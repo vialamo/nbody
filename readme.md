@@ -58,4 +58,4 @@ The simulations model a 2D universe and include a range of standard techniques u
 
 ## Learning Log & Guidebook
 
-This project was developed as a learning exercise. The companion document, [`book/book.md`](book/book.md), is a "living book" that organizes and explains all the physics and computer science concepts encountered during this process. It is written in the style of a guide that I would have found most helpful when I began.
+This project was developed as a learning exercise. The companion document, [`book/book.pdf`](book/book.pdf), is a "living book" that organizes and explains all the physics and computer science concepts encountered during this process. It is written in the style of a guide that I would have found most helpful when I began.
