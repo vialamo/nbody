@@ -42,7 +42,7 @@ The simulations model a 2D universe and include a range of standard techniques u
 
 ### C++ Version (Linux/Ubuntu)
 
-1.  **Prerequisites:** You need a C++ compiler and the SFML 3.0.2 development libraries.
+1.  **Prerequisites:** You need a C++ compiler and the **SFML 3.0.2** development libraries.
     ```bash
     sudo apt update
     sudo apt install build-essential libsfml-dev
