@@ -37,7 +37,7 @@ The simulations model a 2D universe and include a range of standard techniques u
     ```
 2.  **Run:** Navigate to the `python/` directory and run the script:
     ```bash
-    python nbody_simulation.py
+    python nbody.py
     ```
 
 ### C++ Version (Linux/Ubuntu)
@@ -49,11 +49,11 @@ The simulations model a 2D universe and include a range of standard techniques u
     ```
 2.  **Compile:** Navigate to the `cpp/` directory and compile the program. The `pocketfft` library is header-only and included in the repository.
     ```bash
-    g++ -std=c++11 -O3 nbody_cosmology.cpp -o nbody_sim -lsfml-graphics -lsfml-window -lsfml-system
+    g++ nbody.cpp -o nbody -lsfml-graphics -lsfml-window -lsfml-system
     ```
 3.  **Run:** Execute the compiled program:
     ```bash
-    ./nbody_sim
+    ./nbody
     ```
 
 ## Learning Log & Guidebook
