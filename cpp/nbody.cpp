@@ -66,6 +66,7 @@ const double DT = 1e-5 * DYNAMICAL_TIME;
 
 // Misc
 const int DEBUG_INFO_EVERY_CYCLES = 40;
+const int SAVE_RENDER_EVERY_CYCLES = 0;
 const int SEED = 42;
 
 // Render
@@ -427,6 +428,17 @@ Vec2 calculate_total_momentum( const std::vector<Particle>& particles ) {
     return total_momentum;
 }
 
+void save_frame( sf::RenderWindow &window, int frame_num ) {
+    char filename[100];
+    snprintf( filename, sizeof( filename ), "frame_%03d.png", frame_num );
+
+    sf::Texture texture( window.getSize() );
+    texture.update( window );
+    if( texture.copyToImage().saveToFile( filename ) ) {
+        std::cout << "Saved " << filename << std::endl;
+    }
+}
+
 
 int main() {
     // --- SFML Window Setup ---
@@ -479,7 +491,7 @@ int main() {
             auto now = std::chrono::high_resolution_clock::now();
             double elapsed_seconds = std::chrono::duration_cast< std::chrono::duration<double> >( now - start_time ).count();
             double energy = calculate_total_energy( particles, scale_factor );
-            double energy_error = 100.0*abs( energy - initial_energy ) / abs( initial_energy );
+            double energy_error = 100.0 * fabs( energy - initial_energy ) / fabs( initial_energy );
 
             std::cout << "Cycles: " << cycle_count
                 << " | SimTime: " << static_cast< int >( 1000.0 * total_simulation_time )
@@ -487,6 +499,12 @@ int main() {
                 << " | Energy: " << static_cast<int>( energy_error ) << "%"
                 << " | Elapsed Wall Time: " << static_cast< int >( elapsed_seconds ) << "s"
                 << std::endl;
+        }
+
+        // Save a frame every N cycles
+        if( SAVE_RENDER_EVERY_CYCLES != 0 && cycle_count > 0 && cycle_count % SAVE_RENDER_EVERY_CYCLES == 0 ) {
+            int frame_num = cycle_count / SAVE_RENDER_EVERY_CYCLES;
+            save_frame( window, frame_num );
         }
 
         cycle_count++;

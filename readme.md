@@ -2,8 +2,6 @@
 
 This repository documents my experiments in cosmological N-body simulations. It contains two "toy model" simulation programs, one in Python and one in C++, along with a book that explains the underlying physics and algorithms.
 
-
-
 ## Key Features Implemented
 
 The simulations model a 2D universe and include a range of standard techniques used in cosmological codes:
@@ -20,6 +18,8 @@ The simulations model a 2D universe and include a range of standard techniques u
     * **Cloud-in-Cell (CIC):** A second-order mass assignment and force interpolation scheme for the PM grid.
     * **Periodic Boundary Conditions:** A "wrap-around" universe to model a representative patch of a larger cosmos.
     * **Gravitational Softening:** Plummer softening to ensure numerical stability during close encounters.
+    
+![N-Body Simulation Animation](simulation.gif)
 
 ## Repository Structure
 
