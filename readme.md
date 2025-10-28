@@ -1,4 +1,4 @@
-# N-Body Simulation Experiments
+# Cosmological N-Body/Hydro Simulation Experiments
 
 This repository documents my experiments in cosmological N-body/hydrodynamics simulations. It contains two "toy model" simulation programs, one in Python and one in C++, along with a book that explains the underlying physics and algorithms.
 
