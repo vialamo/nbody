@@ -5,14 +5,20 @@ import math
 import time
 import numpy as np
 import pygame
+import matplotlib.cm
+import scipy.ndimage  # Image scaling
 
 # ------------------------
 # Simulation parameters
 # ------------------------
 # Domain and mesh
-DOMAIN_SIZE = 1
-MESH_SIZE = 16
+DOMAIN_SIZE = 1.0
+MESH_SIZE = 64
 CELL_SIZE = DOMAIN_SIZE / MESH_SIZE
+
+# Matter components
+OMEGA_BARYON = 0.15 # Baryon fraction
+OMEGA_DM = 1.0 - OMEGA_BARYON
 
 # P3M parameters
 CUTOFF_RADIUS = 2.5 * CELL_SIZE
@@ -21,22 +27,25 @@ CUTOFF_TRANSITION_WIDTH = 0.2 * CUTOFF_RADIUS
 R_SWITCH_START = CUTOFF_RADIUS - CUTOFF_TRANSITION_WIDTH
 R_SWITCH_START_SQ = R_SWITCH_START**2
 
-# Particles
-NUM_PARTICLES = 25 ** 2 # should be a perfect square for simple IC grid
-PARTICLE_MASS = 1.0 / NUM_PARTICLES
+# Particles and gas
+NUM_DM_PARTICLES = 25 ** 2 # should be a perfect square for simple IC grid
+DM_PARTICLE_MASS = OMEGA_DM / NUM_DM_PARTICLES
+GAS_TOTAL_MASS = OMEGA_BARYON
+ENABLE_HYDRO = True
 
 # Physics
-MEAN_INTERPARTICLE_SPACING = DOMAIN_SIZE / math.sqrt(NUM_PARTICLES)
+MEAN_INTERPARTICLE_SPACING = DOMAIN_SIZE / math.sqrt(NUM_DM_PARTICLES)
 SOFTENING_SQUARED = (MEAN_INTERPARTICLE_SPACING / 50.0)**2
 EXPANSION_START_T = 0.5
 EXPANDING_UNIVERSE = True
 INITIAL_HUBBLE_PARAM = (2.0/3.0) / EXPANSION_START_T if EXPANDING_UNIVERSE else 0.0
 INITIAL_SCALE_FACTOR = EXPANSION_START_T**(2.0/3.0) if EXPANDING_UNIVERSE else 0.0
 G = 1.0 / (6 * math.pi)
+GAMMA = 5.0/3.0 # Adiabatic index for monatomic gas
 
 # Time integration
 DYNAMICAL_TIME = 1.0 / math.sqrt(G)
-DT = 5e-4 * DYNAMICAL_TIME
+DT = 2e-4 * DYNAMICAL_TIME
 
 # Visualization
 RENDER_SIZE = 800
@@ -48,7 +57,7 @@ SEED = 42
 np.random.seed(SEED)
 
 class Particle:
-    def __init__(self, x, y, mass = PARTICLE_MASS, vx=0, vy=0):
+    def __init__(self, x, y, mass = DM_PARTICLE_MASS, vx=0, vy=0):
         self.x = x
         self.y = y
         self.mass = mass
@@ -57,6 +66,114 @@ class Particle:
         self.ax = 0
         self.ay = 0
 
+class GasGrid:
+    """Represents the Eulerian grid for the baryonic gas."""
+    def __init__(self):
+        # Conservative variables
+        self.density = np.zeros((MESH_SIZE, MESH_SIZE))
+        self.momentum_x = np.zeros((MESH_SIZE, MESH_SIZE))
+        self.momentum_y = np.zeros((MESH_SIZE, MESH_SIZE))
+        self.energy = np.zeros((MESH_SIZE, MESH_SIZE)) # Total energy density E = rho*e + 0.5*rho*v^2
+        
+        # Primitive variables (derived)
+        self.pressure = np.zeros((MESH_SIZE, MESH_SIZE))
+        self.velocity_x = np.zeros((MESH_SIZE, MESH_SIZE))
+        self.velocity_y = np.zeros((MESH_SIZE, MESH_SIZE))
+
+        self.accel_x = np.zeros((MESH_SIZE, MESH_SIZE))
+        self.accel_y = np.zeros((MESH_SIZE, MESH_SIZE))
+
+    def update_primitive_variables(self):
+        """Calculates pressure and velocity from the conservative variables."""
+        # Avoid division by zero in empty cells
+        non_zero_density = self.density > 1e-9
+        
+        self.velocity_x[non_zero_density] = self.momentum_x[non_zero_density] / self.density[non_zero_density]
+        self.velocity_y[non_zero_density] = self.momentum_y[non_zero_density] / self.density[non_zero_density]
+
+        kinetic_energy_density = 0.5 * (self.momentum_x**2 + self.momentum_y**2) / self.density
+        internal_energy_density = self.energy - kinetic_energy_density
+        
+        self.pressure = (GAMMA - 1.0) * internal_energy_density
+        self.pressure[self.pressure < 0] = 1e-9 # Pressure floor
+
+    def calculate_fluxes(self, axis):
+        """Internal helper to calculate HLL fluxes along a given axis (0 for x, 1 for y)."""
+        
+        if axis == 1: # Permute axes for y-direction
+            density, mom_n, mom_t, energy, v_n, v_t, pressure = \
+                self.density.T, self.momentum_y.T, self.momentum_x.T, self.energy.T, \
+                self.velocity_y.T, self.velocity_x.T, self.pressure.T
+        else: # x-direction
+            density, mom_n, mom_t, energy, v_n, v_t, pressure = \
+                self.density, self.momentum_x, self.momentum_y, self.energy, \
+                self.velocity_x, self.velocity_y, self.pressure
+
+        # Left and Right states for all cells at once using roll
+        rho_L, p_L, vn_L, vt_L, E_L, mom_n_L, mom_t_L = density, pressure, v_n, v_t, energy, mom_n, mom_t
+        rho_R, p_R, vn_R, vt_R, E_R, mom_n_R, mom_t_R = \
+            np.roll(rho_L, -1, axis=0), np.roll(p_L, -1, axis=0), np.roll(vn_L, -1, axis=0), \
+            np.roll(vt_L, -1, axis=0), np.roll(E_L, -1, axis=0), np.roll(mom_n_L, -1, axis=0), \
+            np.roll(mom_t_L, -1, axis=0)
+
+        # Sound speed
+        cs_L = np.sqrt(GAMMA * p_L / rho_L, where=rho_L > 0, out=np.zeros_like(rho_L))
+        cs_R = np.sqrt(GAMMA * p_R / rho_R, where=rho_R > 0, out=np.zeros_like(rho_R))
+
+        # Wave speeds (vectorized)
+        S_L = np.minimum(vn_L - cs_L, vn_R - cs_R)
+        S_R = np.maximum(vn_L + cs_L, vn_R + cs_R)
+
+        # Fluxes in L and R states (normal direction)
+        F_dens_L, F_dens_R = rho_L * vn_L, rho_R * vn_R
+        F_momn_L, F_momn_R = rho_L * vn_L**2 + p_L, rho_R * vn_R**2 + p_R
+        F_momt_L, F_momt_R = rho_L * vn_L * vt_L, rho_R * vn_R * vt_R
+        F_en_L, F_en_R = (E_L + p_L) * vn_L, (E_R + p_R) * vn_R
+
+        # HLL flux calculation (vectorized)
+        S_R_minus_S_L = S_R - S_L
+        S_R_minus_S_L[np.abs(S_R_minus_S_L) < 1e-9] = 1e-9 # Avoid division by zero
+
+        flux_density = np.where(S_L >= 0, F_dens_L, 
+                    np.where(S_R <= 0, F_dens_R, 
+                                (S_R*F_dens_L - S_L*F_dens_R + S_L*S_R*(rho_R-rho_L))/S_R_minus_S_L))
+        flux_mom_n = np.where(S_L >= 0, F_momn_L,
+                    np.where(S_R <= 0, F_momn_R,
+                            (S_R*F_momn_L - S_L*F_momn_R + S_L*S_R*(mom_n_R-mom_n_L))/S_R_minus_S_L))
+        flux_mom_t = np.where(S_L >= 0, F_momt_L,
+                    np.where(S_R <= 0, F_momt_R,
+                            (S_R*F_momt_L - S_L*F_momt_R + S_L*S_R*(mom_t_R-mom_t_L))/S_R_minus_S_L))
+        flux_energy = np.where(S_L >= 0, F_en_L,
+                    np.where(S_R <= 0, F_en_R,
+                            (S_R*F_en_L - S_L*F_en_R + S_L*S_R*(E_R-E_L))/S_R_minus_S_L))
+
+        # Transpose back if we were working on y-axis
+        if axis == 1:
+            return flux_density.T, flux_mom_t.T, flux_mom_n.T, flux_energy.T
+        else:
+            return flux_density, flux_mom_n, flux_mom_t, flux_energy
+
+    def hydro_step(self, dt):
+        """Performs one first-order finite-volume hydrodynamics step using operator splitting."""
+        self.update_primitive_variables()
+
+        # --- X-direction sweep ---
+        flux_density_x, flux_mom_x_x, flux_mom_y_x, flux_energy_x = self.calculate_fluxes(axis=0)
+        factor = dt / CELL_SIZE
+        self.density    -= factor * (flux_density_x - np.roll(flux_density_x, 1, axis=0))
+        self.momentum_x -= factor * (flux_mom_x_x - np.roll(flux_mom_x_x, 1, axis=0))
+        self.momentum_y -= factor * (flux_mom_y_x - np.roll(flux_mom_y_x, 1, axis=0))
+        self.energy     -= factor * (flux_energy_x - np.roll(flux_energy_x, 1, axis=0))
+        self.update_primitive_variables()
+
+        # --- Y-direction sweep ---
+        flux_density_y, flux_mom_x_y, flux_mom_y_y, flux_energy_y = self.calculate_fluxes(axis=1)
+        self.density    -= factor * (flux_density_y - np.roll(flux_density_y, 1, axis=1))
+        self.momentum_x -= factor * (flux_mom_x_y - np.roll(flux_mom_x_y, 1, axis=1))
+        self.momentum_y -= factor * (flux_mom_y_y - np.roll(flux_mom_y_y, 1, axis=1))
+        self.energy     -= factor * (flux_energy_y - np.roll(flux_energy_y, 1, axis=1))
+        self.update_primitive_variables()
+
 # minimal-image displacement helper (periodic)
 def displacement(dx):
     L = DOMAIN_SIZE
@@ -64,7 +181,6 @@ def displacement(dx):
     return dx
 
 def cic_mass_assignment(particles):
-    # Cloud-In-Cell interpolation
     # Mass per cell
     rho = np.zeros((MESH_SIZE, MESH_SIZE))
     cic_data = []
@@ -93,20 +209,20 @@ def cic_mass_assignment(particles):
     rho /= (CELL_SIZE * CELL_SIZE) # Convert mass to density
     return rho, cic_data
 
-def cic_force_interpolation(particles, fx_grid, fy_grid, cic_data):
+def cic_force_interpolation(particles, ax_grid, ay_grid, cic_data):
     mesh_forces = []
     for i, p in enumerate(particles):
         ix, iy, w1, w2, w3, w4 = cic_data[i]
 
-        fx = (fx_grid[ix % MESH_SIZE, iy % MESH_SIZE] * w1 +
-            fx_grid[(ix + 1) % MESH_SIZE, iy % MESH_SIZE] * w2 +
-            fx_grid[ix % MESH_SIZE, (iy + 1) % MESH_SIZE] * w3 +
-            fx_grid[(ix + 1) % MESH_SIZE, (iy + 1) % MESH_SIZE] * w4)
+        fx = (ax_grid[ix % MESH_SIZE, iy % MESH_SIZE] * w1 +
+            ax_grid[(ix + 1) % MESH_SIZE, iy % MESH_SIZE] * w2 +
+            ax_grid[ix % MESH_SIZE, (iy + 1) % MESH_SIZE] * w3 +
+            ax_grid[(ix + 1) % MESH_SIZE, (iy + 1) % MESH_SIZE] * w4)
             
-        fy = (fy_grid[ix % MESH_SIZE, iy % MESH_SIZE] * w1 +
-            fy_grid[(ix + 1) % MESH_SIZE, iy % MESH_SIZE] * w2 +
-            fy_grid[ix % MESH_SIZE, (iy + 1) % MESH_SIZE] * w3 +
-            fy_grid[(ix + 1) % MESH_SIZE, (iy + 1) % MESH_SIZE] * w4)
+        fy = (ay_grid[ix % MESH_SIZE, iy % MESH_SIZE] * w1 +
+            ay_grid[(ix + 1) % MESH_SIZE, iy % MESH_SIZE] * w2 +
+            ay_grid[ix % MESH_SIZE, (iy + 1) % MESH_SIZE] * w3 +
+            ay_grid[(ix + 1) % MESH_SIZE, (iy + 1) % MESH_SIZE] * w4)
         
         fx *= p.mass
         fy *= p.mass
@@ -114,10 +230,12 @@ def cic_force_interpolation(particles, fx_grid, fy_grid, cic_data):
     
     return mesh_forces
 
-def compute_mesh_forces(particles):
+def compute_gravitational_acceleration(particles, gas):
     # Cloud-In-Cell interpolation instead of NGP (Nearest Grid Point)
     # Mass per cell
     rho, cic_data = cic_mass_assignment(particles)
+    if ENABLE_HYDRO:
+        rho += gas.density
 
     # FFT of density
     rho_k = np.fft.fftn(rho)
@@ -136,12 +254,10 @@ def compute_mesh_forces(particles):
     phi = np.fft.ifftn(phi_k).real
 
     # Gradient to get field (finite differences)
-    fx_grid = (np.roll(phi, 1, axis=0) - np.roll(phi, -1, axis=0)) / (2*CELL_SIZE)
-    fy_grid = (np.roll(phi, 1, axis=1) - np.roll(phi, -1, axis=1)) / (2*CELL_SIZE)
+    ax_grid = (np.roll(phi, 1, axis=0) - np.roll(phi, -1, axis=0)) / (2*CELL_SIZE)
+    ay_grid = (np.roll(phi, 1, axis=1) - np.roll(phi, -1, axis=1)) / (2*CELL_SIZE)
 
-    # Interpolate back to particles
-    mesh_forces = cic_force_interpolation(particles, fx_grid, fy_grid, cic_data)
-    return mesh_forces
+    return ax_grid, ay_grid, cic_data
 
 def compute_PM_short_range_approx(dist_sq, p1_mass, p2_mass, dx, dy):
     softening_epsilon_squared = (0.5 * CELL_SIZE)**2 
@@ -209,8 +325,7 @@ def update_cosmology(total_time):
         hubble_param = 0.0
     return scale_factor, hubble_param
 
-def KDK_step(total_time, particles):
-    # Initial cosmology values
+def KDK_step(total_time, particles, gas):
     scale_factor, hubble_param = update_cosmology(total_time)
 
     # 1. KICK (First half-step for velocity)
@@ -219,6 +334,15 @@ def KDK_step(total_time, particles):
         total_ay = (p.ay / scale_factor**3) - (2 * hubble_param * p.vy)
         p.vx += total_ax * DT / 2.0
         p.vy += total_ay * DT / 2.0
+
+    # Apply Kick to Gas Grid
+    if ENABLE_HYDRO:
+        gas.update_primitive_variables()
+        gas_accel_x = (gas.accel_x / scale_factor**3) - (2 * hubble_param * gas.velocity_x)
+        gas_accel_y = (gas.accel_y / scale_factor**3) - (2 * hubble_param * gas.velocity_y)
+        gas.momentum_x += gas.density * gas_accel_x * DT / 2.0
+        gas.momentum_y += gas.density * gas_accel_y * DT / 2.0
+        gas.energy += (gas.momentum_x * gas_accel_x + gas.momentum_y * gas_accel_y) * DT / 2.0
     
     # 2. DRIFT (Full step for position)
     for p in particles:
@@ -231,8 +355,11 @@ def KDK_step(total_time, particles):
     # 4. COMPUTE FORCES at new positions
     # P³M (PP+PM) Gravity Solver
     pp_forces = compute_PP_forces(particles)
-    pm_forces = compute_mesh_forces(particles)
+    ax_grid, ay_grid, cic_data = compute_gravitational_acceleration(particles, gas)
+    pm_forces = cic_force_interpolation(particles, ax_grid, ay_grid, cic_data)
     forces = [(pp[0]+pm[0], pp[1]+pm[1]) for pp,pm in zip(pp_forces, pm_forces)]
+    if ENABLE_HYDRO:
+        gas.hydro_step(DT)
 
     # 5. KICK (Second half-step for velocity)
     for i, p in enumerate(particles):
@@ -244,11 +371,22 @@ def KDK_step(total_time, particles):
         p.vx += total_ax * DT / 2.0
         p.vy += total_ay * DT / 2.0
 
+    # Apply Kick to Gas Grid
+    if ENABLE_HYDRO:
+        gas.update_primitive_variables()
+        gas.accel_x = ax_grid
+        gas.accel_y = ay_grid
+        gas_accel_x = (gas.accel_x / scale_factor**3) - (2 * hubble_param * gas.velocity_x)
+        gas_accel_y = (gas.accel_y / scale_factor**3) - (2 * hubble_param * gas.velocity_y)
+        gas.momentum_x += gas.density * gas_accel_x * DT / 2.0
+        gas.momentum_y += gas.density * gas_accel_y * DT / 2.0
+        gas.energy += (gas.momentum_x * gas_accel_x + gas.momentum_y * gas_accel_y) * DT / 2.0
+
 # Create initial conditions using the simplified Zel'dovich Approximation
 def create_zeldovich_ics(power_spectrum_index):
-    n_per_side = int(round(NUM_PARTICLES ** 0.5))
-    if n_per_side**2 != NUM_PARTICLES:
-        print(f"Warning: {NUM_PARTICLES} is not a perfect square. Using {n_per_side**2} particles.")
+    n_per_side = int(round(NUM_DM_PARTICLES ** 0.5))
+    if n_per_side**2 != NUM_DM_PARTICLES:
+        print(f"Warning: {NUM_DM_PARTICLES} is not a perfect square. Using {n_per_side**2} particles.")
 
     ic_mesh_size = n_per_side
     cell_size = DOMAIN_SIZE / ic_mesh_size
@@ -293,7 +431,7 @@ def create_zeldovich_ics(power_spectrum_index):
             y = (qy + disp_y[i, j]) % DOMAIN_SIZE
             vx = INITIAL_HUBBLE_PARAM * disp_x[i, j]
             vy = INITIAL_HUBBLE_PARAM * disp_y[i, j]
-            particles.append(Particle(x, y, PARTICLE_MASS, vx, vy))
+            particles.append(Particle(x, y, DM_PARTICLE_MASS, vx, vy))
 
     return particles
 
@@ -334,20 +472,58 @@ def process_events():
             return False
     return True
 
-def render(screen, particles):
-    pixels = np.zeros((RENDER_SIZE, RENDER_SIZE, 3), dtype=np.uint8)
+def render(screen, particles, gas):
+    surface_array = np.zeros((RENDER_SIZE, RENDER_SIZE, 3), dtype=np.uint8)
+
+    if ENABLE_HYDRO:
+        # Render Gas Pressure
+        # Normalize pressure for visualization using a logarithmic scale
+        log_field = np.log10(gas.pressure + 1e-12) # Add a small epsilon to avoid log(0)
+        min_log, max_log = np.min(log_field), np.max(log_field)
+        
+        if max_log > min_log:
+            norm_field = (log_field - min_log) / (max_log - min_log)
+        else:
+            norm_field = np.zeros_like(log_field)
+
+        # Apply a colormap
+        colormap = matplotlib.cm.plasma
+        colored_field = colormap(norm_field)
+        colored_field[:, :, 0:3] *= norm_field[..., np.newaxis]
+        
+        # Upscale to render size using bilinear interpolation
+        zoom_factor = RENDER_SIZE / MESH_SIZE
+        zoomed_field = scipy.ndimage.zoom(colored_field[:, :, 0:3], 
+                                        (zoom_factor, zoom_factor, 1), 
+                                        order=1)
+
+        surface_array = (zoomed_field * 255).astype(np.uint8)
+        pygame.surfarray.blit_array(screen, surface_array)
+
     coords = np.array([(int(p.x*RENDER_SCALE), int(p.y*RENDER_SCALE)) for p in particles])
-    pixels[coords[:,0], coords[:,1]] = [255, 255, 255]
-    pygame.surfarray.blit_array(screen, pixels)    
+    surface_array[coords[:,0], coords[:,1]] = [255, 255, 255]
+    pygame.surfarray.blit_array(screen, surface_array)
     pygame.display.flip()
 
 # ------------------------
 # Main entry point
 # ------------------------
 def main():
-    screen = init_window(RENDER_SIZE, 'N-Body Simulation')
+    screen = init_window(RENDER_SIZE, 'N-Body + Hydrodynamics Simulation')
 
     particles = create_zeldovich_ics(power_spectrum_index=-2.0)
+    
+    # Uniform initialization for gas
+    gas = GasGrid()
+    gas.density.fill(GAS_TOTAL_MASS / (DOMAIN_SIZE**2))
+    initial_internal_energy = 1e-6
+    gas.energy = initial_internal_energy * gas.density
+    
+    if ENABLE_HYDRO:
+        ax_grid, ay_grid, _ = compute_gravitational_acceleration(particles, gas)
+        gas.accel_x = ax_grid
+        gas.accel_y = ay_grid
+
     initial_energy = calculate_total_energy(particles)
 
     cycle_count = 0
@@ -356,8 +532,8 @@ def main():
 
     while process_events():
         total_simulation_time = DT * cycle_count
-        KDK_step(total_simulation_time, particles)
-        render(screen, particles)
+        KDK_step(total_simulation_time, particles, gas)
+        render(screen, particles, gas)
 
         cycle_count += 1
 
@@ -367,7 +543,7 @@ def main():
             scale_factor, _ = update_cosmology(total_simulation_time)
             current_energy = calculate_total_energy(particles, scale_factor)
             energy_error = abs(current_energy - initial_energy) / abs(initial_energy)
-            print(f"Time:{total_elapsed_time:.0f}s Cycles:{cycle_count} Avg. dt:{average_time:.3f}s Energy Error:{energy_error:.1%}")
+            print(f"Time:{total_elapsed_time:.0f}s Cycles:{cycle_count} Avg. dt:{average_time:.3f}s Scale:{scale_factor:.2f} Energy Error:{energy_error:.1%}")
 
     pygame.quit()
 

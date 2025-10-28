@@ -11,57 +11,55 @@
 // Include the header-only pocketfft library
 #include "pocketfft_hdronly.h"
 
+// Include the header-only Eigen library
+#include <Eigen/Dense>
+
 // Define M_PI if it's not provided by the compiler (it's non-standard)
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
 // ------------------------
-// Vector and Particle Structs
-// ------------------------
-struct Vec2 {
-    double x = 0.0, y = 0.0;
-};
-
-struct Particle {
-    Vec2 pos;
-    Vec2 vel;
-    Vec2 acc;
-    double mass;
-};
-
-// ------------------------
 // Simulation parameters
 // ------------------------
 // Domain and mesh
 const double DOMAIN_SIZE = 1.0;
-const int MESH_SIZE = 16;
+const int MESH_SIZE = 64;
 const double CELL_SIZE = DOMAIN_SIZE / MESH_SIZE;
+
+// Matter components
+const double OMEGA_BARYON = 0.15;
+const double OMEGA_DM = 1.0 - OMEGA_BARYON;
 
 // P3M parameters
 const bool USE_PM = true;
+const bool USE_PP = true;
 const double CUTOFF_RADIUS = 2.5 * CELL_SIZE;
 const double CUTOFF_RADIUS_SQUARED = CUTOFF_RADIUS * CUTOFF_RADIUS;
 const double CUTOFF_TRANSITION_WIDTH = 0.2 * CUTOFF_RADIUS;
 const double R_SWITCH_START = CUTOFF_RADIUS - CUTOFF_TRANSITION_WIDTH;
 const double R_SWITCH_START_SQ = R_SWITCH_START * R_SWITCH_START;
 
-// Particles
-const int N_PER_SIDE = 50;
-const int NUM_PARTICLES = N_PER_SIDE * N_PER_SIDE;
+// Matter
+const int N_PER_SIDE = 30;
+const int NUM_DM_PARTICLES = N_PER_SIDE * N_PER_SIDE;
 const double TOTAL_MASS = 1.0;
-const double PARTICLE_MASS = 1.0 / NUM_PARTICLES;
+const double DM_PARTICLE_MASS = ( TOTAL_MASS * OMEGA_DM ) / NUM_DM_PARTICLES;
+const double GAS_TOTAL_MASS = TOTAL_MASS * OMEGA_BARYON;
 
 // Physics
-const double MEAN_INTERPARTICLE_SPACING = DOMAIN_SIZE / sqrt( NUM_PARTICLES );
+const bool STANDING_PARTICLES = false;
+const bool USE_HYDRO = true;
+const double MEAN_INTERPARTICLE_SPACING = DOMAIN_SIZE / sqrt( NUM_DM_PARTICLES );
 const double SOFTENING_SQUARED = pow( MEAN_INTERPARTICLE_SPACING / 50.0, 2 );
 const bool EXPANDING_UNIVERSE = true;
 const double EXPANSION_START_T = 0.1;
 const double G = 1.0 / ( 6.0 * M_PI );
+const double GAMMA = 5.0 / 3.0;
 
 // Time integration
 const double DYNAMICAL_TIME = 1.0 / sqrt( G );
-const double DT = 1e-5 * DYNAMICAL_TIME;
+const double DT = 1e-6 * DYNAMICAL_TIME;
 
 
 // Misc
@@ -77,6 +75,223 @@ const double RENDER_SCALE = RENDER_SIZE / DOMAIN_SIZE;
 // Global cosmological variables
 double scale_factor = 1.0;
 double hubble_param = 0.0;
+
+
+// ------------------------
+// Vector and Particle Structs
+// ------------------------
+struct Vec2 {
+    double x = 0.0, y = 0.0;
+};
+
+struct Particle {
+    Vec2 pos;
+    Vec2 vel;
+    Vec2 acc;
+    double mass;
+};
+
+using Grid = Eigen::Matrix<double, MESH_SIZE, MESH_SIZE>;
+
+// Helper: Rolls an Eigen matrix
+Grid roll( const Grid& m, int shift, int axis ) {
+    Grid result;
+    if( axis == 0 ) {
+        int rows = static_cast< int >( m.rows() );
+        shift = ( shift % rows + rows ) % rows; // Handle negative shifts
+        result.bottomRows( rows - shift ) = m.topRows( rows - shift );
+        result.topRows( shift ) = m.bottomRows( shift );
+    }
+    else {
+        int cols = static_cast< int >( m.cols() );
+        shift = ( shift % cols + cols ) % cols; // Handle negative shifts
+        result.rightCols( cols - shift ) = m.leftCols( cols - shift );
+        result.leftCols( shift ) = m.rightCols( shift );
+    }
+    return result;
+}
+
+struct HydroScratchPad {
+    Grid density, mom_n, mom_t, energy, v_n, v_t, pressure;
+    Grid rho_L, p_L, vn_L, vt_L, E_L, mom_n_L, mom_t_L;
+    Grid rho_R, p_R, vn_R, vt_R, E_R, mom_n_R, mom_t_R;
+    Grid cs_L, cs_R, S_L, S_R, S_R_minus_S_L;
+    Grid F_dens_L, F_dens_R, F_momn_L, F_momn_R, F_momt_L, F_momt_R, F_en_L, F_en_R;
+    Grid flux_density, flux_mom_n, flux_mom_t, flux_energy;
+};
+
+Grid g_grid_x( MESH_SIZE, MESH_SIZE );
+Grid g_grid_y( MESH_SIZE, MESH_SIZE );
+
+struct GasGrid {
+    // Conservative variables
+    Grid density;
+    Grid momentum_x;
+    Grid momentum_y;
+    Grid energy;
+
+    // Primitive variables
+    Grid pressure;
+    Grid velocity_x;
+    Grid velocity_y;
+
+    HydroScratchPad scratch;
+
+    GasGrid() {
+        density.setZero();
+        momentum_x.setZero();
+        momentum_y.setZero();
+        energy.setZero();
+        pressure.setZero();
+        velocity_x.setZero();
+        velocity_y.setZero();
+    }
+
+    void update_primitive_variables() {
+        for( int i = 0; i < MESH_SIZE; ++i ) {
+            for( int j = 0; j < MESH_SIZE; ++j ) {
+                if( density( i, j ) > 1e-12 ) {
+                    velocity_x( i, j ) = momentum_x( i, j ) / density( i, j );
+                    velocity_y( i, j ) = momentum_y( i, j ) / density( i, j );
+                }
+                else {
+                    velocity_x( i, j ) = 0.0;
+                    velocity_y( i, j ) = 0.0;
+                }
+            }
+        }
+
+        Grid kinetic_energy_density = 0.5 * ( momentum_x.array().square() + momentum_y.array().square() );
+        for( int i = 0; i < MESH_SIZE; ++i ) {
+            for( int j = 0; j < MESH_SIZE; ++j ) {
+                if( density( i, j ) > 1e-12 ) {
+                    kinetic_energy_density( i, j ) /= density( i, j );
+                }
+                else {
+                    kinetic_energy_density( i, j ) = 0.0;
+                }
+            }
+        }
+
+        Grid internal_energy_density = energy - kinetic_energy_density;
+        pressure = ( GAMMA - 1.0 ) * internal_energy_density;
+
+        // Apply pressure floor
+        for( int i = 0; i < MESH_SIZE; ++i ) {
+            for( int j = 0; j < MESH_SIZE; ++j ) {
+                if( pressure( i, j ) < 1e-12 ) {
+                    pressure( i, j ) = 1e-12;
+                }
+            }
+        }
+    }
+
+    // Helper: Calculates HLL fluxes for one axis
+    void calculate_fluxes( int axis ) {
+        if( axis == 1 ) { // Permute axes for y-direction
+            scratch.density = density.transpose();
+            scratch.mom_n = momentum_y.transpose();
+            scratch.mom_t = momentum_x.transpose();
+            scratch.energy = energy.transpose();
+            scratch.v_n = velocity_y.transpose();
+            scratch.v_t = velocity_x.transpose();
+            scratch.pressure = pressure.transpose();
+        } else {
+            scratch.density = density;
+            scratch.mom_n = momentum_x;
+            scratch.mom_t = momentum_y;
+            scratch.energy = energy;
+            scratch.v_n = velocity_x;
+            scratch.v_t = velocity_y;
+            scratch.pressure = pressure;
+        }
+
+        const int rollDir = -1;
+        scratch.rho_L = scratch.density;
+        scratch.p_L = scratch.pressure;
+        scratch.vn_L = scratch.v_n;
+        scratch.vt_L = scratch.v_t;
+        scratch.E_L = scratch.energy;
+        scratch.mom_n_L = scratch.mom_n;
+        scratch.mom_t_L = scratch.mom_t;
+        scratch.rho_R = roll( scratch.rho_L, rollDir, 0 );
+        scratch.p_R = roll( scratch.p_L, rollDir, 0 );
+        scratch.vn_R = roll( scratch.vn_L, rollDir, 0 );
+        scratch.vt_R = roll( scratch.vt_L, rollDir, 0 );
+        scratch.E_R = roll( scratch.E_L, rollDir, 0 );
+        scratch.mom_n_R = roll( scratch.mom_n_L, rollDir, 0 );
+        scratch.mom_t_R = roll( scratch.mom_t_L, rollDir, 0 );
+
+        scratch.cs_L = ( GAMMA * scratch.p_L.array() / scratch.rho_L.array() ).sqrt();
+        scratch.cs_R = ( GAMMA * scratch.p_R.array() / scratch.rho_R.array() ).sqrt();
+        if( scratch.cs_L != scratch.cs_L || scratch.cs_R != scratch.cs_R ) {
+            //double hydro_dt = get_hydro_dt( gas );
+            throw std::runtime_error( "Density error" );
+        }
+        scratch.cs_L = ( scratch.rho_L.array() > 0 ).select( scratch.cs_L, 0.0 );
+        scratch.cs_R = ( scratch.rho_R.array() > 0 ).select( scratch.cs_R, 0.0 );
+
+        scratch.S_L = ( scratch.vn_L.array() - scratch.cs_L.array() ).cwiseMin( scratch.vn_R.array() - scratch.cs_R.array() );
+        scratch.S_R = ( scratch.vn_L.array() + scratch.cs_L.array() ).cwiseMax( scratch.vn_R.array() + scratch.cs_R.array() );
+
+        scratch.F_dens_L = scratch.rho_L.array() * scratch.vn_L.array();
+        scratch.F_dens_R = scratch.rho_R.array() * scratch.vn_R.array();
+        scratch.F_momn_L = scratch.rho_L.array() * scratch.vn_L.array().square() + scratch.p_L.array();
+        scratch.F_momn_R = scratch.rho_R.array() * scratch.vn_R.array().square() + scratch.p_R.array();
+        scratch.F_momt_L = scratch.rho_L.array() * scratch.vn_L.array() * scratch.vt_L.array();
+        scratch.F_momt_R = scratch.rho_R.array() * scratch.vn_R.array() * scratch.vt_R.array();
+        scratch.F_en_L = ( scratch.E_L.array() + scratch.p_L.array() ) * scratch.vn_L.array();
+        scratch.F_en_R = ( scratch.E_R.array() + scratch.p_R.array() ) * scratch.vn_R.array();
+
+        scratch.S_R_minus_S_L = scratch.S_R - scratch.S_L;
+        scratch.S_R_minus_S_L = ( scratch.S_R_minus_S_L.array().abs() < 1e-9 ).select( 1e-9, scratch.S_R_minus_S_L );
+
+        scratch.flux_density = ( scratch.S_L.array() >= 0 ).select( scratch.F_dens_L,
+            ( scratch.S_R.array() <= 0 ).select( scratch.F_dens_R,
+                ( scratch.S_R.array() * scratch.F_dens_L.array() - scratch.S_L.array() * scratch.F_dens_R.array() + scratch.S_L.array() * scratch.S_R.array() * ( scratch.rho_R.array() - scratch.rho_L.array() ) ) / scratch.S_R_minus_S_L.array() ) );
+        scratch.flux_mom_n = ( scratch.S_L.array() >= 0 ).select( scratch.F_momn_L,
+            ( scratch.S_R.array() <= 0 ).select( scratch.F_momn_R,
+                ( scratch.S_R.array() * scratch.F_momn_L.array() - scratch.S_L.array() * scratch.F_momn_R.array() + scratch.S_L.array() * scratch.S_R.array() * ( scratch.mom_n_R.array() - scratch.mom_n_L.array() ) ) / scratch.S_R_minus_S_L.array() ) );
+        scratch.flux_mom_t = ( scratch.S_L.array() >= 0 ).select( scratch.F_momt_L,
+            ( scratch.S_R.array() <= 0 ).select( scratch.F_momt_R,
+                ( scratch.S_R.array() * scratch.F_momt_L.array() - scratch.S_L.array() * scratch.F_momt_R.array() + scratch.S_L.array() * scratch.S_R.array() * ( scratch.mom_t_R.array() - scratch.mom_t_L.array() ) ) / scratch.S_R_minus_S_L.array() ) );
+        scratch.flux_energy = ( scratch.S_L.array() >= 0 ).select( scratch.F_en_L,
+            ( scratch.S_R.array() <= 0 ).select( scratch.F_en_R,
+                ( scratch.S_R.array() * scratch.F_en_L.array() - scratch.S_L.array() * scratch.F_en_R.array() + scratch.S_L.array() * scratch.S_R.array() * ( scratch.E_R.array() - scratch.E_L.array() ) ) / scratch.S_R_minus_S_L.array() ) );
+
+        if( axis == 1 ) {
+            scratch.flux_density.transposeInPlace();
+            scratch.flux_mom_t.transposeInPlace();
+            scratch.flux_mom_n.transposeInPlace();
+            scratch.flux_energy.transposeInPlace();
+        }
+    }
+
+    void hydro_step( double dt ) {
+
+        update_primitive_variables();
+
+        calculate_fluxes( 0 );
+        double factor = dt / CELL_SIZE;
+        density -= factor * ( scratch.flux_density - roll( scratch.flux_density, 1, 0 ) );
+        momentum_x -= factor * ( scratch.flux_mom_n - roll( scratch.flux_mom_n, 1, 0 ) );
+        momentum_y -= factor * ( scratch.flux_mom_t - roll( scratch.flux_mom_t, 1, 0 ) );
+        energy -= factor * ( scratch.flux_energy - roll( scratch.flux_energy, 1, 0 ) );
+        update_primitive_variables();
+
+        calculate_fluxes( 1 );
+        density -= factor * ( scratch.flux_density - roll( scratch.flux_density, 1, 1 ) );
+        momentum_x -= factor * ( scratch.flux_mom_t - roll( scratch.flux_mom_t, 1, 1 ) );
+        momentum_y -= factor * ( scratch.flux_mom_n - roll( scratch.flux_mom_n, 1, 1 ) );
+        energy -= factor * ( scratch.flux_energy - roll( scratch.flux_energy, 1, 1 ) );
+        update_primitive_variables();
+    }
+};
+
+struct CIC_Data {
+    int ix, iy;
+    double w1, w2, w3, w4;
+};
 
 
 // ------------------------
@@ -98,114 +313,114 @@ void update_cosmology( double total_time ) {
     }
 }
 
-// ------------------------
-// Force Calculation
-// ------------------------
-struct CIC_Data {
-    int ix, iy;
-    double w1, w2, w3, w4;
-};
+// Add this function after your helper functions
+double get_hydro_dt( const GasGrid& gas ) {
+    double max_signal_vel = 1e-9; // Avoid division by zero
+    for( int i = 0; i < MESH_SIZE; ++i ) {
+        for( int j = 0; j < MESH_SIZE; ++j ) {
+            double rho = gas.density( i, j );
+            if( rho <= 1e-12 ) continue; // Skip empty cells
 
-void compute_mesh_forces( std::vector<Particle>& particles, std::vector<Vec2>& mesh_forces ) {
-    std::vector<double> rho( MESH_SIZE * MESH_SIZE, 0.0 );
-    std::vector<CIC_Data> cic_data( particles.size() );
+            double P = gas.pressure( i, j );
+            double vx = gas.velocity_x( i, j );
+            double vy = gas.velocity_y( i, j );
 
-    // 1. Mass Assignment (CIC)
+            double v_mag = sqrt( vx * vx + vy * vy );
+            // Sound speed
+            double cs = sqrt( GAMMA * P / rho );
+
+            // Total speed information can travel
+            double signal_vel = v_mag + cs;
+            if( signal_vel > max_signal_vel ) {
+                max_signal_vel = signal_vel;
+            }
+        }
+    }
+
+    // The time it takes for the fastest signal to cross one cell
+    double courant_time = CELL_SIZE / max_signal_vel;
+
+    // Use a "safety factor", 0.5 is common
+    return 0.5 * courant_time;
+}
+
+void cic_mass_assignment( std::vector<Particle>& particles, Grid& dm_rho, std::vector<CIC_Data>& cic_data ) {
+    dm_rho.setZero();
+    cic_data.assign( particles.size(), {} );
+
     for( size_t i = 0; i < particles.size(); ++i ) {
         const auto& p = particles[i];
         int ix = static_cast< int >( p.pos.x / CELL_SIZE );
         int iy = static_cast< int >( p.pos.y / CELL_SIZE );
         double frac_x = ( p.pos.x / CELL_SIZE ) - ix;
         double frac_y = ( p.pos.y / CELL_SIZE ) - iy;
-
-        double w1 = ( 1 - frac_x ) * ( 1 - frac_y );
-        double w2 = frac_x * ( 1 - frac_y );
-        double w3 = ( 1 - frac_x ) * frac_y;
-        double w4 = frac_x * frac_y;
-
+        double w1 = ( 1 - frac_x ) * ( 1 - frac_y ), w2 = frac_x * ( 1 - frac_y );
+        double w3 = ( 1 - frac_x ) * frac_y, w4 = frac_x * frac_y;
         cic_data[i] = { ix, iy, w1, w2, w3, w4 };
 
-        rho[( ix % MESH_SIZE ) * MESH_SIZE + ( iy % MESH_SIZE )] += p.mass * w1;
-        rho[( ( ix + 1 ) % MESH_SIZE ) * MESH_SIZE + ( iy % MESH_SIZE )] += p.mass * w2;
-        rho[( ix % MESH_SIZE ) * MESH_SIZE + ( ( iy + 1 ) % MESH_SIZE )] += p.mass * w3;
-        rho[( ( ix + 1 ) % MESH_SIZE ) * MESH_SIZE + ( ( iy + 1 ) % MESH_SIZE )] += p.mass * w4;
+        dm_rho( ix % MESH_SIZE, iy % MESH_SIZE ) += p.mass * w1;
+        dm_rho( ( ix + 1 ) % MESH_SIZE, iy % MESH_SIZE ) += p.mass * w2;
+        dm_rho( ix % MESH_SIZE, ( iy + 1 ) % MESH_SIZE ) += p.mass * w3;
+        dm_rho( ( ix + 1 ) % MESH_SIZE, ( iy + 1 ) % MESH_SIZE ) += p.mass * w4;
     }
+    dm_rho /= ( CELL_SIZE * CELL_SIZE );
+}
 
-    for( auto& val : rho ) {
-        val /= ( CELL_SIZE * CELL_SIZE );
+void cic_force_interpolation( const std::vector<Particle>& particles, const Grid& ax_grid, const Grid& ay_grid, const std::vector<CIC_Data>& cic_data, std::vector<Vec2>& forces ) {
+    forces.assign( particles.size(), { 0.0, 0.0 } );
+    for( size_t i = 0; i < particles.size(); ++i ) {
+        const auto& p = particles[i];
+        const auto& cd = cic_data[i];
+        double ax = ( ax_grid( cd.ix % MESH_SIZE, cd.iy % MESH_SIZE ) * cd.w1 +
+            ax_grid( ( cd.ix + 1 ) % MESH_SIZE, cd.iy % MESH_SIZE ) * cd.w2 +
+            ax_grid( cd.ix % MESH_SIZE, ( cd.iy + 1 ) % MESH_SIZE ) * cd.w3 +
+            ax_grid( ( cd.ix + 1 ) % MESH_SIZE, ( cd.iy + 1 ) % MESH_SIZE ) * cd.w4 );
+        double ay = ( ay_grid( cd.ix % MESH_SIZE, cd.iy % MESH_SIZE ) * cd.w1 +
+            ay_grid( ( cd.ix + 1 ) % MESH_SIZE, cd.iy % MESH_SIZE ) * cd.w2 +
+            ay_grid( cd.ix % MESH_SIZE, ( cd.iy + 1 ) % MESH_SIZE ) * cd.w3 +
+            ay_grid( ( cd.ix + 1 ) % MESH_SIZE, ( cd.iy + 1 ) % MESH_SIZE ) * cd.w4 );
+        forces[i].x = ax * p.mass;
+        forces[i].y = ay * p.mass;
     }
+}
 
-    // 2. FFT and Poisson Solver using pocketfft
+void compute_gravitational_acceleration( std::vector<Particle>& particles, GasGrid& gas, Grid& g_grid_x, Grid& g_grid_y, std::vector<CIC_Data>& cic_data ) {
+    Grid dm_rho( MESH_SIZE, MESH_SIZE );
+    cic_mass_assignment( particles, dm_rho, cic_data );
+    Grid total_rho = dm_rho + ( USE_HYDRO ? gas.density : 0 * gas.density );
+
     pocketfft::shape_t shape = { ( size_t )MESH_SIZE, ( size_t )MESH_SIZE };
-    pocketfft::stride_t stride_r = { sizeof( double ) * MESH_SIZE, sizeof( double ) };
-    pocketfft::stride_t stride_c = { sizeof( std::complex<double> ) * ( MESH_SIZE / 2 + 1 ), sizeof( std::complex<double> ) };
+    pocketfft::stride_t stride_r = { static_cast< ptrdiff_t >( sizeof( double ) * MESH_SIZE ), static_cast< ptrdiff_t >( sizeof( double ) ) };
+    pocketfft::stride_t stride_c = { static_cast< ptrdiff_t >( sizeof( std::complex<double> ) * ( MESH_SIZE / 2 + 1 ) ), static_cast< ptrdiff_t >( sizeof( std::complex<double> ) ) };
 
     std::vector<std::complex<double>> rho_k( MESH_SIZE * ( MESH_SIZE / 2 + 1 ) );
-    pocketfft::r2c( shape, stride_r, stride_c, { 0, 1 }, true, rho.data(), rho_k.data(), 1.0 );
-
+    pocketfft::r2c( shape, stride_r, stride_c, { 0, 1 }, true, total_rho.data(), rho_k.data(), 1.0 );
 
     std::vector<std::complex<double>> phi_k( MESH_SIZE * ( MESH_SIZE / 2 + 1 ) );
     for( int i = 0; i < MESH_SIZE; ++i ) {
         for( int j = 0; j < MESH_SIZE / 2 + 1; ++j ) {
-            double kx_freq = ( i < MESH_SIZE / 2 ) ? i : ( i - MESH_SIZE );
-            double ky_freq = j;
-
-            double kx = kx_freq * 2.0 * M_PI / DOMAIN_SIZE;
-            double ky = ky_freq * 2.0 * M_PI / DOMAIN_SIZE;
-            double k2 = kx * kx + ky * ky;
-            double k = sqrt( k2 );
-
-            int idx = i * ( MESH_SIZE / 2 + 1 ) + j;
             if( i == 0 && j == 0 ) {
-                phi_k[idx] = { 0.0, 0.0 };
+                phi_k[0] = { 0.0, 0.0 };
                 continue;
             }
+            double kx_freq = ( i < MESH_SIZE / 2 ) ? i : ( i - MESH_SIZE );
+            double kx = kx_freq * 2.0 * M_PI / DOMAIN_SIZE;
+            double ky = ( double )j * 2.0 * M_PI / DOMAIN_SIZE;
+            double k2 = kx * kx + ky * ky;
 
-            double factor = -2.0 * M_PI * G / k;
-            phi_k[idx] = rho_k[idx] * factor;
+            // 3D gravity on a 2D plane -> -1/k
+            phi_k[i * ( MESH_SIZE / 2 + 1 ) + j] = rho_k[i * ( MESH_SIZE / 2 + 1 ) + j] * ( -2.0 * M_PI * G / sqrt( k2 ) );
         }
     }
 
-    // 3. Inverse FFT
-    std::vector<double> phi( MESH_SIZE * MESH_SIZE, 0.0 );
-    pocketfft::c2r( shape, stride_c, stride_r, { 0, 1 }, false, phi_k.data(), phi.data(), 1.0 );
+    std::vector<double> phi_flat( MESH_SIZE * MESH_SIZE, 0.0 );
+    pocketfft::c2r( shape, stride_c, stride_r, { 0, 1 }, false, phi_k.data(), phi_flat.data(), 1.0 );
 
-    // 4. Gradient
-    std::vector<Vec2> force_grid( MESH_SIZE * MESH_SIZE );
-    double norm = 1.0 / ( MESH_SIZE * MESH_SIZE ); // Normalization for pocketfft
-    for( int i = 0; i < MESH_SIZE; ++i ) {
-        for( int j = 0; j < MESH_SIZE; ++j ) {
-            int current = i * MESH_SIZE + j;
-            int prev_x = ( ( i - 1 + MESH_SIZE ) % MESH_SIZE ) * MESH_SIZE + j;
-            int next_x = ( ( i + 1 ) % MESH_SIZE ) * MESH_SIZE + j;
-            int prev_y = i * MESH_SIZE + ( ( j - 1 + MESH_SIZE ) % MESH_SIZE );
-            int next_y = i * MESH_SIZE + ( ( j + 1 ) % MESH_SIZE );
+    Grid phi = Eigen::Map<const Grid>( phi_flat.data() );
+    double norm = 1.0 / ( MESH_SIZE * MESH_SIZE );
 
-            force_grid[current].x = ( phi[prev_x] - phi[next_x] ) * norm / ( 2.0 * CELL_SIZE );
-            force_grid[current].y = ( phi[prev_y] - phi[next_y] ) * norm / ( 2.0 * CELL_SIZE );
-        }
-    }
-
-    // 5. Interpolate back to particles
-    mesh_forces.assign( particles.size(), { 0.0, 0.0 } );
-    for( size_t i = 0; i < particles.size(); ++i ) {
-        const auto& p = particles[i];
-        const auto& cd = cic_data[i];
-
-        Vec2 f;
-        f.x = force_grid[( cd.ix % MESH_SIZE ) * MESH_SIZE + ( cd.iy % MESH_SIZE )].x * cd.w1 +
-            force_grid[( ( cd.ix + 1 ) % MESH_SIZE ) * MESH_SIZE + ( cd.iy % MESH_SIZE )].x * cd.w2 +
-            force_grid[( cd.ix % MESH_SIZE ) * MESH_SIZE + ( ( cd.iy + 1 ) % MESH_SIZE )].x * cd.w3 +
-            force_grid[( ( cd.ix + 1 ) % MESH_SIZE ) * MESH_SIZE + ( ( cd.iy + 1 ) % MESH_SIZE )].x * cd.w4;
-
-        f.y = force_grid[( cd.ix % MESH_SIZE ) * MESH_SIZE + ( cd.iy % MESH_SIZE )].y * cd.w1 +
-            force_grid[( ( cd.ix + 1 ) % MESH_SIZE ) * MESH_SIZE + ( cd.iy % MESH_SIZE )].y * cd.w2 +
-            force_grid[( cd.ix % MESH_SIZE ) * MESH_SIZE + ( ( cd.iy + 1 ) % MESH_SIZE )].y * cd.w3 +
-            force_grid[( ( cd.ix + 1 ) % MESH_SIZE ) * MESH_SIZE + ( ( cd.iy + 1 ) % MESH_SIZE )].y * cd.w4;
-
-        mesh_forces[i].x = f.x * p.mass;
-        mesh_forces[i].y = f.y * p.mass;
-    }
+    g_grid_x = ( roll( phi, 1, 0 ) - roll( phi, -1, 0 ) ) * norm / ( 2.0 * CELL_SIZE );
+    g_grid_y = ( roll( phi, 1, 1 ) - roll( phi, -1, 1 ) ) * norm / ( 2.0 * CELL_SIZE );
 }
 
 void compute_PP_forces( std::vector<Particle>& particles, std::vector<Vec2>& pp_forces ) {
@@ -299,8 +514,8 @@ void create_zeldovich_ics( std::vector<Particle>& particles ) {
             std::complex<double> delta_k = random_k[idx] * power_spectrum_sqrt;
             std::complex<double> phi_k = -delta_k / k2;
 
-            disp_x_k[idx] = std::complex<double>( 0, 1 ) * kx * phi_k;
-            disp_y_k[idx] = std::complex<double>( 0, 1 ) * ky * phi_k;
+            disp_x_k[idx] = std::complex<double>( 0, -1 ) * kx * phi_k;
+            disp_y_k[idx] = std::complex<double>( 0, -1 ) * ky * phi_k;
         }
     }
 
@@ -338,55 +553,104 @@ void create_zeldovich_ics( std::vector<Particle>& particles ) {
             Particle p;
             p.pos.x = fmod( qx + dx + DOMAIN_SIZE, DOMAIN_SIZE );
             p.pos.y = fmod( qy + dy + DOMAIN_SIZE, DOMAIN_SIZE );
-            p.vel.x = initial_hubble_param * dx;
-            p.vel.y = initial_hubble_param * dy;
-            p.mass = PARTICLE_MASS;
+            p.vel.x = STANDING_PARTICLES ? 0 : initial_hubble_param* dx;
+            p.vel.y = STANDING_PARTICLES ? 0 : initial_hubble_param* dy;
+            p.mass = DM_PARTICLE_MASS;
             particles.push_back( p );
         }
     }
 }
 
 
-void KDK_step( double total_time, std::vector<Particle>& particles ) {
+void KDK_step( double total_time, double dt, std::vector<Particle>& particles, GasGrid& gas ) {
     update_cosmology( total_time );
     double a = scale_factor;
     double H = hubble_param;
+    double a3 = a * a * a;
 
+    // --- KICK 1 (t -> t + dt/2) ---
+
+    // Update gas primitives to get v(t)
+    gas.update_primitive_variables();
+
+    // Calculate total gas acceleration at time t
+    Grid total_ax_gas = ( g_grid_x.array() / a3 ) - ( 2 * H * gas.velocity_x.array() );
+    Grid total_ay_gas = ( g_grid_y.array() / a3 ) - ( 2 * H * gas.velocity_y.array() );
+
+    // Calculate force and power densities
+    Grid g_mom_x_source = gas.density.array() * total_ax_gas.array();
+    Grid g_mom_y_source = gas.density.array() * total_ay_gas.array();
+    Grid power_density = gas.velocity_x.array() * g_mom_x_source.array() + gas.velocity_y.array() * g_mom_y_source.array();
+
+    // Apply kick to gas
+    gas.momentum_x += g_mom_x_source * ( dt / 2.0 );
+    gas.momentum_y += g_mom_y_source * ( dt / 2.0 );
+    gas.energy += power_density * ( dt / 2.0 );
+
+    // Apply kick to particles
     for( auto& p : particles ) {
-        double total_ax = ( p.acc.x / ( a * a * a ) ) - ( 2 * H * p.vel.x );
-        double total_ay = ( p.acc.y / ( a * a * a ) ) - ( 2 * H * p.vel.y );
-        p.vel.x += total_ax * DT / 2.0;
-        p.vel.y += total_ay * DT / 2.0;
+        double total_ax_p = ( p.acc.x / a3 ) - ( 2 * H * p.vel.x );
+        double total_ay_p = ( p.acc.y / a3 ) - ( 2 * H * p.vel.y );
+        p.vel.x += total_ax_p * dt / 2.0;
+        p.vel.y += total_ay_p * dt / 2.0;
     }
 
+    // --- DRIFT (t -> t + dt) ---
     for( auto& p : particles ) {
-        p.pos.x = fmod( p.pos.x + p.vel.x * DT + DOMAIN_SIZE, DOMAIN_SIZE );
-        p.pos.y = fmod( p.pos.y + p.vel.y * DT + DOMAIN_SIZE, DOMAIN_SIZE );
+        p.pos.x = fmod( p.pos.x + p.vel.x * dt + DOMAIN_SIZE, DOMAIN_SIZE );
+        p.pos.y = fmod( p.pos.y + p.vel.y * dt + DOMAIN_SIZE, DOMAIN_SIZE );
     }
 
-    update_cosmology( total_time + DT );
+    if( USE_HYDRO ) {
+        gas.hydro_step( dt );
+    }
+
+    // --- UPDATE COSMOLOGY to t + dt ---
+    update_cosmology( total_time + dt );
     a = scale_factor;
     H = hubble_param;
+    a3 = a * a * a;
+
+    // --- COMPUTE FORCES at t + dt ---
+    static Grid g_grid_x_new( MESH_SIZE, MESH_SIZE ), g_grid_y_new( MESH_SIZE, MESH_SIZE );
+    std::vector<CIC_Data> cic_data;
+    compute_gravitational_acceleration( particles, gas, g_grid_x_new, g_grid_y_new, cic_data );
 
     std::vector<Vec2> pp_forces, pm_forces;
-    compute_PP_forces( particles, pp_forces );
-    compute_mesh_forces( particles, pm_forces );
+    if( USE_PP ) { compute_PP_forces( particles, pp_forces ); }
+    else { pp_forces.assign( particles.size(), { 0.0, 0.0 } ); }
 
+    if( USE_PM ) { cic_force_interpolation( particles, g_grid_x_new, g_grid_y_new, cic_data, pm_forces ); }
+    else { pm_forces.assign( particles.size(), { 0.0, 0.0 } ); }
+
+    // --- KICK 2 (t + dt/2 -> t + dt) ---
+
+    // Update gas primitives to get v(t+dt/2) for the energy kick
+    gas.update_primitive_variables();
+
+    // Calculate total gas acceleration at time t + dt
+    total_ax_gas = ( g_grid_x_new.array() / a3 ) - ( 2 * H * gas.velocity_x.array() );
+    total_ay_gas = ( g_grid_y_new.array() / a3 ) - ( 2 * H * gas.velocity_y.array() );
+
+    g_mom_x_source = gas.density.array() * total_ax_gas.array();
+    g_mom_y_source = gas.density.array() * total_ay_gas.array();
+    power_density = gas.velocity_x.array() * g_mom_x_source.array() + gas.velocity_y.array() * g_mom_y_source.array();
+
+    // Apply kick to gas
+    gas.momentum_x += g_mom_x_source * ( dt / 2.0 );
+    gas.momentum_y += g_mom_y_source * ( dt / 2.0 );
+    gas.energy += power_density * ( dt / 2.0 );
+
+    // Apply kick to particles
     for( size_t i = 0; i < particles.size(); ++i ) {
-        if( !USE_PM ) {
-            pm_forces[i].x = 0;
-            pm_forces[i].y = 0;
-        }
-
         auto& p = particles[i];
         Vec2 f = { pp_forces[i].x + pm_forces[i].x, pp_forces[i].y + pm_forces[i].y };
-        p.acc.x = f.x / p.mass;
-        p.acc.y = f.y / p.mass;
-
-        double total_ax = ( p.acc.x / ( a * a * a ) ) - ( 2 * H * p.vel.x );
-        double total_ay = ( p.acc.y / ( a * a * a ) ) - ( 2 * H * p.vel.y );
-        p.vel.x += total_ax * DT / 2.0;
-        p.vel.y += total_ay * DT / 2.0;
+        p.acc.x = STANDING_PARTICLES ? 0 : f.x / p.mass;
+        p.acc.y = STANDING_PARTICLES ? 0 : f.y / p.mass;
+        double total_ax_p = ( p.acc.x / a3 ) - ( 2 * H * p.vel.x );
+        double total_ay_p = ( p.acc.y / a3 ) - ( 2 * H * p.vel.y );
+        p.vel.x += total_ax_p * dt / 2.0;
+        p.vel.y += total_ay_p * dt / 2.0;
     }
 }
 
@@ -409,7 +673,6 @@ double calculate_total_energy( const std::vector<Particle>& particles, double a 
             double dx = displacement( p2.pos.x - p1.pos.x );
             double dy = displacement( p2.pos.y - p1.pos.y );
 
-            // Note: We use the PP softened distance for consistency in measurement
             double proper_dist_sq = ( a * a ) * ( dx * dx + dy * dy + SOFTENING_SQUARED );
             if( proper_dist_sq > 0 ) {
                 potential_energy -= G * p1.mass * p2.mass / sqrt( proper_dist_sq );
@@ -439,17 +702,103 @@ void save_frame( sf::RenderWindow &window, int frame_num ) {
     }
 }
 
+sf::Color lerpColor( sf::Color c1, sf::Color c2, double t ) {
+    t = std::max( 0.0, std::min( 1.0, t ) );
+    return sf::Color(
+        static_cast< uint8_t >( c1.r + ( c2.r - c1.r ) * t ),
+        static_cast< uint8_t >( c1.g + ( c2.g - c1.g ) * t ),
+        static_cast< uint8_t >( c1.b + ( c2.b - c1.b ) * t )
+    );
+}
+
+sf::Color getPlasmaColor( double value ) {
+    if( value < 0.25 ) return lerpColor(sf::Color(0, 0, 0), sf::Color(84, 2, 163), value / 0.25);
+    if( value < 0.5 ) return lerpColor( sf::Color( 84, 2, 163 ), sf::Color( 158, 28, 133 ), ( value - 0.25 ) / 0.25 );
+    if( value < 0.75 ) return lerpColor( sf::Color( 158, 28, 133 ), sf::Color( 218, 107, 49 ), ( value - 0.5 ) / 0.25 );
+    return lerpColor( sf::Color( 218, 107, 49 ), sf::Color( 255, 237, 200 ), ( value - 0.75 ) / 0.25 );
+}
+
+void render_field( sf::RenderWindow& window, const Grid& field ) {
+    double min_f = field.minCoeff();
+    double max_f = field.maxCoeff();
+
+    double range_f = max_f - min_f;
+    if( range_f < 1e-9 ) range_f = 1.0;
+
+    sf::VertexArray field_mesh( sf::PrimitiveType::TriangleStrip, MESH_SIZE * MESH_SIZE * 4 );
+
+    for( int i = 0; i < MESH_SIZE; ++i ) {
+        for( int j = 0; j < MESH_SIZE; ++j ) {
+            // Get indices for the four corners of this cell
+            int i_next = ( i + 1 ) % MESH_SIZE;
+            int j_next = ( j + 1 ) % MESH_SIZE;
+
+            // Get the normalized values for the four corners
+            double val1 = ( field( i, j ) - min_f ) / range_f;
+            double val2 = ( field( i, j_next ) - min_f ) / range_f;
+            double val3 = ( field( i_next, j_next ) - min_f ) / range_f;
+            double val4 = ( field( i_next, j ) - min_f ) / range_f;
+
+            sf::Color c1 = getPlasmaColor( val1 );
+            sf::Color c2 = getPlasmaColor( val2 );
+            sf::Color c3 = getPlasmaColor( val3 );
+            sf::Color c4 = getPlasmaColor( val4 );
+
+            // Get the screen positions for the four corners
+            sf::Vector2f pos1( static_cast<float>( i * CELL_SIZE * RENDER_SCALE ),         static_cast<float>( j * CELL_SIZE * RENDER_SCALE ) );
+            sf::Vector2f pos2( static_cast<float>( i * CELL_SIZE * RENDER_SCALE ),         static_cast<float>( ( j + 1 ) * CELL_SIZE * RENDER_SCALE ) );
+            sf::Vector2f pos3( static_cast<float>( ( i + 1 ) * CELL_SIZE * RENDER_SCALE ), static_cast<float>( ( j + 1 ) * CELL_SIZE * RENDER_SCALE ) );
+            sf::Vector2f pos4( static_cast<float>( ( i + 1 ) * CELL_SIZE * RENDER_SCALE ), static_cast<float>( j * CELL_SIZE * RENDER_SCALE ) );
+
+            size_t idx = ( i * MESH_SIZE + j ) * 4;
+
+            // Re-order vertices for TriangleStrip to form a quad
+            field_mesh[idx + 0].position = pos1; field_mesh[idx + 0].color = c1;
+            field_mesh[idx + 1].position = pos2; field_mesh[idx + 1].color = c2;
+            field_mesh[idx + 2].position = pos4; field_mesh[idx + 2].color = c4;
+            field_mesh[idx + 3].position = pos3; field_mesh[idx + 3].color = c3;
+        }
+    }
+    window.draw( field_mesh );
+}
+
+void render( sf::RenderWindow& window, const std::vector<Particle>& particles, const GasGrid& gas ) {
+    window.clear( sf::Color::Black );
+
+    render_field( window, gas.pressure );
+
+    // Render DM Particles
+    sf::CircleShape particle_shape( 1.0f );
+    particle_shape.setFillColor( sf::Color::White );
+    for( const auto& p : particles ) {
+        particle_shape.setPosition( { static_cast< float >( p.pos.x * RENDER_SCALE ),
+            static_cast< float >( p.pos.y * RENDER_SCALE ) } );
+        window.draw( particle_shape );
+    }
+
+    window.display();
+}
+
 
 int main() {
-    // --- SFML Window Setup ---
-    sf::RenderWindow window( sf::VideoMode( { RENDER_SIZE, RENDER_SIZE } ), "N-Body Simulation" );
+    sf::RenderWindow window( sf::VideoMode( { RENDER_SIZE, RENDER_SIZE } ), "N-Body + Hydro Simulation" );
 
     std::vector<Particle> particles;
     create_zeldovich_ics( particles );
 
+    auto gas = std::make_unique<GasGrid>();
+    gas->density.fill( GAS_TOTAL_MASS / ( DOMAIN_SIZE * DOMAIN_SIZE ) );
+    double initial_internal_energy = 1e-6;
+    gas->energy = gas->density.array() * initial_internal_energy;
+    gas->update_primitive_variables();
+
+    std::vector<CIC_Data> cic_data;
     std::vector<Vec2> pp_forces, pm_forces;
+
+    compute_gravitational_acceleration( particles, *gas, g_grid_x, g_grid_y, cic_data );
+    cic_force_interpolation( particles, g_grid_x, g_grid_y, cic_data, pm_forces );
     compute_PP_forces( particles, pp_forces );
-    compute_mesh_forces( particles, pm_forces );
+
     for( size_t i = 0; i < particles.size(); ++i ) {
         particles[i].acc.x = ( pp_forces[i].x + pm_forces[i].x ) / particles[i].mass;
         particles[i].acc.y = ( pp_forces[i].y + pm_forces[i].y ) / particles[i].mass;
@@ -458,11 +807,11 @@ int main() {
     int cycle_count = 0;
     auto start_time = std::chrono::high_resolution_clock::now();
     update_cosmology( 0 );
+
     double initial_energy = calculate_total_energy( particles, scale_factor );
 
     std::cout << "Starting simulation..." << std::endl;
     while( window.isOpen() ) {
-        // Handle window events
         while( auto event = window.pollEvent() ) {
             if( event->is<sf::Event::Closed>() ) {
                 window.close();
@@ -470,21 +819,9 @@ int main() {
         }
 
         double total_simulation_time = DT * cycle_count;
+        KDK_step( total_simulation_time, DT, particles, *gas );
 
-        KDK_step( total_simulation_time, particles );
-
-        // --- Rendering ---
-        window.clear( sf::Color::Black );
-
-        sf::CircleShape particle_shape( 1.0f );
-        particle_shape.setFillColor( sf::Color::White );
-
-        for( const auto& p : particles ) {
-            particle_shape.setPosition( { static_cast<float>(p.pos.x * RENDER_SCALE), static_cast<float>(p.pos.y * RENDER_SCALE) } );
-            window.draw( particle_shape );
-        }
-
-        window.display();
+        render( window, particles, *gas );
 
         if( cycle_count % DEBUG_INFO_EVERY_CYCLES == 0 ) {
             update_cosmology( total_simulation_time );
@@ -499,10 +836,14 @@ int main() {
                 << " | Energy: " << static_cast<int>( energy_error ) << "%"
                 << " | Elapsed Wall Time: " << static_cast< int >( elapsed_seconds ) << "s"
                 << std::endl;
+
+            std::cout << "Gas: Total Mass: " << gas->density.sum() * CELL_SIZE * CELL_SIZE
+                << " | Total MomX: " << gas->momentum_x.sum()
+                << " | Total Energy: " << gas->energy.sum() << std::endl;
         }
 
         // Save a frame every N cycles
-        if( SAVE_RENDER_EVERY_CYCLES != 0 && cycle_count > 0 && cycle_count % SAVE_RENDER_EVERY_CYCLES == 0 ) {
+        if( SAVE_RENDER_EVERY_CYCLES > 0 && cycle_count > 0 && cycle_count % SAVE_RENDER_EVERY_CYCLES == 0 ) {
             int frame_num = cycle_count / SAVE_RENDER_EVERY_CYCLES;
             save_frame( window, frame_num );
         }

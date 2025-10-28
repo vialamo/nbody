@@ -1,8 +1,8 @@
-# Notes on N-Body Simulation
+# Notes on N-Body/Hydrodynamics Simulation
 
 This is a living document—a collection of knowledge that I have gathered while learning about cosmological simulations. It is not a formal text but rather a journal, an attempt to solidify complex concepts by structuring and explaining them in my own way.
 
-This process has been a dual one. Alongside the theoretical exploration, I have been developing a "toy model"—a simple N-body simulation. This hands-on approach allowed me to understand algorithms by implementing them, and to appreciate physical principles by seeing their effects in a virtual universe. The explanations in this document came from the challenges of this practical work.
+This process has been a dual one. Alongside the theoretical exploration, I have been developing a "toy model"—a simple N-body/hydrodynamics simulation. This hands-on approach allowed me to understand algorithms by implementing them, and to appreciate physical principles by seeing their effects in a virtual universe. The explanations in this document came from the challenges of this practical work.
 
 This is my best effort (and my AI assistant's as well) to present this knowledge in the way that I would have found most helpful at the start of my learning process.
 
@@ -734,3 +734,269 @@ Ultimately, running a successful simulation implies balancing these interconnect
 *Reference*
 Dehnen, W., & Read, J. I. (2011). *N-body simulations of gravitational dynamics*. arXiv:1105.1082. Available at [https://arxiv.org/abs/1105.1082](https://arxiv.org/abs/1105.1082).
 
+
+## Hydrodynamics
+
+A simulation that focuses on the evolution of collisionless N-body particles is an excellent model for the dark matter that forms the universe's invisible scaffolding. However, to simulate the formation of the luminous structures—stars, galaxies, and galaxy clusters—it must include the physics of **baryonic matter**. In cosmology, "baryons" is the term for all normal matter, which primarily exists as a vast, diffuse **gas**.
+
+Unlike dark matter, gas is not collisionless. Its particles (atoms and ions) interact with each other, giving rise to familiar fluid properties like **pressure** and **temperature**. To model this behavior, a simulation must include the laws of **hydrodynamics**.
+
+### The Euler Equations
+
+For a simple, non-viscous gas (a good approximation for most cosmic fluids), its motion is governed by a set of three conservation laws known as the **Euler Equations**. These equations describe how the density, momentum, and energy of the gas change over time.
+
+In a simulation, these equations are solved on the same grid used for the Particle-Mesh gravity solver. This is known as an **Eulerian** approach, where the properties of the fluid are tracked as it flows through our fixed grid cells.
+
+**1. Conservation of Mass**
+
+This law states that the change in the mass density ($\rho$) in a given cell is equal to the net flow of mass into or out of it. If more gas flows in than out, the density increases.
+
+$$\frac{\partial \rho}{\partial t} + \nabla \cdot (\rho \mathbf{v}) = 0$$
+
+Here, $\mathbf{v}$ is the velocity of the gas, and the term $\nabla \cdot (\rho \mathbf{v})$ represents the divergence, or the "outflow," of the mass flux.
+
+**2. Conservation of Momentum**
+
+It states that the change in the gas's momentum ($\rho\mathbf{v}$) is caused by the forces acting on it. In a cosmological simulation, there are two crucial forces: pressure and gravity.
+
+$$\frac{\partial (\rho \mathbf{v})}{\partial t} + \nabla \cdot (\rho \mathbf{v} \otimes \mathbf{v}) = -\nabla P + \rho \mathbf{g}$$
+
+The right-hand side represents the forces:
+* **$-\nabla P$ (The Pressure Gradient Force):** This is the key new piece of physics. It describes the force that causes gas to flow from regions of high pressure to regions of low pressure. This is the force that allows the gas to resist gravitational collapse. 
+* **$\rho \mathbf{g}$ (The Gravitational Force):** This is the familiar force of gravity. The gravitational acceleration, $\mathbf{g}$, is calculated from the density of **all** matter (both dark matter and gas) using the existing Particle-Mesh solver. This term is the link that couples the gas to the underlying cosmic web.
+
+**3. Conservation of Energy and the Equation of State**
+
+The full energy conservation equation is complex, but for a simple simulation, we can track the **internal energy** of the gas, $e$, which is a measure of its temperature. The pressure, $P$, is not an independent variable but is related to the density and internal energy by an **equation of state**. For a simple, ideal gas, this equation is:
+
+$$P = (\gamma - 1)\rho e$$
+
+Here, $\gamma$ is the adiabatic index, a constant which is typically 5/3 for a monatomic gas like the hydrogen and helium that fill the cosmos. It describes how much the pressure of a gas responds to a change in volume during an adibatic process—the gas is compressed or expands so quickly that it doesn't have time to exchange heat with its surroundings. A higher $\gamma$ means the pressure rises more sharply for the same amount of compression.
+
+### Hybrid Simulation
+
+In a **hybrid code**, the dark matter is treated as a collection of Lagrangian N-body particles that follow trajectories, while the gas is treated as a continuous Eulerian fluid, whose properties are tracked on a grid. The two components are linked together by the force of gravity, which is sourced by their combined density. This hybrid approach is the foundation of all modern cosmological simulations that aim to model the formation of the visible universe.
+
+### An Operator-Split Hydro-Solver
+
+To simulate the gaseous (baryonic) component, we can adopt an **Eulerian** approach, solving the equations of hydrodynamics on the same fixed grid used by the Particle-Mesh gravity solver.
+
+The full set of cosmological hydrodynamic equations is complex, as it couples the conservation laws of fluid dynamics with the source terms from gravity in an expanding universe. The equation for the vector of conserved quantities, $\mathbf{U} = [\rho, \rho\mathbf{v}, E]$, can be written as:
+
+$$\frac{\partial \mathbf{U}}{\partial t} + \nabla \cdot \mathbf{F}(\mathbf{U}) = \mathbf{S}(\mathbf{U})$$
+Where:
+* $\mathbf{U}$ is the vector of conserved state variables (density, momentum density, energy density).
+* $\nabla \cdot \mathbf{F}(\mathbf{U})$ is the "flux" term, which describes how quantities move due to pressure and advection (the fluid flowing).
+* $\mathbf{S}(\mathbf{U})$ is the "source" term, which describes changes due to external forces, namely gravity ($\rho\mathbf{g}$) and cosmic expansion (the Hubble drag).
+
+Solving this equation all at once is difficult. A common and effective technique called **operator splitting** breaks the problem into simpler, sequential steps.
+
+Here is the step-by-step process to advance the gas grid from time $t$ to $t+\Delta t$ following the **Kick-Drift-Kick (KDK)** structure.
+
+#### Step 1: Convert to Primitive Variables
+
+The solver begins with the grid of **conserved variables** ($\rho$, $S_x = \rho v_x$, $S_y = \rho v_y$, $E$) from the previous step. To calculate fluxes and forces, it first computes the **primitive variables** (velocity $\mathbf{v}$ and pressure $P$):
+
+$$v_x = \frac{S_x}{\rho} \quad , \quad v_y = \frac{S_y}{\rho}$$
+$$P = (\gamma - 1) \left( E - \frac{1}{2} \rho |\mathbf{v}|^2 \right)$$
+
+#### Step 2: Gravity Half-Step
+
+First, the "source" terms from gravity are applied for half a time step, $\Delta t/2$. The gravitational acceleration field, $\mathbf{g}$, can be provided by the Particle-Mesh solver. The acceleration field must be derived from the **total matter density**—the sum of the dark matter density (from the N-body particles) and the gas density (from the hydro grid). This step updates the momentum and total energy of the gas:
+
+$$\mathbf{S}(t + \tfrac{1}{2}\Delta t) = \mathbf{S}(t) + (\rho \mathbf{g}) \frac{\Delta t}{2}$$
+$$E(t + \tfrac{1}{2}\Delta t) = E(t) + (\mathbf{v} \cdot \rho \mathbf{g}) \frac{\Delta t}{2}$$
+
+The energy is updated by the **power density** (Force Density $\cdot$ Velocity, or $\mathbf{v} \cdot \rho \mathbf{g}$), which is the rate at which the gravitational field does work on the gas.
+
+#### Step 3: Hydrodynamic Full-Step
+
+Next, the code solves the pure hydrodynamic equations (the "flux" part) for a full time step, $\Delta t$. This is done using a **finite-volume** method based on the conservation law:
+
+> The change of a quantity in a cell = (Flux In) - (Flux Out)
+
+For any conserved variable $\mathbf{U}$ in a 1D cell `i`, the update equation is:
+$$\mathbf{U}_{i}^{new} = \mathbf{U}_{i}^{old} - \frac{\Delta t}{L} \left( \mathbf{F}_{i+1/2} - \mathbf{F}_{i-1/2} \right)$$
+Where $L$ is the cell size, and $\mathbf{F}_{i\pm1/2}$ is the flux vector across the cell's right and left interfaces. 
+
+To solve this complex problem in a multi-dimensional case, the code uses a technique called **dimensional splitting**. This approach approximates the full multi-dimensional update by breaking it into a sequence of simpler, one-dimensional "sweeps," one for each spatial axis.
+
+The 1D flux equation is solved sequentially, one dimension at a time.
+1.  **First Sweep:** The fluxes are calculated along the first dimension (e.g., the x-axis) for the entire grid. These fluxes are then used to update the state of every cell.
+2.  **Subsequent Sweeps:** Using this **newly updated state** as the input, the process is repeated for the second dimension (e.g., the y-axis), and then again for the third (e.g., the z-axis), and so on, until all dimensions have been processed.
+
+For each of these 1D sweeps, the fluxes at the interfaces are calculated using an **approximate Riemann solver** (specifically, the Harten-Lax-van Leer, or HLL, method). This solver determines the flow of mass, momentum, and energy between adjacent cells based on their current states.
+
+This process updates the gas based only on its own internal pressure and flow, advecting it across the grid.
+
+#### Step 4: Second Gravity Half-Step
+
+Finally, the gravitational source terms are applied again for the second half of the time step, $\Delta t/2$, using the updated values from the "Drift" step:
+
+$$\mathbf{S}(t + \Delta t) = \mathbf{S}(t + \tfrac{1}{2}\Delta t) + (\rho \mathbf{g}) \frac{\Delta t}{2}$$
+$$E(t + \Delta t) = E(t + \tfrac{1}{2}\Delta t) + (\mathbf{v} \cdot \rho \mathbf{g}) \frac{\Delta t}{2}$$
+
+At the end of this sequence, the conserved variables of the gas grid have been fully advanced to time $t+\Delta t$, accounting for both the internal fluid dynamics and the external force of gravity.
+
+#### The HLL Solver
+
+The Harten-Lax-van Leer (HLL) solver is an **approximate Riemann solver** used to determine the flux $\mathbf{F}_{i+1/2}$ at the interface between two cells, $i$ and $i+1$. These two cells define the "Left" state ($\mathbf{U}_L = \mathbf{U}_i$) and the "Right" state ($\mathbf{U}_R = \mathbf{U}_{i+1}$) of a Riemann problem—a classic, one-dimensional "shock-tube" problem that describes what happens when two different fluid states collide.
+
+In a real physical system, this collision generates a complex wave structure (often composed of shock and rarefaction waves) that propagates away from the interface. While an exact solution for this structure is computationally expensive, the HLL method provides a robust and efficient approximation by assuming this entire structure can be simplified to a three-region model: the original Left and Right states, separated by a single, constant "star" state ($\mathbf{U}^*$).
+
+The HLL solver takes advantage of the fact that this entire simplified structure is bounded by the fastest wave moving left, $S_L$, and the fastest wave moving right, $S_R$. These two "signal velocities" are the only parameters the solver needs to determine the correct flux at the interface, bypassing the need to solve for the complex "star" state.
+
+The calculation of the HLL flux at the interface ($\mathbf{F}_{HLL}$) proceeds in three steps:
+
+**1. Calculate Left/Right Fluxes**
+
+First, the flux vectors, $\mathbf{F}_L$ and $\mathbf{F}_R$, are computed directly from the primitive variables of the Left and Right states. For a 1D sweep along the normal direction $n$, the flux vector $\mathbf{F}$ for the conserved quantities $\mathbf{U} = [\rho, S_n, S_t, E]$ is:
+
+$$\mathbf{F}(\mathbf{U}) = \begin{bmatrix} \rho v_n \\ \rho v_n^2 + P \\ \rho v_n v_t \\ (E+P)v_n \end{bmatrix}$$
+Where $v_n$ is the velocity normal to the interface, $v_t$ is the velocity tangential to it, $S_n$ and $S_t$ are the normal and tangential components of the momentum density vector $\mathbf{S} = (\rho v_x, \rho v_y)$. The fluxes $\mathbf{F}_L = \mathbf{F}(\mathbf{U}_L)$ and $\mathbf{F}_R = \mathbf{F}(\mathbf{U}_R)$ are calculated from their respective states.
+
+**2. Estimate Signal Velocities ($S_L, S_R$)**
+
+Next, the solver must estimate the fastest signal speeds, $S_L$ and $S_R$, at which information propagates away from the interface. This requires the sound speed, $c_s = \sqrt{\gamma P / \rho}$, for both the Left and Right states ($c_{s,L}$ and $c_{s,R}$).
+
+A common and robust estimate for these wave speeds, which guarantees stability, is given by:
+$$S_L = \min(v_{n,L} - c_{s,L}, v_{n,R} - c_{s,R})$$ $$S_R = \max(v_{n,L} + c_{s,L}, v_{n,R} + c_{s,R})$$
+Here, $v_n$ represents the normal velocity (e.g., $v_x$ during an x-sweep).
+
+**3. Calculate the HLL Flux**
+
+The solver determines the flux at the interface based on the direction of these wave speeds.
+* If $S_L > 0$, the entire wave structure is moving to the right, away from the interface. The flux at the interface is simply the original Left flux:
+    $$\mathbf{F}_{HLL} = \mathbf{F}_L$$
+* If $S_R < 0$, the entire wave structure is moving to the left. The flux at the interface is the original Right flux:
+    $$\mathbf{F}_{HLL} = \mathbf{F}_R$$
+* If $S_L < 0 < S_R$, the interface is inside the wave structure, between the two fastest waves. In this case, the HLL flux is a weighted average of the fluxes and the states, given by the central formula:
+    $$\mathbf{F}_{HLL} = \frac{S_R \mathbf{F}_L - S_L \mathbf{F}_R + S_L S_R (\mathbf{U}_R - \mathbf{U}_L)}{S_R - S_L}$$
+
+This resulting $\mathbf{F}_{HLL}$ is the single, consistent flux vector used in the finite-volume update for that interface. This process is repeated for every interface in the 1D sweep, advecting the gas based on its own internal pressure and flow.
+
+### Coupling Hydrodynamics to the Expanding Universe
+
+In a static box, the hydrodynamic equations are only sourced by gravity and their own internal pressure. However, in a cosmological simulation, the gas, just like the dark matter, is defined in **comoving coordinates** and is therefore subject to the physics of the expanding universe.
+
+To correctly model this, the standard Euler equations must be modified with new "source terms" that account for the expansion. These terms are mathematically identical to the ones used for the N-body particles.
+
+The cosmological effects are applied as "source terms" in the main integrator "Kick" steps, alongside the gravity. During each "Kick" step, a **total acceleration** is applied to the gas in every grid cell, which is the sum of two components:
+
+1.  **Modified Gravity:** The comoving gravitational acceleration, $\mathbf{g}_{\text{comoving}}$, is calculated from the total density of *both* dark matter and gas. This acceleration is then scaled by $1/a^3$ to account for the dilution of physical density as the universe's volume ($V \propto a^3$) increases.
+2.  **Hubble Drag:** A velocity-dependent "friction" term, $-2H\mathbf{v}$, is added. This term, where $H$ is the Hubble parameter and $\mathbf{v}$ is the gas's peculiar velocity, correctly damps the gas's peculiar momentum as space stretches.
+
+The **total acceleration** applied to the gas in each cell is therefore:
+$$\mathbf{a}_{\text{total}} = \frac{\mathbf{g}_{\text{comoving}}}{a^3} - 2H\mathbf{v}$$
+This total acceleration, which is a force per unit mass, is then used to update the gas grid's conserved quantities over the half-time-step ($\Delta t/2$):
+
+* **Momentum Update:** The momentum density $\mathbf{S} = \rho \mathbf{v}$ is updated by the force density ($\rho \mathbf{a}_{\text{total}}$):
+    $$\Delta \mathbf{S} = (\rho \mathbf{a}_{\text{total}}) \frac{\Delta t}{2}$$
+
+* **Energy Update:** The total energy density $E$ is updated by the power density (Force $\cdot$ Velocity) delivered by these forces:
+    $$\Delta E = (\mathbf{v} \cdot \rho \mathbf{a}_{\text{total}}) \frac{\Delta t}{2}$$
+
+By applying these cosmological source terms to the gas grid within the same KDK integrator as the dark matter particles, we ensure that both components feel the same gravity and the same cosmic expansion, allowing them to evolve in a physically consistent manner.
+
+### Initial Conditions for the Gaseous Component
+
+While the dark matter particles are placed using the Zel'dovich approximation to create a "lumpy," non-uniform starting state, the hydrodynamic (gas) component is typically initialized in a much simpler fashion. This is a common simplification for cosmological simulations that models the gas as a separate fluid that will later fall into the dark matter potential wells.
+
+The gas is not initialized with perturbations. Instead, it is treated as a perfectly smooth fluid, uniformly spread across the entire simulation box.
+
+1.  **Initial Density:** The gas density, $\rho_{\text{gas}}$, is set to a constant, uniform value in every cell of the grid. This value is the total baryonic mass of the simulation divided by the total comoving volume of the box ($L^3$).
+
+2.  **Initial Peculiar Velocity:** The gas is started "cold" and "at rest" relative to the comoving grid. This means its initial peculiar velocity field, $\mathbf{v}_{\text{pec}}$, is set to zero in every cell.
+
+3.  **Initial Temperature:** The gas must have an initial thermodynamic state. To allow gravitational collapse to occur, the gas is initialized with a very low, uniform internal energy, $e$. This corresponds to a minimal starting temperature and ensures that the gas pressure is too weak to resist the pull of gravity.
+
+This setup creates a clean initial state. At $t=0$, the simulation consists of a lumpy, non-uniform distribution of dark matter particles embedded in a smooth, cold, and static sea of gas. When the simulation begins, the gas will immediately start to respond to the non-uniform gravitational field created by the dark matter, flowing out of the under-dense regions (voids) and falling into the over-dense regions (halos), beginning the process of galaxy formation.
+
+### Validation of the Hydrodynamic Solver
+
+While the N-body component of our simulation is validated by checking its adherence to conservation laws (energy, momentum) in a static universe, validating the hydrodynamic component is more complex. The goal is not simply to conserve energy; in fact, hydrodynamic shocks are *designed* to convert kinetic energy into thermal energy, a process that must be captured correctly.
+
+A hydrodynamic solver is instead validated by its ability to accurately reproduce the known analytical solutions to a set of classic, standardized test problems. These tests are the "unit tests" of computational fluid dynamics.
+
+#### Conservation in a Closed Box
+
+The most fundamental test is to ensure the solver correctly conserves all quantities in the absence of external forces.
+
+* **The Setup:** A periodic, non-expanding box is initialized with a random distribution of gas densities, pressures, and velocities. The gravitational solver is turned off.
+* **The Validation:** The simulation is run for many time steps. At each step, the code must verify that the following total quantities, summed over all grid cells, remain constant to machine precision:
+    1.  **Total Mass:** $M_{total} = \sum_i \rho_i L^3$
+    2.  **Total Momentum:** $\mathbf{P}_{total} = \sum_i (\rho \mathbf{v})_i L^3$
+    3.  **Total Energy:** $E_{total} = \sum_i E_i L^3$
+* **What it Proves:** This test confirms that the numerical flux calculations are perfectly balanced—that any mass, momentum, or energy that leaves one cell correctly enters its neighbor, with no numerical "leaks" or "sources."
+
+#### The 1D Shock-Tube
+
+This test has a known, exact analytical solution (the **Sod Shock Tube** is the most famous variant) that validates the code's ability to handle all three fundamental wave structures.
+
+* **The Setup:** A 1D tube of gas is initialized with a "diaphragm" at its center. The gas on the "Left" state has a high density and pressure, while the gas on the "Right" state has a low density and pressure. At $t=0$, the diaphragm is removed.
+* **The Expected Result:** The collision of the two states generates a complex, self-similar wave structure.
+* **The Validation:** After evolving the system to a time $t$, a snapshot of the simulation's density, pressure, and velocity along the 1D line is plotted. This numerical result must be compared directly against the known, exact mathematical solution. A successful test will correctly capture the speed, position, and amplitude of the three key features:
+    1.  A **Shock Wave** (an abrupt, discontinuous compression) propagating into the low-density region.
+    2.  A **Rarefaction Fan** (a smooth, continuous expansion) propagating back into the high-density region.
+    3.  A **Contact Discontinuity** (a jump in density, but not pressure) separating the two materials.
+
+
+
+#### The Sedov-Taylor Blast Wave (Point Explosion)
+
+This is the classic multi-dimensional test for how a code handles a powerful, symmetric explosion, such as a supernova.
+
+* **The Setup:** A uniform, low-density gas fills the 2D or 3D grid, initially at rest. At $t=0$, a very large amount of thermal energy is deposited into a single central cell.
+* **The Expected Result:** A strong, spherical (or circular in 2D) shock wave propagates outwards from the center, sweeping the surrounding gas into a dense, hot shell.
+* **The Validation:** This test has a known self-similar solution and is validated in two ways:
+    1.  **Symmetry:** The shock front must remain perfectly circular (in 2D). Any "boxy" or distorted shape indicates that the dimensional splitting in the solver is introducing errors.
+    2.  **Propagation Speed:** The radius of the shock front, $R$, must grow with time, $t$, according to a specific power law. For a 3D explosion in a uniform medium, this is $R(t) \propto t^{2/5}$. A log-log plot of radius versus time must produce a straight line with a slope of 2/5.
+
+#### The Kelvin-Helmholtz Instability
+
+This test is not about shocks, but about the code's ability to correctly model fluid mixing and the growth of instabilities.
+
+* **The Setup:** A 2D box is initialized with two layers of fluid sliding past each other in opposite directions. For example, the top half has a velocity $v_x = +v$ and the bottom half has $v_x = -v$. A tiny, sinusoidal perturbation is introduced at the interface.
+* **The Expected Result:** The shear at the interface is unstable. The small initial perturbation should grow exponentially, causing the interface to roll up into a characteristic series of vortices.
+* **The Validation:** This is a test of the solver's numerical diffusion. A good solver will capture the growth of these vortices. A poor or overly-diffusive solver will smear out the interface, artificially damping the instability and preventing the vortices from ever forming.
+
+
+
+Passing this standard suite of tests provides strong confidence that a hydrodynamic code is correctly solving the Euler equations and is ready for use in complex physical simulations.
+
+### Gas Physics
+
+While the laws of hydrodynamics describe how gas moves, the true engine of galaxy formation is **thermodynamics**—the physics of how gas heats up and, more importantly, how it cools down. The balance between these two processes acts as a cosmic thermostat, determining whether a gas cloud has enough pressure to resist gravity or whether it will collapse to form stars.
+
+#### Temperature
+
+First, it must be understood what "temperature" means in the near-vacuum of interstellar or intergalactic space. In the air around us, temperature is a measure of the energy transferred by countless atoms constantly colliding with each other. In the extremely sparse gas of the cosmos, particles are so far apart that they rarely ever collide.
+
+In this context, **temperature** is a direct measure of the **average kinetic energy** of the gas particles. It is a statement about **how fast the particles are moving**, not how much they are interacting.
+* A **"hot"** gas is one where the individual atoms and ions are moving at very high random speeds. The gas inside a galaxy cluster, for example, can reach millions of degrees, even though it is less dense than any vacuum we can create on Earth.
+* A **"cold"** gas is one where the particles are moving relatively slowly.
+
+#### Gravitational Compression and Shocks
+
+Cosmic gas doesn't have a "stove" to heat it up. Its temperature increases when energy is added to it from large-scale astrophysical processes. The primary heating mechanism is **gravitational compression**.
+
+As gas is pulled into the deep gravitational well of a dark matter halo, it accelerates to enormous speeds. When this rapidly falling gas meets the gas that has already accumulated, it collides violently, creating an immense **shock wave**. This shock wave is an almost instantaneous conversion of the gas's ordered, in-falling kinetic energy into disordered, random motion—in other words, heat. This process, known as **virial heating**, can raise the gas temperature to millions of degrees, creating the vast, hot atmospheres we observe in galaxy clusters.
+
+Other significant heating sources include:
+* **Supernova Feedback:** The explosive death of massive stars creates powerful blast waves that rip through the surrounding medium, shocking and heating the gas. 
+* **Radiation:** High-energy photons from stars and active galactic nuclei can ionize atoms, transferring their energy to the gas and heating it.
+
+#### Radiative Cooling
+
+A gas cloud in the vacuum of space cannot cool down by touching anything cold. The *only* way it can lose energy is by radiating it away in the form of **photons** (light). This process is called **radiative cooling**, and it is the single most important mechanism for galaxy formation. If a gas cloud cannot cool, its internal pressure will forever resist the pull of gravity, and stars will never form.
+
+Gas particles turn their kinetic energy into light through two main processes:
+
+1.  **Line Emission:** In a warm gas, collisions (even if rare) can knock an electron in an atom or ion into a higher energy level. When the electron inevitably drops back down, it emits a photon of a very specific wavelength or "line." This photon escapes into space, carrying away a small packet of the cloud's energy.
+
+2.  **Bremsstrahlung ("Braking Radiation"):** In very hot, ionized gas (a plasma), a fast-moving free electron can fly past a positive ion. The ion's electric field will deflect the electron, causing it to "brake" and change direction. The kinetic energy lost by the electron during this braking process is emitted as a high-energy photon (often an X-ray). This is the dominant cooling mechanism in the hot atmospheres of galaxy clusters. 
+
+The rate of cooling is highly dependent on the density and temperature of the gas. By implementing these heating and cooling functions in our simulation, we create a dynamic "cosmic thermostat" that, in a constant battle with gravity, ultimately dictates where and when the stars will begin to shine.
+
+*Reference*
+Teyssier, R. (2002). *Cosmological hydrodynamics with adaptive mesh refinement. A new high-resolution code called RAMSES*. arXiv:astro-ph/0111367. Available at [https://arxiv.org/abs/astro-ph/0111367](https://arxiv.org/abs/astro-ph/0111367)
