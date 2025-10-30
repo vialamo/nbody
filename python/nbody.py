@@ -3,10 +3,12 @@ os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
 
 import math
 import time
+import datetime
 import numpy as np
 import pygame
 import matplotlib.cm
 import scipy.ndimage  # Image scaling
+import h5py # Snapshot saving
 
 # ------------------------
 # Simulation parameters
@@ -53,6 +55,7 @@ RENDER_SCALE = RENDER_SIZE / DOMAIN_SIZE
 
 # Misc
 DEBUG_INFO_EVERY_CYCLES = 40
+SAVE_SNAPSHOT_EVERY_CYCLES = 100
 SEED = 42
 np.random.seed(SEED)
 
@@ -505,6 +508,46 @@ def render(screen, particles, gas):
     pygame.surfarray.blit_array(screen, surface_array)
     pygame.display.flip()
 
+def save_snapshot(h5_file, snapshot_name, particles, gas, sim_time, scale_factor):
+    """Saves the current simulation state to a group in the HDF5 file."""
+    try:
+        grp = h5_file.create_group(snapshot_name)
+        
+        # Store Metadata
+        grp.attrs['time'] = sim_time
+        grp.attrs['scale_factor'] = scale_factor
+        
+        # Store Particle Data
+        # Convert list of objects to NumPy arrays for efficient storage
+        num_p = len(particles)
+        positions = np.zeros((num_p, 2))
+        velocities = np.zeros((num_p, 2))
+        masses = np.zeros(num_p)
+        
+        for i, p in enumerate(particles):
+            positions[i] = [p.x, p.y]
+            velocities[i] = [p.vx, p.vy]
+            masses[i] = p.mass
+            
+        p_grp = grp.create_group("particles")
+        p_grp.create_dataset("positions", data=positions, compression="gzip")
+        p_grp.create_dataset("velocities", data=velocities, compression="gzip")
+        p_grp.create_dataset("masses", data=masses, compression="gzip")
+        
+        # Store Gas Data
+        if ENABLE_HYDRO:
+            g_grp = grp.create_group("gas")
+            g_grp.create_dataset("density", data=gas.density, compression="gzip")
+            g_grp.create_dataset("momentum_x", data=gas.momentum_x, compression="gzip")
+            g_grp.create_dataset("momentum_y", data=gas.momentum_y, compression="gzip")
+            g_grp.create_dataset("energy", data=gas.energy, compression="gzip")
+            g_grp.create_dataset("pressure", data=gas.pressure, compression="gzip") # Also save primitive
+            g_grp.create_dataset("velocity_x", data=gas.velocity_x, compression="gzip")
+            g_grp.create_dataset("velocity_y", data=gas.velocity_y, compression="gzip")
+            
+    except Exception as e:
+        print(f"Error saving snapshot {snapshot_name}: {e}")
+
 # ------------------------
 # Main entry point
 # ------------------------
@@ -530,12 +573,40 @@ def main():
     simulation_start_time = time.time()
     total_simulation_time = 0.0
 
+    # Create HDF5 file
+    run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    snapshot_filename = f"sim_{run_timestamp}.hdf5"
+    print(f"Saving snapshots to: {snapshot_filename}")
+
+    h5_file = h5py.File(snapshot_filename, 'w')
+    param_grp = h5_file.create_group("parameters")
+    param_grp.attrs['DOMAIN_SIZE'] = DOMAIN_SIZE
+    param_grp.attrs['MESH_SIZE'] = MESH_SIZE
+    param_grp.attrs['NUM_DM_PARTICLES'] = NUM_DM_PARTICLES
+    param_grp.attrs['OMEGA_BARYON'] = OMEGA_BARYON
+    param_grp.attrs['OMEGA_DM'] = OMEGA_DM
+    param_grp.attrs['ENABLE_HYDRO'] = ENABLE_HYDRO
+    param_grp.attrs['G'] = G
+    param_grp.attrs['GAMMA'] = GAMMA
+    param_grp.attrs['DT'] = DT
+    param_grp.attrs['EXPANDING_UNIVERSE'] = EXPANDING_UNIVERSE
+    param_grp.attrs['INITIAL_HUBBLE_PARAM'] = INITIAL_HUBBLE_PARAM
+    param_grp.attrs['SOFTENING_SQUARED'] = SOFTENING_SQUARED
+    snapshot_count = 0
+
     while process_events():
         total_simulation_time = DT * cycle_count
         KDK_step(total_simulation_time, particles, gas)
         render(screen, particles, gas)
 
         cycle_count += 1
+
+        if SAVE_SNAPSHOT_EVERY_CYCLES > 0 and cycle_count % SAVE_SNAPSHOT_EVERY_CYCLES == 0:
+            snapshot_name = f"snapshot_{snapshot_count:04d}"
+            scale_factor, _ = update_cosmology(total_simulation_time)
+            save_snapshot(h5_file, snapshot_name, particles, gas, total_simulation_time, scale_factor)
+            print(f"Savied snapshot: {snapshot_name}")
+            snapshot_count += 1
 
         if cycle_count % DEBUG_INFO_EVERY_CYCLES == 0:
             total_elapsed_time = time.time() - simulation_start_time
@@ -545,6 +616,7 @@ def main():
             energy_error = abs(current_energy - initial_energy) / abs(initial_energy)
             print(f"Time:{total_elapsed_time:.0f}s Cycles:{cycle_count} Avg. dt:{average_time:.3f}s Scale:{scale_factor:.2f} Energy Error:{energy_error:.1%}")
 
+    h5_file.close()
     pygame.quit()
 
 if __name__ == "__main__":

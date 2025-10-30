@@ -5,14 +5,15 @@
 #include <complex>
 #include <chrono>
 
-// Include the SFML graphics header
 #include <SFML/Graphics.hpp>
 
-// Include the header-only pocketfft library
+// Header-only pocketfft library
 #include "pocketfft_hdronly.h"
 
-// Include the header-only Eigen library
+// Header-only Eigen library
 #include <Eigen/Dense>
+
+#include "H5Cpp.h"
 
 // Define M_PI if it's not provided by the compiler (it's non-standard)
 #ifndef M_PI
@@ -60,6 +61,9 @@ const double GAMMA = 5.0 / 3.0;
 // Time integration
 const double DYNAMICAL_TIME = 1.0 / sqrt( G );
 const double DT = 1e-6 * DYNAMICAL_TIME;
+
+// HDF5 Output
+const int SAVE_HDF5_EVERY_CYCLES = 100; // Save HDF5 snapshot every 100 cycles
 
 
 // Misc
@@ -779,6 +783,168 @@ void render( sf::RenderWindow& window, const std::vector<Particle>& particles, c
     window.display();
 }
 
+// ---- HDF5 Helper Functions ----
+// Helper to create a double attribute
+
+void set_hdf5_attr_double( H5::H5Object& obj, const char* attr_name, double value ) {
+    H5::DataSpace scalar_space( H5S_SCALAR );
+    H5::Attribute attr = obj.createAttribute( attr_name, H5::PredType::NATIVE_DOUBLE, scalar_space );
+    attr.write( H5::PredType::NATIVE_DOUBLE, &value );
+    attr.close();
+}
+
+// Helper to create an int attribute
+void set_hdf5_attr_int( H5::H5Object& obj, const char* attr_name, int value ) {
+    H5::DataSpace scalar_space( H5S_SCALAR );
+    H5::Attribute attr = obj.createAttribute( attr_name, H5::PredType::NATIVE_INT, scalar_space );
+    attr.write( H5::PredType::NATIVE_INT, &value );
+    attr.close();
+}
+
+// Helper to write an Eigen Grid to HDF5, handling row/column major conversion
+void write_grid_to_hdf5( H5::Group& group, const char* dataset_name, const Grid& grid ) {
+    // Eigen's default is ColMajor. H5py/Numpy expect RowMajor (C-style).
+    // Copying to a RowMajor matrix correctly rearranges the data for Python.
+    Eigen::Matrix<double, MESH_SIZE, MESH_SIZE, Eigen::RowMajor> row_major_grid = grid;
+
+    hsize_t dims[2] = { MESH_SIZE, MESH_SIZE };
+    H5::DataSpace dataspace( 2, dims );
+    H5::DataSet dataset = group.createDataSet( dataset_name, H5::PredType::NATIVE_DOUBLE, dataspace );
+    dataset.write( row_major_grid.data(), H5::PredType::NATIVE_DOUBLE );
+    dataset.close();
+}
+
+// Helper to write a 1D vector of particle data
+void write_particle_vec_to_hdf5( H5::Group& group, const char* dataset_name, const std::vector<double>& vec ) {
+    hsize_t dims[1] = { vec.size() };
+    H5::DataSpace dataspace( 1, dims );
+    H5::DataSet dataset = group.createDataSet( dataset_name, H5::PredType::NATIVE_DOUBLE, dataspace );
+    dataset.write( vec.data(), H5::PredType::NATIVE_DOUBLE );
+    dataset.close();
+}
+
+// Main function to save a snapshot
+void save_hdf5_snapshot( H5::H5File& file, int snapshot_index, double sim_time, double a,
+    const std::vector<Particle>& particles, const GasGrid& gas ) {
+
+    // Create a new group for this snapshot
+    char group_name[100];
+    snprintf( group_name, sizeof( group_name ), "snapshot_%04d", snapshot_index );
+    H5::Group snapshot_group = file.createGroup( group_name );
+
+    // --- Add Attributes to the Snapshot Group ---
+    H5::DataSpace scalar_space( H5S_SCALAR );
+    // Save simulation time
+    H5::Attribute attr_time = snapshot_group.createAttribute( "simulation_time", H5::PredType::NATIVE_DOUBLE, scalar_space );
+    attr_time.write( H5::PredType::NATIVE_DOUBLE, &sim_time );
+    attr_time.close();
+    // Save scale factor
+    H5::Attribute attr_a = snapshot_group.createAttribute( "scale_factor", H5::PredType::NATIVE_DOUBLE, scalar_space );
+    attr_a.write( H5::PredType::NATIVE_DOUBLE, &a );
+    attr_a.close();
+
+    // --- Save Particle Data ---
+    // Create a subgroup for particles
+    H5::Group particle_group = snapshot_group.createGroup( "particles" );
+    size_t n_particles = particles.size();
+
+    // De-structure the particle data into simple vectors for easier saving/reading
+    std::vector<double> pos_x( n_particles ), pos_y( n_particles );
+    std::vector<double> vel_x( n_particles ), vel_y( n_particles );
+    std::vector<double> acc_x( n_particles ), acc_y( n_particles );
+    std::vector<double> mass( n_particles );
+
+    for( size_t i = 0; i < n_particles; ++i ) {
+        pos_x[i] = particles[i].pos.x;
+        pos_y[i] = particles[i].pos.y;
+        vel_x[i] = particles[i].vel.x;
+        vel_y[i] = particles[i].vel.y;
+        acc_x[i] = particles[i].acc.x;
+        acc_y[i] = particles[i].acc.y;
+        mass[i] = particles[i].mass;
+    }
+
+    // Write each vector as a separate dataset
+    write_particle_vec_to_hdf5( particle_group, "position_x", pos_x );
+    write_particle_vec_to_hdf5( particle_group, "position_y", pos_y );
+    write_particle_vec_to_hdf5( particle_group, "velocity_x", vel_x );
+    write_particle_vec_to_hdf5( particle_group, "velocity_y", vel_y );
+    write_particle_vec_to_hdf5( particle_group, "acceleration_x", acc_x );
+    write_particle_vec_to_hdf5( particle_group, "acceleration_y", acc_y );
+    write_particle_vec_to_hdf5( particle_group, "mass", mass );
+
+    particle_group.close();
+
+    // --- Save Gas Grid Data ---
+    // Create a subgroup for gas
+    H5::Group gas_group = snapshot_group.createGroup( "gas" );
+
+    // Write each grid as a separate dataset
+    write_grid_to_hdf5( gas_group, "density", gas.density );
+    write_grid_to_hdf5( gas_group, "momentum_x", gas.momentum_x );
+    write_grid_to_hdf5( gas_group, "momentum_y", gas.momentum_y );
+    write_grid_to_hdf5( gas_group, "energy", gas.energy );
+    write_grid_to_hdf5( gas_group, "pressure", gas.pressure ); // Save primitive for convenience
+
+    gas_group.close();
+
+    // --- Clean up ---
+    snapshot_group.close();
+}
+
+void initialize_hdf5_file( H5::H5File& file ) {
+    std::time_t now = std::time( nullptr );
+    std::tm ltm;
+#ifdef _MSC_VER
+    localtime_s( &ltm, &now );
+#else
+    // POSIX-compliant way
+    ltm = *std::localtime( &now );
+#endif
+
+    std::stringstream ss;
+    ss << "sim_"
+        << std::put_time( &ltm, "%Y-%m-%d_%H-%M-%S" )
+        << ".hdf5";
+    std::string filename_str = ss.str();
+    const char* filename = filename_str.c_str();
+    std::cout << "Creating HDF5 output file: " << filename << std::endl;
+
+    try {
+        file = H5::H5File( filename, H5F_ACC_TRUNC );
+    }
+    catch( H5::Exception& e ) {
+        std::cerr << "Error: Could not create HDF5 file." << std::endl;
+        e.printErrorStack();
+        return;
+    }
+
+    try {
+        H5::Group root_group = file.openGroup( "/" );
+
+        set_hdf5_attr_double( root_group, "domain_size", DOMAIN_SIZE );
+        set_hdf5_attr_int( root_group, "mesh_size", MESH_SIZE );
+        set_hdf5_attr_double( root_group, "omega_baryon", OMEGA_BARYON );
+        set_hdf5_attr_double( root_group, "omega_dm", OMEGA_DM );
+        set_hdf5_attr_int( root_group, "num_dm_particles", NUM_DM_PARTICLES );
+        set_hdf5_attr_double( root_group, "total_mass", TOTAL_MASS );
+        set_hdf5_attr_double( root_group, "particle_mass_dm", DM_PARTICLE_MASS );
+        set_hdf5_attr_double( root_group, "G_const", G );
+        set_hdf5_attr_double( root_group, "gamma", GAMMA );
+        set_hdf5_attr_double( root_group, "dt", DT );
+        set_hdf5_attr_double( root_group, "expansion_start_t", EXPANSION_START_T );
+        set_hdf5_attr_int( root_group, "use_hydro", USE_HYDRO );
+        set_hdf5_attr_int( root_group, "use_pm", USE_PM );
+        set_hdf5_attr_int( root_group, "use_pp", USE_PP );
+
+        root_group.close();
+    }
+    catch( H5::Exception& e ) {
+        std::cerr << "Error: Could not create HDF5 file." << std::endl;
+        e.printErrorStack();
+    }
+}
+
 
 int main() {
     sf::RenderWindow window( sf::VideoMode( { RENDER_SIZE, RENDER_SIZE } ), "N-Body + Hydro Simulation" );
@@ -803,6 +969,10 @@ int main() {
         particles[i].acc.x = ( pp_forces[i].x + pm_forces[i].x ) / particles[i].mass;
         particles[i].acc.y = ( pp_forces[i].y + pm_forces[i].y ) / particles[i].mass;
     }
+
+    H5::H5File hdf5_file;
+    initialize_hdf5_file( hdf5_file );
+    int hdf5_snapshot_count = 0;
 
     int cycle_count = 0;
     auto start_time = std::chrono::high_resolution_clock::now();
@@ -848,8 +1018,22 @@ int main() {
             save_frame( window, frame_num );
         }
 
+        if( SAVE_HDF5_EVERY_CYCLES > 0 && cycle_count > 0 && cycle_count % SAVE_HDF5_EVERY_CYCLES == 0 ) {
+            try {
+                save_hdf5_snapshot( hdf5_file, hdf5_snapshot_count, total_simulation_time, scale_factor, particles, *gas );
+                std::cout << "HDF5 snapshot " << hdf5_snapshot_count << " saved." << std::endl;
+            }
+            catch( H5::Exception& e ) {
+                std::cerr << "Error: Could not save HDF5 snapshot." << std::endl;
+                e.printErrorStack();
+            }
+            hdf5_snapshot_count++;
+        }
+
         cycle_count++;
     }
+
+    hdf5_file.close();
 
     return 0;
 }

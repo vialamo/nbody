@@ -23,6 +23,8 @@ The simulations model a 2D universe and include a range of standard techniques u
     * **Cloud-in-Cell (CIC):** A second-order mass assignment and force interpolation scheme for the PM grid.
     * **Periodic Boundary Conditions:** A "wrap-around" universe to model a representative patch of a larger cosmos.
     * **Gravitational Softening:** Plummer softening to ensure numerical stability during close encounters.
+* **Data Output:**
+    * **Snapshot Storage:** Simulation snapshots (including particle data, gas grids, and metadata) are saved periodically using the HDF5 (Hierarchical Data Format) file format.
     
 ![N-Body Simulation Animation](simulation.gif)
 
@@ -38,7 +40,7 @@ The simulations model a 2D universe and include a range of standard techniques u
 
 1.  **Prerequisites:** Ensure you have Python 3 and the following libraries installed:
     ```bash
-    pip install numpy pygame matplotlib scipy
+    pip install numpy pygame matplotlib scipy h5py
     ```
 2.  **Run:** Navigate to the `python/` directory and run the script:
     ```bash
@@ -47,14 +49,14 @@ The simulations model a 2D universe and include a range of standard techniques u
 
 ### C++ Version (Linux/Ubuntu)
 
-1.  **Prerequisites:** You need a C++ compiler and the **SFML 3.0.2** development libraries.
+1.  **Prerequisites:** You need a C++ compiler and the **SFML 3.0.2** and **HDF5** development libraries.
     ```bash
     sudo apt update
-    sudo apt install build-essential libsfml-dev
+    sudo apt install build-essential libsfml-dev libhdf5-dev
     ```
 2.  **Compile:** Navigate to the `cpp/` directory and compile the program. The `pocketfft` library is header-only and included in the repository.
     ```bash
-    g++ nbody.cpp -o nbody -I . -lsfml-graphics -lsfml-window -lsfml-system
+    g++ nbody.cpp -o nbody -I. -I/usr/include/hdf5/serial  -lsfml-graphics -lsfml-window -lsfml-system -lhdf5_serial_cpp -lhdf5_serial
     ```
 3.  **Run:** Execute the compiled program:
     ```bash
