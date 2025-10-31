@@ -284,36 +284,68 @@ def compute_switching_parameter(dist_sq):
     return S
 
 def compute_PP_forces(particles):
-    # Initialize forces as a list of mutable lists [fx, fy]
+    # Bin particles into a grid (cell list)
+    cells = {} # Key: (ix, iy), Value: list of particle indices
+    particle_cells = [] # Store (ix, iy) for each particle i
+    for i, p in enumerate(particles):
+        ix = int(p.x / CELL_SIZE)
+        iy = int(p.y / CELL_SIZE)
+        particle_cells.append((ix, iy))
+        key = (ix, iy)
+        if key not in cells:
+            cells[key] = []
+        cells[key].append(i)
+
     forces = [[0.0, 0.0] for _ in particles]
-
-    for i in range(len(particles)):
-        for j in range(i + 1, len(particles)):
-            p1 = particles[i]
-            p2 = particles[j]
-
-            dx = displacement(p2.x - p1.x)
-            dy = displacement(p2.y - p1.y)
-            dist_sq = dx*dx + dy*dy
-
-            if dist_sq > CUTOFF_RADIUS_SQUARED:
-                continue
-            
-            # Substractive scheme
-            fx_sub, fy_sub = compute_PM_short_range_approx(dist_sq, p1.mass, p2.mass, dx, dy)
-
-            S = compute_switching_parameter(dist_sq)
-            dist_sq += SOFTENING_SQUARED
-            dist = math.sqrt(dist_sq)
-            f = G * p1.mass * p2.mass / dist_sq
-            fx = S * (f * dx / dist - fx_sub)
-            fy = S * (f * dy / dist - fy_sub)
     
-            forces[i][0] += fx
-            forces[i][1] += fy
+    # Base search radius in cells on cutoff
+    search_radius_cells = int(math.ceil(CUTOFF_RADIUS / CELL_SIZE))
 
-            forces[j][0] -= fx
-            forces[j][1] -= fy
+    # Iterate over particles and their neighbors
+    for i, p1 in enumerate(particles):
+        ix1, iy1 = particle_cells[i]
+        
+        # Check blocks of cells around the particle
+        for dx_cell in range(-search_radius_cells, search_radius_cells + 1):
+            for dy_cell in range(-search_radius_cells, search_radius_cells + 1):
+                
+                neighbor_ix = (ix1 + dx_cell) % MESH_SIZE
+                neighbor_iy = (iy1 + dy_cell) % MESH_SIZE
+                cell_key = (neighbor_ix, neighbor_iy)
+                
+                if cell_key not in cells:
+                    continue # Empty neighbor cells
+
+                # Compute interactions with particles in the neighbor cell
+                for j in cells[cell_key]:
+                    # Avoid double counting (j > i) and self-interaction (j != i)
+                    if i >= j:
+                        continue
+                            
+                    p2 = particles[j]
+                    
+                    dx = displacement(p2.x - p1.x)
+                    dy = displacement(p2.y - p1.y)
+                    dist_sq = dx*dx + dy*dy
+
+                    if dist_sq > CUTOFF_RADIUS_SQUARED:
+                        continue
+                    
+                    # Subtractive scheme
+                    fx_sub, fy_sub = compute_PM_short_range_approx(dist_sq, p1.mass, p2.mass, dx, dy)
+                    S = compute_switching_parameter(dist_sq)
+                    dist_sq_soft = dist_sq + SOFTENING_SQUARED
+                    dist = math.sqrt(dist_sq_soft)
+                    f = G * p1.mass * p2.mass / dist_sq_soft
+                    fx = S * (f * dx / dist - fx_sub)
+                    fy = S * (f * dy / dist - fy_sub)
+            
+                    # Apply forces to both particles
+                    forces[i][0] += fx
+                    forces[i][1] += fy
+
+                    forces[j][0] -= fx
+                    forces[j][1] -= fy
             
     # Convert back to a list of tuples for compatibility
     return [tuple(f) for f in forces]

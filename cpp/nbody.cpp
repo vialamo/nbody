@@ -429,50 +429,90 @@ void compute_gravitational_acceleration( std::vector<Particle>& particles, GasGr
 
 void compute_PP_forces( std::vector<Particle>& particles, std::vector<Vec2>& pp_forces ) {
     pp_forces.assign( particles.size(), { 0.0, 0.0 } );
+
+    // Build a cell list to bin particles
+    std::vector<std::vector<int>> cell_grid( MESH_SIZE * MESH_SIZE );
+
     for( size_t i = 0; i < particles.size(); ++i ) {
-        for( size_t j = i + 1; j < particles.size(); ++j ) {
-            auto& p1 = particles[i];
-            auto& p2 = particles[j];
+        int ix = static_cast< int >( particles[i].pos.x / CELL_SIZE );
+        int iy = static_cast< int >( particles[i].pos.y / CELL_SIZE );
+        ix = ( ix % MESH_SIZE + MESH_SIZE ) % MESH_SIZE;
+        iy = ( iy % MESH_SIZE + MESH_SIZE ) % MESH_SIZE;
 
-            double dx = displacement( p2.pos.x - p1.pos.x );
-            double dy = displacement( p2.pos.y - p1.pos.y );
-            double dist_sq = dx * dx + dy * dy;
+        int cell_index = iy * MESH_SIZE + ix;
+        cell_grid[cell_index].push_back( static_cast<int>(i) );
+    }
 
-            if( USE_PM && dist_sq > CUTOFF_RADIUS_SQUARED ) continue;
+    const int search_radius_cells = static_cast< int >( ceil( CUTOFF_RADIUS / CELL_SIZE ) );
 
-            double S = 1.0;
-            if( USE_PM && dist_sq > R_SWITCH_START_SQ ) {
-                double dist = sqrt( dist_sq );
-                double x = ( dist - R_SWITCH_START ) / CUTOFF_TRANSITION_WIDTH;
-                S = 2 * pow( x, 3 ) - 3 * pow( x, 2 ) + 1;
+    for( size_t i = 0; i < particles.size(); ++i ) {
+        auto& p1 = particles[i];
+
+        // Get the cell
+        int ix = static_cast< int >( p1.pos.x / CELL_SIZE );
+        int iy = static_cast< int >( p1.pos.y / CELL_SIZE );
+        ix = ( ix % MESH_SIZE + MESH_SIZE ) % MESH_SIZE;
+        iy = ( iy % MESH_SIZE + MESH_SIZE ) % MESH_SIZE;
+
+        // Iterate over the cells around particle
+        for( int dx_cell = -search_radius_cells; dx_cell <= search_radius_cells; ++dx_cell ) {
+            for( int dy_cell = -search_radius_cells; dy_cell <= search_radius_cells; ++dy_cell ) {
+
+                int neighbor_ix = ( ix + dx_cell + MESH_SIZE ) % MESH_SIZE;
+                int neighbor_iy = ( iy + dy_cell + MESH_SIZE ) % MESH_SIZE;
+                int neighbor_cell_index = neighbor_iy * MESH_SIZE + neighbor_ix;
+
+                // Iterate over particles in the cell
+                for( int j : cell_grid[neighbor_cell_index] ) {
+
+                    if( i >= j ) 
+                        continue;
+
+                    auto& p2 = particles[j];
+
+                    double dx = displacement( p2.pos.x - p1.pos.x );
+                    double dy = displacement( p2.pos.y - p1.pos.y );
+                    double dist_sq = dx * dx + dy * dy;
+
+                    if( USE_PM && dist_sq > CUTOFF_RADIUS_SQUARED ) 
+                        continue;
+
+                    double S = 1.0;
+                    if( USE_PM && dist_sq > R_SWITCH_START_SQ ) {
+                        double dist = sqrt( dist_sq );
+                        double x = ( dist - R_SWITCH_START ) / CUTOFF_TRANSITION_WIDTH;
+                        S = 2 * pow( x, 3 ) - 3 * pow( x, 2 ) + 1;
+                    }
+
+                    // PM-short subtraction term
+                    double soft_dist_sq = dist_sq + pow( 0.5 * CELL_SIZE, 2 );
+                    double f_pm_short = G * p1.mass * p2.mass / soft_dist_sq;
+                    double soft_dist = sqrt( soft_dist_sq );
+                    Vec2 f_pm_short_vec = { f_pm_short * dx / soft_dist, f_pm_short * dy / soft_dist };
+
+                    // PP (exact) term
+                    double pp_dist_sq = dist_sq + SOFTENING_SQUARED;
+                    double f_pp = G * p1.mass * p2.mass / pp_dist_sq;
+                    double pp_dist = sqrt( pp_dist_sq );
+                    Vec2 f_pp_vec = { f_pp * dx / pp_dist, f_pp * dy / pp_dist };
+
+                    Vec2 correction_f;
+                    if( !USE_PM ) {
+                        f_pm_short_vec.x = 0;
+                        f_pm_short_vec.y = 0;
+                    }
+                    correction_f.x = S * ( f_pp_vec.x - f_pm_short_vec.x );
+                    correction_f.y = S * ( f_pp_vec.y - f_pm_short_vec.y );
+
+                    pp_forces[i].x += correction_f.x;
+                    pp_forces[i].y += correction_f.y;
+                    pp_forces[j].x -= correction_f.x;
+                    pp_forces[j].y -= correction_f.y;
+                }
             }
-
-            double soft_dist_sq = dist_sq + pow( 0.5 * CELL_SIZE, 2 );
-            double f_pm_short = G * p1.mass * p2.mass / soft_dist_sq;
-            double soft_dist = sqrt( soft_dist_sq );
-            Vec2 f_pm_short_vec = { f_pm_short * dx / soft_dist, f_pm_short * dy / soft_dist };
-
-            double pp_dist_sq = dist_sq + SOFTENING_SQUARED;
-            double f_pp = G * p1.mass * p2.mass / pp_dist_sq;
-            double pp_dist = sqrt( pp_dist_sq );
-            Vec2 f_pp_vec = { f_pp * dx / pp_dist, f_pp * dy / pp_dist };
-
-            Vec2 correction_f;
-            if( !USE_PM ) {
-                f_pm_short_vec.x = 0;
-                f_pm_short_vec.y = 0;
-            }
-            correction_f.x = S * ( f_pp_vec.x - f_pm_short_vec.x );
-            correction_f.y = S * ( f_pp_vec.y - f_pm_short_vec.y );
-
-            pp_forces[i].x += correction_f.x;
-            pp_forces[i].y += correction_f.y;
-            pp_forces[j].x -= correction_f.x;
-            pp_forces[j].y -= correction_f.y;
         }
     }
 }
-
 
 void create_zeldovich_ics( std::vector<Particle>& particles ) {
     int n_per_side = N_PER_SIDE;
