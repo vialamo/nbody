@@ -23,8 +23,9 @@ The simulations model a 2D universe and include a range of standard techniques u
     * **Cloud-in-Cell (CIC):** A second-order mass assignment and force interpolation scheme for the PM grid.
     * **Periodic Boundary Conditions:** A "wrap-around" universe to model a representative patch of a larger cosmos.
     * **Gravitational Softening:** Plummer softening to ensure numerical stability during close encounters.
-* **Data Output:**
-    * **Snapshot Storage:** Simulation snapshots (including particle data, gas grids, and metadata) are saved periodically using the HDF5 (Hierarchical Data Format) file format.
+* **Configuration & I/O:**
+    * **Parameter Input:** All simulation parameters (domain size, particle count, physics, output timing, etc.) are read at runtime from a plain-text `simulation.ini` file.
+    * **Snapshot Output:** Simulation snapshots (including particle data, gas grids, and metadata) are saved periodically using the HDF5 (Hierarchical Data Format) file format.
     
 ![N-Body Simulation Animation](simulation.gif)
 
@@ -42,26 +43,47 @@ The simulations model a 2D universe and include a range of standard techniques u
     ```bash
     pip install numpy pygame matplotlib scipy h5py
     ```
-2.  **Run:** Navigate to the `python/` directory and run the script:
+2.  **Run:** Navigate to the `python/` directory (or wherever the script is). Make sure the `simulation.ini` file is in the same directory. Run the script:
     ```bash
     python nbody.py
     ```
 
 ### C++ Version (Linux/Ubuntu)
 
-1.  **Prerequisites:** You need a C++ compiler and the **SFML 3.0.2** and **HDF5** development libraries.
+1.  **Prerequisites:**
+    You need a C++ compiler, CMake, and the development libraries for SFML, HDF5, and Eigen.
+
     ```bash
     sudo apt update
-    sudo apt install build-essential libsfml-dev libhdf5-dev
+    sudo apt install build-essential cmake libsfml-dev libhdf5-dev libeigen3-dev
     ```
-2.  **Compile:** Navigate to the `cpp/` directory and compile the program. The `pocketfft` library is header-only and included in the repository.
+
+2.  **Compile (with CMake):**
+    This project uses CMake to find all dependencies and build the executable. The build is done in a separate `build` directory to keep the source folder clean.
+
     ```bash
-    g++ nbody.cpp -o nbody -I. -I/usr/include/hdf5/serial  -lsfml-graphics -lsfml-window -lsfml-system -lhdf5_serial_cpp -lhdf5_serial
+    # From the project's root directory (e.g., cpp/):
+    mkdir build
+    cd build
+
+    # This finds all libraries and generates the Makefile
+    cmake ..
+
+    # This compiles the code into an executable
+    make
     ```
-3.  **Run:** Execute the compiled program:
+
+    This will create an executable named `nbody` inside the `build` directory.
+
+3.  **Run:**
+    The build process automatically copies the `simulation.ini` file into the `build` directory. You can run the simulation from there:
+
     ```bash
+    # From inside the 'build' directory:
     ./nbody
     ```
+
+    The program will start and automatically load its configuration from `simulation.ini`.
 
 ## Learning Log & Guidebook
 
