@@ -5,6 +5,10 @@
 #include <complex>
 #include <chrono>
 #include <iomanip>
+#include <fstream>
+#include <sstream>
+#include <map>
+#include <string>
 
 #include <Eigen/Dense>
 #include <SFML/Graphics.hpp>
@@ -15,7 +19,6 @@
 
 #include "ini.h"
 
-// Define M_PI if it's not provided by the compiler (it's non-standard)
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -51,6 +54,9 @@ struct Config {
 
     // [time]
     double DT_FACTOR;
+    double CFL_SAFETY_FACTOR;
+    double GRAVITY_DT_FACTOR;
+    bool USE_ADAPTIVE_DT;
 
     // [output]
     int SAVE_HDF5_EVERY_CYCLES;
@@ -63,6 +69,7 @@ struct Config {
 
     // Derived Parameters
     double CELL_SIZE;
+    double CELL_VOLUME;
     double OMEGA_DM;
     double CUTOFF_RADIUS;
     double CUTOFF_RADIUS_SQUARED;
@@ -76,7 +83,7 @@ struct Config {
     double MEAN_INTERPARTICLE_SPACING;
     double SOFTENING_SQUARED;
     double DYNAMICAL_TIME;
-    double DT;
+    double FIXED_DT;
     double RENDER_SCALE;
 
     // Global Cosmological Variables
@@ -109,6 +116,9 @@ struct Config {
         CUTOFF_TRANSITION_WIDTH_FACTOR = config_file.get_double( "p3m", "cutoff_transition_width_factor", 0.2 );
 
         DT_FACTOR = config_file.get_double( "time", "dt_factor", 1e-6 );
+        CFL_SAFETY_FACTOR = config_file.get_double( "time", "cfl_safety_factor", 0.5 );
+        GRAVITY_DT_FACTOR = config_file.get_double( "time", "gravity_dt_factor", 0.2 );
+        USE_ADAPTIVE_DT = config_file.get_bool( "time", "use_adaptive_dt", true );
 
         SAVE_HDF5_EVERY_CYCLES = config_file.get_int( "output", "save_hdf5_every_cycles", 100 );
         DEBUG_INFO_EVERY_CYCLES = config_file.get_int( "output", "debug_info_every_cycles", 40 );
@@ -119,6 +129,7 @@ struct Config {
 
         // Calculate Derived Parameters
         CELL_SIZE = DOMAIN_SIZE / MESH_SIZE;
+        CELL_VOLUME = CELL_SIZE * CELL_SIZE;
         OMEGA_DM = 1.0 - OMEGA_BARYON;
 
         CUTOFF_RADIUS = CUTOFF_RADIUS_CELLS * CELL_SIZE;
@@ -132,13 +143,13 @@ struct Config {
         DM_PARTICLE_MASS = ( TOTAL_MASS * OMEGA_DM ) / NUM_DM_PARTICLES;
         GAS_TOTAL_MASS = TOTAL_MASS * OMEGA_BARYON;
 
-        MEAN_INTERPARTICLE_SPACING = DOMAIN_SIZE / sqrt( (double)NUM_DM_PARTICLES );
+        MEAN_INTERPARTICLE_SPACING = DOMAIN_SIZE / sqrt( ( double )NUM_DM_PARTICLES );
         SOFTENING_SQUARED = pow( MEAN_INTERPARTICLE_SPACING / 50.0, 2 );
 
         DYNAMICAL_TIME = 1.0 / sqrt( G );
-        DT = DT_FACTOR * DYNAMICAL_TIME;
+        FIXED_DT = DT_FACTOR * DYNAMICAL_TIME; // Renamed from DT
 
-        RENDER_SCALE = RENDER_SIZE / DOMAIN_SIZE;
+        RENDER_SCALE = ( double )RENDER_SIZE / DOMAIN_SIZE;
 
         scale_factor = 1.0;
         hubble_param = 0.0;
@@ -159,25 +170,158 @@ struct Particle {
     double mass;
 };
 
+// ------------------------
+// Diagnostics & Logging
+// ------------------------
+struct Diagnostics {
+    // Simulation state
+    int cycle = 0;
+    double sim_time = 0.0;
+    double scale_factor = 1.0;
 
-// Helper: Rolls an Eigen matrix
-Grid roll( const Grid& m, int shift, int axis ) {
-    Grid result( m.rows(), m.cols() );
-    if( axis == 0 ) {
-        int rows = static_cast< int >( m.rows() );
-        shift = ( shift % rows + rows ) % rows; // Handle negative shifts
-        result.bottomRows( rows - shift ) = m.topRows( rows - shift );
-        result.topRows( shift ) = m.bottomRows( shift );
-    }
-    else {
-        int cols = static_cast< int >( m.cols() );
-        shift = ( shift % cols + cols ) % cols; // Handle negative shifts
-        result.rightCols( cols - shift ) = m.leftCols( cols - shift );
-        result.leftCols( shift ) = m.rightCols( shift );
-    }
-    return result;
-}
+    // Conservation
+    double total_mass_gas = 0.0;
+    double total_mass_dm = 0.0;
+    Vec2 total_momentum_gas = { 0.0, 0.0 };
+    Vec2 total_momentum_dm = { 0.0, 0.0 };
+    double ke_gas = 0.0;
+    double ke_dm = 0.0;
+    double pe_dm = 0.0;
+    double ie_gas = 0.0;
 
+    // Stability
+    double dt_cfl = 0.0;
+    double dt_gravity = 0.0;
+    double dt_final = 0.0;
+    double max_gas_density = 0.0;
+    double max_gas_pressure = 0.0;
+    double max_gas_velocity = 0.0;
+
+    // Performance
+    double wall_time_total = 0.0;
+    double wall_time_pm = 0.0;
+    double wall_time_pp = 0.0;
+    double wall_time_hydro = 0.0;
+    double wall_time_io = 0.0;
+
+    double total_mass() const { return total_mass_gas + total_mass_dm; }
+    Vec2 total_momentum() const { return { total_momentum_gas.x + total_momentum_dm.x, total_momentum_gas.y + total_momentum_dm.y }; }
+    double total_energy() const { return ke_gas + ke_dm + pe_dm + ie_gas; }
+};
+
+class Logger {
+    std::ofstream log_file;
+    std::chrono::high_resolution_clock::time_point start_time;
+    bool header_written = false;
+
+    // Helper to format a floating point number
+    std::string format_double( double val, int precision, bool scientific = false ) {
+        std::stringstream ss;
+        if( scientific ) {
+            ss << std::scientific;
+        }
+        else {
+            ss << std::fixed;
+        }
+        ss << std::setprecision( precision ) << val;
+        return ss.str();
+    }
+
+public:
+    Logger( const std::string& log_filename ) : start_time( std::chrono::high_resolution_clock::now() ) {
+        log_file.open( log_filename );
+        if( !log_file.is_open() ) {
+            std::cerr << "Warning: Could not open log file: " << log_filename << std::endl;
+        }
+    }
+
+    ~Logger() {
+        if( log_file.is_open() ) {
+            log_file.close();
+        }
+    }
+
+    void write_header() {
+        if( !log_file.is_open() || header_written ) return;
+
+        log_file << "cycle,sim_time,scale_factor,"
+            << "total_mass_gas,total_mass_dm,total_momentum_gas_x,total_momentum_gas_y,total_momentum_dm_x,total_momentum_dm_y,"
+            << "ke_gas,ke_dm,pe_dm,ie_gas,"
+            << "dt_cfl,dt_gravity,dt_final,"
+            << "max_gas_density,max_gas_pressure,max_gas_velocity,"
+            << "wall_time_total,wall_time_pm,wall_time_pp,wall_time_hydro,wall_time_io"
+            << std::endl;
+        header_written = true;
+    }
+
+    void log( const Diagnostics& diag ) {
+        if( !header_written ) {
+            write_header();
+        }
+
+        // Write to CSV file
+        if( log_file.is_open() ) {
+            log_file << diag.cycle << "," << diag.sim_time << "," << diag.scale_factor << ","
+                << diag.total_mass_gas << "," << diag.total_mass_dm << ","
+                << diag.total_momentum_gas.x << "," << diag.total_momentum_gas.y << ","
+                << diag.total_momentum_dm.x << "," << diag.total_momentum_dm.y << ","
+                << diag.ke_gas << "," << diag.ke_dm << "," << diag.pe_dm << "," << diag.ie_gas << ","
+                << diag.dt_cfl << "," << diag.dt_gravity << "," << diag.dt_final << ","
+                << diag.max_gas_density << "," << diag.max_gas_pressure << "," << diag.max_gas_velocity << ","
+                << diag.wall_time_total << "," << diag.wall_time_pm << "," << diag.wall_time_pp << ","
+                << diag.wall_time_hydro << "," << diag.wall_time_io
+                << std::endl;
+        }
+
+        // Write to stdout (console)
+        auto now = std::chrono::high_resolution_clock::now();
+        double wall_time_s = std::chrono::duration_cast< std::chrono::duration<double> >( now - start_time ).count();
+        double mass_err = diag.total_mass() - 1.0; // Assuming total mass is 1.0
+        Vec2 total_mom = diag.total_momentum();
+
+        std::cout << "[Cycle " << diag.cycle << "] "
+            << "Wall: " << format_double( wall_time_s, 1 ) << "s | "
+            << "SimTime: " << format_double( diag.sim_time, 3 ) << " | "
+            << "a: " << format_double( diag.scale_factor, 3 )
+            << std::endl;
+
+        std::cout << "  [Physics]" << std::endl;
+        std::cout << "    - Mass (P/G/T):   "
+            << format_double( diag.total_mass_dm, 4 ) << " | "
+            << format_double( diag.total_mass_gas, 4 ) << " | "
+            << format_double( diag.total_mass(), 4 )
+            << " (Err: " << std::scientific << std::setprecision( 1 ) << mass_err << std::fixed << ")" << std::endl;
+        std::cout << "    - Momentum (P/G): ("
+            << format_double( diag.total_momentum_dm.x, 1, true ) << ", " << format_double( diag.total_momentum_dm.y, 1, true ) << ") | ("
+            << format_double( diag.total_momentum_gas.x, 1, true ) << ", " << format_double( diag.total_momentum_gas.y, 1, true ) << ")" << std::endl;
+        std::cout << "    - Energy (KE/PE/IE): "
+            << format_double( diag.ke_dm + diag.ke_gas, 3, true ) << " | "
+            << format_double( diag.pe_dm, 3, true ) << " | "
+            << format_double( diag.ie_gas, 3, true )
+            << " (Total: " << format_double( diag.total_energy(), 3, true ) << ")" << std::endl;
+
+        std::cout << "  [Stability]" << std::endl;
+        std::cout << "    - Timestep (CFL): " << format_double( diag.dt_cfl, 2, true )
+            << " | (Grav): " << format_double( diag.dt_gravity, 2, true )
+            << " | (Final): " << format_double( diag.dt_final, 2, true ) << std::endl;
+        std::cout << "    - Max(rho): " << format_double( diag.max_gas_density, 2, true )
+            << " | Max(press): " << format_double( diag.max_gas_pressure, 2, true )
+            << " | Max(vel): " << format_double( diag.max_gas_velocity, 2, true ) << std::endl;
+
+        std::cout << "  [Performance (ms)]" << std::endl;
+        std::cout << "    - PM: " << format_double( diag.wall_time_pm * 1000.0, 1 )
+            << " | PP: " << format_double( diag.wall_time_pp * 1000.0, 1 )
+            << " | Hydro: " << format_double( diag.wall_time_hydro * 1000.0, 1 )
+            << " | I/O: " << format_double( diag.wall_time_io * 1000.0, 1 )
+            << " | Total: " << format_double( diag.wall_time_total * 1000.0, 1 ) << std::endl;
+        std::cout << "----------------------------------------------------------------------" << std::endl;
+    }
+};
+
+
+// ------------------------
+// Simulation Classes
+// ------------------------
 struct HydroScratchPad {
     Grid density, mom_n, mom_t, energy, v_n, v_t, pressure;
     Grid rho_L, p_L, vn_L, vt_L, E_L, mom_n_L, mom_t_L;
@@ -203,6 +347,24 @@ struct HydroScratchPad {
         flux_mom_t( mesh_size, mesh_size ), flux_energy( mesh_size, mesh_size ) {
     }
 };
+
+// Helper: Rolls an Eigen matrix
+Grid roll( const Grid& m, int shift, int axis ) {
+    Grid result( m.rows(), m.cols() );
+    if( axis == 0 ) {
+        int rows = static_cast< int >( m.rows() );
+        shift = ( shift % rows + rows ) % rows; // Handle negative shifts
+        result.bottomRows( rows - shift ) = m.topRows( rows - shift );
+        result.topRows( shift ) = m.bottomRows( shift );
+    }
+    else {
+        int cols = static_cast< int >( m.cols() );
+        shift = ( shift % cols + cols ) % cols; // Handle negative shifts
+        result.rightCols( cols - shift ) = m.leftCols( cols - shift );
+        result.leftCols( shift ) = m.rightCols( shift );
+    }
+    return result;
+}
 
 // Global grids, initialized in main() after config is read
 Grid g_grid_x;
@@ -388,6 +550,21 @@ struct CIC_Data {
 // ------------------------
 // Helper Functions
 // ------------------------
+
+// Helper to get a timestamp string
+std::string get_timestamp() {
+    std::time_t now = std::time( nullptr );
+    std::tm ltm;
+#ifdef _MSC_VER
+    localtime_s( &ltm, &now );
+#else
+    ltm = *std::localtime( &now );
+#endif
+    std::stringstream ss;
+    ss << std::put_time( &ltm, "%Y-%m-%d_%H-%M-%S" );
+    return ss.str();
+}
+
 double displacement( double dx, const Config& config ) {
     return fmod( dx + 0.5 * config.DOMAIN_SIZE + config.DOMAIN_SIZE, config.DOMAIN_SIZE ) - 0.5 * config.DOMAIN_SIZE;
 }
@@ -418,9 +595,9 @@ void cic_mass_assignment( const std::vector<Particle>& particles, Grid& dm_rho, 
         double w3 = ( 1 - frac_x ) * frac_y, w4 = frac_x * frac_y;
         cic_data[i] = { ix, iy, w1, w2, w3, w4 };
 
-        dm_rho( (ix + config.MESH_SIZE) % config.MESH_SIZE, (iy + config.MESH_SIZE) % config.MESH_SIZE ) += p.mass * w1;
-        dm_rho( ( ix + 1 + config.MESH_SIZE ) % config.MESH_SIZE, (iy + config.MESH_SIZE) % config.MESH_SIZE ) += p.mass * w2;
-        dm_rho( (ix + config.MESH_SIZE) % config.MESH_SIZE, ( iy + 1 + config.MESH_SIZE ) % config.MESH_SIZE ) += p.mass * w3;
+        dm_rho( ( ix + config.MESH_SIZE ) % config.MESH_SIZE, ( iy + config.MESH_SIZE ) % config.MESH_SIZE ) += p.mass * w1;
+        dm_rho( ( ix + 1 + config.MESH_SIZE ) % config.MESH_SIZE, ( iy + config.MESH_SIZE ) % config.MESH_SIZE ) += p.mass * w2;
+        dm_rho( ( ix + config.MESH_SIZE ) % config.MESH_SIZE, ( iy + 1 + config.MESH_SIZE ) % config.MESH_SIZE ) += p.mass * w3;
         dm_rho( ( ix + 1 + config.MESH_SIZE ) % config.MESH_SIZE, ( iy + 1 + config.MESH_SIZE ) % config.MESH_SIZE ) += p.mass * w4;
     }
     dm_rho /= ( config.CELL_SIZE * config.CELL_SIZE );
@@ -431,20 +608,21 @@ void cic_force_interpolation( const std::vector<Particle>& particles, const Grid
     for( size_t i = 0; i < particles.size(); ++i ) {
         const auto& p = particles[i];
         const auto& cd = cic_data[i];
-        double ax = ( ax_grid( (cd.ix + config.MESH_SIZE) % config.MESH_SIZE, (cd.iy + config.MESH_SIZE) % config.MESH_SIZE ) * cd.w1 +
-            ax_grid( ( cd.ix + 1 + config.MESH_SIZE ) % config.MESH_SIZE, (cd.iy + config.MESH_SIZE) % config.MESH_SIZE ) * cd.w2 +
-            ax_grid( (cd.ix + config.MESH_SIZE) % config.MESH_SIZE, ( cd.iy + 1 + config.MESH_SIZE ) % config.MESH_SIZE ) * cd.w3 +
+        double ax = ( ax_grid( ( cd.ix + config.MESH_SIZE ) % config.MESH_SIZE, ( cd.iy + config.MESH_SIZE ) % config.MESH_SIZE ) * cd.w1 +
+            ax_grid( ( cd.ix + 1 + config.MESH_SIZE ) % config.MESH_SIZE, ( cd.iy + config.MESH_SIZE ) % config.MESH_SIZE ) * cd.w2 +
+            ax_grid( ( cd.ix + config.MESH_SIZE ) % config.MESH_SIZE, ( cd.iy + 1 + config.MESH_SIZE ) % config.MESH_SIZE ) * cd.w3 +
             ax_grid( ( cd.ix + 1 + config.MESH_SIZE ) % config.MESH_SIZE, ( cd.iy + 1 + config.MESH_SIZE ) % config.MESH_SIZE ) * cd.w4 );
-        double ay = ( ay_grid( (cd.ix + config.MESH_SIZE) % config.MESH_SIZE, (cd.iy + config.MESH_SIZE) % config.MESH_SIZE ) * cd.w1 +
-            ay_grid( ( cd.ix + 1 + config.MESH_SIZE ) % config.MESH_SIZE, (cd.iy + config.MESH_SIZE) % config.MESH_SIZE ) * cd.w2 +
-            ay_grid( (cd.ix + config.MESH_SIZE) % config.MESH_SIZE, ( cd.iy + 1 + config.MESH_SIZE ) % config.MESH_SIZE ) * cd.w3 +
+        double ay = ( ay_grid( ( cd.ix + config.MESH_SIZE ) % config.MESH_SIZE, ( cd.iy + config.MESH_SIZE ) % config.MESH_SIZE ) * cd.w1 +
+            ay_grid( ( cd.ix + 1 + config.MESH_SIZE ) % config.MESH_SIZE, ( cd.iy + config.MESH_SIZE ) % config.MESH_SIZE ) * cd.w2 +
+            ay_grid( ( cd.ix + config.MESH_SIZE ) % config.MESH_SIZE, ( cd.iy + 1 + config.MESH_SIZE ) % config.MESH_SIZE ) * cd.w3 +
             ay_grid( ( cd.ix + 1 + config.MESH_SIZE ) % config.MESH_SIZE, ( cd.iy + 1 + config.MESH_SIZE ) % config.MESH_SIZE ) * cd.w4 );
         forces[i].x = ax * p.mass;
         forces[i].y = ay * p.mass;
     }
 }
 
-void compute_gravitational_acceleration( std::vector<Particle>& particles, GasGrid& gas, Grid& g_grid_x, Grid& g_grid_y, std::vector<CIC_Data>& cic_data, const Config& config ) {
+// Returns total_rho for diagnostics
+Grid compute_gravitational_acceleration( std::vector<Particle>& particles, GasGrid& gas, Grid& g_grid_x, Grid& g_grid_y, std::vector<CIC_Data>& cic_data, const Config& config ) {
     Grid dm_rho( config.MESH_SIZE, config.MESH_SIZE );
     cic_mass_assignment( particles, dm_rho, cic_data, config );
     Grid total_rho = dm_rho + ( config.USE_HYDRO ? gas.density : Grid::Zero( config.MESH_SIZE, config.MESH_SIZE ) );
@@ -480,6 +658,8 @@ void compute_gravitational_acceleration( std::vector<Particle>& particles, GasGr
 
     g_grid_x = ( roll( phi, 1, 0 ) - roll( phi, -1, 0 ) ) * norm / ( 2.0 * config.CELL_SIZE );
     g_grid_y = ( roll( phi, 1, 1 ) - roll( phi, -1, 1 ) ) * norm / ( 2.0 * config.CELL_SIZE );
+
+    return total_rho;
 }
 
 void compute_PP_forces( std::vector<Particle>& particles, std::vector<Vec2>& pp_forces, const Config& config ) {
@@ -636,13 +816,16 @@ void create_zeldovich_ics( std::vector<Particle>& particles, const Config& confi
     }
 }
 
+// Returns a map of timings for the logger
+std::map<std::string, double> KDK_step( double total_time, std::vector<Particle>& particles, GasGrid& gas, double dt, Config& config ) {
+    std::map<std::string, double> timings;
+    auto start_time = std::chrono::high_resolution_clock::now();
+    auto end_time = start_time;
 
-void KDK_step( double total_time, std::vector<Particle>& particles, GasGrid& gas, Config& config ) {
     update_cosmology( config, total_time );
     double a = config.scale_factor;
     double H = config.hubble_param;
     double a3 = a * a * a;
-    double dt = config.DT;
 
     // KICK 1 (t -> t + dt/2)
     gas.update_primitive_variables();
@@ -652,9 +835,11 @@ void KDK_step( double total_time, std::vector<Particle>& particles, GasGrid& gas
     Grid g_mom_y_source = gas.density.array() * total_ay_gas.array();
     Grid power_density = gas.velocity_x.array() * g_mom_x_source.array() + gas.velocity_y.array() * g_mom_y_source.array();
 
-    gas.momentum_x += g_mom_x_source * ( dt / 2.0 );
-    gas.momentum_y += g_mom_y_source * ( dt / 2.0 );
-    gas.energy += power_density * ( dt / 2.0 );
+    if( config.USE_HYDRO ) {
+        gas.momentum_x += g_mom_x_source * ( dt / 2.0 );
+        gas.momentum_y += g_mom_y_source * ( dt / 2.0 );
+        gas.energy += power_density * ( dt / 2.0 );
+    }
 
     for( auto& p : particles ) {
         double total_ax_p = ( p.acc.x / a3 ) - ( 2 * H * p.vel.x );
@@ -669,9 +854,13 @@ void KDK_step( double total_time, std::vector<Particle>& particles, GasGrid& gas
         p.pos.y = fmod( p.pos.y + p.vel.y * dt + config.DOMAIN_SIZE, config.DOMAIN_SIZE );
     }
 
+    start_time = std::chrono::high_resolution_clock::now();
     if( config.USE_HYDRO ) {
         gas.hydro_step( dt );
     }
+    end_time = std::chrono::high_resolution_clock::now();
+    timings["hydro"] = std::chrono::duration_cast< std::chrono::duration<double> >( end_time - start_time ).count();
+
 
     // UPDATE COSMOLOGY to t + dt
     update_cosmology( config, total_time + dt );
@@ -680,13 +869,20 @@ void KDK_step( double total_time, std::vector<Particle>& particles, GasGrid& gas
     a3 = a * a * a;
 
     // COMPUTE FORCES at t + dt
+    start_time = std::chrono::high_resolution_clock::now();
     static Grid g_grid_x_new( config.MESH_SIZE, config.MESH_SIZE ), g_grid_y_new( config.MESH_SIZE, config.MESH_SIZE );
     std::vector<CIC_Data> cic_data;
     compute_gravitational_acceleration( particles, gas, g_grid_x_new, g_grid_y_new, cic_data, config );
+    end_time = std::chrono::high_resolution_clock::now();
+    timings["pm"] = std::chrono::duration_cast< std::chrono::duration<double> >( end_time - start_time ).count();
 
     std::vector<Vec2> pp_forces, pm_forces;
+    start_time = std::chrono::high_resolution_clock::now();
     if( config.USE_PP ) { compute_PP_forces( particles, pp_forces, config ); }
     else { pp_forces.assign( particles.size(), { 0.0, 0.0 } ); }
+    end_time = std::chrono::high_resolution_clock::now();
+    timings["pp"] = std::chrono::duration_cast< std::chrono::duration<double> >( end_time - start_time ).count();
+
     if( config.USE_PM ) { cic_force_interpolation( particles, g_grid_x_new, g_grid_y_new, cic_data, pm_forces, config ); }
     else { pm_forces.assign( particles.size(), { 0.0, 0.0 } ); }
 
@@ -702,9 +898,11 @@ void KDK_step( double total_time, std::vector<Particle>& particles, GasGrid& gas
     g_mom_y_source = gas.density.array() * total_ay_gas.array();
     power_density = gas.velocity_x.array() * g_mom_x_source.array() + gas.velocity_y.array() * g_mom_y_source.array();
 
-    gas.momentum_x += g_mom_x_source * ( dt / 2.0 );
-    gas.momentum_y += g_mom_y_source * ( dt / 2.0 );
-    gas.energy += power_density * ( dt / 2.0 );
+    if( config.USE_HYDRO ) {
+        gas.momentum_x += g_mom_x_source * ( dt / 2.0 );
+        gas.momentum_y += g_mom_y_source * ( dt / 2.0 );
+        gas.energy += power_density * ( dt / 2.0 );
+    }
 
     for( size_t i = 0; i < particles.size(); ++i ) {
         auto& p = particles[i];
@@ -716,9 +914,12 @@ void KDK_step( double total_time, std::vector<Particle>& particles, GasGrid& gas
         p.vel.x += total_ax_p * dt / 2.0;
         p.vel.y += total_ay_p * dt / 2.0;
     }
+
+    return timings;
 }
 
-double calculate_total_energy( const std::vector<Particle>& particles, double a, const Config& config ) {
+// Returns { KE, PE }
+std::pair<double, double> calculate_particle_energies( const std::vector<Particle>& particles, double a, const Config& config ) {
     double kinetic_energy = 0.0;
     double potential_energy = 0.0;
     for( const auto& p : particles ) {
@@ -737,19 +938,115 @@ double calculate_total_energy( const std::vector<Particle>& particles, double a,
             }
         }
     }
-    return kinetic_energy + potential_energy;
+    return { kinetic_energy, potential_energy };
 }
+
+double get_cfl_timestep( const GasGrid& gas, const Config& config ) {
+    if( !config.USE_HYDRO ) {
+        return std::numeric_limits<double>::infinity();
+    }
+
+    Grid cs_sq = ( config.GAMMA * gas.pressure.array() / gas.density.array() );
+    cs_sq = ( gas.density.array() > 1e-12 ).select( cs_sq, 0.0 );
+    cs_sq = ( cs_sq.array() == cs_sq.array() ).select( cs_sq, 0.0 ); // Handle NaN
+    Grid cs = cs_sq.array().sqrt();
+
+    Grid v_mag = ( gas.velocity_x.array().square() + gas.velocity_y.array().square() ).sqrt();
+    Grid signal_vel = v_mag + cs;
+
+    double max_signal_vel = signal_vel.maxCoeff();
+    if( max_signal_vel < 1e-9 ) {
+        return std::numeric_limits<double>::infinity();
+    }
+    double dt_cfl = config.CELL_SIZE / max_signal_vel;
+    return dt_cfl * config.CFL_SAFETY_FACTOR;
+}
+
+double get_gravity_timestep( const std::vector<Particle>& particles, const Config& config ) {
+    if( particles.empty() ) {
+        return std::numeric_limits<double>::infinity();
+    }
+    double max_accel_sq = 1e-9;
+    for( const auto& p : particles ) {
+        double accel_sq = p.acc.x * p.acc.x + p.acc.y * p.acc.y;
+        if( accel_sq > max_accel_sq ) {
+            max_accel_sq = accel_sq;
+        }
+    }
+    double dt_grav = sqrt( config.SOFTENING_SQUARED ) / sqrt( max_accel_sq );
+    return dt_grav * config.GRAVITY_DT_FACTOR;
+}
+
+Diagnostics calculate_diagnostics(
+    const std::vector<Particle>& particles,
+    const GasGrid& gas,
+    const std::map<std::string, double>& timings,
+    double dt, int cycle, double sim_time, double scale_factor, const Config& config )
+{
+    Diagnostics diag;
+    diag.cycle = cycle;
+    diag.sim_time = sim_time;
+    diag.scale_factor = scale_factor;
+
+    // Performance
+    diag.wall_time_pm = timings.count( "pm" ) ? timings.at( "pm" ) : 0.0;
+    diag.wall_time_pp = timings.count( "pp" ) ? timings.at( "pp" ) : 0.0;
+    diag.wall_time_hydro = timings.count( "hydro" ) ? timings.at( "hydro" ) : 0.0;
+    diag.wall_time_io = timings.count( "io" ) ? timings.at( "io" ) : 0.0;
+    diag.wall_time_total = diag.wall_time_pm + diag.wall_time_pp + diag.wall_time_hydro + diag.wall_time_io;
+
+    // Stability
+    diag.dt_cfl = get_cfl_timestep( gas, config );
+    diag.dt_gravity = get_gravity_timestep( particles, config );
+    diag.dt_final = dt;
+
+    if( config.USE_HYDRO ) {
+        diag.max_gas_density = gas.density.maxCoeff();
+        diag.max_gas_pressure = gas.pressure.maxCoeff();
+        diag.max_gas_velocity = ( gas.velocity_x.array().square() + gas.velocity_y.array().square() ).sqrt().maxCoeff();
+    }
+
+    // Conservation
+    for( const auto& p : particles ) {
+        diag.total_mass_dm += p.mass;
+        diag.total_momentum_dm.x += p.mass * p.vel.x;
+        diag.total_momentum_dm.y += p.mass * p.vel.y;
+    }
+    auto energies = calculate_particle_energies( particles, scale_factor, config );
+    diag.ke_dm = energies.first;
+    diag.pe_dm = energies.second;
+
+    if( config.USE_HYDRO ) {
+        diag.total_mass_gas = gas.density.sum() * config.CELL_VOLUME;
+        diag.total_momentum_gas.x = gas.momentum_x.sum();
+        diag.total_momentum_gas.y = gas.momentum_y.sum();
+
+        Grid ke_gas_density = 0.5 * ( gas.momentum_x.array().square() + gas.momentum_y.array().square() );
+        for( int i = 0; i < config.MESH_SIZE; ++i ) {
+            for( int j = 0; j < config.MESH_SIZE; ++j ) {
+                if( gas.density( i, j ) > 1e-12 ) {
+                    ke_gas_density( i, j ) /= gas.density( i, j );
+                }
+                else {
+                    ke_gas_density( i, j ) = 0.0;
+                }
+            }
+        }
+        diag.ke_gas = ke_gas_density.sum() * config.CELL_VOLUME;
+
+        Grid internal_energy_density = gas.pressure.array() / ( config.GAMMA - 1.0 );
+        diag.ie_gas = internal_energy_density.sum() * config.CELL_VOLUME;
+    }
+
+    return diag;
+}
+
 
 void save_frame( sf::RenderWindow& window, int frame_num ) {
     char filename[100];
     snprintf( filename, sizeof( filename ), "frame_%03d.png", frame_num );
-    
-    // --- SFML 2.x Change ---
-    // sf::Texture texture( window.getSize() ); // sf::Texture constructor from sf::Vector2u is SFML 3
     sf::Texture texture;
-    texture.create(window.getSize().x, window.getSize().y); // SFML 2.x way
-    // --- End of Change ---
-
+    texture.create( window.getSize().x, window.getSize().y );
     texture.update( window );
     if( texture.copyToImage().saveToFile( filename ) ) {
         std::cout << "Saved " << filename << std::endl;
@@ -861,56 +1158,58 @@ void write_particle_vec_to_hdf5( H5::Group& group, const char* dataset_name, con
     dataset.close();
 }
 
-void save_hdf5_snapshot( H5::H5File& file, int snapshot_index, double sim_time, double a,
+double save_hdf5_snapshot( H5::H5File& file, int snapshot_index, double sim_time, double a,
     const std::vector<Particle>& particles, const GasGrid& gas, const Config& config ) {
-    char group_name[100];
-    snprintf( group_name, sizeof( group_name ), "snapshot_%04d", snapshot_index );
-    H5::Group snapshot_group = file.createGroup( group_name );
 
-    set_hdf5_attr_double( snapshot_group, "simulation_time", sim_time );
-    set_hdf5_attr_double( snapshot_group, "scale_factor", a );
+    auto start_time = std::chrono::high_resolution_clock::now();
+    try {
+        char group_name[100];
+        snprintf( group_name, sizeof( group_name ), "snapshot_%04d", snapshot_index );
+        H5::Group snapshot_group = file.createGroup( group_name );
 
-    H5::Group particle_group = snapshot_group.createGroup( "particles" );
-    size_t n_particles = particles.size();
-    std::vector<double> pos_x( n_particles ), pos_y( n_particles ), vel_x( n_particles ), vel_y( n_particles ), acc_x( n_particles ), acc_y( n_particles ), mass( n_particles );
-    for( size_t i = 0; i < n_particles; ++i ) {
-        pos_x[i] = particles[i].pos.x; pos_y[i] = particles[i].pos.y;
-        vel_x[i] = particles[i].vel.x; vel_y[i] = particles[i].vel.y;
-        acc_x[i] = particles[i].acc.x; acc_y[i] = particles[i].acc.y;
-        mass[i] = particles[i].mass;
+        set_hdf5_attr_double( snapshot_group, "simulation_time", sim_time );
+        set_hdf5_attr_double( snapshot_group, "scale_factor", a );
+
+        H5::Group particle_group = snapshot_group.createGroup( "particles" );
+        size_t n_particles = particles.size();
+        std::vector<double> pos_x( n_particles ), pos_y( n_particles ), vel_x( n_particles ), vel_y( n_particles ), acc_x( n_particles ), acc_y( n_particles ), mass( n_particles );
+        for( size_t i = 0; i < n_particles; ++i ) {
+            pos_x[i] = particles[i].pos.x; pos_y[i] = particles[i].pos.y;
+            vel_x[i] = particles[i].vel.x; vel_y[i] = particles[i].vel.y;
+            acc_x[i] = particles[i].acc.x; acc_y[i] = particles[i].acc.y;
+            mass[i] = particles[i].mass;
+        }
+        write_particle_vec_to_hdf5( particle_group, "position_x", pos_x );
+        write_particle_vec_to_hdf5( particle_group, "position_y", pos_y );
+        write_particle_vec_to_hdf5( particle_group, "velocity_x", vel_x );
+        write_particle_vec_to_hdf5( particle_group, "velocity_y", vel_y );
+        write_particle_vec_to_hdf5( particle_group, "acceleration_x", acc_x );
+        write_particle_vec_to_hdf5( particle_group, "acceleration_y", acc_y );
+        write_particle_vec_to_hdf5( particle_group, "mass", mass );
+        particle_group.close();
+
+        if( config.USE_HYDRO ) {
+            H5::Group gas_group = snapshot_group.createGroup( "gas" );
+            write_grid_to_hdf5( gas_group, "density", gas.density );
+            write_grid_to_hdf5( gas_group, "momentum_x", gas.momentum_x );
+            write_grid_to_hdf5( gas_group, "momentum_y", gas.momentum_y );
+            write_grid_to_hdf5( gas_group, "energy", gas.energy );
+            write_grid_to_hdf5( gas_group, "pressure", gas.pressure );
+            gas_group.close();
+        }
+        snapshot_group.close();
     }
-    write_particle_vec_to_hdf5( particle_group, "position_x", pos_x );
-    write_particle_vec_to_hdf5( particle_group, "position_y", pos_y );
-    write_particle_vec_to_hdf5( particle_group, "velocity_x", vel_x );
-    write_particle_vec_to_hdf5( particle_group, "velocity_y", vel_y );
-    write_particle_vec_to_hdf5( particle_group, "acceleration_x", acc_x );
-    write_particle_vec_to_hdf5( particle_group, "acceleration_y", acc_y );
-    write_particle_vec_to_hdf5( particle_group, "mass", mass );
-    particle_group.close();
-
-    if( config.USE_HYDRO ) {
-        H5::Group gas_group = snapshot_group.createGroup( "gas" );
-        write_grid_to_hdf5( gas_group, "density", gas.density );
-        write_grid_to_hdf5( gas_group, "momentum_x", gas.momentum_x );
-        write_grid_to_hdf5( gas_group, "momentum_y", gas.momentum_y );
-        write_grid_to_hdf5( gas_group, "energy", gas.energy );
-        write_grid_to_hdf5( gas_group, "pressure", gas.pressure );
-        gas_group.close();
+    catch( H5::Exception& e ) {
+        std::cerr << "Error: Could not save HDF5 snapshot." << std::endl;
+        e.printErrorStack();
     }
-    snapshot_group.close();
+    auto end_time = std::chrono::high_resolution_clock::now();
+    return std::chrono::duration_cast< std::chrono::duration<double> >( end_time - start_time ).count();
 }
 
-void initialize_hdf5_file( H5::H5File& file, const Config& config ) {
-    std::time_t now = std::time( nullptr );
-    std::tm ltm;
-#ifdef _MSC_VER
-    localtime_s( &ltm, &now );
-#else
-    ltm = *std::localtime( &now );
-#endif
-    std::stringstream ss;
-    ss << "sim_" << std::put_time( &ltm, "%Y-%m-%d_%H-%M-%S" ) << ".hdf5";
-    std::string filename_str = ss.str();
+std::string initialize_hdf5_file( H5::H5File& file, const Config& config ) {
+    std::string timestamp = get_timestamp();
+    std::string filename_str = "sim_" + timestamp + ".hdf5";
     const char* filename = filename_str.c_str();
     std::cout << "Creating HDF5 output file: " << filename << std::endl;
 
@@ -934,6 +1233,9 @@ void initialize_hdf5_file( H5::H5File& file, const Config& config ) {
         set_hdf5_attr_bool( root_group, "use_pp", config.USE_PP );
         set_hdf5_attr_double( root_group, "cutoff_radius_cells", config.CUTOFF_RADIUS_CELLS );
         set_hdf5_attr_double( root_group, "dt_factor", config.DT_FACTOR );
+        set_hdf5_attr_double( root_group, "cfl_safety_factor", config.CFL_SAFETY_FACTOR );
+        set_hdf5_attr_double( root_group, "gravity_dt_factor", config.GRAVITY_DT_FACTOR );
+        set_hdf5_attr_bool( root_group, "use_adaptive_dt", config.USE_ADAPTIVE_DT );
         set_hdf5_attr_int( root_group, "seed", config.SEED );
 
         root_group.close();
@@ -942,6 +1244,7 @@ void initialize_hdf5_file( H5::H5File& file, const Config& config ) {
         std::cerr << "Error: Could not create HDF5 file." << std::endl;
         e.printErrorStack();
     }
+    return "sim_" + timestamp; // Return the base name for the log file
 }
 
 
@@ -997,69 +1300,81 @@ int main() {
 
     // Initialize HDF5 File
     H5::H5File hdf5_file;
-    initialize_hdf5_file( hdf5_file, config );
+    std::string sim_basename = initialize_hdf5_file( hdf5_file, config );
     int hdf5_snapshot_count = 0;
+
+    // Initialize Logger
+    Logger logger( sim_basename + "_diagnostics.csv" );
+    std::cout << "Logging diagnostics to: " << sim_basename + "_diagnostics.csv" << std::endl;
 
     // Main Loop
     int cycle_count = 0;
-    auto start_time = std::chrono::high_resolution_clock::now();
+    double total_simulation_time = 0.0;
     update_cosmology( config, 0 );
 
-    double initial_energy = calculate_total_energy( particles, config.scale_factor, config );
+    // Determine initial timestep
+    double dt_cfl = get_cfl_timestep( gas, config );
+    double dt_grav = get_gravity_timestep( particles, config );
+    double current_dt = config.USE_ADAPTIVE_DT ? std::min( { dt_cfl, dt_grav, config.FIXED_DT } ) : config.FIXED_DT;
+
+    // Log initial state (Cycle 0)
+    std::map<std::string, double> initial_timings;
+    Diagnostics diag = calculate_diagnostics( particles, gas, initial_timings, current_dt, cycle_count, total_simulation_time, config.scale_factor, config );
+    logger.log( diag );
 
     std::cout << "Starting simulation..." << std::endl;
     while( window.isOpen() ) {
-        
+
         sf::Event event;
-        while( window.pollEvent(event) ) {
+        while( window.pollEvent( event ) ) {
             if( event.type == sf::Event::Closed ) {
                 window.close();
             }
         }
 
-        double total_simulation_time = config.DT * cycle_count;
-        KDK_step( total_simulation_time, particles, gas, config );
+        // Core simulation step
+        std::map<std::string, double> timings = KDK_step( total_simulation_time, particles, gas, current_dt, config );
+
+        // Update time
+        total_simulation_time += current_dt;
+        cycle_count++;
+        update_cosmology( config, total_simulation_time ); // Update config.scale_factor
+
+        // Determine next timestep
+        if( config.USE_ADAPTIVE_DT ) {
+            dt_cfl = get_cfl_timestep( gas, config );
+            dt_grav = get_gravity_timestep( particles, config );
+            current_dt = std::min( { dt_cfl, dt_grav, config.FIXED_DT } );
+        }
+        else {
+            current_dt = config.FIXED_DT;
+        }
 
         render( window, particles, gas, config );
 
-        if( config.DEBUG_INFO_EVERY_CYCLES > 0 && cycle_count % config.DEBUG_INFO_EVERY_CYCLES == 0 ) {
-            update_cosmology( config, total_simulation_time );
-            auto now = std::chrono::high_resolution_clock::now();
-            double elapsed_seconds = std::chrono::duration_cast< std::chrono::duration<double> >( now - start_time ).count();
-            double energy = calculate_total_energy( particles, config.scale_factor, config );
-            double energy_error = 100.0 * fabs( energy - initial_energy ) / fabs( initial_energy );
+        // I/O and Logging
+        double io_time = 0.0;
+        if( config.SAVE_HDF5_EVERY_CYCLES > 0 && cycle_count > 0 && cycle_count % config.SAVE_HDF5_EVERY_CYCLES == 0 ) {
+            io_time = save_hdf5_snapshot( hdf5_file, hdf5_snapshot_count, total_simulation_time, config.scale_factor, particles, gas, config );
+            std::cout << "Saved HDF5 snapshot " << hdf5_snapshot_count << std::endl;
+            hdf5_snapshot_count++;
+        }
+        timings["io"] = io_time;
 
-            std::cout << "Cycles: " << cycle_count
-                << " | SimTime: " << std::fixed << std::setprecision( 4 ) << total_simulation_time
-                << " | ScaleFactor: " << std::fixed << std::setprecision( 3 ) << config.scale_factor
-                << " | Energy Err: " << std::fixed << std::setprecision( 2 ) << energy_error << "%"
-                << " | Wall Time: " << static_cast< int >( elapsed_seconds ) << "s"
-                << std::endl;
+        if( config.DEBUG_INFO_EVERY_CYCLES > 0 && cycle_count % config.DEBUG_INFO_EVERY_CYCLES == 0 ) {
+            Diagnostics diag = calculate_diagnostics( particles, gas, timings, current_dt, cycle_count, total_simulation_time, config.scale_factor, config );
+            logger.log( diag );
         }
 
         if( config.SAVE_RENDER_EVERY_CYCLES > 0 && cycle_count > 0 && cycle_count % config.SAVE_RENDER_EVERY_CYCLES == 0 ) {
             int frame_num = cycle_count / config.SAVE_RENDER_EVERY_CYCLES;
             save_frame( window, frame_num );
         }
-
-        if( config.SAVE_HDF5_EVERY_CYCLES > 0 && cycle_count > 0 && cycle_count % config.SAVE_HDF5_EVERY_CYCLES == 0 ) {
-            try {
-                save_hdf5_snapshot( hdf5_file, hdf5_snapshot_count, total_simulation_time, config.scale_factor, particles, gas, config );
-                hdf5_snapshot_count++;
-                std::cout << "Saved HDF5 snapshot " << hdf5_snapshot_count << std::endl;
-            }
-            catch( H5::Exception& e ) {
-                std::cerr << "Error: Could not save HDF5 snapshot." << std::endl;
-                e.printErrorStack();
-            }
-        }
-
-        cycle_count++;
     }
 
     hdf5_file.close();
+    // Logger closes automatically via destructor
+    std::cout << "Simulation finished. HDF5 and log files closed." << std::endl;
 
     return 0;
 }
-
-
