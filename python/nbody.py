@@ -7,10 +7,11 @@ import datetime
 import numpy as np
 import pygame
 import matplotlib.cm
-import scipy.ndimage  # Image scaling
-import h5py # Snapshot saving
+import scipy.ndimage
+import h5py
 import configparser
 import sys
+import csv
 
 # ------------------------
 # Config Class
@@ -49,7 +50,10 @@ class Config:
 
         # [time]
         self.dt_factor = self._get(config, 'time', 'dt_factor', 'float')
-        
+        self.cfl_safety_factor = self._get(config, 'time', 'cfl_safety_factor', 'float')
+        self.gravity_dt_factor = self._get(config, 'time', 'gravity_dt_factor', 'float')
+        self.use_adaptive_dt = self._get(config, 'time', 'use_adaptive_dt', 'bool')
+
         # [output]
         self.debug_info_every_cycles = self._get(config, 'output', 'debug_info_every_cycles', 'int')
         self.save_snapshot_every_cycles = self._get(config, 'output', 'save_snapshot_every_cycles', 'int')
@@ -60,6 +64,7 @@ class Config:
 
         # --- Calculate derived parameters ---
         self.cell_size = self.domain_size / self.mesh_size
+        self.cell_volume = self.cell_size**2
         self.omega_dm = 1.0 - self.omega_baryon
         
         self.cutoff_radius = self.cutoff_radius_cells * self.cell_size
@@ -79,7 +84,7 @@ class Config:
         self.initial_scale_factor = self.expansion_start_t**(2.0/3.0) if self.expanding_universe else 0.0
         
         self.dynamical_time = 1.0 / math.sqrt(self.g_const)
-        self.dt = self.dt_factor * self.dynamical_time
+        self.fixed_dt = self.dt_factor * self.dynamical_time # Used if adaptive_dt is false
         
         self.render_scale = self.render_size / self.domain_size
 
@@ -103,6 +108,103 @@ class Config:
     def get_all_params(self):
         """Get all *base* parameters for saving to HDF5."""
         return self.params
+
+# ------------------------
+# Diagnostics & Logging
+# ------------------------
+class Diagnostics:
+    """A data bucket to hold all diagnostics for a given step."""
+    def __init__(self):
+        # Simulation state
+        self.cycle = 0
+        self.sim_time = 0.0
+        self.scale_factor = 1.0
+        
+        # Conservation
+        self.total_mass_gas = 0.0
+        self.total_mass_dm = 0.0
+        self.total_momentum_gas = (0.0, 0.0)
+        self.total_momentum_dm = (0.0, 0.0)
+        self.ke_gas = 0.0
+        self.ke_dm = 0.0
+        self.pe_dm = 0.0
+        self.ie_gas = 0.0
+        
+        # Stability
+        self.dt_cfl = 0.0
+        self.dt_gravity = 0.0
+        self.dt_final = 0.0
+        self.max_gas_density = 0.0
+        self.max_gas_pressure = 0.0
+        self.max_gas_velocity = 0.0
+        
+        # Performance
+        self.wall_time_total = 0.0
+        self.wall_time_pm = 0.0
+        self.wall_time_pp = 0.0
+        self.wall_time_hydro = 0.0
+        self.wall_time_io = 0.0
+        
+    @property
+    def total_mass(self):
+        return self.total_mass_gas + self.total_mass_dm
+
+    @property
+    def total_momentum(self):
+        return (self.total_momentum_gas[0] + self.total_momentum_dm[0],
+                self.total_momentum_gas[1] + self.total_momentum_dm[1])
+    
+    @property
+    def total_energy(self):
+        # Note: PE for gas and gas-DM interaction is not included
+        return self.ke_gas + self.ke_dm + self.pe_dm + self.ie_gas
+
+class Logger:
+    """Handles writing diagnostics to stdout and a CSV log file."""
+    def __init__(self, log_filename="diagnostics.csv"):
+        self.log_filename = log_filename
+        self.log_file = open(log_filename, 'w', newline='')
+        self.writer = None
+        self.start_time = time.time()
+
+    def write_header(self, diag):
+        """Writes the header row to the CSV file."""
+        self.writer = csv.DictWriter(self.log_file, fieldnames=diag.__dict__.keys())
+        self.writer.writeheader()
+        self.log_file.flush()
+
+    def log(self, diag):
+        """Logs a diagnostic step to both the CSV file and stdout."""
+        if self.writer is None:
+            self.write_header(diag)
+            
+        # Write to CSV
+        self.writer.writerow(diag.__dict__)
+        self.log_file.flush()
+        
+        # Write to stdout
+        wall_time_str = f"Wall: {time.time() - self.start_time:.1f}s"
+        sim_time_str = f"SimTime: {diag.sim_time:.3f}"
+        scale_str = f"a: {diag.scale_factor:.3f}"
+        
+        print(f"[Cycle {diag.cycle}] {wall_time_str} | {sim_time_str} | {scale_str}")
+        
+        mass_err = (diag.total_mass - 1.0) # Assuming total mass is 1.0
+        print(f"  [Physics]")
+        print(f"    - Mass (P/G/T):   {diag.total_mass_dm:.4f} | {diag.total_mass_gas:.4f} | {diag.total_mass:.4f} (Err: {mass_err:+.1e})")
+        print(f"    - Momentum (P/G): ({diag.total_momentum_dm[0]:.1e}, {diag.total_momentum_dm[1]:.1e}) | ({diag.total_momentum_gas[0]:.1e}, {diag.total_momentum_gas[1]:.1e})")
+        print(f"    - Energy (KE/PE/IE): {diag.ke_dm + diag.ke_gas:.3e} | {diag.pe_dm:.3e} | {diag.ie_gas:.3e} (Total: {diag.total_energy:.3e})")
+        
+        print(f"  [Stability]")
+        print(f"    - Timestep (CFL): {diag.dt_cfl:.2e} | (Grav): {diag.dt_gravity:.2e} | (Final): {diag.dt_final:.2e}")
+        print(f"    - Max(rho): {diag.max_gas_density:.2e} | Max(press): {diag.max_gas_pressure:.2e} | Max(vel): {diag.max_gas_velocity:.2e}")
+
+        print(f"  [Performance (ms)]")
+        print(f"    - PM: {diag.wall_time_pm*1000:.1f} | PP: {diag.wall_time_pp*1000:.1f} | Hydro: {diag.wall_time_hydro*1000:.1f} | I/O: {diag.wall_time_io*1000:.1f} | Total: {diag.wall_time_total*1000:.1f}")
+        print("-" * 70)
+
+    def close(self):
+        self.log_file.close()
 
 # ------------------------
 # Simulation Classes
@@ -141,7 +243,7 @@ class GasGrid:
     def update_primitive_variables(self):
         """Calculates pressure and velocity from the conservative variables."""
         # Avoid division by zero in empty cells
-        non_zero_density = self.density > 1e-9
+        non_zero_density = self.density > 1e-12
         
         self.velocity_x.fill(0.0)
         self.velocity_y.fill(0.0)
@@ -154,7 +256,7 @@ class GasGrid:
         internal_energy_density = self.energy - kinetic_energy_density
         
         self.pressure = (self.config.gamma - 1.0) * internal_energy_density
-        self.pressure[self.pressure < 1e-9] = 1e-9 # Pressure floor
+        self.pressure[self.pressure < 1e-12] = 1e-12 # Pressure floor
 
     def calculate_fluxes(self, axis):
         """Internal helper to calculate HLL fluxes along a given axis (0 for x, 1 for y)."""
@@ -328,7 +430,7 @@ def compute_gravitational_acceleration(particles, gas, config):
     ax_grid = (np.roll(phi, 1, axis=0) - np.roll(phi, -1, axis=0)) / (2*cell_size)
     ay_grid = (np.roll(phi, 1, axis=1) - np.roll(phi, -1, axis=1)) / (2*cell_size)
 
-    return ax_grid, ay_grid, cic_data
+    return ax_grid, ay_grid, cic_data, rho
 
 def compute_PM_short_range_approx(dist_sq, p1_mass, p2_mass, dx, dy, config):
     softening_epsilon_squared = (0.5 * config.cell_size)**2 
@@ -429,9 +531,11 @@ def update_cosmology(total_time, config):
         hubble_param = 0.0
     return scale_factor, hubble_param
 
-def KDK_step(total_time, particles, gas, config):
+def KDK_step(total_time, particles, gas, dt, config):
+    
+    timings = {} # To store performance breakdown
+    
     scale_factor, hubble_param = update_cosmology(total_time, config)
-    dt = config.dt
     
     # 1. KICK (First half-step for velocity)
     for p in particles:
@@ -459,24 +563,33 @@ def KDK_step(total_time, particles, gas, config):
         p.y = ( p.y + p.vy * dt ) % config.domain_size
 
     # 3. UPDATE COSMOLOGY
-    scale_factor, hubble_param = update_cosmology(total_time + dt, config)
+    scale_factor_new, hubble_param_new = update_cosmology(total_time + dt, config)
 
     # 4. COMPUTE FORCES at new positions
+    
+    t_pp_start = time.time()
     pp_forces = compute_PP_forces(particles, config)
-    ax_grid, ay_grid, cic_data = compute_gravitational_acceleration(particles, gas, config)
+    timings['pp'] = time.time() - t_pp_start
+    
+    t_pm_start = time.time()
+    ax_grid, ay_grid, cic_data, total_rho = compute_gravitational_acceleration(particles, gas, config)
     pm_forces = cic_force_interpolation(particles, ax_grid, ay_grid, cic_data, config)
+    timings['pm'] = time.time() - t_pm_start
+    
     forces = [(pp[0]+pm[0], pp[1]+pm[1]) for pp,pm in zip(pp_forces, pm_forces)]
     
+    t_hydro_start = time.time()
     if config.enable_hydro:
         gas.hydro_step(dt)
+    timings['hydro'] = time.time() - t_hydro_start
 
     # 5. KICK (Second half-step for velocity)
     for i, p in enumerate(particles):
         fx, fy = forces[i]
         p.ax = fx / p.mass
         p.ay = fy / p.mass
-        total_ax = (p.ax / scale_factor**3) - (2 * hubble_param * p.vx)
-        total_ay = (p.ay / scale_factor**3) - (2 * hubble_param * p.vy)
+        total_ax = (p.ax / scale_factor_new**3) - (2 * hubble_param_new * p.vx)
+        total_ay = (p.ay / scale_factor_new**3) - (2 * hubble_param_new * p.vy)
         p.vx += total_ax * dt / 2.0
         p.vy += total_ay * dt / 2.0
 
@@ -485,14 +598,16 @@ def KDK_step(total_time, particles, gas, config):
         gas.update_primitive_variables()
         gas.accel_x = ax_grid
         gas.accel_y = ay_grid
-        gas_accel_x = (gas.accel_x / scale_factor**3) - (2 * hubble_param * gas.velocity_x)
-        gas_accel_y = (gas.accel_y / scale_factor**3) - (2 * hubble_param * gas.velocity_y)
+        gas_accel_x = (gas.accel_x / scale_factor_new**3) - (2 * hubble_param_new * gas.velocity_x)
+        gas_accel_y = (gas.accel_y / scale_factor_new**3) - (2 * hubble_param_new * gas.velocity_y)
         
         power_density = gas.density * (gas_accel_x * gas.velocity_x + gas_accel_y * gas.velocity_y)
 
         gas.momentum_x += gas.density * gas_accel_x * dt / 2.0
         gas.momentum_y += gas.density * gas_accel_y * dt / 2.0
         gas.energy += power_density * dt / 2.0
+        
+    return timings, total_rho
 
 # Create initial conditions using the simplified Zel'dovich Approximation
 def create_zeldovich_ics(config):
@@ -550,7 +665,7 @@ def create_zeldovich_ics(config):
 
     return particles
 
-def calculate_total_energy(particles, scale_factor, config):
+def calculate_particle_energies(particles, scale_factor, config):
     kinetic_energy = 0.0
     potential_energy = 0.0
     g_const = config.g_const
@@ -573,7 +688,83 @@ def calculate_total_energy(particles, scale_factor, config):
             if dist > 0:
                 potential_energy -= g_const * p1.mass * p2.mass / dist
 
-    return kinetic_energy + potential_energy
+    return kinetic_energy, potential_energy
+
+def get_cfl_timestep(gas, config):
+    """Calculates the Courant-Friedrichs-Lewy (CFL) timestep limit."""
+    if not config.enable_hydro:
+        return np.inf
+        
+    non_zero_density = gas.density > 1e-12
+    if not np.any(non_zero_density):
+        return np.inf
+        
+    cs = np.sqrt(config.gamma * gas.pressure[non_zero_density] / gas.density[non_zero_density])
+    v_mag = np.sqrt(gas.velocity_x[non_zero_density]**2 + gas.velocity_y[non_zero_density]**2)
+    
+    max_signal_vel = np.max(v_mag + cs)
+    if max_signal_vel < 1e-9:
+        return np.inf
+        
+    dt_cfl = config.cell_size / max_signal_vel
+    return dt_cfl * config.cfl_safety_factor
+    
+def get_gravity_timestep(particles, config):
+    """Calculates the gravity acceleration timestep limit."""
+    if not particles:
+        return np.inf
+        
+    max_accel_sq = 1e-9
+    for p in particles:
+        accel_sq = p.ax**2 + p.ay**2
+        if accel_sq > max_accel_sq:
+            max_accel_sq = accel_sq
+            
+    dt_grav = np.sqrt(config.softening_squared) / np.sqrt(max_accel_sq)
+    return dt_grav * config.gravity_dt_factor
+
+def calculate_diagnostics(particles, gas, total_rho, timings, dt, cycle, sim_time, scale_factor, config):
+    """Fills a Diagnostics object with data from the current simulation state."""
+    
+    diag = Diagnostics()
+    diag.cycle = cycle
+    diag.sim_time = sim_time
+    diag.scale_factor = scale_factor
+
+    # Performance
+    diag.wall_time_pm = timings.get('pm', 0.0)
+    diag.wall_time_pp = timings.get('pp', 0.0)
+    diag.wall_time_hydro = timings.get('hydro', 0.0)
+    diag.wall_time_io = timings.get('io', 0.0)
+    diag.wall_time_total = diag.wall_time_pm + diag.wall_time_pp + diag.wall_time_hydro + diag.wall_time_io
+
+    # Stability
+    diag.dt_cfl = get_cfl_timestep(gas, config)
+    diag.dt_gravity = get_gravity_timestep(particles, config)
+    diag.dt_final = dt
+    
+    if config.enable_hydro:
+        diag.max_gas_density = np.max(gas.density)
+        diag.max_gas_pressure = np.max(gas.pressure)
+        v_mag = np.sqrt(gas.velocity_x**2 + gas.velocity_y**2)
+        diag.max_gas_velocity = np.max(v_mag)
+
+    # Conservation
+    diag.total_mass_dm = sum(p.mass for p in particles)
+    diag.total_momentum_dm = (sum(p.mass * p.vx for p in particles), sum(p.mass * p.vy for p in particles))
+    diag.ke_dm, diag.pe_dm = calculate_particle_energies(particles, scale_factor, config)
+
+    if config.enable_hydro:
+        diag.total_mass_gas = np.sum(gas.density) * config.cell_volume
+        diag.total_momentum_gas = (np.sum(gas.momentum_x), np.sum(gas.momentum_y))
+        
+        ke_gas_density = 0.5 * (gas.momentum_x**2 + gas.momentum_y**2) / (gas.density + 1e-12)
+        diag.ke_gas = np.sum(ke_gas_density) * config.cell_volume
+        
+        internal_energy_density = gas.pressure / (config.gamma - 1.0)
+        diag.ie_gas = np.sum(internal_energy_density) * config.cell_volume
+        
+    return diag
 
 # ------------------------
 # Visualization helpers
@@ -674,7 +865,7 @@ def save_snapshot(h5_file, snapshot_name, particles, gas, sim_time, scale_factor
 # Main entry point
 # ------------------------
 def main():
-    # --- Load Configuration ---
+    # Load Configuration
     if len(sys.argv) > 1:
         config_filename = sys.argv[1]
     else:
@@ -687,7 +878,13 @@ def main():
         return
 
     print(f"Loaded parameters from: {config_filename}")
-    # --- End Configuration ---
+    
+    # Create timestamp for output files
+    run_timestamp = datetime.datetime.now().strftime("%Y%md%d_%H%M%S")
+
+    # Initialize Logger
+    logger = Logger(log_filename=f"sim_{run_timestamp}_diagnostics.csv")
+    print(f"Logging diagnostics to: {logger.log_filename}")
 
     screen = init_window(config.render_size, 'N-Body + Hydrodynamics Simulation')
 
@@ -700,20 +897,28 @@ def main():
     gas.energy = initial_internal_energy * gas.density
     gas.update_primitive_variables()
     
+    # Calculate initial gravitational field for particles and gas
+    ax_grid, ay_grid, cic_data, total_rho = compute_gravitational_acceleration(particles, gas, config)
+    pm_forces = cic_force_interpolation(particles, ax_grid, ay_grid, cic_data, config)
+    pp_forces = compute_PP_forces(particles, config)
+    forces = [(pp[0]+pm[0], pp[1]+pm[1]) for pp,pm in zip(pp_forces, pp_forces)]
+    for i, p in enumerate(particles):
+        p.ax = forces[i][0] / p.mass
+        p.ay = forces[i][1] / p.mass
     if config.enable_hydro:
-        # Calculate initial gravitational field for the gas
-        ax_grid, ay_grid, _ = compute_gravitational_acceleration(particles, gas, config)
         gas.accel_x = ax_grid
         gas.accel_y = ay_grid
 
-    initial_energy = calculate_total_energy(particles, config.initial_scale_factor, config)
 
     cycle_count = 0
-    simulation_start_time = time.time()
     total_simulation_time = 0.0
+    
+    # Determine initial timestep
+    dt_cfl = get_cfl_timestep(gas, config)
+    dt_grav = get_gravity_timestep(particles, config)
+    current_dt = min(dt_cfl, dt_grav, config.fixed_dt) if config.use_adaptive_dt else config.fixed_dt
 
     # Create HDF5 file
-    run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     snapshot_filename = f"sim_{run_timestamp}.hdf5"
     print(f"Saving snapshots to: {snapshot_filename}")
 
@@ -725,35 +930,55 @@ def main():
         param_grp.attrs[key] = val
         
     snapshot_count = 0
+    
+    # Log initial state (Cycle 0)
+    scale_factor, _ = update_cosmology(total_simulation_time, config)
+    diag = calculate_diagnostics(particles, gas, total_rho, {}, current_dt, cycle_count, total_simulation_time, scale_factor, config)
+    logger.log(diag)
+
 
     running = True
     while running:
         running = process_events()
 
-        total_simulation_time = config.dt * cycle_count
-        KDK_step(total_simulation_time, particles, gas, config)
+        # Core simulation step
+        timings, total_rho = KDK_step(total_simulation_time, particles, gas, current_dt, config)
+        
+        # Update time
+        total_simulation_time += current_dt
+        cycle_count += 1
+        scale_factor, _ = update_cosmology(total_simulation_time, config)
+        
+        # Determine next timestep
+        if config.use_adaptive_dt:
+            dt_cfl = get_cfl_timestep(gas, config)
+            dt_grav = get_gravity_timestep(particles, config)
+            current_dt = min(dt_cfl, dt_grav, config.fixed_dt)
+        else:
+            current_dt = config.fixed_dt # Keep dt constant
+
+        # Render
         render(screen, particles, gas, config)
 
-        cycle_count += 1
-
+        # I/O and Logging
+        t_io_start = time.time()
         if config.save_snapshot_every_cycles > 0 and cycle_count % config.save_snapshot_every_cycles == 0:
             snapshot_name = f"snapshot_{snapshot_count:04d}"
-            scale_factor, _ = update_cosmology(total_simulation_time, config)
             save_snapshot(h5_file, snapshot_name, particles, gas, total_simulation_time, scale_factor, config)
             print(f"Saved snapshot: {snapshot_name}")
             snapshot_count += 1
+        timings['io'] = time.time() - t_io_start
 
         if config.debug_info_every_cycles > 0 and cycle_count % config.debug_info_every_cycles == 0:
-            total_elapsed_time = time.time() - simulation_start_time
-            average_time = total_elapsed_time / cycle_count if cycle_count > 0 else 0
-            scale_factor, _ = update_cosmology(total_simulation_time, config)
-            current_energy = calculate_total_energy(particles, scale_factor, config)
-            energy_error = abs(current_energy - initial_energy) / abs(initial_energy) if abs(initial_energy) > 1e-12 else 0.0
-            print(f"Time:{total_elapsed_time:.0f}s Cycles:{cycle_count} Avg. dt:{average_time:.3f}s Scale:{scale_factor:.2f} Energy Error:{energy_error:.1%}")
+            diag = calculate_diagnostics(particles, gas, total_rho, timings, current_dt, cycle_count, total_simulation_time, scale_factor, config)
+            logger.log(diag)
+
 
     h5_file.close()
+    logger.close()
     pygame.quit()
-    print("Simulation finished. HDF5 file closed.")
+    print("Simulation finished. HDF5 and log files closed.")
 
 if __name__ == "__main__":
     main()
+
