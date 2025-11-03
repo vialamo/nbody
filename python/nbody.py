@@ -347,14 +347,23 @@ def displacement(dx, config):
     dx = (dx + 0.5*L) % L - 0.5*L
     return dx
 
-def cic_mass_assignment(particles, config):
+def particle_binning_and_mass_assignment(particles, config):
+    """
+    Performs one loop over particles to generate all data needed
+    for both PP (cell list) and PM (density grid, CIC weights) solvers.
+    """
     mesh_size = config.mesh_size
     cell_size = config.cell_size
     
-    # Mass per cell
-    rho = np.zeros((mesh_size, mesh_size))
-    cic_data = []
-    for p in particles:
+    # PM Data
+    dm_rho = np.zeros((mesh_size, mesh_size))
+    cic_data = [] # List of (ix, iy, w1, w2, w3, w4) for each particle i
+    
+    # PP Data
+    cells = {} # Key: (ix, iy), Value: list of particle indices
+    particle_cells = [] # List of (ix, iy) for each particle i
+
+    for i, p in enumerate(particles):
         ix = int(p.x / cell_size)
         iy = int(p.y / cell_size)
 
@@ -368,22 +377,34 @@ def cic_mass_assignment(particles, config):
         w3 = (1 - frac_x) * frac_y       # (ix, iy+1)
         w4 = frac_x * frac_y             # (ix+1, iy+1)
 
+        # --- Store data for BOTH solvers ---
+        
+        # 1. For PM (CIC weights)
         cic_data.append((ix, iy, w1, w2, w3, w4))
 
+        # 2. For PP (Cell list)
+        particle_cells.append((ix, iy))
+        key = (ix % mesh_size, iy % mesh_size) # Use periodic cell index for key
+        if key not in cells:
+            cells[key] = []
+        cells[key].append(i)
+
+        # 3. For PM (Mass assignment)
         # Distribute mass to the 4 grid points (with periodic boundaries)
-        rho[ix % mesh_size, iy % mesh_size] += p.mass * w1
-        rho[(ix + 1) % mesh_size, iy % mesh_size] += p.mass * w2
-        rho[ix % mesh_size, (iy + 1) % mesh_size] += p.mass * w3
-        rho[(ix + 1) % mesh_size, (iy + 1) % mesh_size] += p.mass * w4
+        dm_rho[ix % mesh_size, iy % mesh_size] += p.mass * w1
+        dm_rho[(ix + 1) % mesh_size, iy % mesh_size] += p.mass * w2
+        dm_rho[ix % mesh_size, (iy + 1) % mesh_size] += p.mass * w3
+        dm_rho[(ix + 1) % mesh_size, (iy + 1) % mesh_size] += p.mass * w4
     
-    rho /= (cell_size * cell_size) # Convert mass to density
-    return rho, cic_data
+    dm_rho /= (cell_size * cell_size) # Convert mass to density
+    
+    return dm_rho, cic_data, cells, particle_cells
 
 def cic_force_interpolation(particles, ax_grid, ay_grid, cic_data, config):
     mesh_size = config.mesh_size
     mesh_forces = []
     for i, p in enumerate(particles):
-        ix, iy, w1, w2, w3, w4 = cic_data[i]
+        ix, iy, w1, w2, w3, w4 = cic_data[i] # Use pre-computed CIC data
 
         fx = (ax_grid[ix % mesh_size, iy % mesh_size] * w1 +
             ax_grid[(ix + 1) % mesh_size, iy % mesh_size] * w2 +
@@ -401,17 +422,21 @@ def cic_force_interpolation(particles, ax_grid, ay_grid, cic_data, config):
     
     return mesh_forces
 
-def compute_gravitational_acceleration(particles, gas, config):
+def compute_gravitational_acceleration(gas, config, dm_rho):
+    """
+    Calculates PM gravity field.
+    Requires dm_rho, the particle density grid, to be pre-computed.
+    """
     mesh_size = config.mesh_size
     cell_size = config.cell_size
     
-    # Cloud-In-Cell interpolation
-    rho, cic_data = cic_mass_assignment(particles, config)
     if config.enable_hydro:
-        rho += gas.density
+        total_rho = dm_rho + gas.density
+    else:
+        total_rho = dm_rho
 
     # FFT of density
-    rho_k = np.fft.fftn(rho)
+    rho_k = np.fft.fftn(total_rho)
 
     # Poisson solver in k-space
     kx = np.fft.fftfreq(mesh_size, d=cell_size) * 2 * np.pi
@@ -430,7 +455,7 @@ def compute_gravitational_acceleration(particles, gas, config):
     ax_grid = (np.roll(phi, 1, axis=0) - np.roll(phi, -1, axis=0)) / (2*cell_size)
     ay_grid = (np.roll(phi, 1, axis=1) - np.roll(phi, -1, axis=1)) / (2*cell_size)
 
-    return ax_grid, ay_grid, cic_data, rho
+    return ax_grid, ay_grid, total_rho
 
 def compute_PM_short_range_approx(dist_sq, p1_mass, p2_mass, dx, dy, config):
     softening_epsilon_squared = (0.5 * config.cell_size)**2 
@@ -451,30 +476,16 @@ def compute_switching_parameter(dist_sq, config):
         S = 2*x**3 - 3*x**2 + 1
     return S
 
-def compute_PP_forces(particles, config):
-    cell_size = config.cell_size
+def compute_PP_forces(particles, config, cells, particle_cells):
     mesh_size = config.mesh_size
-
-    # Bin particles into a grid (cell list)
-    cells = {} # Key: (ix, iy), Value: list of particle indices
-    particle_cells = [] # Store (ix, iy) for each particle i
-    for i, p in enumerate(particles):
-        ix = int(p.x / cell_size)
-        iy = int(p.y / cell_size)
-        particle_cells.append((ix, iy))
-        key = (ix, iy)
-        if key not in cells:
-            cells[key] = []
-        cells[key].append(i)
-
     forces = [[0.0, 0.0] for _ in particles]
     
     # Base search radius in cells on cutoff
-    search_radius_cells = int(math.ceil(config.cutoff_radius / cell_size))
+    search_radius_cells = int(math.ceil(config.cutoff_radius / config.cell_size))
 
     # Iterate over particles and their neighbors
     for i, p1 in enumerate(particles):
-        ix1, iy1 = particle_cells[i]
+        ix1, iy1 = particle_cells[i] # Use pre-computed cell index
         
         # Check blocks of cells around the particle
         for dx_cell in range(-search_radius_cells, search_radius_cells + 1):
@@ -567,15 +578,20 @@ def KDK_step(total_time, particles, gas, dt, config):
 
     # 4. COMPUTE FORCES at new positions
     
-    t_pp_start = time.time()
-    pp_forces = compute_PP_forces(particles, config)
-    timings['pp'] = time.time() - t_pp_start
-    
     t_pm_start = time.time()
-    ax_grid, ay_grid, cic_data, total_rho = compute_gravitational_acceleration(particles, gas, config)
+    # 4a. Bin all particles ONCE
+    dm_rho, cic_data, cells, particle_cells = particle_binning_and_mass_assignment(particles, config)
+    
+    # 4b. Compute PM forces
+    ax_grid, ay_grid, total_rho = compute_gravitational_acceleration(gas, config, dm_rho)
     pm_forces = cic_force_interpolation(particles, ax_grid, ay_grid, cic_data, config)
     timings['pm'] = time.time() - t_pm_start
     
+    # 4c. Compute PP forces (using pre-computed cell data)
+    t_pp_start = time.time()
+    pp_forces = compute_PP_forces(particles, config, cells, particle_cells)
+    timings['pp'] = time.time() - t_pp_start
+
     forces = [(pp[0]+pm[0], pp[1]+pm[1]) for pp,pm in zip(pp_forces, pm_forces)]
     
     t_hydro_start = time.time()
@@ -723,7 +739,7 @@ def get_gravity_timestep(particles, config):
     dt_grav = np.sqrt(config.softening_squared) / np.sqrt(max_accel_sq)
     return dt_grav * config.gravity_dt_factor
 
-def calculate_diagnostics(particles, gas, total_rho, timings, dt, cycle, sim_time, scale_factor, config):
+def calculate_diagnostics(particles, gas, timings, dt, cycle, sim_time, scale_factor, config):
     """Fills a Diagnostics object with data from the current simulation state."""
     
     diag = Diagnostics()
@@ -800,8 +816,6 @@ def render(screen, particles, gas, config):
 
         colormap = matplotlib.cm.plasma
         colored_field = colormap(norm_field)
-        
-        # Manually apply brightness scaling
         colored_field[:, :, 0:3] *= norm_field[..., np.newaxis]
         
         zoom_factor = render_size / mesh_size
@@ -880,7 +894,7 @@ def main():
     print(f"Loaded parameters from: {config_filename}")
     
     # Create timestamp for output files
-    run_timestamp = datetime.datetime.now().strftime("%Y%md%d_%H%M%S")
+    run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Initialize Logger
     logger = Logger(log_filename=f"sim_{run_timestamp}_diagnostics.csv")
@@ -898,9 +912,13 @@ def main():
     gas.update_primitive_variables()
     
     # Calculate initial gravitational field for particles and gas
-    ax_grid, ay_grid, cic_data, total_rho = compute_gravitational_acceleration(particles, gas, config)
+    # This now does the binning for both PM and PP
+    dm_rho, cic_data, cells, particle_cells = particle_binning_and_mass_assignment(particles, config)
+    
+    ax_grid, ay_grid, total_rho = compute_gravitational_acceleration(gas, config, dm_rho)
     pm_forces = cic_force_interpolation(particles, ax_grid, ay_grid, cic_data, config)
-    pp_forces = compute_PP_forces(particles, config)
+    pp_forces = compute_PP_forces(particles, config, cells, particle_cells)
+    
     forces = [(pp[0]+pm[0], pp[1]+pm[1]) for pp,pm in zip(pp_forces, pp_forces)]
     for i, p in enumerate(particles):
         p.ax = forces[i][0] / p.mass
@@ -933,7 +951,7 @@ def main():
     
     # Log initial state (Cycle 0)
     scale_factor, _ = update_cosmology(total_simulation_time, config)
-    diag = calculate_diagnostics(particles, gas, total_rho, {}, current_dt, cycle_count, total_simulation_time, scale_factor, config)
+    diag = calculate_diagnostics(particles, gas, {}, current_dt, cycle_count, total_simulation_time, scale_factor, config)
     logger.log(diag)
 
 
@@ -970,7 +988,7 @@ def main():
         timings['io'] = time.time() - t_io_start
 
         if config.debug_info_every_cycles > 0 and cycle_count % config.debug_info_every_cycles == 0:
-            diag = calculate_diagnostics(particles, gas, total_rho, timings, current_dt, cycle_count, total_simulation_time, scale_factor, config)
+            diag = calculate_diagnostics(particles, gas, timings, current_dt, cycle_count, total_simulation_time, scale_factor, config)
             logger.log(diag)
 
 

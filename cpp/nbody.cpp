@@ -83,7 +83,7 @@ struct Config {
     double MEAN_INTERPARTICLE_SPACING;
     double SOFTENING_SQUARED;
     double DYNAMICAL_TIME;
-    double FIXED_DT;
+    double FIXED_DT; // Renamed from DT
     double RENDER_SCALE;
 
     // Global Cosmological Variables
@@ -546,6 +546,8 @@ struct CIC_Data {
     double w1, w2, w3, w4;
 };
 
+// Data structure for the PP solver's cell list
+using CellGrid = std::vector<std::vector<int>>;
 
 // ------------------------
 // Helper Functions
@@ -581,9 +583,29 @@ void update_cosmology( Config& config, double total_time ) {
     }
 }
 
-void cic_mass_assignment( const std::vector<Particle>& particles, Grid& dm_rho, std::vector<CIC_Data>& cic_data, const Config& config ) {
+/**
+ * @brief Performs one loop over particles to generate all data needed
+ * for both PP (cell list) and PM (density grid, CIC weights) solvers.
+ * @param particles The vector of particles.
+ * @param config The simulation configuration.
+ * @param dm_rho (output) The particle density grid (for PM).
+ * @param cic_data (output) The CIC interpolation weights (for PM).
+ * @param cell_grid (output) The cell list, mapping [cell_index] -> [particle_ids] (for PP).
+ */
+void particle_binning_and_mass_assignment(
+    const std::vector<Particle>& particles,
+    const Config& config,
+    Grid& dm_rho,
+    std::vector<CIC_Data>& cic_data,
+    CellGrid& cell_grid )
+{
     dm_rho.setZero();
     cic_data.assign( particles.size(), {} );
+
+    // Clear the cell grid from the previous step
+    for( auto& cell : cell_grid ) {
+        cell.clear();
+    }
 
     for( size_t i = 0; i < particles.size(); ++i ) {
         const auto& p = particles[i];
@@ -591,17 +613,29 @@ void cic_mass_assignment( const std::vector<Particle>& particles, Grid& dm_rho, 
         int iy = static_cast< int >( p.pos.y / config.CELL_SIZE );
         double frac_x = ( p.pos.x / config.CELL_SIZE ) - ix;
         double frac_y = ( p.pos.y / config.CELL_SIZE ) - iy;
+
+        // For PM: Calculate CIC weights
         double w1 = ( 1 - frac_x ) * ( 1 - frac_y ), w2 = frac_x * ( 1 - frac_y );
         double w3 = ( 1 - frac_x ) * frac_y, w4 = frac_x * frac_y;
         cic_data[i] = { ix, iy, w1, w2, w3, w4 };
 
+        // For PM: Assign mass to density grid
         dm_rho( ( ix + config.MESH_SIZE ) % config.MESH_SIZE, ( iy + config.MESH_SIZE ) % config.MESH_SIZE ) += p.mass * w1;
         dm_rho( ( ix + 1 + config.MESH_SIZE ) % config.MESH_SIZE, ( iy + config.MESH_SIZE ) % config.MESH_SIZE ) += p.mass * w2;
         dm_rho( ( ix + config.MESH_SIZE ) % config.MESH_SIZE, ( iy + 1 + config.MESH_SIZE ) % config.MESH_SIZE ) += p.mass * w3;
         dm_rho( ( ix + 1 + config.MESH_SIZE ) % config.MESH_SIZE, ( iy + 1 + config.MESH_SIZE ) % config.MESH_SIZE ) += p.mass * w4;
+
+        // For PP: Bin particle into the cell list
+        int cell_index_x = ( ix % config.MESH_SIZE + config.MESH_SIZE ) % config.MESH_SIZE;
+        int cell_index_y = ( iy % config.MESH_SIZE + config.MESH_SIZE ) % config.MESH_SIZE;
+        int cell_index = cell_index_y * config.MESH_SIZE + cell_index_x;
+        cell_grid[cell_index].push_back( static_cast< int >( i ) );
     }
+
+    // Finalize density grid
     dm_rho /= ( config.CELL_SIZE * config.CELL_SIZE );
 }
+
 
 void cic_force_interpolation( const std::vector<Particle>& particles, const Grid& ax_grid, const Grid& ay_grid, const std::vector<CIC_Data>& cic_data, std::vector<Vec2>& forces, const Config& config ) {
     forces.assign( particles.size(), { 0.0, 0.0 } );
@@ -622,9 +656,13 @@ void cic_force_interpolation( const std::vector<Particle>& particles, const Grid
 }
 
 // Returns total_rho for diagnostics
-Grid compute_gravitational_acceleration( std::vector<Particle>& particles, GasGrid& gas, Grid& g_grid_x, Grid& g_grid_y, std::vector<CIC_Data>& cic_data, const Config& config ) {
-    Grid dm_rho( config.MESH_SIZE, config.MESH_SIZE );
-    cic_mass_assignment( particles, dm_rho, cic_data, config );
+Grid compute_gravitational_acceleration(
+    GasGrid& gas,
+    Grid& g_grid_x,
+    Grid& g_grid_y,
+    const Config& config,
+    const Grid& dm_rho )
+{
     Grid total_rho = dm_rho + ( config.USE_HYDRO ? gas.density : Grid::Zero( config.MESH_SIZE, config.MESH_SIZE ) );
 
     pocketfft::shape_t shape = { ( size_t )config.MESH_SIZE, ( size_t )config.MESH_SIZE };
@@ -662,34 +700,33 @@ Grid compute_gravitational_acceleration( std::vector<Particle>& particles, GasGr
     return total_rho;
 }
 
-void compute_PP_forces( std::vector<Particle>& particles, std::vector<Vec2>& pp_forces, const Config& config ) {
+void compute_PP_forces(
+    std::vector<Particle>& particles,
+    std::vector<Vec2>& pp_forces,
+    const Config& config,
+    const CellGrid& cell_grid )
+{
     pp_forces.assign( particles.size(), { 0.0, 0.0 } );
-
-    std::vector<std::vector<int>> cell_grid( config.MESH_SIZE * config.MESH_SIZE );
-    for( size_t i = 0; i < particles.size(); ++i ) {
-        int ix = static_cast< int >( particles[i].pos.x / config.CELL_SIZE );
-        int iy = static_cast< int >( particles[i].pos.y / config.CELL_SIZE );
-        ix = ( ix % config.MESH_SIZE + config.MESH_SIZE ) % config.MESH_SIZE;
-        iy = ( iy % config.MESH_SIZE + config.MESH_SIZE ) % config.MESH_SIZE;
-        int cell_index = iy * config.MESH_SIZE + ix;
-        cell_grid[cell_index].push_back( static_cast< int >( i ) );
-    }
-
     const int search_radius_cells = static_cast< int >( ceil( config.CUTOFF_RADIUS / config.CELL_SIZE ) );
 
     for( size_t i = 0; i < particles.size(); ++i ) {
         auto& p1 = particles[i];
+
+        // We need the particle's *un-wrapped* cell index for neighbor search
         int ix = static_cast< int >( p1.pos.x / config.CELL_SIZE );
         int iy = static_cast< int >( p1.pos.y / config.CELL_SIZE );
-        ix = ( ix % config.MESH_SIZE + config.MESH_SIZE ) % config.MESH_SIZE;
-        iy = ( iy % config.MESH_SIZE + config.MESH_SIZE ) % config.MESH_SIZE;
+        // Note: We don't need the wrapped (ix % MESH_SIZE) here,
+        // because we use the wrapped index to *find* neighbor cells.
 
         for( int dx_cell = -search_radius_cells; dx_cell <= search_radius_cells; ++dx_cell ) {
             for( int dy_cell = -search_radius_cells; dy_cell <= search_radius_cells; ++dy_cell ) {
+
+                // Get the wrapped index of the neighbor cell
                 int neighbor_ix = ( ix + dx_cell + config.MESH_SIZE ) % config.MESH_SIZE;
                 int neighbor_iy = ( iy + dy_cell + config.MESH_SIZE ) % config.MESH_SIZE;
                 int neighbor_cell_index = neighbor_iy * config.MESH_SIZE + neighbor_ix;
 
+                // Use the pre-computed cell_grid
                 for( int j : cell_grid[neighbor_cell_index] ) {
                     if( i >= j ) continue;
                     auto& p2 = particles[j];
@@ -817,7 +854,17 @@ void create_zeldovich_ics( std::vector<Particle>& particles, const Config& confi
 }
 
 // Returns a map of timings for the logger
-std::map<std::string, double> KDK_step( double total_time, std::vector<Particle>& particles, GasGrid& gas, double dt, Config& config ) {
+std::map<std::string, double> KDK_step(
+    double total_time,
+    std::vector<Particle>& particles,
+    GasGrid& gas,
+    double dt,
+    Config& config,
+    // Data structures to re-use
+    Grid& dm_rho,
+    std::vector<CIC_Data>& cic_data,
+    CellGrid& cell_grid )
+{
     std::map<std::string, double> timings;
     auto start_time = std::chrono::high_resolution_clock::now();
     auto end_time = start_time;
@@ -870,21 +917,27 @@ std::map<std::string, double> KDK_step( double total_time, std::vector<Particle>
 
     // COMPUTE FORCES at t + dt
     start_time = std::chrono::high_resolution_clock::now();
+    // 1. Bin all particles ONCE
+    particle_binning_and_mass_assignment( particles, config, dm_rho, cic_data, cell_grid );
+
+    // 2. Compute PM forces
     static Grid g_grid_x_new( config.MESH_SIZE, config.MESH_SIZE ), g_grid_y_new( config.MESH_SIZE, config.MESH_SIZE );
-    std::vector<CIC_Data> cic_data;
-    compute_gravitational_acceleration( particles, gas, g_grid_x_new, g_grid_y_new, cic_data, config );
+    compute_gravitational_acceleration( gas, g_grid_x_new, g_grid_y_new, config, dm_rho );
+    std::vector<Vec2> pm_forces;
+    if( config.USE_PM ) { cic_force_interpolation( particles, g_grid_x_new, g_grid_y_new, cic_data, pm_forces, config ); }
+    else { pm_forces.assign( particles.size(), { 0.0, 0.0 } ); }
     end_time = std::chrono::high_resolution_clock::now();
     timings["pm"] = std::chrono::duration_cast< std::chrono::duration<double> >( end_time - start_time ).count();
 
-    std::vector<Vec2> pp_forces, pm_forces;
+
     start_time = std::chrono::high_resolution_clock::now();
-    if( config.USE_PP ) { compute_PP_forces( particles, pp_forces, config ); }
+    // 3. Compute PP forces (using pre-computed cell_grid)
+    std::vector<Vec2> pp_forces;
+    if( config.USE_PP ) { compute_PP_forces( particles, pp_forces, config, cell_grid ); }
     else { pp_forces.assign( particles.size(), { 0.0, 0.0 } ); }
     end_time = std::chrono::high_resolution_clock::now();
     timings["pp"] = std::chrono::duration_cast< std::chrono::duration<double> >( end_time - start_time ).count();
 
-    if( config.USE_PM ) { cic_force_interpolation( particles, g_grid_x_new, g_grid_y_new, cic_data, pm_forces, config ); }
-    else { pm_forces.assign( particles.size(), { 0.0, 0.0 } ); }
 
     // Store new gravity field for next step's kick
     g_grid_x = g_grid_x_new;
@@ -1248,17 +1301,22 @@ std::string initialize_hdf5_file( H5::H5File& file, const Config& config ) {
 }
 
 
-int main() {
+int main( int argc, char* argv[] ) {
+    std::string config_filename = "simulation.ini";
+    if( argc >= 2 ) {
+        config_filename = argv[1];
+    }
+
     // Load Config
     Config config;
     try {
-        config.load( "simulation.ini" );
+        config.load( config_filename );
     }
     catch( const std::exception& e ) {
-        std::cerr << "Error loading simulation.ini: " << e.what() << std::endl;
+        std::cerr << "Error loading " << config_filename << ": " << e.what() << std::endl;
         return 1;
     }
-    std::cout << "Successfully loaded simulation.ini" << std::endl;
+    std::cout << "Successfully loaded " << config_filename << std::endl;
     std::cout << "Mesh size: " << config.MESH_SIZE << "x" << config.MESH_SIZE << std::endl;
     std::cout << "Particle count: " << config.NUM_DM_PARTICLES << std::endl;
 
@@ -1283,14 +1341,19 @@ int main() {
         gas.update_primitive_variables();
     }
 
-    std::vector<CIC_Data> cic_data;
-    std::vector<Vec2> pp_forces, pm_forces;
+    // Create persistent data structures for binning
+    Grid dm_rho( config.MESH_SIZE, config.MESH_SIZE );
+    std::vector<CIC_Data> cic_data( particles.size() );
+    CellGrid cell_grid( config.MESH_SIZE * config.MESH_SIZE );
 
     // Compute Initial Forces
-    compute_gravitational_acceleration( particles, gas, g_grid_x, g_grid_y, cic_data, config );
+    particle_binning_and_mass_assignment( particles, config, dm_rho, cic_data, cell_grid );
+    compute_gravitational_acceleration( gas, g_grid_x, g_grid_y, config, dm_rho );
+
+    std::vector<Vec2> pp_forces, pm_forces;
     if( config.USE_PM ) { cic_force_interpolation( particles, g_grid_x, g_grid_y, cic_data, pm_forces, config ); }
     else { pm_forces.assign( particles.size(), { 0.0, 0.0 } ); }
-    if( config.USE_PP ) { compute_PP_forces( particles, pp_forces, config ); }
+    if( config.USE_PP ) { compute_PP_forces( particles, pp_forces, config, cell_grid ); }
     else { pp_forces.assign( particles.size(), { 0.0, 0.0 } ); }
 
     for( size_t i = 0; i < particles.size(); ++i ) {
@@ -1333,7 +1396,8 @@ int main() {
         }
 
         // Core simulation step
-        std::map<std::string, double> timings = KDK_step( total_simulation_time, particles, gas, current_dt, config );
+        std::map<std::string, double> timings = KDK_step( total_simulation_time, particles, gas, current_dt, config,
+            dm_rho, cic_data, cell_grid ); // Pass persistent data structures
 
         // Update time
         total_simulation_time += current_dt;
@@ -1378,3 +1442,4 @@ int main() {
 
     return 0;
 }
+
