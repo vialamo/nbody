@@ -1,10 +1,10 @@
 # Notes on N-Body/Hydrodynamics Simulation
 
-This is a living document—a collection of knowledge that I have gathered while learning about cosmological simulations. It is not a formal text but rather a journal, an attempt to solidify complex concepts by structuring and explaining them in my own way.
+This is a living document—a collection of knowledge that I have gathered while learning about cosmological simulations. It is not a formal text but rather a journal, an attempt to solidify concepts by structuring and explaining them in my own way.
 
-This process has been a dual one. Alongside the theoretical exploration, I have been developing a "toy model"—a simple N-body/hydrodynamics simulation. This hands-on approach allowed me to understand algorithms by implementing them, and to appreciate physical principles by seeing their effects in a virtual universe. The explanations in this document came from the challenges of this practical work.
+Along the way, I have been developing a proof-of-concept engine—a simple N-body/hydrodynamics simulation, which allowed me to understand algorithms by implementing them, and to appreciate physical principles by seeing their effects in a virtual universe. The explanations in this document are reflected in this practical work.
 
-This is my best effort (and my AI assistant's as well) to present this knowledge in the way that I would have found most helpful at the start of my learning process.
+This is my best effort to present this knowledge in the way that I would have found most helpful at the start of my learning process.
 
 Victor Alamo
 vialamo@gmail.com
@@ -235,7 +235,7 @@ This allows us to replace the slow, brute-force calculation with a faster three-
    $$\mathcal{F}\{\nabla^2 G(\mathbf{r})\} = -k^2 G_k$$ $$\mathcal{F}\{4\pi G\delta(\mathbf{r})\} = 4\pi G$$ $$G_k = -\frac{4\pi G}{k^2}.$$
    This is the function we use to compute the potential in the Fourier domain. This function has a mathematical singularity at the **$k=0$ mode**. This mode (also known as the DC component) represents the **average potential** of the entire simulation box.
 
-   However, since physical forces depend only on the **gradient** of the potential ($\mathbf{F} = -\nabla\Phi$), not its absolute value, this average potential is physically arbitrary. To avoid the division-by-zero, we can redefine the $k=0$ component of the potential to an arbitrary value (usually zero). This is a standard procedure that makes the calculation well-defined without affecting the final forces.
+   However, since physical forces depend only on the **gradient** of the potential ($\mathbf{F} = -\nabla\Phi$), not its absolute value, this average potential is physically arbitrary. To avoid the division-by-zero, we can redefine the $k=0$ component of the potential to zero. Beyond just fixing a numerical error, this is mathematically equivalent to subtracting the mean background density of the universe from the source term. This is a standard technique in cosmology (often related to the "Jeans swindle"), which ensures that gravity is driven only by local *perturbations* (overdensities and underdensities) rather than the infinite mass of a periodic universe. It makes the calculation perfectly well-defined without affecting the final relative forces.
 
 2. **Multiply:**
    In frequency space, the Poisson equation becomes an element-wise multiplication:
@@ -1003,7 +1003,7 @@ Teyssier, R. (2002). *Cosmological hydrodynamics with adaptive mesh refinement. 
 
 ### Adaptive Timestep
 
-Computational cosmology simulations are filled with different, interacting components. Dark matter particles interact only through gravity, a long-range force that can be relatively slow. Baryonic gas, however, also interacts through hydrodynamic pressure, leading to shock waves and sound waves that propagate at very high speeds.
+Computational cosmology simulations are filled with different components. Dark matter particles interact only through gravity, a long-range force that can be relatively slow. Baryonic gas, however, also interacts through hydrodynamic pressure, leading to shock waves and sound waves that propagate at very high speeds.
 
 This creates a challenge: the simulation evolves on many different timescales simultaneously. In a dense, hot region of a gas cloud, the time it takes for a sound wave to cross a single grid cell might be a microsecond. In the cold, empty void, the time it takes for a particle to move significantly under gravity might be a million years.
 
