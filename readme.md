@@ -2,9 +2,11 @@
 
 This repository documents my experiments in cosmological N-body/hydrodynamics simulations. It contains two "toy model" simulation programs, one in Python and one in C++, along with a book that explains the underlying physics and algorithms.
 
-## Key Features Implemented
+The repository contains two distinct engines:
+*A 3D Python Implementation: Focuses on full 3D physics, utilizing VisPy for real-time GPU-accelerated volumetric rendering.
+*A 2D C++ Implementation: Serves as a high-performance algorithmic testbed, utilizing Eigen and PocketFFT to explore memory-contiguous architectures and optimized linear algebra.
 
-The simulations model a 2D universe and include a range of standard techniques used in cosmological codes:
+## Key Features Implemented
 
 * **Gravity Solvers:**
     * **Particle-Particle (PP):** Direct summation for high-accuracy short-range forces.
@@ -14,43 +16,46 @@ The simulations model a 2D universe and include a range of standard techniques u
     * **Expanding Universe:** Simulation in comoving coordinates within an Einstein-de Sitter (EdS) model.
     * **Cosmological Integrator:** A Kick-Drift-Kick (KDK) Leapfrog scheme that correctly handles Hubble drag.
     * **Initial Conditions:** Particle generation on a lattice with perturbations applied via a simplified Zel'dovich Approximation using a power-law power spectrum.
+    * **Adaptive Timestepping:** Dynamic calculation of the global timestep based on the Courant-Friedrichs-Lewy (CFL) hydro condition and maximum gravitational acceleration.
 * **Hydrodynamics:**
     * **Grid-Based (Eulerian) Solver:** Implements a finite-volume solver for the adiabatic Euler equations on a fixed grid, tracking conservative variables (density, momentum, energy).
     * **HLL Riemann Solver:** Uses the Harten-Lax-van Leer (HLL) approximate Riemann solver to compute fluxes between cells.
-    * **Operator Splitting:** Employs dimensional splitting (sequential X and Y-sweeps) to update the 2D grid.
-    * **Two-Way Coupling:** The gas density contributes to the total gravitational field, and the gas itself is accelerated by gravity via source terms in the momentum and energy equations.
+    * **Operator Splitting:** Employs directional splitting (sequential X, Y, and Z-sweeps) to update the multidimensional grid.
+    * **Two-Way Coupling:** The gas density contributes to the total gravitational field via the PM solver, and the gas momentum/energy is updated by gravitational source terms during the KDK kicks.
 * **Numerical Methods:**
-    * **Cloud-in-Cell (CIC):** A second-order mass assignment and force interpolation scheme for the PM grid.
+    * **Cloud-in-Cell (CIC):** A symmetric mass-assignment and force-interpolation scheme for the PM grid to ensure strict momentum conservation.
     * **Periodic Boundary Conditions:** A "wrap-around" universe to model a representative patch of a larger cosmos.
     * **Gravitational Softening:** Plummer softening to ensure numerical stability during close encounters.
 * **Configuration & I/O:**
     * **Parameter Input:** All simulation parameters (domain size, particle count, physics, output timing, etc.) are read at runtime from a plain-text `simulation.ini` file.
     * **Snapshot Output:** Simulation snapshots (including particle data, gas grids, and metadata) are saved periodically using the HDF5 (Hierarchical Data Format) file format.
+    * **Diagnostics:** Real-time logging of conservation metrics (mass, momentum, energy) and performance timings to stdout and CSV.
     
 ![N-Body Simulation Animation](simulation.gif)
 
 ## Repository Structure
 
-* [`/python/`](python/): A complete 2D P³M + hydrodynamics cosmological simulation written in Python.
-* [`/cpp/`](cpp/): A high-performance C++ equivalent of the simulation.
-* [`/book/`](book/): Contains a book titled **"Notes on N-Body/Hydrodynamics Simulation"** in Markdown format (also exported to epub and pdf). This document summarizes the concepts, derivations, and algorithms implemented in the code.
+* [`/python/`](python/): A complete 3D P³M + hydrodynamics cosmological simulation written in Python.
+* [`/cpp/`](cpp/): A high-performance 2D C++ equivalent of the simulation.
+* [`/book/`](book/): Contains a book titled **"Notes on N-Body/Hydrodynamics Simulation"** in Markdown format (also in epub and pdf). This document summarizes the concepts, derivations, and algorithms implemented in the code.
 
 ## Getting Started
 
-### Python Version
+### Python Version (3D)
 
 1.  **Prerequisites:** Ensure you have Python 3 and the following libraries installed:
     ```bash
-    pip install numpy pygame matplotlib scipy h5py
+    pip install numpy vispy h5py
     ```
+    *(Note: VisPy requires a working OpenGL implementation on your system for the 3D volumetric rendering).*
 2.  **Run:** Navigate to the `python/` directory (or wherever the script is). Make sure the `simulation.ini` file is in the same directory. Run the script:
     ```bash
     python nbody.py
     ```
 
-### C++ Version (Linux/Ubuntu)
+### C++ Version (2D) 
 
-1.  **Prerequisites:**
+1.  **Prerequisites (Linux/Ubuntu):**
     You need a C++ compiler, CMake, and the development libraries for SFML, HDF5, and Eigen.
 
     ```bash
