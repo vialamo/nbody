@@ -6,8 +6,9 @@ Along the way, I have been developing a proof-of-concept engine—a simple N-bod
 
 This is my best effort to present this knowledge in the way that I would have found most helpful at the start of my learning process.
 
-Victor Alamo
-vialamo@gmail.com
+Victor Alamo  
+vialamo@gmail.com  
+https://github.com/vialamo/nbody
 
 ## The N-Body Problem
 
@@ -64,7 +65,7 @@ $$d = \frac{L}{{N}^{1/3}}$$
 
 A typical choice for the softening length is then a small fraction of this, such as $\epsilon = d/30$. This ensures that the force is physically accurate for the vast majority of interactions, while the softening only activates during rare, close encounters to prevent numerical catastrophe.
 
-*Reference*
+*Key Literature & Further Reading*  
 Springel, V. (2005). *The cosmological simulation code GADGET-2. Monthly Notices of the Royal Astronomical Society*, 364(4), 1105-1134. arXiv:astro-ph/0505010. Available at [https://arxiv.org/abs/astro-ph/0505010](https://arxiv.org/abs/astro-ph/0505010)
 
 ## The Integrator
@@ -141,7 +142,7 @@ $$\mathbf{v}(t + \Delta t) = \mathbf{v}(t + \tfrac{1}{2}\Delta t) + \mathbf{a}(t
 
 While mathematically equivalent to Verlet in simpler cases, this staggered formulation is particularly robust for handling the time-varying and velocity-dependent forces present in a cosmological simulation. The symmetric "kick-force-kick" structure gracefully incorporates these complexities, which is why the KDK leapfrog is the workhorse integrator for nearly all modern cosmological N-body codes.
 
-*Reference*
+*Key Literature & Further Reading*  
 Tsang, D., Galley, C. R., Stein, L. C., & Turner, A. (2015). *Slimplectic Integrators: Variational Integrators for General Nonconservative Systems*. arXiv:1506.08443. Available at [https://arxiv.org/pdf/1506.08443.pdf](https://arxiv.org/pdf/1506.08443.pdf).
 
 ## The Particle-Mesh Method
@@ -257,7 +258,7 @@ $$F_{x, i,j,k} \approx -\frac{\Phi_{i+1,j,k} - \Phi_{i-1,j,k}}{2L}$$
 
 With the force calculated at every point on the grid, the final step is to **interpolate** this force back to each particle's continuous position. This is done using the same scheme we used for mass assignment (e.g., NGP or CIC), completing the Particle-Mesh calculation.
 
-*Reference*
+*Key Literature & Further Reading*  
 Breton, Michel-Andrès. (2024). *PySCo: A fast Particle-Mesh N-body code for modified gravity simulations in Python*. arXiv:2410.20501. Available at [https://export.arxiv.org/abs/2410.20501](https://export.arxiv.org/abs/2410.20501) 
 
 ## Advanced Interpolation
@@ -361,7 +362,7 @@ $$\mathbf{F}_p = m_p \mathbf{a}_p$$
 
 This symmetric "Splat-Gather" procedure ensures that the forces are numerically conservative, which is the fundamental reason why CIC allows a symplectic integrator to conserve energy over long periods.
 
-*Reference*
+*Key Literature & Further Reading*  
 Bagla, J. S., & Padmanabhan, T. (2004). *Cosmological N-Body Simulations*. arXiv:astro-ph/0411730. Available at [https://arxiv.org/pdf/astro-ph/0411730.pdf](https://arxiv.org/pdf/astro-ph/0411730.pdf)
 
 ## The P³M Algorithm
@@ -453,7 +454,7 @@ $$S(x) = 2x^3 - 3x^2 + 1$$
 
 Using this function to taper the correction term eliminates the unphysical jolt at the cutoff. It creates a continuous and differentiable total force, which allows the symplectic integrator to perform optimally and leads to superior long-term energy conservation.
 
-*Reference*
+*Key Literature & Further Reading*  
 Shirokov, A., & Bertschinger, E. (2005). *GRACOS: Scalable and Load Balanced P3M Cosmological N-body Code*. arXiv:astro-ph/0505087. Available at [https://arxiv.org/abs/astro-ph/0505087](https://arxiv.org/abs/astro-ph/0505087)
 
 ## An Expanding Space
@@ -532,7 +533,7 @@ $$G = \frac{3H(t)^2 (a(t)L)^3}{8\pi M_{total}} = \frac{L^3}{6\pi M_{total}} = \f
 
 By using this specific value for $G$, we ensure that the strength of gravity in our simulation is perfectly balanced against the expansion rate, allowing for the realistic, hierarchical growth of structure.
 
-*Reference*
+*Key Literature & Further Reading*  
 Springel, V. (2005). The cosmological simulation code GADGET-2. *Monthly Notices of the Royal Astronomical Society*, 364(4), 1105-1134. Available at: [https://arxiv.org/abs/astro-ph/0505010](https://arxiv.org/abs/astro-ph/0505010)
 
 ## Initial Conditions
@@ -621,7 +622,7 @@ $$\mathbf{v}_{\text{pec}}(t_{initial}) = H(t_{initial}) D(t_{initial}) \boldsymb
 
 This method produces a self-consistent set of initial conditions for both position and velocity, where the particle motions are correlated over large distances, forming the beginnings of the filaments and voids that will later evolve into galaxies and clusters.
 
-*Reference*
+*Key Literature & Further Reading*  
 Sirko, E. (2005). *Initial Conditions to Cosmological N-Body Simulations, or Translations from the Power Spectrum to Real Space*. arXiv:astro-ph/0503106. Available at [https://arxiv.org/abs/astro-ph/0503106](https://arxiv.org/abs/astro-ph/0503106)
 
 ## Validation and Accuracy
@@ -731,7 +732,7 @@ The Particle-Mesh method gains its speed by calculating long-range forces on a g
 
 Ultimately, running a successful simulation implies balancing these interconnected errors. A smaller softening length demands a smaller time step. A finer grid reduces aliasing but increases computational cost. Understanding these trade-offs is the key to producing results that are both stable and physically reliable.
 
-*Reference*
+*Key Literature & Further Reading*  
 Dehnen, W., & Read, J. I. (2011). *N-body simulations of gravitational dynamics*. arXiv:1105.1082. Available at [https://arxiv.org/abs/1105.1082](https://arxiv.org/abs/1105.1082).
 
 
@@ -998,7 +999,7 @@ Gas particles turn their kinetic energy into light through two main processes:
 
 The rate of cooling is highly dependent on the density and temperature of the gas. By implementing these heating and cooling functions in our simulation, we create a dynamic "cosmic thermostat" that, in a constant battle with gravity, ultimately dictates where and when the stars will begin to shine.
 
-*Reference*
+*Key Literature & Further Reading*  
 Teyssier, R. (2002). *Cosmological hydrodynamics with adaptive mesh refinement. A new high-resolution code called RAMSES*. arXiv:astro-ph/0111367. Available at [https://arxiv.org/abs/astro-ph/0111367](https://arxiv.org/abs/astro-ph/0111367)
 
 ### Adaptive Timestep
@@ -1051,3 +1052,7 @@ The final global timestep is therefore the minimum of all constraints:
 $$\Delta t = \min(\Delta t_{\text{CFL}}, \Delta t_{\text{grav}}, \Delta t_{\text{max}})$$
 
 This ensures that the simulation proceeds as fast as possible while respecting the most stringent physical constraints present anywhere in the computational domain, guaranteeing that no part of the simulation—from the fastest shock wave to the slowest drifting particle—evolves into an unstable, non-physical state.
+
+
+*Key Literature & Further Reading*  
+Bryan, G. L., Norman, M. L., O'Shea, B. W., et al. (2014). *ENZO: An Adaptive Mesh Refinement Code for Astrophysics*. The Astrophysical Journal Supplement Series, 211(2), 19. arXiv:1307.2265. Available at [https://arxiv.org/abs/1307.2265](https://arxiv.org/abs/1307.2265)
