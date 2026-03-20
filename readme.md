@@ -3,8 +3,8 @@
 This repository documents my experiments in cosmological N-body/hydrodynamics simulations. It contains two "toy model" simulation programs, one in Python and one in C++, along with a book that explains the underlying physics and algorithms.
 
 The repository contains two distinct engines:
-*A 3D Python Implementation: Focuses on full 3D physics, utilizing VisPy for real-time GPU-accelerated volumetric rendering.
-*A 2.5D C++ Implementation: Serves as a high-performance algorithmic testbed. It models a "Mass-Sheet Cosmological Slice"—restricting particle motion to a 2D plane while strictly preserving 3D gravitational physics. It utilices Eigen and PocketFFT to explore memory-contiguous architectures and optimized linear algebra.
+* A 3D Python Implementation: Focuses on full 3D physics, utilizing VisPy for real-time GPU-accelerated volumetric rendering.
+* A 2.5D C++ Implementation: Serves as a high-performance algorithmic testbed. It models a "Mass-Sheet Cosmological Slice"—restricting particle motion to a 2D plane while strictly preserving 3D gravitational physics. It utilices Eigen and PocketFFT to explore memory-contiguous architectures and optimized linear algebra.
 
 ## Key Features Implemented
 
