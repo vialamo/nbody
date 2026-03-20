@@ -4,7 +4,7 @@ This repository documents my experiments in cosmological N-body/hydrodynamics si
 
 The repository contains two distinct engines:
 *A 3D Python Implementation: Focuses on full 3D physics, utilizing VisPy for real-time GPU-accelerated volumetric rendering.
-*A 2D C++ Implementation: Serves as a high-performance algorithmic testbed, utilizing Eigen and PocketFFT to explore memory-contiguous architectures and optimized linear algebra.
+*A 2.5D C++ Implementation: Serves as a high-performance algorithmic testbed. It models a "Mass-Sheet Cosmological Slice"—restricting particle motion to a 2D plane while strictly preserving 3D gravitational physics. It utilices Eigen and PocketFFT to explore memory-contiguous architectures and optimized linear algebra.
 
 ## Key Features Implemented
 
@@ -36,7 +36,7 @@ The repository contains two distinct engines:
 ## Repository Structure
 
 * [`/python/`](python/): A complete 3D P³M + hydrodynamics cosmological simulation written in Python.
-* [`/cpp/`](cpp/): A high-performance 2D C++ equivalent of the simulation.
+* [`/cpp/`](cpp/): A high-performance 2.5D C++ mass-sheet equivalent of the simulation.
 * [`/book/`](book/): Contains a book titled **"Notes on N-Body/Hydrodynamics Simulation"** in Markdown format (also in epub and pdf). This document summarizes the concepts, derivations, and algorithms implemented in the code.
 
 ## Getting Started
@@ -53,7 +53,7 @@ The repository contains two distinct engines:
     python nbody.py
     ```
 
-### C++ Version (2D) 
+### C++ Version (2.5D mass-sheet cosmological slice) 
 
 1.  **Prerequisites (Linux/Ubuntu):**
     You need a C++ compiler, CMake, and the development libraries for SFML, HDF5, and Eigen.
