@@ -83,7 +83,7 @@ struct Config {
     double MEAN_INTERPARTICLE_SPACING;
     double SOFTENING_SQUARED;
     double DYNAMICAL_TIME;
-    double FIXED_DT; // Renamed from DT
+    double FIXED_DT;
     double RENDER_SCALE;
 
     // Global Cosmological Variables
@@ -147,7 +147,7 @@ struct Config {
         SOFTENING_SQUARED = pow( MEAN_INTERPARTICLE_SPACING / 50.0, 2 );
 
         DYNAMICAL_TIME = 1.0 / sqrt( G );
-        FIXED_DT = DT_FACTOR * DYNAMICAL_TIME; // Renamed from DT
+        FIXED_DT = DT_FACTOR * DYNAMICAL_TIME;
 
         RENDER_SCALE = ( double )RENDER_SIZE / DOMAIN_SIZE;
 
