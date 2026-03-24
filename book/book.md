@@ -406,6 +406,7 @@ The vector force that approximates the mesh's influence between two particles wi
 $$\mathbf{F}_{\text{PM}}^{\text{short}} = \frac{G m_1 m_2 \mathbf{r}}{\left(r^2 + \epsilon_{\text{PM}}^2\right)^{3/2}}$$
 
 The terms in this formula are:
+
 * $\mathbf{r}$ is the vector separating the two particles.
 * $r$ is the magnitude of that vector, $r = \|\mathbf{r}\|$.
 * $G, m_1, m_2$ are the gravitational constant and the particle masses.
@@ -476,6 +477,7 @@ Where $H(t)$ is the Hubble parameter at time $t$. This flow is the background up
 Tracking particles whose primary motion is this rapid expansion is computationally difficult. It's much easier to factor out the expansion. We do this by defining a **scale factor**, $a(t)$, which describes the relative size of the universe at any time $t$. By convention, $a=1$ today. In the past, $a$ was smaller.
 
 We can now define two types of coordinates:
+
 * **Proper Coordinates ($\mathbf{r}$):** The real, physical distance between two objects that you would measure with a ruler at time $t$. This distance grows as the universe expands.
 * **Comoving Coordinates ($\mathbf{x}$):** The coordinates of an object on our virtual, expanding grid. If an object is moved *only* by the Hubble Flow, its comoving coordinates **do not change**.
 
@@ -524,6 +526,7 @@ By equating $\rho_{mean} = \rho_c$ and substituting the EdS relations for $a(t)$
 #### Natural Units
 
 To simplify the implementation, it is standard practice to work in a system of **natural units** where key quantities are set to 1. A common choice for N-body simulations is to set:
+
 * The total mass of the system: $M_{total} = 1$
 * The comoving side length of the box: $L = 1$
 * The present-day scale factor: $a(t_{today}) = 1$
@@ -693,6 +696,7 @@ After running the simulation, we can check the planet's trajectory against Keple
 
 **1. Is the Orbit a Closed Ellipse? (Kepler's First Law)**
 The most important check. The planet should trace a stable, closed ellipse with the star at one of the foci. Common failure modes are:
+
 * **Energy Drift:** The orbit spirals inwards or outwards, indicating a non-symplectic integrator or a bug.
 * **Unphysical Precession:** The ellipse itself rotates over time. A large, rapid precession is a sign of numerical inaccuracy. A stable, non-precessing ellipse is a sign of a healthy integrator.
 
@@ -763,6 +767,7 @@ It states that the change in the gas's momentum ($\rho\mathbf{v}$) is caused by 
 $$\frac{\partial (\rho \mathbf{v})}{\partial t} + \nabla \cdot (\rho \mathbf{v} \otimes \mathbf{v}) = -\nabla P + \rho \mathbf{g}$$
 
 The right-hand side represents the forces:
+
 * **$-\nabla P$ (The Pressure Gradient Force):** This is the key new piece of physics. It describes the force that causes gas to flow from regions of high pressure to regions of low pressure. This is the force that allows the gas to resist gravitational collapse. 
 * **$\rho \mathbf{g}$ (The Gravitational Force):** This is the familiar force of gravity. The gravitational acceleration, $\mathbf{g}$, is calculated from the density of **all** matter (both dark matter and gas) using the existing Particle-Mesh solver. This term is the link that couples the gas to the underlying cosmic web.
 
@@ -786,6 +791,7 @@ The full set of cosmological hydrodynamic equations is complex, as it couples th
 
 $$\frac{\partial \mathbf{U}}{\partial t} + \nabla \cdot \mathbf{F}(\mathbf{U}) = \mathbf{S}(\mathbf{U})$$
 Where:
+
 * $\mathbf{U}$ is the vector of conserved state variables (density, momentum density, energy density).
 * $\nabla \cdot \mathbf{F}(\mathbf{U})$ is the "flux" term, which describes how quantities move due to pressure and advection (the fluid flowing).
 * $\mathbf{S}(\mathbf{U})$ is the "source" term, which describes changes due to external forces, namely gravity ($\rho\mathbf{g}$) and cosmic expansion (the Hubble drag).
@@ -823,6 +829,7 @@ Where $L$ is the cell size, and $\mathbf{F}_{i\pm1/2}$ is the flux vector across
 To solve this complex problem in a multi-dimensional case, the code uses a technique called **dimensional splitting**. This approach approximates the full multi-dimensional update by breaking it into a sequence of simpler, one-dimensional "sweeps," one for each spatial axis.
 
 The 1D flux equation is solved sequentially, one dimension at a time.
+
 1.  **First Sweep:** The fluxes are calculated along the first dimension (e.g., the x-axis) for the entire grid. These fluxes are then used to update the state of every cell.
 2.  **Subsequent Sweeps:** Using this **newly updated state** as the input, the process is repeated for the second dimension (e.g., the y-axis), and then again for the third (e.g., the z-axis), and so on, until all dimensions have been processed.
 
@@ -867,6 +874,7 @@ Here, $v_n$ represents the normal velocity (e.g., $v_x$ during an x-sweep).
 **3. Calculate the HLL Flux**
 
 The solver determines the flux at the interface based on the direction of these wave speeds.
+
 * If $S_L > 0$, the entire wave structure is moving to the right, away from the interface. The flux at the interface is simply the original Left flux:
     $$\mathbf{F}_{HLL} = \mathbf{F}_L$$
 * If $S_R < 0$, the entire wave structure is moving to the left. The flux at the interface is the original Right flux:
@@ -974,6 +982,7 @@ While the laws of hydrodynamics describe how gas moves, the true engine of galax
 First, it must be understood what "temperature" means in the near-vacuum of interstellar or intergalactic space. In the air around us, temperature is a measure of the energy transferred by countless atoms constantly colliding with each other. In the extremely sparse gas of the cosmos, particles are so far apart that they rarely ever collide.
 
 In this context, **temperature** is a direct measure of the **average kinetic energy** of the gas particles. It is a statement about **how fast the particles are moving**, not how much they are interacting.
+
 * A **"hot"** gas is one where the individual atoms and ions are moving at very high random speeds. The gas inside a galaxy cluster, for example, can reach millions of degrees, even though it is less dense than any vacuum we can create on Earth.
 * A **"cold"** gas is one where the particles are moving relatively slowly.
 
@@ -984,6 +993,7 @@ Cosmic gas doesn't have a "stove" to heat it up. Its temperature increases when 
 As gas is pulled into the deep gravitational well of a dark matter halo, it accelerates to enormous speeds. When this rapidly falling gas meets the gas that has already accumulated, it collides violently, creating an immense **shock wave**. This shock wave is an almost instantaneous conversion of the gas's ordered, in-falling kinetic energy into disordered, random motion—in other words, heat. This process, known as **virial heating**, can raise the gas temperature to millions of degrees, creating the vast, hot atmospheres we observe in galaxy clusters.
 
 Other significant heating sources include:
+
 * **Supernova Feedback:** The explosive death of massive stars creates powerful blast waves that rip through the surrounding medium, shocking and heating the gas. 
 * **Radiation:** High-energy photons from stars and active galactic nuclei can ionize atoms, transferring their energy to the gas and heating it.
 
