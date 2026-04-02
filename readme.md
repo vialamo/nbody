@@ -45,12 +45,12 @@ The repository contains two distinct engines:
 
 1.  **Prerequisites:** Ensure you have Python 3 and the following libraries installed:
     ```bash
-    pip install numpy vispy h5py
+    pip install numpy vispy h5py PyOpenGL
     ```
     *(Note: VisPy requires a working OpenGL implementation on your system for the 3D volumetric rendering).*
 2.  **Run:** Navigate to the `python/` directory (or wherever the script is). Make sure the `simulation.ini` file is in the same directory. Run the script:
     ```bash
-    python nbody.py
+    python main.py
     ```
 
 ### C++ Version (2.5D mass-sheet cosmological slice) 
