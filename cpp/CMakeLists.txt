@@ -27,9 +27,22 @@ include_directories(
 )
 
 # ---------------------------------------------------------------------
-# Target
+# Target & Sources
 # ---------------------------------------------------------------------
-add_executable(nbody nbody.cpp)
+# List all your new implementation files here! 
+# (Headers like .h or inline implementations like ini.h don't need to be compiled)
+set(SOURCES
+    main.cpp
+    engine.cpp
+    gas.cpp
+    ics.cpp
+    integrator.cpp
+    particles.cpp
+    utils.cpp
+    visualization.cpp
+)
+
+add_executable(nbody ${SOURCES})
 
 target_link_libraries(nbody
     PRIVATE
@@ -39,6 +52,11 @@ target_link_libraries(nbody
     sfml-window
     sfml-system
 )
+
+# Suppress the harmless HDF5 DLL warnings if compiling on Windows (MSVC)
+if(MSVC)
+    target_compile_options(nbody PRIVATE /wd4251)
+endif()
 
 # ---------------------------------------------------------------------
 # Post-build: copy resource/config files next to the executable
@@ -66,4 +84,3 @@ message(STATUS "SFML include dir: ${SFML_INCLUDE_DIRS}")
 message(STATUS "HDF5 include dir: ${HDF5_INCLUDE_DIRS}")
 message(STATUS "Eigen include dir: ${EIGEN3_INCLUDE_DIR}")
 message(STATUS "Executable will be in: ${CMAKE_BINARY_DIR}")
-
