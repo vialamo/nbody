@@ -910,17 +910,20 @@ By applying these cosmological source terms to the gas grid within the same KDK 
 
 ### Initial Conditions for the Gaseous Component
 
-While the dark matter particles are placed using the Zel'dovich approximation to create a "lumpy," non-uniform starting state, the hydrodynamic (gas) component is typically initialized in a much simpler fashion. This is a common simplification for cosmological simulations that models the gas as a separate fluid that will later fall into the dark matter potential wells.
+In cosmological simulations, the baryonic gas and the dark matter must be initialized to reflect the physical reality of the universe long after the epoch of recombination. By the time a typical simulation begins, the gas has already spent millions of years falling into the gravitational potential wells excavated by the dark matter. 
 
-The gas is not initialized with perturbations. Instead, it is treated as a perfectly smooth fluid, uniformly spread across the entire simulation box.
+Therefore, treating the gas as a smooth, static fluid is physically incorrect and will result in artificial decoupling. Instead, the gaseous component must be initialized in lockstep with the dark matter, sharing its exact density fluctuations and bulk velocity flows, governed by the Zel'dovich approximation.
 
-1.  **Initial Density:** The gas density, $\rho_{\text{gas}}$, is set to a constant, uniform value in every cell of the grid. This value is the total baryonic mass of the simulation divided by the total comoving volume of the box ($L^3$).
+**1. Initial Density**
+The gas density, $\rho_{\text{gas}}$, is not uniform; it must perfectly trace the initial density perturbations of the dark matter. Once the dark matter particles are displaced to their starting positions, their mass is mapped to the Eulerian grid (via schemes like Cloud-in-Cell) to establish the primordial dark matter density field. The gas density in each cell is then set directly proportional to this field, scaled by the cosmic baryon fraction—the ratio of total gas mass to total dark matter mass in the simulation. 
 
-2.  **Initial Peculiar Velocity:** The gas is started "cold" and "at rest" relative to the comoving grid. This means its initial peculiar velocity field, $\mathbf{v}_{\text{pec}}$, is set to zero in every cell.
+**2. Initial Peculiar Velocity**
+The gas cannot start "at rest". Because it has been gravitationally influenced by the dark matter for millions of years prior to the start of the simulation, the gas shares the same large-scale velocity flows. To achieve this synchronization, the continuous primordial velocity field is calculated natively on the high-resolution Eulerian grid using the Zel'dovich approximation. The gas grid is directly populated with these continuous velocity vectors, $\mathbf{v}_{\text{pec}}$. The collisionless dark matter particles, rather than carrying the grid, simply sample their individual initial velocities from this same continuous background field based on their starting coordinates.
 
-3.  **Initial Temperature:** The gas must have an initial thermodynamic state. To allow gravitational collapse to occur, the gas is initialized with a very low, uniform internal energy, $e$. This corresponds to a minimal starting temperature and ensures that the gas pressure is too weak to resist the pull of gravity.
+**3. Initial Energy**
+The total energy of the gas grid is initialized as the sum of its kinetic and internal (thermal) energies. Because the gas is now moving, it possesses a macroscopic kinetic energy density dictated by its initial momentum ($E_k = \frac{1}{2}\rho v^2$). The *internal* energy is initialized to a very low, uniform baseline. This ensures the gas starts "cold," meaning its thermal pressure is negligible and too weak to artificially resist the initial gravitational collapse.
 
-This setup creates a clean initial state. At $t=0$, the simulation consists of a lumpy, non-uniform distribution of dark matter particles embedded in a smooth, cold, and static sea of gas. When the simulation begins, the gas will immediately start to respond to the non-uniform gravitational field created by the dark matter, flowing out of the under-dense regions (voids) and falling into the over-dense regions (halos), beginning the process of galaxy formation.
+This setup creates a physically robust initial state. At $t=0$, the simulation consists of two distinct but perfectly synchronized fluids: a collisionless dark matter component and a hydrodynamic gas component, both sharing the exact same primordial density peaks and velocity flows. When the simulation begins, the cosmic web collapses cohesively, with the gas naturally shocking and heating as it flows into the deepening dark matter halos.
 
 ### Validation of the Hydrodynamic Solver
 
@@ -982,7 +985,7 @@ While the laws of hydrodynamics describe how gas moves, the true engine of galax
 
 First, it must be understood what "temperature" means in the near-vacuum of interstellar or intergalactic space. In the air around us, temperature is a measure of the energy transferred by countless atoms constantly colliding with each other. In the extremely sparse gas of the cosmos, particles are so far apart that they rarely ever collide.
 
-In this context, **temperature** is a direct measure of the **average kinetic energy** of the gas particles. It is a statement about **how fast the particles are moving**, not how much they are interacting.
+In this context, **temperature** is a direct measure of the **average kinetic energy** of the gas particles relative to the local bulk velocity of the fluid. It is a statement about **how fast the particles are moving**, not how much they are interacting.
 
 * A **"hot"** gas is one where the individual atoms and ions are moving at very high random speeds. The gas inside a galaxy cluster, for example, can reach millions of degrees, even though it is less dense than any vacuum we can create on Earth.
 * A **"cold"** gas is one where the particles are moving relatively slowly.

@@ -1,7 +1,6 @@
 import math
 import numpy as np
 
-# Import the base classes and physics routines needed to build the initial state
 from gas import GasGrid
 from particles import (Particle, particle_binning_and_mass_assignment, 
                        cic_force_interpolation, compute_PP_forces)
@@ -10,9 +9,9 @@ from state import SimState
 from integrator import update_cosmology
 
 def create_zeldovich_ics(config):
-    """Generates particles perturbed by the Zel'dovich approximation."""
-    n_per_side = config.num_dm_particles_side
-    ic_mesh_size = n_per_side
+    """Generates particles and gas velocity grids using the Zel'dovich approximation."""
+    # Calculate the primordial fields at the Eulerian grid resolution
+    ic_mesh_size = config.mesh_size
     cell_size = config.domain_size / ic_mesh_size
     grid_shape = (ic_mesh_size, ic_mesh_size, ic_mesh_size)
 
@@ -43,33 +42,70 @@ def create_zeldovich_ics(config):
     disp_y *= config.initial_scale_factor * cell_size
     disp_z *= config.initial_scale_factor * cell_size
 
+    gas_vx = config.initial_hubble_param * disp_x
+    gas_vy = config.initial_hubble_param * disp_y
+    gas_vz = config.initial_hubble_param * disp_z
+
+    # Sample the high-resolution field to create the particles
     particles = []
+    n_per_side = config.num_dm_particles_side
     spacing = config.domain_size / n_per_side
+
     for i in range(n_per_side):
         for j in range(n_per_side):
             for k in range(n_per_side):
+                # Particle's perfectly uniform starting coordinate
                 qx, qy, qz = (i + 0.5) * spacing, (j + 0.5) * spacing, (k + 0.5) * spacing
-                x = (qx + disp_x[i, j, k]) % config.domain_size
-                y = (qy + disp_y[i, j, k]) % config.domain_size
-                z = (qz + disp_z[i, j, k]) % config.domain_size
-                vx = config.initial_hubble_param * disp_x[i, j, k]
-                vy = config.initial_hubble_param * disp_y[i, j, k]
-                vz = config.initial_hubble_param * disp_z[i, j, k]
+                
+                # Map physical coordinate to the high-res grid index
+                ix = int(qx / cell_size) % ic_mesh_size
+                iy = int(qy / cell_size) % ic_mesh_size
+                iz = int(qz / cell_size) % ic_mesh_size
+
+                # Displace the particle using that cell's vector
+                x = (qx + disp_x[ix, iy, iz]) % config.domain_size
+                y = (qy + disp_y[ix, iy, iz]) % config.domain_size
+                z = (qz + disp_z[ix, iy, iz]) % config.domain_size
+                
+                # Assign the particle velocity
+                vx = gas_vx[ix, iy, iz]
+                vy = gas_vy[ix, iy, iz]
+                vz = gas_vz[ix, iy, iz]
+                
                 particles.append(Particle(x, y, z, config.dm_particle_mass, vx, vy, vz))
 
-    return particles
+    return particles, gas_vx, gas_vy, gas_vz
 
 def initialize_state(config):
     """Initializes particles, gas grid, and computes the 'Step 0' forces."""
-    particles = create_zeldovich_ics(config)
+    particles, gas_vx, gas_vy, gas_vz = create_zeldovich_ics(config)
     gas = GasGrid(config)
     
-    if config.enable_hydro:
-        gas.density.fill(config.gas_total_mass / (config.domain_size**3))
-        gas.energy = 1e-6 * gas.density
-        gas.update_primitive_variables()
-    
+    # Bin Dark Matter to get the primordial density structure FIRST
     dm_rho, cic_data, cells, particle_cells = particle_binning_and_mass_assignment(particles, config)
+    
+    # Initialize Gas to perfectly trace the Dark Matter
+    if config.enable_hydro:
+        # Gas density is directly proportional to DM density
+        total_dm_mass = len(particles) * config.dm_particle_mass
+        mass_ratio = config.gas_total_mass / total_dm_mass
+        
+        gas.density = dm_rho * mass_ratio
+        
+        # Prevent hydro crashes in deep voids by setting a density floor
+        gas.density = np.maximum(gas.density, 1e-12)
+
+        gas.momentum_x = gas.density * gas_vx
+        gas.momentum_y = gas.density * gas_vy
+        gas.momentum_z = gas.density * gas_vz
+
+        initial_internal_energy = 1e-6
+        kin_energy = 0.5 * (gas.momentum_x**2 + gas.momentum_y**2 + gas.momentum_z**2) / gas.density
+        
+        gas.energy = (gas.density * initial_internal_energy) + kin_energy
+        gas.update_primitive_variables()
+        
+    # Compute Step 0 Gravity Forces
     ax_grid, ay_grid, az_grid, total_rho = compute_gravitational_acceleration(gas, config, dm_rho)
     pm_forces = cic_force_interpolation(particles, ax_grid, ay_grid, az_grid, cic_data, config)
     pp_forces = compute_PP_forces(particles, config, cells, particle_cells)
