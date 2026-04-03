@@ -31,8 +31,6 @@ struct Config {
     int DEBUG_INFO_EVERY_CYCLES;
     int SAVE_RENDER_EVERY_CYCLES;
     int SEED;
-    unsigned int RENDER_SIZE;
-    bool ENABLE_VISUALIZATION;
     int MAX_CYCLES;
 
     // Derived Parameters
@@ -42,7 +40,7 @@ struct Config {
     int NUM_DM_PARTICLES;
     double TOTAL_MASS, DM_PARTICLE_MASS, GAS_TOTAL_MASS;
     double MEAN_INTERPARTICLE_SPACING, SOFTENING_SQUARED;
-    double DYNAMICAL_TIME, FIXED_DT, RENDER_SCALE;
+    double DYNAMICAL_TIME, FIXED_DT;
 
     void load( const std::string& filename ) {
         ini::Ini config_file;
@@ -72,25 +70,26 @@ struct Config {
         DEBUG_INFO_EVERY_CYCLES = config_file.get_int( "output", "debug_info_every_cycles", 40 );
         SAVE_RENDER_EVERY_CYCLES = config_file.get_int( "output", "save_render_every_cycles", 0 );
         SEED = config_file.get_int( "output", "seed", 42 );
-        RENDER_SIZE = config_file.get_int( "visualization", "render_size", 800 );
-        ENABLE_VISUALIZATION = config_file.get_bool( "visualization", "enable_visualization", true );
 
         CELL_SIZE = DOMAIN_SIZE / MESH_SIZE;
-        CELL_VOLUME = CELL_SIZE * CELL_SIZE;
+        CELL_VOLUME = CELL_SIZE * CELL_SIZE * CELL_SIZE;
         OMEGA_DM = 1.0 - OMEGA_BARYON;
         CUTOFF_RADIUS = CUTOFF_RADIUS_CELLS * CELL_SIZE;
         CUTOFF_RADIUS_SQUARED = CUTOFF_RADIUS * CUTOFF_RADIUS;
         CUTOFF_TRANSITION_WIDTH = CUTOFF_TRANSITION_WIDTH_FACTOR * CUTOFF_RADIUS;
         R_SWITCH_START = CUTOFF_RADIUS - CUTOFF_TRANSITION_WIDTH;
         R_SWITCH_START_SQ = R_SWITCH_START * R_SWITCH_START;
-        NUM_DM_PARTICLES = N_PER_SIDE * N_PER_SIDE;
+
+        NUM_DM_PARTICLES = N_PER_SIDE * N_PER_SIDE * N_PER_SIDE;
+
         TOTAL_MASS = 1.0;
         DM_PARTICLE_MASS = ( TOTAL_MASS * OMEGA_DM ) / NUM_DM_PARTICLES;
         GAS_TOTAL_MASS = TOTAL_MASS * OMEGA_BARYON;
-        MEAN_INTERPARTICLE_SPACING = DOMAIN_SIZE / sqrt( ( double )NUM_DM_PARTICLES );
+
+        MEAN_INTERPARTICLE_SPACING = DOMAIN_SIZE / std::cbrt( ( double )NUM_DM_PARTICLES );
+
         SOFTENING_SQUARED = pow( MEAN_INTERPARTICLE_SPACING / 50.0, 2 );
         DYNAMICAL_TIME = 1.0 / sqrt( G );
         FIXED_DT = DT_FACTOR * DYNAMICAL_TIME;
-        RENDER_SCALE = ( double )RENDER_SIZE / DOMAIN_SIZE;
     }
 };

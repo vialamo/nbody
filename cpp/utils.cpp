@@ -54,7 +54,7 @@ void Logger::write_header() {
     if( !log_file.is_open() || header_written ) return;
 
     log_file << "cycle,sim_time,scale_factor,"
-        << "total_mass_gas,total_mass_dm,total_momentum_gas_x,total_momentum_gas_y,total_momentum_dm_x,total_momentum_dm_y,"
+        << "total_mass_gas,total_mass_dm,total_momentum_gas_x,total_momentum_gas_y,total_momentum_gas_z,total_momentum_dm_x,total_momentum_dm_y,total_momentum_dm_z,"
         << "ke_gas,ke_dm,pe_dm,ie_gas,"
         << "dt_cfl,dt_gravity,dt_final,"
         << "max_gas_density,max_gas_pressure,max_gas_velocity,"
@@ -71,8 +71,8 @@ void Logger::log( const Diagnostics& diag ) {
     if( log_file.is_open() ) {
         log_file << diag.cycle << "," << diag.sim_time << "," << diag.scale_factor << ","
             << diag.total_mass_gas << "," << diag.total_mass_dm << ","
-            << diag.total_momentum_gas.x << "," << diag.total_momentum_gas.y << ","
-            << diag.total_momentum_dm.x << "," << diag.total_momentum_dm.y << ","
+            << diag.total_momentum_gas.x << "," << diag.total_momentum_gas.y << "," << diag.total_momentum_gas.z << ","
+            << diag.total_momentum_dm.x << "," << diag.total_momentum_dm.y << "," << diag.total_momentum_dm.z << ","
             << diag.ke_gas << "," << diag.ke_dm << "," << diag.pe_dm << "," << diag.ie_gas << ","
             << diag.dt_cfl << "," << diag.dt_gravity << "," << diag.dt_final << ","
             << diag.max_gas_density << "," << diag.max_gas_pressure << "," << diag.max_gas_velocity << ","
@@ -84,7 +84,6 @@ void Logger::log( const Diagnostics& diag ) {
     auto now = std::chrono::high_resolution_clock::now();
     double wall_time_s = std::chrono::duration_cast< std::chrono::duration<double> >( now - start_time ).count();
     double mass_err = diag.total_mass() - 1.0;
-    Vec2 total_mom = diag.total_momentum();
 
     std::cout << "[Cycle " << diag.cycle << "] "
         << "Wall: " << format_double( wall_time_s, 1 ) << "s | "
@@ -97,9 +96,11 @@ void Logger::log( const Diagnostics& diag ) {
         << format_double( diag.total_mass_gas, 4 ) << " | "
         << format_double( diag.total_mass(), 4 )
         << " (Err: " << std::scientific << std::setprecision( 1 ) << mass_err << std::fixed << ")" << std::endl;
+
     std::cout << "    - Momentum (P/G): ("
-        << format_double( diag.total_momentum_dm.x, 1, true ) << ", " << format_double( diag.total_momentum_dm.y, 1, true ) << ") | ("
-        << format_double( diag.total_momentum_gas.x, 1, true ) << ", " << format_double( diag.total_momentum_gas.y, 1, true ) << ")" << std::endl;
+        << format_double( diag.total_momentum_dm.x, 1, true ) << ", " << format_double( diag.total_momentum_dm.y, 1, true ) << ", " << format_double( diag.total_momentum_dm.z, 1, true ) << ") | ("
+        << format_double( diag.total_momentum_gas.x, 1, true ) << ", " << format_double( diag.total_momentum_gas.y, 1, true ) << ", " << format_double( diag.total_momentum_gas.z, 1, true ) << ")" << std::endl;
+
     std::cout << "    - Energy (KE/PE/IE): "
         << format_double( diag.ke_dm + diag.ke_gas, 3, true ) << " | "
         << format_double( diag.pe_dm, 3, true ) << " | "
@@ -145,12 +146,14 @@ void HDF5Writer::set_attr_bool( H5::H5Object& obj, const char* attr_name, bool v
     set_attr_int( obj, attr_name, int_val );
 }
 
-void HDF5Writer::write_grid( H5::Group& group, const char* dataset_name, const Grid& grid ) {
-    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> row_major_grid = grid;
-    hsize_t dims[2] = { ( hsize_t )grid.rows(), ( hsize_t )grid.cols() };
-    H5::DataSpace dataspace( 2, dims );
+void HDF5Writer::write_grid( H5::Group& group, const char* dataset_name, const Grid3D& grid ) {
+    hsize_t N = grid.n;
+    hsize_t dims[3] = { N, N, N };
+
+    H5::DataSpace dataspace( 3, dims );
+
     H5::DataSet dataset = group.createDataSet( dataset_name, H5::PredType::NATIVE_DOUBLE, dataspace );
-    dataset.write( row_major_grid.data(), H5::PredType::NATIVE_DOUBLE );
+    dataset.write( grid.raw_data(), H5::PredType::NATIVE_DOUBLE );
     dataset.close();
 }
 
@@ -168,7 +171,7 @@ HDF5Writer::HDF5Writer( const Config& config ) {
     std::cout << "Creating HDF5 output file: " << filename_str << std::endl;
 
     try {
-        file = H5::H5File( filename_str, H5F_ACC_TRUNC );
+        file = H5::H5File( filename_str.c_str(), H5F_ACC_TRUNC | H5F_ACC_SWMR_WRITE );
         H5::Group root_group = file.openGroup( "/" );
 
         set_attr_double( root_group, "domain_size", config.DOMAIN_SIZE );
@@ -220,21 +223,40 @@ double HDF5Writer::save_snapshot( int snapshot_index, const SimState& state, con
 
         H5::Group particle_group = snapshot_group.createGroup( "particles" );
         size_t n_particles = state.dm.particles.size();
-        std::vector<double> pos_x( n_particles ), pos_y( n_particles ), vel_x( n_particles ), vel_y( n_particles ), acc_x( n_particles ), acc_y( n_particles ), mass( n_particles );
+
+        std::vector<double> pos_x( n_particles ), pos_y( n_particles ), pos_z( n_particles );
+        std::vector<double> vel_x( n_particles ), vel_y( n_particles ), vel_z( n_particles );
+        std::vector<double> acc_x( n_particles ), acc_y( n_particles ), acc_z( n_particles );
+        std::vector<double> mass( n_particles );
 
         for( size_t i = 0; i < n_particles; ++i ) {
-            pos_x[i] = state.dm.particles[i].pos.x; pos_y[i] = state.dm.particles[i].pos.y;
-            vel_x[i] = state.dm.particles[i].vel.x; vel_y[i] = state.dm.particles[i].vel.y;
-            acc_x[i] = state.dm.particles[i].acc.x; acc_y[i] = state.dm.particles[i].acc.y;
+            pos_x[i] = state.dm.particles[i].pos.x;
+            pos_y[i] = state.dm.particles[i].pos.y;
+            pos_z[i] = state.dm.particles[i].pos.z;
+
+            vel_x[i] = state.dm.particles[i].vel.x;
+            vel_y[i] = state.dm.particles[i].vel.y;
+            vel_z[i] = state.dm.particles[i].vel.z;
+
+            acc_x[i] = state.dm.particles[i].acc.x;
+            acc_y[i] = state.dm.particles[i].acc.y;
+            acc_z[i] = state.dm.particles[i].acc.z;
+
             mass[i] = state.dm.particles[i].mass;
         }
 
         write_particle_vec( particle_group, "position_x", pos_x );
         write_particle_vec( particle_group, "position_y", pos_y );
+        write_particle_vec( particle_group, "position_z", pos_z );
+
         write_particle_vec( particle_group, "velocity_x", vel_x );
         write_particle_vec( particle_group, "velocity_y", vel_y );
+        write_particle_vec( particle_group, "velocity_z", vel_z );
+
         write_particle_vec( particle_group, "acceleration_x", acc_x );
         write_particle_vec( particle_group, "acceleration_y", acc_y );
+        write_particle_vec( particle_group, "acceleration_z", acc_z );
+
         write_particle_vec( particle_group, "mass", mass );
         particle_group.close();
 
@@ -243,11 +265,13 @@ double HDF5Writer::save_snapshot( int snapshot_index, const SimState& state, con
             write_grid( gas_group, "density", state.gas.density );
             write_grid( gas_group, "momentum_x", state.gas.momentum_x );
             write_grid( gas_group, "momentum_y", state.gas.momentum_y );
+            write_grid( gas_group, "momentum_z", state.gas.momentum_z );
             write_grid( gas_group, "energy", state.gas.energy );
             write_grid( gas_group, "pressure", state.gas.pressure );
             gas_group.close();
         }
         snapshot_group.close();
+        file.flush( H5F_SCOPE_GLOBAL );
     }
     catch( H5::Exception& e ) {
         std::cerr << "Error: Could not save HDF5 snapshot." << std::endl;
@@ -285,7 +309,9 @@ Diagnostics calculate_diagnostics(
     if( config.USE_HYDRO ) {
         diag.max_gas_density = state.gas.density.maxCoeff();
         diag.max_gas_pressure = state.gas.pressure.maxCoeff();
-        diag.max_gas_velocity = ( state.gas.velocity_x.array().square() + state.gas.velocity_y.array().square() ).sqrt().maxCoeff();
+        diag.max_gas_velocity = ( state.gas.velocity_x.array().square() +
+            state.gas.velocity_y.array().square() +
+            state.gas.velocity_z.array().square() ).sqrt().maxCoeff();
     }
 
     // Conservation (Particles)
@@ -293,6 +319,7 @@ Diagnostics calculate_diagnostics(
         diag.total_mass_dm += p.mass;
         diag.total_momentum_dm.x += p.mass * p.vel.x;
         diag.total_momentum_dm.y += p.mass * p.vel.y;
+        diag.total_momentum_dm.z += p.mass * p.vel.z;
     }
     auto energies = state.dm.calculate_energies( state.scale_factor, config );
     diag.ke_dm = energies.first;
@@ -303,21 +330,26 @@ Diagnostics calculate_diagnostics(
         diag.total_mass_gas = state.gas.density.sum() * config.CELL_VOLUME;
         diag.total_momentum_gas.x = state.gas.momentum_x.sum();
         diag.total_momentum_gas.y = state.gas.momentum_y.sum();
+        diag.total_momentum_gas.z = state.gas.momentum_z.sum();
 
-        Grid ke_gas_density = 0.5 * ( state.gas.momentum_x.array().square() + state.gas.momentum_y.array().square() );
-        for( int i = 0; i < config.MESH_SIZE; ++i ) {
-            for( int j = 0; j < config.MESH_SIZE; ++j ) {
-                if( state.gas.density( i, j ) > 1e-12 ) {
-                    ke_gas_density( i, j ) /= state.gas.density( i, j );
-                }
-                else {
-                    ke_gas_density( i, j ) = 0.0;
-                }
+        Grid3D ke_gas_density( config.MESH_SIZE );
+        ke_gas_density.data = 0.5 * ( state.gas.momentum_x.array().square() +
+            state.gas.momentum_y.array().square() +
+            state.gas.momentum_z.array().square() );
+
+        int total_cells = config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
+        for( int i = 0; i < total_cells; ++i ) {
+            if( state.gas.density.data[i] > 1e-12 ) {
+                ke_gas_density.data[i] /= state.gas.density.data[i];
+            }
+            else {
+                ke_gas_density.data[i] = 0.0;
             }
         }
         diag.ke_gas = ke_gas_density.sum() * config.CELL_VOLUME;
 
-        Grid internal_energy_density = state.gas.pressure.array() / ( config.GAMMA - 1.0 );
+        Grid3D internal_energy_density( config.MESH_SIZE );
+        internal_energy_density.data = state.gas.pressure.array() / ( config.GAMMA - 1.0 );
         diag.ie_gas = internal_energy_density.sum() * config.CELL_VOLUME;
     }
 

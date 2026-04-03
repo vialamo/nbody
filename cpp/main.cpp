@@ -1,16 +1,27 @@
 #include <iostream>
+#include <csignal>
+#include <atomic>
 #include "config.h"
 #include "utils.h"
 #include "engine.h"
-#include "visualization.h"
+
+std::atomic<bool> keep_running{ true };
+
+void signal_handler( int signal ) {
+    if( signal == SIGINT ) {
+        std::cout << "\n[Ctrl+C Detected] Finishing the current cycle and shutting down safely..." << std::endl;
+        keep_running = false;
+    }
+}
 
 int main( int argc, char* argv[] ) {
+    std::signal( SIGINT, signal_handler );
+
     std::string config_filename = "simulation.ini";
     if( argc >= 2 ) {
         config_filename = argv[1];
     }
 
-    // Load Configuration
     Config config;
     try {
         config.load( config_filename );
@@ -21,32 +32,26 @@ int main( int argc, char* argv[] ) {
     }
     std::cout << "Successfully loaded " << config_filename << std::endl;
 
-    // Initialize Output Files
     HDF5Writer h5_writer( config );
-    Logger logger( h5_writer.get_base_name() + "_diagnostics.csv");
+    Logger logger( h5_writer.get_base_name() + "_diagnostics.csv" );
 
-    // Create the Physics Engine
     SimulationEngine engine( config, logger, h5_writer );
 
-    // Run the Simulation
     try {
-        if( config.ENABLE_VISUALIZATION ) {
-            SimulationApp sim_app( engine );
-            sim_app.run(); // Blocks until window is closed
-        }
-        else {
-            std::cout << "Starting headless simulation loop..." << std::endl;
-            while( engine.cycle_count < config.MAX_CYCLES ) {
-                engine.step();
-            }
+        while( keep_running && engine.cycle_count < config.MAX_CYCLES ) {
+            engine.step();
         }
     }
     catch( const std::exception& e ) {
-        std::cerr << "\nSimulation interrupted: " << e.what() << std::endl;
+        std::cerr << "\nSimulation crashed: " << e.what() << std::endl;
     }
 
-    // Cleanup
-    std::cout << "Simulation finished" << std::endl;
+    if( !keep_running ) {
+        std::cout << "Simulation aborted by user." << std::endl;
+    }
+    else {
+        std::cout << "Simulation reached MAX_CYCLES." << std::endl;
+    }
 
     return 0;
 }

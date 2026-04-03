@@ -9,9 +9,6 @@ set(CMAKE_BUILD_TYPE Release)
 # Dependencies
 # ---------------------------------------------------------------------
 
-# SFML
-find_package(SFML 2.6.1 REQUIRED COMPONENTS graphics window system)
-
 # HDF5
 find_package(HDF5 REQUIRED COMPONENTS CXX)
 
@@ -21,7 +18,6 @@ find_package(Eigen3 3.3 REQUIRED)
 # Include directories
 include_directories(
     ${HDF5_INCLUDE_DIRS}
-    ${SFML_INCLUDE_DIRS}
     ${EIGEN3_INCLUDE_DIR}
     ${CMAKE_SOURCE_DIR}
 )
@@ -29,8 +25,6 @@ include_directories(
 # ---------------------------------------------------------------------
 # Target & Sources
 # ---------------------------------------------------------------------
-# List all your new implementation files here! 
-# (Headers like .h or inline implementations like ini.h don't need to be compiled)
 set(SOURCES
     main.cpp
     engine.cpp
@@ -39,7 +33,6 @@ set(SOURCES
     integrator.cpp
     particles.cpp
     utils.cpp
-    visualization.cpp
 )
 
 add_executable(nbody ${SOURCES})
@@ -48,9 +41,6 @@ target_link_libraries(nbody
     PRIVATE
     ${HDF5_CXX_LIBRARIES}
     ${HDF5_LIBRARIES}
-    sfml-graphics
-    sfml-window
-    sfml-system
 )
 
 # Suppress the harmless HDF5 DLL warnings if compiling on Windows (MSVC)
@@ -80,7 +70,6 @@ endforeach()
 # ---------------------------------------------------------------------
 # Status messages (for debug clarity)
 # ---------------------------------------------------------------------
-message(STATUS "SFML include dir: ${SFML_INCLUDE_DIRS}")
 message(STATUS "HDF5 include dir: ${HDF5_INCLUDE_DIRS}")
 message(STATUS "Eigen include dir: ${EIGEN3_INCLUDE_DIR}")
 message(STATUS "Executable will be in: ${CMAKE_BINARY_DIR}")

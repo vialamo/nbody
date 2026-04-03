@@ -8,7 +8,7 @@ class ParticleSystem {
 public:
     std::vector<Particle> particles;
 
-    Grid dm_rho;
+    Grid3D dm_rho;
     std::vector<CIC_Data> cic_data;
     CellGrid cell_grid;
 
@@ -16,10 +16,10 @@ public:
 
     void bin_and_assign_mass( const Config& config );
 
-    void interpolate_cic_forces( const Grid& ax_grid, const Grid& ay_grid,
-        std::vector<Vec2>& forces, const Config& config );
+    void interpolate_cic_forces( const Grid3D& ax_grid, const Grid3D& ay_grid, const Grid3D& az_grid,
+        std::vector<Vec3>& forces, const Config& config );
 
-    void compute_pp_forces( std::vector<Vec2>& pp_forces, const Config& config );
+    void compute_pp_forces( std::vector<Vec3>& pp_forces, const Config& config );
 
     std::pair<double, double> calculate_energies( double a, const Config& config ) const;
 

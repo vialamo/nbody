@@ -7,10 +7,10 @@
 void update_cosmology( SimState& state, const Config& config );
 
 // FFT Gravity Solver
-Grid compute_gravitational_acceleration(
+Grid3D compute_gravitational_acceleration(
     GasGrid& gas,
     const Config& config,
-    const Grid& dm_rho );
+    const Grid3D& dm_rho );
 
 // The Master Step
 std::map<std::string, double> KDK_step(

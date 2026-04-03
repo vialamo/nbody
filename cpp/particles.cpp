@@ -7,11 +7,10 @@ static double displacement( double dx, const Config& config ) {
 }
 
 ParticleSystem::ParticleSystem( const Config& config )
-    : dm_rho( config.MESH_SIZE, config.MESH_SIZE ),
+    : dm_rho( config.MESH_SIZE ),
     cic_data( config.NUM_DM_PARTICLES ),
-    cell_grid( config.MESH_SIZE* config.MESH_SIZE )
+    cell_grid( config.MESH_SIZE* config.MESH_SIZE* config.MESH_SIZE )
 {
-    // Pre-allocate memory
     particles.reserve( config.NUM_DM_PARTICLES );
 }
 
@@ -23,103 +22,133 @@ void ParticleSystem::bin_and_assign_mass( const Config& config ) {
         cell.clear();
     }
 
+    int N = config.MESH_SIZE;
+
     for( size_t i = 0; i < particles.size(); ++i ) {
         const auto& p = particles[i];
         int ix = static_cast< int >( p.pos.x / config.CELL_SIZE );
         int iy = static_cast< int >( p.pos.y / config.CELL_SIZE );
+        int iz = static_cast< int >( p.pos.z / config.CELL_SIZE );
+
         double frac_x = ( p.pos.x / config.CELL_SIZE ) - ix;
         double frac_y = ( p.pos.y / config.CELL_SIZE ) - iy;
+        double frac_z = ( p.pos.z / config.CELL_SIZE ) - iz;
 
-        double w1 = ( 1 - frac_x ) * ( 1 - frac_y ), w2 = frac_x * ( 1 - frac_y );
-        double w3 = ( 1 - frac_x ) * frac_y, w4 = frac_x * frac_y;
-        cic_data[i] = { ix, iy, w1, w2, w3, w4 };
+        // 8 corners of the 3D cell
+        double w000 = ( 1 - frac_x ) * ( 1 - frac_y ) * ( 1 - frac_z );
+        double w100 = frac_x * ( 1 - frac_y ) * ( 1 - frac_z );
+        double w010 = ( 1 - frac_x ) * frac_y * ( 1 - frac_z );
+        double w110 = frac_x * frac_y * ( 1 - frac_z );
+        double w001 = ( 1 - frac_x ) * ( 1 - frac_y ) * frac_z;
+        double w101 = frac_x * ( 1 - frac_y ) * frac_z;
+        double w011 = ( 1 - frac_x ) * frac_y * frac_z;
+        double w111 = frac_x * frac_y * frac_z;
 
-        dm_rho( ( ix + config.MESH_SIZE ) % config.MESH_SIZE, ( iy + config.MESH_SIZE ) % config.MESH_SIZE ) += p.mass * w1;
-        dm_rho( ( ix + 1 + config.MESH_SIZE ) % config.MESH_SIZE, ( iy + config.MESH_SIZE ) % config.MESH_SIZE ) += p.mass * w2;
-        dm_rho( ( ix + config.MESH_SIZE ) % config.MESH_SIZE, ( iy + 1 + config.MESH_SIZE ) % config.MESH_SIZE ) += p.mass * w3;
-        dm_rho( ( ix + 1 + config.MESH_SIZE ) % config.MESH_SIZE, ( iy + 1 + config.MESH_SIZE ) % config.MESH_SIZE ) += p.mass * w4;
+        cic_data[i] = { ix, iy, iz, w000, w100, w010, w110, w001, w101, w011, w111 };
 
-        int cell_index_x = ( ix % config.MESH_SIZE + config.MESH_SIZE ) % config.MESH_SIZE;
-        int cell_index_y = ( iy % config.MESH_SIZE + config.MESH_SIZE ) % config.MESH_SIZE;
-        int cell_index = cell_index_y * config.MESH_SIZE + cell_index_x;
+        int ix0 = ( ix + N ) % N, ix1 = ( ix + 1 + N ) % N;
+        int iy0 = ( iy + N ) % N, iy1 = ( iy + 1 + N ) % N;
+        int iz0 = ( iz + N ) % N, iz1 = ( iz + 1 + N ) % N;
+
+        dm_rho( ix0, iy0, iz0 ) += p.mass * w000;
+        dm_rho( ix1, iy0, iz0 ) += p.mass * w100;
+        dm_rho( ix0, iy1, iz0 ) += p.mass * w010;
+        dm_rho( ix1, iy1, iz0 ) += p.mass * w110;
+        dm_rho( ix0, iy0, iz1 ) += p.mass * w001;
+        dm_rho( ix1, iy0, iz1 ) += p.mass * w101;
+        dm_rho( ix0, iy1, iz1 ) += p.mass * w011;
+        dm_rho( ix1, iy1, iz1 ) += p.mass * w111;
+
+        int cell_index = iz0 * N * N + iy0 * N + ix0;
         cell_grid[cell_index].push_back( static_cast< int >( i ) );
     }
 
-    dm_rho /= ( config.CELL_SIZE * config.CELL_SIZE );
+    dm_rho.data /= config.CELL_VOLUME;
 }
 
-void ParticleSystem::interpolate_cic_forces( const Grid& ax_grid, const Grid& ay_grid, std::vector<Vec2>& forces, const Config& config ) {
-    forces.assign( particles.size(), { 0.0, 0.0 } );
+void ParticleSystem::interpolate_cic_forces( const Grid3D& ax_grid, const Grid3D& ay_grid, const Grid3D& az_grid, std::vector<Vec3>& forces, const Config& config ) {
+    forces.assign( particles.size(), { 0.0, 0.0, 0.0 } );
+    int N = config.MESH_SIZE;
+
     for( size_t i = 0; i < particles.size(); ++i ) {
         const auto& p = particles[i];
         const auto& cd = cic_data[i];
-        double ax = ( ax_grid( ( cd.ix + config.MESH_SIZE ) % config.MESH_SIZE, ( cd.iy + config.MESH_SIZE ) % config.MESH_SIZE ) * cd.w1 +
-            ax_grid( ( cd.ix + 1 + config.MESH_SIZE ) % config.MESH_SIZE, ( cd.iy + config.MESH_SIZE ) % config.MESH_SIZE ) * cd.w2 +
-            ax_grid( ( cd.ix + config.MESH_SIZE ) % config.MESH_SIZE, ( cd.iy + 1 + config.MESH_SIZE ) % config.MESH_SIZE ) * cd.w3 +
-            ax_grid( ( cd.ix + 1 + config.MESH_SIZE ) % config.MESH_SIZE, ( cd.iy + 1 + config.MESH_SIZE ) % config.MESH_SIZE ) * cd.w4 );
-        double ay = ( ay_grid( ( cd.ix + config.MESH_SIZE ) % config.MESH_SIZE, ( cd.iy + config.MESH_SIZE ) % config.MESH_SIZE ) * cd.w1 +
-            ay_grid( ( cd.ix + 1 + config.MESH_SIZE ) % config.MESH_SIZE, ( cd.iy + config.MESH_SIZE ) % config.MESH_SIZE ) * cd.w2 +
-            ay_grid( ( cd.ix + config.MESH_SIZE ) % config.MESH_SIZE, ( cd.iy + 1 + config.MESH_SIZE ) % config.MESH_SIZE ) * cd.w3 +
-            ay_grid( ( cd.ix + 1 + config.MESH_SIZE ) % config.MESH_SIZE, ( cd.iy + 1 + config.MESH_SIZE ) % config.MESH_SIZE ) * cd.w4 );
-        forces[i].x = ax * p.mass;
-        forces[i].y = ay * p.mass;
+
+        int ix0 = ( cd.ix + N ) % N, ix1 = ( cd.ix + 1 + N ) % N;
+        int iy0 = ( cd.iy + N ) % N, iy1 = ( cd.iy + 1 + N ) % N;
+        int iz0 = ( cd.iz + N ) % N, iz1 = ( cd.iz + 1 + N ) % N;
+
+        auto interp = [&]( const Grid3D& grid ) {
+            return grid( ix0, iy0, iz0 ) * cd.w000 + grid( ix1, iy0, iz0 ) * cd.w100 +
+                grid( ix0, iy1, iz0 ) * cd.w010 + grid( ix1, iy1, iz0 ) * cd.w110 +
+                grid( ix0, iy0, iz1 ) * cd.w001 + grid( ix1, iy0, iz1 ) * cd.w101 +
+                grid( ix0, iy1, iz1 ) * cd.w011 + grid( ix1, iy1, iz1 ) * cd.w111;
+            };
+
+        forces[i].x = interp( ax_grid ) * p.mass;
+        forces[i].y = interp( ay_grid ) * p.mass;
+        forces[i].z = interp( az_grid ) * p.mass;
     }
 }
 
-void ParticleSystem::compute_pp_forces( std::vector<Vec2>& pp_forces, const Config& config ) {
-    pp_forces.assign( particles.size(), { 0.0, 0.0 } );
-    const int search_radius_cells = static_cast< int >( ceil( config.CUTOFF_RADIUS / config.CELL_SIZE ) );
+void ParticleSystem::compute_pp_forces( std::vector<Vec3>& pp_forces, const Config& config ) {
+    pp_forces.assign( particles.size(), { 0.0, 0.0, 0.0 } );
+    const int search_radius = static_cast< int >( ceil( config.CUTOFF_RADIUS / config.CELL_SIZE ) );
+    int N = config.MESH_SIZE;
 
     for( size_t i = 0; i < particles.size(); ++i ) {
         auto& p1 = particles[i];
         int ix = static_cast< int >( p1.pos.x / config.CELL_SIZE );
         int iy = static_cast< int >( p1.pos.y / config.CELL_SIZE );
+        int iz = static_cast< int >( p1.pos.z / config.CELL_SIZE );
 
-        for( int dx_cell = -search_radius_cells; dx_cell <= search_radius_cells; ++dx_cell ) {
-            for( int dy_cell = -search_radius_cells; dy_cell <= search_radius_cells; ++dy_cell ) {
-                int neighbor_ix = ( ix + dx_cell + config.MESH_SIZE ) % config.MESH_SIZE;
-                int neighbor_iy = ( iy + dy_cell + config.MESH_SIZE ) % config.MESH_SIZE;
-                int neighbor_cell_index = neighbor_iy * config.MESH_SIZE + neighbor_ix;
+        for( int dx_cell = -search_radius; dx_cell <= search_radius; ++dx_cell ) {
+            for( int dy_cell = -search_radius; dy_cell <= search_radius; ++dy_cell ) {
+                for( int dz_cell = -search_radius; dz_cell <= search_radius; ++dz_cell ) {
 
-                for( int j : cell_grid[neighbor_cell_index] ) {
-                    if( i >= j ) continue;
-                    auto& p2 = particles[j];
+                    int neighbor_ix = ( ix + dx_cell + N ) % N;
+                    int neighbor_iy = ( iy + dy_cell + N ) % N;
+                    int neighbor_iz = ( iz + dz_cell + N ) % N;
+                    int neighbor_cell_index = neighbor_iz * N * N + neighbor_iy * N + neighbor_ix;
 
-                    double dx = displacement( p2.pos.x - p1.pos.x, config );
-                    double dy = displacement( p2.pos.y - p1.pos.y, config );
-                    double dist_sq = dx * dx + dy * dy;
+                    for( int j : cell_grid[neighbor_cell_index] ) {
+                        if( i >= j ) continue;
+                        auto& p2 = particles[j];
 
-                    if( config.USE_PM && dist_sq > config.CUTOFF_RADIUS_SQUARED ) continue;
+                        double dx = displacement( p2.pos.x - p1.pos.x, config );
+                        double dy = displacement( p2.pos.y - p1.pos.y, config );
+                        double dz = displacement( p2.pos.z - p1.pos.z, config );
+                        double dist_sq = dx * dx + dy * dy + dz * dz;
 
-                    double S = 1.0;
-                    if( config.USE_PM && dist_sq > config.R_SWITCH_START_SQ ) {
-                        double dist = sqrt( dist_sq );
-                        double x = ( dist - config.R_SWITCH_START ) / config.CUTOFF_TRANSITION_WIDTH;
-                        S = 2 * pow( x, 3 ) - 3 * pow( x, 2 ) + 1;
+                        if( config.USE_PM && dist_sq > config.CUTOFF_RADIUS_SQUARED ) continue;
+
+                        double S = 1.0;
+                        if( config.USE_PM && dist_sq > config.R_SWITCH_START_SQ ) {
+                            double dist = sqrt( dist_sq );
+                            double x = ( dist - config.R_SWITCH_START ) / config.CUTOFF_TRANSITION_WIDTH;
+                            S = 2 * pow( x, 3 ) - 3 * pow( x, 2 ) + 1;
+                        }
+
+                        double soft_dist_sq = dist_sq + pow( 0.5 * config.CELL_SIZE, 2 );
+                        double f_pm_short = config.G * p1.mass * p2.mass / soft_dist_sq;
+                        double soft_dist = sqrt( soft_dist_sq );
+                        Vec3 f_pm_short_vec = { f_pm_short * dx / soft_dist, f_pm_short * dy / soft_dist, f_pm_short * dz / soft_dist };
+
+                        double pp_dist_sq = dist_sq + config.SOFTENING_SQUARED;
+                        double f_pp = config.G * p1.mass * p2.mass / pp_dist_sq;
+                        double pp_dist = sqrt( pp_dist_sq );
+                        Vec3 f_pp_vec = { f_pp * dx / pp_dist, f_pp * dy / pp_dist, f_pp * dz / pp_dist };
+
+                        Vec3 correction_f;
+                        if( !config.USE_PM ) f_pm_short_vec = { 0.0, 0.0, 0.0 };
+
+                        correction_f.x = S * ( f_pp_vec.x - f_pm_short_vec.x );
+                        correction_f.y = S * ( f_pp_vec.y - f_pm_short_vec.y );
+                        correction_f.z = S * ( f_pp_vec.z - f_pm_short_vec.z );
+
+                        pp_forces[i].x += correction_f.x; pp_forces[i].y += correction_f.y; pp_forces[i].z += correction_f.z;
+                        pp_forces[j].x -= correction_f.x; pp_forces[j].y -= correction_f.y; pp_forces[j].z -= correction_f.z;
                     }
-
-                    double soft_dist_sq = dist_sq + pow( 0.5 * config.CELL_SIZE, 2 );
-                    double f_pm_short = config.G * p1.mass * p2.mass / soft_dist_sq;
-                    double soft_dist = sqrt( soft_dist_sq );
-                    Vec2 f_pm_short_vec = { f_pm_short * dx / soft_dist, f_pm_short * dy / soft_dist };
-
-                    double pp_dist_sq = dist_sq + config.SOFTENING_SQUARED;
-                    double f_pp = config.G * p1.mass * p2.mass / pp_dist_sq;
-                    double pp_dist = sqrt( pp_dist_sq );
-                    Vec2 f_pp_vec = { f_pp * dx / pp_dist, f_pp * dy / pp_dist };
-
-                    Vec2 correction_f;
-                    if( !config.USE_PM ) {
-                        f_pm_short_vec.x = 0;
-                        f_pm_short_vec.y = 0;
-                    }
-                    correction_f.x = S * ( f_pp_vec.x - f_pm_short_vec.x );
-                    correction_f.y = S * ( f_pp_vec.y - f_pm_short_vec.y );
-
-                    pp_forces[i].x += correction_f.x;
-                    pp_forces[i].y += correction_f.y;
-                    pp_forces[j].x -= correction_f.x;
-                    pp_forces[j].y -= correction_f.y;
                 }
             }
         }
@@ -130,7 +159,7 @@ std::pair<double, double> ParticleSystem::calculate_energies( double a, const Co
     double kinetic_energy = 0.0;
     double potential_energy = 0.0;
     for( const auto& p : particles ) {
-        double proper_vel_sq = ( a * p.vel.x ) * ( a * p.vel.x ) + ( a * p.vel.y ) * ( a * p.vel.y );
+        double proper_vel_sq = ( a * p.vel.x ) * ( a * p.vel.x ) + ( a * p.vel.y ) * ( a * p.vel.y ) + ( a * p.vel.z ) * ( a * p.vel.z );
         kinetic_energy += 0.5 * p.mass * proper_vel_sq;
     }
     for( size_t i = 0; i < particles.size(); ++i ) {
@@ -139,7 +168,8 @@ std::pair<double, double> ParticleSystem::calculate_energies( double a, const Co
             const auto& p2 = particles[j];
             double dx = displacement( p2.pos.x - p1.pos.x, config );
             double dy = displacement( p2.pos.y - p1.pos.y, config );
-            double proper_dist_sq = ( a * a ) * ( dx * dx + dy * dy + config.SOFTENING_SQUARED );
+            double dz = displacement( p2.pos.z - p1.pos.z, config );
+            double proper_dist_sq = ( a * a ) * ( dx * dx + dy * dy + dz * dz + config.SOFTENING_SQUARED );
             if( proper_dist_sq > 0 ) {
                 potential_energy -= config.G * p1.mass * p2.mass / sqrt( proper_dist_sq );
             }
@@ -153,10 +183,8 @@ double ParticleSystem::get_gravity_timestep( const Config& config ) const {
 
     double max_accel_sq = 1e-9;
     for( const auto& p : particles ) {
-        double accel_sq = p.acc.x * p.acc.x + p.acc.y * p.acc.y;
-        if( accel_sq > max_accel_sq ) {
-            max_accel_sq = accel_sq;
-        }
+        double accel_sq = p.acc.x * p.acc.x + p.acc.y * p.acc.y + p.acc.z * p.acc.z;
+        if( accel_sq > max_accel_sq ) max_accel_sq = accel_sq;
     }
     double dt_grav = sqrt( config.SOFTENING_SQUARED ) / sqrt( max_accel_sq );
     return dt_grav * config.GRAVITY_DT_FACTOR;
