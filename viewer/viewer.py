@@ -4,6 +4,8 @@ import numpy as np
 from vispy import app, scene
 from vispy.scene.visuals import Volume, Markers, Text
 from vispy.color import get_colormap, Colormap
+from vispy.io import write_png
+import os
 
 class True3DViewer:
     def __init__(self, filepath):
@@ -101,6 +103,7 @@ class True3DViewer:
         print("[Right Arrow] : Next Frame")
         print("[Left Arrow]  : Previous Frame")
         print("[F5]          : Refresh File to load new frames")
+        print("[E]           : Export all frames as clean PNGs")
         print("[Left Mouse]  : Rotate Camera")
         print("[Scroll]      : Zoom In/Out")
         print("[Shift + Left] : Pan Camera")
@@ -144,6 +147,40 @@ class True3DViewer:
         self.hud_text.text = hud_str
         self.canvas.update()
 
+    def export_frames(self):
+        """Exports all frames as clean PNGs without the HUD."""
+        export_dir = "export_frames"
+        os.makedirs(export_dir, exist_ok=True)
+        
+        print(f"\nStarting export of {self.num_frames} frames to '{export_dir}/'...")
+        
+        # Save current state (user's session)
+        original_frame = self.current_frame
+        was_playing = self.is_playing
+        if self.is_playing:
+            self.timer.stop()
+            self.is_playing = False
+            
+        for i in range(self.num_frames):
+            self.update_frame(i)
+            self.hud_text.text = ''
+            app.process_events() 
+            
+            img = self.canvas.render()
+            filepath = os.path.join(export_dir, f"frame_{i:04d}.png")
+            write_png(filepath, img)
+            
+            sys.stdout.write(f"\rExporting: {i+1}/{self.num_frames} ({filepath})")
+            sys.stdout.flush()
+            
+        print("\nExport complete!")
+        
+        # Restore the viewer back
+        self.update_frame(original_frame)
+        if was_playing:
+            self.timer.start()
+            self.is_playing = True
+
     def on_timer(self, event):
         if self.holding_right:
             if self.current_frame < self.num_frames - 1:
@@ -184,6 +221,9 @@ class True3DViewer:
             
         elif event.key == 'F5':
             self.refresh_file()
+
+        elif event.key == 'E':
+            self.export_frames()
 
     def on_key_release(self, event):
         if event.key == 'Right':
