@@ -1,0 +1,17 @@
+# Ignore CMake build folders
+cpp/build/
+
+# Ignore the C++ IntelliSense database
+compile_commands.json
+
+# Ignore VS Code cache files (but KEEP settings.json)
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# Ignore Python virtual environments and caches
+__pycache__/
+*.pyc
+.venv/
+venv/

@@ -1,0 +1,8 @@
+Checks: '-*,bugprone-*,performance-*,readability-*,modernize-*,
+  -readability-magic-numbers,
+  -modernize-use-trailing-return-type,
+  -readability-braces-around-statements,
+  -modernize-use-nodiscard,
+  -readability-identifier-length'
+WarningsAsErrors: ''
+HeaderFilterRegex: ''

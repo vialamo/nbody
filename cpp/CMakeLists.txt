@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(nbody_sim LANGUAGES CXX)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_BUILD_TYPE Release)
@@ -73,3 +74,14 @@ endforeach()
 message(STATUS "HDF5 include dir: ${HDF5_INCLUDE_DIRS}")
 message(STATUS "Eigen include dir: ${EIGEN3_INCLUDE_DIR}")
 message(STATUS "Executable will be in: ${CMAKE_BINARY_DIR}")
+
+# ---------------------------------------------------------------------
+# Code suggestions
+# ---------------------------------------------------------------------
+find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
+if(CLANG_TIDY_EXE)
+    message(STATUS "clang-tidy found: ${CLANG_TIDY_EXE}")
+    set_target_properties(nbody PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
+else()
+    message(WARNING "clang-tidy not found!")
+endif()
