@@ -38,7 +38,8 @@ int main( int argc, char* argv[] ) {
     SimulationEngine engine( config, logger, h5_writer );
 
     try {
-        while( keep_running && engine.cycle_count < config.MAX_CYCLES ) {
+        while( keep_running && engine.cycle_count < config.MAX_CYCLES && 
+               engine.state.scale_factor < config.MAX_SCALE_FACTOR ) {
             engine.step();
         }
     }
@@ -48,6 +49,10 @@ int main( int argc, char* argv[] ) {
 
     if( !keep_running ) {
         std::cout << "Simulation aborted by user." << std::endl;
+    }
+    else if (engine.state.scale_factor >= config.MAX_SCALE_FACTOR) {
+        std::cout << "Simulation successfully reached a = " 
+                  << config.MAX_SCALE_FACTOR << "." << std::endl;
     }
     else {
         std::cout << "Simulation reached MAX_CYCLES." << std::endl;

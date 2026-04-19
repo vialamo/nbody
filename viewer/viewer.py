@@ -1,4 +1,8 @@
 import sys
+import vispy
+vispy.use('PyQt5') # Force the PyQt5 backend
+
+import matplotlib.pyplot as plt
 import h5py
 import numpy as np
 from vispy import app, scene
@@ -67,9 +71,13 @@ class True3DViewer:
         self.view.camera.center = (self.domain_size/2, self.domain_size/2, self.domain_size/2)
 
         # Create an Alpha-Gradient Colormap
-        base_cmap = get_colormap('plasma')
-        colors = base_cmap.map(np.linspace(0, 1, 256))
-        colors[:, 3] = np.linspace(0, 1, 256) ** 2 
+        # base_cmap = get_colormap('plasma')
+        # colors = base_cmap.map(np.linspace(0, 1, 256))
+        # Grab the raw colors directly from Matplotlib
+        colors = plt.get_cmap('plasma')(np.linspace(0, 1, 256))
+        
+        # Force the Alpha (opacity) channel to fade quadratically
+        colors[:, 3] = np.linspace(0, 1, 256) ** 2
         self.custom_cmap = Colormap(colors)
 
         # Setup Gas Volume

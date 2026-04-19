@@ -19,6 +19,7 @@ struct Config {
     bool EXPANDING_UNIVERSE;
     double EXPANSION_START_T;
     double INITIAL_POWER_SPECTRUM_INDEX;
+    double SIGMA_RMS;
     bool USE_PM;
     bool USE_PP;
     double CUTOFF_RADIUS_CELLS;
@@ -32,6 +33,7 @@ struct Config {
     int SAVE_RENDER_EVERY_CYCLES;
     int SEED;
     int MAX_CYCLES;
+    double MAX_SCALE_FACTOR;
 
     // Derived Parameters
     double CELL_SIZE, CELL_VOLUME, OMEGA_DM;
@@ -57,6 +59,7 @@ struct Config {
         EXPANDING_UNIVERSE = config_file.get_bool( "physics", "expanding_universe", true );
         EXPANSION_START_T = config_file.get_double( "physics", "expansion_start_t", 0.1 );
         INITIAL_POWER_SPECTRUM_INDEX = config_file.get_double( "physics", "initial_power_spectrum_index", -2.0 );
+        SIGMA_RMS = config_file.get_double("physics", "sigma_RMS", 0.05);
         USE_PM = config_file.get_bool( "p3m", "use_pm", true );
         USE_PP = config_file.get_bool( "p3m", "use_pp", true );
         CUTOFF_RADIUS_CELLS = config_file.get_double( "p3m", "cutoff_radius_cells", 2.5 );
@@ -65,6 +68,7 @@ struct Config {
         CFL_SAFETY_FACTOR = config_file.get_double( "time", "cfl_safety_factor", 0.5 );
         GRAVITY_DT_FACTOR = config_file.get_double( "time", "gravity_dt_factor", 0.2 );
         USE_ADAPTIVE_DT = config_file.get_bool( "time", "use_adaptive_dt", true );
+        MAX_SCALE_FACTOR = config_file.get_double( "time", "max_scale_factor", 1.0 );
         MAX_CYCLES = config_file.get_int( "time", "max_cycles", 1000000000 );
         SAVE_HDF5_EVERY_CYCLES = config_file.get_int( "output", "save_hdf5_every_cycles", 100 );
         DEBUG_INFO_EVERY_CYCLES = config_file.get_int( "output", "debug_info_every_cycles", 40 );

@@ -258,6 +258,9 @@ void GasGrid::hydro_step(double dt) {
         density.array() -= factor * (solver.get_flux_density().array() -
                                      solver.get_flux_density_sh().array());
 
+        // Enforce the density floor to prevent NaN crashes in voids
+        density.data = (density.array() < 1e-12).select(1e-12, density.data);
+
         m_n->array() -= factor * (solver.get_flux_mom_n().array() -
                                   solver.get_flux_mom_n_sh().array());
 
