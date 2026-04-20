@@ -16,6 +16,8 @@
 #include "config.h"
 #include "state.h"
 
+std::string get_timestamp();
+
 struct Diagnostics {
     int cycle = 0;
     double sim_time = 0.0;
@@ -48,7 +50,7 @@ class Logger {
                                      bool scientific = false);
 
    public:
-    Logger(const std::string& log_filename);
+    Logger(const std::string& run_dir);
     ~Logger();
     void write_header();
     void log(const Diagnostics& diag);
@@ -56,8 +58,7 @@ class Logger {
 
 class HDF5Writer {
    private:
-    H5::H5File file;
-    std::string base_name;
+    std::string output_directory;
 
     void set_attr_double(H5::H5Object& obj, const char* attr_name,
                          double value);
@@ -69,12 +70,11 @@ class HDF5Writer {
                             const std::vector<double>& vec);
 
    public:
-    HDF5Writer(const Config& config);
+    HDF5Writer(const std::string& run_dir, const Config& config);
     ~HDF5Writer();
 
     double save_snapshot(int snapshot_index, const SimState& state,
                          const Config& config);
-    std::string get_base_name() const { return base_name; }
 };
 
 Diagnostics calculate_diagnostics(const SimState& state,

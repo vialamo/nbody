@@ -1,4 +1,5 @@
 #include "particles.h"
+#include <omp.h>
 #include <cmath>
 #include <limits>
 
@@ -70,6 +71,7 @@ void ParticleSystem::interpolate_cic_forces( const Grid3D& ax_grid, const Grid3D
     forces.assign( particles.size(), { 0.0, 0.0, 0.0 } );
     int N = config.MESH_SIZE;
 
+    #pragma omp parallel for schedule(dynamic, 64)
     for( size_t i = 0; i < particles.size(); ++i ) {
         const auto& p = particles[i];
         const auto& cd = cic_data[i];
@@ -96,11 +98,16 @@ void ParticleSystem::compute_pp_forces( std::vector<Vec3>& pp_forces, const Conf
     const int search_radius = static_cast< int >( ceil( config.CUTOFF_RADIUS / config.CELL_SIZE ) );
     int N = config.MESH_SIZE;
 
+    // Parallelize the outer loop. Each thread gets its own 'i'.
+    #pragma omp parallel for schedule(dynamic, 64)
     for( size_t i = 0; i < particles.size(); ++i ) {
         auto& p1 = particles[i];
         int ix = static_cast< int >( p1.pos.x / config.CELL_SIZE );
         int iy = static_cast< int >( p1.pos.y / config.CELL_SIZE );
         int iz = static_cast< int >( p1.pos.z / config.CELL_SIZE );
+
+        // Local accumulator to avoid hammering the main array in memory
+        Vec3 local_force = {0.0, 0.0, 0.0};
 
         for( int dx_cell = -search_radius; dx_cell <= search_radius; ++dx_cell ) {
             for( int dy_cell = -search_radius; dy_cell <= search_radius; ++dy_cell ) {
@@ -112,7 +119,9 @@ void ParticleSystem::compute_pp_forces( std::vector<Vec3>& pp_forces, const Conf
                     int neighbor_cell_index = neighbor_iz * N * N + neighbor_iy * N + neighbor_ix;
 
                     for( int j : cell_grid[neighbor_cell_index] ) {
-                        if( i >= j ) continue;
+                        // Because OMP, we must compute force from j on i, even if we already did i on j
+                        if( i == j ) continue; 
+                        
                         auto& p2 = particles[j];
 
                         double dx = displacement( p2.pos.x - p1.pos.x, config );
@@ -139,19 +148,20 @@ void ParticleSystem::compute_pp_forces( std::vector<Vec3>& pp_forces, const Conf
                         double pp_dist = sqrt( pp_dist_sq );
                         Vec3 f_pp_vec = { f_pp * dx / pp_dist, f_pp * dy / pp_dist, f_pp * dz / pp_dist };
 
-                        Vec3 correction_f;
                         if( !config.USE_PM ) f_pm_short_vec = { 0.0, 0.0, 0.0 };
 
-                        correction_f.x = S * ( f_pp_vec.x - f_pm_short_vec.x );
-                        correction_f.y = S * ( f_pp_vec.y - f_pm_short_vec.y );
-                        correction_f.z = S * ( f_pp_vec.z - f_pm_short_vec.z );
-
-                        pp_forces[i].x += correction_f.x; pp_forces[i].y += correction_f.y; pp_forces[i].z += correction_f.z;
-                        pp_forces[j].x -= correction_f.x; pp_forces[j].y -= correction_f.y; pp_forces[j].z -= correction_f.z;
+                        // Accumulate locally
+                        local_force.x += S * ( f_pp_vec.x - f_pm_short_vec.x );
+                        local_force.y += S * ( f_pp_vec.y - f_pm_short_vec.y );
+                        local_force.z += S * ( f_pp_vec.z - f_pm_short_vec.z );
                     }
                 }
             }
         }
+        // Write the finalized force to memory ONCE per particle
+        pp_forces[i].x += local_force.x;
+        pp_forces[i].y += local_force.y;
+        pp_forces[i].z += local_force.z;
     }
 }
 

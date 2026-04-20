@@ -1,29 +1,29 @@
 import sys
-import vispy
-vispy.use('PyQt5') # Force the PyQt5 backend
-
-import matplotlib.pyplot as plt
+import os
+import glob
 import h5py
 import numpy as np
+import matplotlib.pyplot as plt
+
+import vispy
+vispy.use('PyQt5') # Force the PyQt5 backend
 from vispy import app, scene
 from vispy.scene.visuals import Volume, Markers, Text
-from vispy.color import get_colormap, Colormap
+from vispy.color import Colormap
 from vispy.io import write_png
-import os
 
 class True3DViewer:
-    def __init__(self, filepath):
-        self.filepath = filepath
-        self.file = None
+    def __init__(self, run_dir):
+        self.run_dir = run_dir
         
         # Initial load and configuration parsing
-        self.refresh_file(initial=True)
+        self.refresh_directory(initial=True)
         
         if self.num_frames == 0:
-            print("Error: No snapshots found in the HDF5 file.")
+            print(f"Error: No snapshot files found in '{self.run_dir}'.")
             sys.exit(1)
             
-        print(f"Loaded {self.filepath} - Found {self.num_frames} frames.")
+        print(f"Loaded directory '{self.run_dir}' - Found {self.num_frames} frames.")
         
         self.current_frame = 0
         self.is_playing = False
@@ -31,23 +31,18 @@ class True3DViewer:
         self.setup_canvas()
         self.update_frame(0)
 
-    def refresh_file(self, initial=False):
-        """Handles opening the file, setting SWMR, and scanning for snapshots."""
+    def refresh_directory(self, initial=False):
+        """Scans the directory for snapshot files."""
         try:
-            if self.file is not None:
-                self.file.close()
+            search_pattern = os.path.join(self.run_dir, "snapshot_*.hdf5")
+            self.snapshot_files = sorted(glob.glob(search_pattern))
+            self.num_frames = len(self.snapshot_files)
             
-            # Re-open safely with SWMR explicitly requested
-            self.file = h5py.File(self.filepath, 'r', libver='latest', swmr=True)
-            
-            if initial:
-                assert self.file.swmr_mode, "Failed to engage SWMR mode!"
-                self.domain_size = self.file.attrs.get('domain_size', 1.0)
-                self.use_hydro = bool(self.file.attrs.get('use_hydro', 0))
-            
-            # Re-read the available snapshots
-            self.snapshots = sorted([k for k in self.file.keys() if k.startswith('snapshot_')])
-            self.num_frames = len(self.snapshots)
+            if initial and self.num_frames > 0:
+                # Extract static simulation parameters from the first snapshot
+                with h5py.File(self.snapshot_files[0], 'r', libver='latest', swmr=True) as f:
+                    self.domain_size = f.attrs.get('domain_size', 1.0)
+                    self.use_hydro = bool(f.attrs.get('use_hydro', 0))
             
             if not initial:
                 print(f"Refreshed: Now seeing {self.num_frames} frames.")
@@ -71,9 +66,6 @@ class True3DViewer:
         self.view.camera.center = (self.domain_size/2, self.domain_size/2, self.domain_size/2)
 
         # Create an Alpha-Gradient Colormap
-        # base_cmap = get_colormap('plasma')
-        # colors = base_cmap.map(np.linspace(0, 1, 256))
-        # Grab the raw colors directly from Matplotlib
         colors = plt.get_cmap('plasma')(np.linspace(0, 1, 256))
         
         # Force the Alpha (opacity) channel to fade quadratically
@@ -84,7 +76,9 @@ class True3DViewer:
         self.volume = None
         if self.use_hydro:
             self.volume = Volume(np.zeros((2, 2, 2)), cmap=self.custom_cmap, method='translucent', parent=self.view.scene)
-            N = self.file.attrs.get('mesh_size', 64)
+            # Read mesh size from the first file to scale the volume properly
+            with h5py.File(self.snapshot_files[0], 'r') as f:
+                N = f.attrs.get('mesh_size', 64)
             scale_factor = self.domain_size / N
             self.volume.transform = scene.transforms.STTransform(scale=(scale_factor, scale_factor, scale_factor))
 
@@ -110,39 +104,40 @@ class True3DViewer:
         print("[Spacebar] : Play / Pause")
         print("[Right Arrow] : Next Frame")
         print("[Left Arrow]  : Previous Frame")
-        print("[F5]          : Refresh File to load new frames")
+        print("[F5]          : Refresh Folder to load new frames")
         print("[E]           : Export all frames as clean PNGs")
         print("[Left Mouse]  : Rotate Camera")
         print("[Scroll]      : Zoom In/Out")
         print("[Shift + Left] : Pan Camera")
 
     def update_frame(self, frame_idx):
-        group_name = self.snapshots[frame_idx]
-        group = self.file[group_name]
+        filepath = self.snapshot_files[frame_idx]
         
-        sim_time = group.attrs.get('simulation_time', 0.0)
-        a = group.attrs.get('scale_factor', 1.0)
-        z = (1.0 / a) - 1.0 if a > 0 else 0.0
-        
-        # Particles
-        pos_x = group['particles/position_x'][:]
-        pos_y = group['particles/position_y'][:]
-        pos_z = group['particles/position_z'][:]
-        positions = np.c_[pos_x, pos_y, pos_z]
-        
-        self.particles.set_data(positions, face_color=(1, 1, 1, 0.5), edge_width=0, size=2.0)
-
-        # Gas
-        p_max = 0
-        if self.use_hydro and 'gas' in group:
-            pressure = group['gas/pressure'][:]
-            pressure = pressure.transpose(2, 1, 0)
+        # Open the file, read what we need, and let the 'with' block close it automatically
+        with h5py.File(filepath, 'r', libver='latest', swmr=True) as f:
+            sim_time = f.attrs.get('simulation_time', 0.0)
+            a = f.attrs.get('scale_factor', 1.0)
+            z = (1.0 / a) - 1.0 if a > 0 else 0.0
             
-            p_min, p_max = np.min(pressure), np.max(pressure)
-            if p_max > p_min:
-                normalized_pressure = (pressure - p_min) / (p_max - p_min)
-                self.volume.set_data(normalized_pressure)
-                self.volume.clim = [0.0, 1.0]
+            # Particles
+            pos_x = f['particles/position_x'][:]
+            pos_y = f['particles/position_y'][:]
+            pos_z = f['particles/position_z'][:]
+            positions = np.c_[pos_x, pos_y, pos_z]
+            
+            self.particles.set_data(positions, face_color=(1, 1, 1, 0.5), edge_width=0, size=2.0)
+
+            # Gas
+            p_max = 0
+            if self.use_hydro and 'gas' in f:
+                pressure = f['gas/pressure'][:]
+                pressure = pressure.transpose(2, 1, 0)
+                
+                p_min, p_max = np.min(pressure), np.max(pressure)
+                if p_max > p_min:
+                    normalized_pressure = (pressure - p_min) / (p_max - p_min)
+                    self.volume.set_data(normalized_pressure)
+                    self.volume.clim = [0.0, 1.0]
 
         # HUD
         hud_str = (
@@ -228,7 +223,7 @@ class True3DViewer:
             self.timer.start()
             
         elif event.key == 'F5':
-            self.refresh_file()
+            self.refresh_directory()
 
         elif event.key == 'E':
             self.export_frames()
@@ -249,7 +244,7 @@ class True3DViewer:
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        print("Usage: python viewer_vispy.py <path_to_hdf5_file>")
+        print("Usage: python viewer_vispy.py <path_to_run_directory>")
         sys.exit(1)
         
     viewer = True3DViewer(sys.argv[1])

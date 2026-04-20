@@ -30,7 +30,6 @@ struct Config {
     bool USE_ADAPTIVE_DT;
     int SAVE_HDF5_EVERY_CYCLES;
     int DEBUG_INFO_EVERY_CYCLES;
-    int SAVE_RENDER_EVERY_CYCLES;
     int SEED;
     int MAX_CYCLES;
     double MAX_SCALE_FACTOR;
@@ -72,7 +71,6 @@ struct Config {
         MAX_CYCLES = config_file.get_int( "time", "max_cycles", 1000000000 );
         SAVE_HDF5_EVERY_CYCLES = config_file.get_int( "output", "save_hdf5_every_cycles", 100 );
         DEBUG_INFO_EVERY_CYCLES = config_file.get_int( "output", "debug_info_every_cycles", 40 );
-        SAVE_RENDER_EVERY_CYCLES = config_file.get_int( "output", "save_render_every_cycles", 0 );
         SEED = config_file.get_int( "output", "seed", 42 );
 
         CELL_SIZE = DOMAIN_SIZE / MESH_SIZE;

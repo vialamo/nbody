@@ -1,5 +1,8 @@
 #include "utils.h"
 
+#include <sys/resource.h>
+#include <unistd.h>  // For sysconf and _SC_PAGESIZE
+
 #include <ctime>
 #include <iomanip>
 #include <iostream>
@@ -7,6 +10,38 @@
 
 #include "gas.h"        // For get_cfl_timestep
 #include "particles.h"  // For calculate_particle_energies and get_gravity_timestep
+
+// Returns the Peak Resident Set Size (RSS) in Megabytes
+static double get_peak_memory_usage_MB() {
+    struct rusage usage;
+    getrusage(RUSAGE_SELF, &usage);
+
+    // On Linux, ru_maxrss is returned in Kilobytes.
+    // Divide by 1024 to get Megabytes.
+    return static_cast<double>(usage.ru_maxrss) / 1024.0;
+}
+
+// Returns the Current Resident Set Size (RSS) in Megabytes
+static double get_current_memory_usage_MB() {
+    // /proc/self/statm contains memory stats for the current process
+    std::ifstream statm("/proc/self/statm");
+    if (!statm.is_open()) {
+        return 0.0;  // Fallback in case of an error
+    }
+
+    long virtual_size, rss_pages;
+    // The first value is total virtual memory, the second is current RSS in
+    // pages
+    statm >> virtual_size >> rss_pages;
+    statm.close();
+
+    // Linux allocates memory in "pages" (usually 4096 bytes).
+    // We multiply the page count by the page size to get total bytes.
+    long page_size_bytes = sysconf(_SC_PAGESIZE);
+
+    // Convert bytes to Megabytes
+    return static_cast<double>(rss_pages * page_size_bytes) / (1024.0 * 1024.0);
+}
 
 // ---------------------------------------------------------
 // Helper: Timestamp Generator
@@ -38,12 +73,13 @@ std::string Logger::format_double(double val, int precision, bool scientific) {
     return ss.str();
 }
 
-Logger::Logger(const std::string& log_filename)
+Logger::Logger(const std::string& run_dir)
     : start_time(std::chrono::high_resolution_clock::now()) {
+    std::string log_filename = run_dir + "/diagnostics.csv";
     log_file.open(log_filename);
     if (!log_file.is_open()) {
         std::cerr << "Warning: Could not open log file: " << log_filename
-                  << std::endl;
+                  << "\n";
     }
 }
 
@@ -56,15 +92,16 @@ Logger::~Logger() {
 void Logger::write_header() {
     if (!log_file.is_open() || header_written) return;
 
-    log_file << "cycle,sim_time,scale_factor,"
-             << "total_mass_gas,total_mass_dm,total_momentum_gas_x,total_"
-                "momentum_gas_y,total_momentum_gas_z,total_momentum_dm_x,total_"
-                "momentum_dm_y,total_momentum_dm_z,"
-             << "ke_gas,ke_dm,pe_dm,ie_gas,"
-             << "dt_cfl,dt_gravity,dt_final,"
-             << "max_gas_density,max_gas_pressure,max_gas_velocity,"
-             << "wall_time_total,wall_time_pm,wall_time_pp,wall_time_hydro,"
-                "wall_time_io\n";
+    log_file
+        << "cycle,sim_time,scale_factor,"
+        << "total_mass_gas,total_mass_dm,total_momentum_gas_x,total_"
+           "momentum_gas_y,total_momentum_gas_z,total_momentum_dm_x,total_"
+           "momentum_dm_y,total_momentum_dm_z,"
+        << "ke_gas,ke_dm,pe_dm,ie_gas,"
+        << "dt_cfl,dt_gravity,dt_final,"
+        << "max_gas_density,max_gas_pressure,max_gas_velocity,"
+        << "wall_time_total,wall_time_pm,wall_time_pp,wall_time_hydro,"
+           "wall_time_io,cumulative_wall_time,memory_peak,memory_current\n";
     header_written = true;
 }
 
@@ -72,6 +109,15 @@ void Logger::log(const Diagnostics& diag) {
     if (!header_written) {
         write_header();
     }
+
+    auto now = std::chrono::high_resolution_clock::now();
+    double wall_time_s =
+        std::chrono::duration_cast<std::chrono::duration<double> >(now -
+                                                                   start_time)
+            .count();
+
+    int peak_mem = get_peak_memory_usage_MB();
+    int curr_mem = get_current_memory_usage_MB();
 
     // Write to CSV file
     if (log_file.is_open()) {
@@ -88,29 +134,26 @@ void Logger::log(const Diagnostics& diag) {
                  << diag.max_gas_pressure << "," << diag.max_gas_velocity << ","
                  << diag.wall_time_total << "," << diag.wall_time_pm << ","
                  << diag.wall_time_pp << "," << diag.wall_time_hydro << ","
-                 << diag.wall_time_io << "\n";
+                 << diag.wall_time_io << "," << wall_time_s << "," << peak_mem
+                 << "," << curr_mem << "\n";
     }
 
     // Write to stdout (console)
-    auto now = std::chrono::high_resolution_clock::now();
-    double wall_time_s =
-        std::chrono::duration_cast<std::chrono::duration<double> >(now -
-                                                                   start_time)
-            .count();
     double mass_err = diag.total_mass() - 1.0;
 
     std::cout << "[Cycle " << diag.cycle << "] "
+              << "Mem (peak/curr MB): " << peak_mem << ", " << curr_mem << " | "
               << "Wall: " << format_double(wall_time_s, 1) << "s | "
               << "SimTime: " << format_double(diag.sim_time, 3) << " | "
-              << "a: " << format_double(diag.scale_factor, 3) << std::endl;
+              << "a: " << format_double(diag.scale_factor, 3) << "\n";
 
-    std::cout << "  [Physics]" << std::endl;
+    std::cout << "  [Physics]" << "\n";
     std::cout << "    - Mass (P/G/T):   "
               << format_double(diag.total_mass_dm, 4) << " | "
               << format_double(diag.total_mass_gas, 4) << " | "
               << format_double(diag.total_mass(), 4)
               << " (Err: " << std::scientific << std::setprecision(1)
-              << mass_err << std::fixed << ")" << std::endl;
+              << mass_err << std::fixed << ")" << "\n";
 
     std::cout << "    - Momentum (P/G): ("
               << format_double(diag.total_momentum_dm.x, 1, true) << ", "
@@ -119,37 +162,37 @@ void Logger::log(const Diagnostics& diag) {
               << format_double(diag.total_momentum_gas.x, 1, true) << ", "
               << format_double(diag.total_momentum_gas.y, 1, true) << ", "
               << format_double(diag.total_momentum_gas.z, 1, true) << ")"
-              << std::endl;
+              << "\n";
 
     std::cout << "    - Energy (KE/PE/IE): "
               << format_double(diag.ke_dm + diag.ke_gas, 3, true) << " | "
               << format_double(diag.pe_dm, 3, true) << " | "
               << format_double(diag.ie_gas, 3, true)
               << " (Total: " << format_double(diag.total_energy(), 3, true)
-              << ")" << std::endl;
+              << ")" << "\n";
 
-    std::cout << "  [Stability]" << std::endl;
+    std::cout << "  [Stability]" << "\n";
     std::cout << "    - Timestep (CFL): " << format_double(diag.dt_cfl, 2, true)
               << " | (Grav): " << format_double(diag.dt_gravity, 2, true)
               << " | (Final): " << format_double(diag.dt_final, 2, true)
-              << std::endl;
+              << "\n";
     std::cout << "    - Max(rho): "
               << format_double(diag.max_gas_density, 2, true)
               << " | Max(press): "
               << format_double(diag.max_gas_pressure, 2, true)
               << " | Max(vel): "
-              << format_double(diag.max_gas_velocity, 2, true) << std::endl;
+              << format_double(diag.max_gas_velocity, 2, true) << "\n";
 
-    std::cout << "  [Performance (ms)]" << std::endl;
+    std::cout << "  [Performance (ms)]" << "\n";
     std::cout << "    - PM: " << format_double(diag.wall_time_pm * 1000.0, 1)
               << " | PP: " << format_double(diag.wall_time_pp * 1000.0, 1)
               << " | Hydro: " << format_double(diag.wall_time_hydro * 1000.0, 1)
               << " | I/O: " << format_double(diag.wall_time_io * 1000.0, 1)
               << " | Total: " << format_double(diag.wall_time_total * 1000.0, 1)
-              << std::endl;
+              << "\n";
     std::cout << "-------------------------------------------------------------"
                  "---------"
-              << std::endl;
+              << "\n";
 }
 
 // ---------------------------------------------------------
@@ -202,14 +245,22 @@ void HDF5Writer::write_particle_vec(H5::Group& group, const char* dataset_name,
     dataset.close();
 }
 
-HDF5Writer::HDF5Writer(const Config& config) {
-    base_name = "sim_" + get_timestamp();
-    std::string filename_str = base_name + ".hdf5";
-    std::cout << "Creating HDF5 output file: " << filename_str << std::endl;
+HDF5Writer::HDF5Writer(const std::string& run_dir, const Config& config)
+    : output_directory(run_dir) {}
+
+HDF5Writer::~HDF5Writer() {}
+
+double HDF5Writer::save_snapshot(int snapshot_index, const SimState& state,
+                                 const Config& config) {
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    char filename[256];
+    snprintf(filename, sizeof(filename), "%s/snapshot_%04d.hdf5",
+             output_directory.c_str(), snapshot_index);
 
     try {
-        file = H5::H5File(filename_str.c_str(),
-                          H5F_ACC_TRUNC | H5F_ACC_SWMR_WRITE);
+        H5::H5File file(filename, H5F_ACC_TRUNC | H5F_ACC_SWMR_WRITE);
+
         H5::Group root_group = file.openGroup("/");
 
         set_attr_double(root_group, "domain_size", config.DOMAIN_SIZE);
@@ -239,34 +290,10 @@ HDF5Writer::HDF5Writer(const Config& config) {
         set_attr_bool(root_group, "use_adaptive_dt", config.USE_ADAPTIVE_DT);
         set_attr_int(root_group, "seed", config.SEED);
 
-        root_group.close();
-    } catch (H5::Exception& e) {
-        std::cerr << "Error: Could not create HDF5 file." << std::endl;
-        e.printErrorStack();
-    }
-}
+        set_attr_double(root_group, "simulation_time", state.total_time);
+        set_attr_double(root_group, "scale_factor", state.scale_factor);
 
-HDF5Writer::~HDF5Writer() {
-    try {
-        file.close();
-    } catch (...) {
-        // Suppress errors during destruction
-    }
-}
-
-double HDF5Writer::save_snapshot(int snapshot_index, const SimState& state,
-                                 const Config& config) {
-    auto start_time = std::chrono::high_resolution_clock::now();
-    try {
-        char group_name[100];
-        snprintf(group_name, sizeof(group_name), "snapshot_%04d",
-                 snapshot_index);
-        H5::Group snapshot_group = file.createGroup(group_name);
-
-        set_attr_double(snapshot_group, "simulation_time", state.total_time);
-        set_attr_double(snapshot_group, "scale_factor", state.scale_factor);
-
-        H5::Group particle_group = snapshot_group.createGroup("particles");
+        H5::Group particle_group = root_group.createGroup("particles");
         size_t n_particles = state.dm.particles.size();
 
         std::vector<double> pos_x(n_particles), pos_y(n_particles),
@@ -309,7 +336,7 @@ double HDF5Writer::save_snapshot(int snapshot_index, const SimState& state,
         particle_group.close();
 
         if (config.USE_HYDRO) {
-            H5::Group gas_group = snapshot_group.createGroup("gas");
+            H5::Group gas_group = root_group.createGroup("gas");
             write_grid(gas_group, "density", state.gas.get_density());
             write_grid(gas_group, "momentum_x", state.gas.get_momentum_x());
             write_grid(gas_group, "momentum_y", state.gas.get_momentum_y());
@@ -318,12 +345,13 @@ double HDF5Writer::save_snapshot(int snapshot_index, const SimState& state,
             write_grid(gas_group, "pressure", state.gas.get_pressure());
             gas_group.close();
         }
-        snapshot_group.close();
-        file.flush(H5F_SCOPE_GLOBAL);
+        root_group.close();
+        file.close();
     } catch (H5::Exception& e) {
-        std::cerr << "Error: Could not save HDF5 snapshot." << std::endl;
+        std::cerr << "Error: Could not save HDF5 snapshot." << "\n";
         e.printErrorStack();
     }
+
     auto end_time = std::chrono::high_resolution_clock::now();
     return std::chrono::duration_cast<std::chrono::duration<double> >(
                end_time - start_time)

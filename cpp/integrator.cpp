@@ -1,5 +1,7 @@
 #include "integrator.h"
 
+#include <omp.h>
+
 #include <chrono>
 
 #include "particles.h"
@@ -39,10 +41,11 @@ Grid3D compute_gravitational_acceleration(Grid3D& acc_x, Grid3D& acc_y,
 
     std::vector<std::complex<double>> rho_k((size_t)N * N * (N / 2 + 1));
     pocketfft::r2c(shape, stride_r, stride_c, {0, 1, 2}, true,
-                   total_rho.raw_data(), rho_k.data(), 1.0);
+                   total_rho.raw_data(), rho_k.data(), 1.0, 0);
 
     std::vector<std::complex<double>> phi_k((size_t)N * N * (N / 2 + 1));
 
+#pragma omp parallel for collapse(3)
     for (int i = 0; i < N; ++i) {
         for (int j = 0; j < N; ++j) {
             for (int k = 0; k < N / 2 + 1; ++k) {
@@ -71,11 +74,12 @@ Grid3D compute_gravitational_acceleration(Grid3D& acc_x, Grid3D& acc_y,
 
     Grid3D phi(N);
     pocketfft::c2r(shape, stride_c, stride_r, {0, 1, 2}, false, phi_k.data(),
-                   const_cast<double*>(phi.raw_data()), 1.0);
+                   const_cast<double*>(phi.raw_data()), 1.0, 0);
 
     double norm = 1.0 / ((double)N * N * N);
     double factor = -norm / (2.0 * config.CELL_SIZE);
 
+#pragma omp parallel for collapse(3)
     for (int i = 0; i < N; ++i) {
         for (int j = 0; j < N; ++j) {
             for (int k = 0; k < N; ++k) {

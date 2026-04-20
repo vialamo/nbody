@@ -1,8 +1,12 @@
 #include "gas.h"
+#include <omp.h>
 
 static Grid3D roll(const Grid3D& m, int shift, int axis) {
     int N = m.n;
     Grid3D res(N);
+    
+    // Collapse flattens the 3 nested loops into 1 for perfect thread distribution
+    #pragma omp parallel for collapse(3)
     for (int i = 0; i < N; ++i) {
         for (int j = 0; j < N; ++j) {
             for (int k = 0; k < N; ++k) {
@@ -202,8 +206,10 @@ GasGrid::GasGrid(const Config& conf)
       config(conf) {}
 
 void GasGrid::update_primitive_variables() {
-    for (int i = 0; i < config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
-         ++i) {
+    int total_cells = config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
+
+    #pragma omp parallel for
+    for (int i = 0; i < total_cells; ++i) {
         if (density.data[i] > 1e-12) {
             velocity_x.data[i] = momentum_x.data[i] / density.data[i];
             velocity_y.data[i] = momentum_y.data[i] / density.data[i];
@@ -218,8 +224,8 @@ void GasGrid::update_primitive_variables() {
         0.5 * (momentum_x.array().square() + momentum_y.array().square() +
                momentum_z.array().square());
 
-    for (int i = 0; i < config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
-         ++i) {
+    #pragma omp parallel for
+    for (int i = 0; i < total_cells; ++i) {
         if (density.data[i] > 1e-12)
             kin_energy.data[i] /= density.data[i];
         else

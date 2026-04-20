@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(nbody_sim LANGUAGES CXX)
+project(nbody LANGUAGES CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
@@ -15,6 +15,8 @@ find_package(HDF5 REQUIRED COMPONENTS CXX)
 
 # Eigen (header-only, so no linking required)
 find_package(Eigen3 3.3 REQUIRED)
+
+find_package(OpenMP REQUIRED)
 
 # Include directories
 include_directories(
@@ -42,6 +44,7 @@ target_link_libraries(nbody
     PRIVATE
     ${HDF5_CXX_LIBRARIES}
     ${HDF5_LIBRARIES}
+    OpenMP::OpenMP_CXX
 )
 
 # Suppress the harmless HDF5 DLL warnings if compiling on Windows (MSVC)
