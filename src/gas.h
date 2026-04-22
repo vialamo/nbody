@@ -20,6 +20,8 @@ class RiemannSolver {
     Grid3D flux_density_sh, flux_mom_n_sh, flux_mom_t1_sh, flux_mom_t2_sh,
         flux_energy_sh;
 
+    friend struct RiemannSolverTestAccess;
+
    public:
     RiemannSolver(int mesh_size);
     Grid3D solve_hll(const Grid3D& FL, const Grid3D& FR, const Grid3D& UL,

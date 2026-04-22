@@ -21,7 +21,7 @@ public:
 
     void compute_pp_forces( std::vector<Vec3>& pp_forces, const Config& config );
 
-    std::pair<double, double> calculate_energies( double a, const Config& config ) const;
+    double calculate_kinetic_energy(double a) const;
 
     double get_gravity_timestep( const Config& config ) const;
 };

@@ -1,27 +1,6 @@
 #include "gas.h"
 #include <omp.h>
 
-static Grid3D roll(const Grid3D& m, int shift, int axis) {
-    int N = m.n;
-    Grid3D res(N);
-    
-    // Collapse flattens the 3 nested loops into 1 for perfect thread distribution
-    #pragma omp parallel for collapse(3)
-    for (int i = 0; i < N; ++i) {
-        for (int j = 0; j < N; ++j) {
-            for (int k = 0; k < N; ++k) {
-                if (axis == 0)
-                    res((i + shift + N) % N, j, k) = m(i, j, k);
-                else if (axis == 1)
-                    res(i, (j + shift + N) % N, k) = m(i, j, k);
-                else if (axis == 2)
-                    res(i, j, (k + shift + N) % N) = m(i, j, k);
-            }
-        }
-    }
-    return res;
-}
-
 RiemannSolver::RiemannSolver(int mesh_size)
     : density(mesh_size),
       mom_n(mesh_size),
@@ -121,24 +100,24 @@ void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
     // in +axis direction
     const int rollDir = -1;
     rho_L = density;
-    rho_R = roll(rho_L, rollDir, axis);
+    rho_R = rho_L.roll(rollDir, axis);
     p_L = pressure;
-    p_R = roll(p_L, rollDir, axis);
+    p_R = p_L.roll(rollDir, axis);
     vn_L = v_n;
-    vn_R = roll(vn_L, rollDir, axis);
+    vn_R = vn_L.roll(rollDir, axis);
     vt1_L = v_t1;
-    vt1_R = roll(vt1_L, rollDir, axis);
+    vt1_R = vt1_L.roll(rollDir, axis);
     vt2_L = v_t2;
-    vt2_R = roll(vt2_L, rollDir, axis);
+    vt2_R = vt2_L.roll(rollDir, axis);
     E_L = energy;
-    E_R = roll(E_L, rollDir, axis);
+    E_R = E_L.roll(rollDir, axis);
 
     mom_n_L = mom_n;
-    mom_n_R = roll(mom_n_L, rollDir, axis);
+    mom_n_R = mom_n_L.roll(rollDir, axis);
     mom_t1_L = mom_t1;
-    mom_t1_R = roll(mom_t1_L, rollDir, axis);
+    mom_t1_R = mom_t1_L.roll(rollDir, axis);
     mom_t2_L = mom_t2;
-    mom_t2_R = roll(mom_t2_L, rollDir, axis);
+    mom_t2_R = mom_t2_L.roll(rollDir, axis);
 
     // --- 3. Compute Sound Speeds and Wave Signal Speeds ---
     cs_L.data = (gamma * p_L.array() / rho_L.array()).sqrt();
@@ -185,11 +164,11 @@ void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
     flux_energy = solve_hll(F_en_L, F_en_R, E_L, E_R);
 
     // --- 6. Pre-calculate shifted fluxes for the grid update ---
-    flux_density_sh = roll(flux_density, 1, axis);
-    flux_mom_n_sh = roll(flux_mom_n, 1, axis);
-    flux_mom_t1_sh = roll(flux_mom_t1, 1, axis);
-    flux_mom_t2_sh = roll(flux_mom_t2, 1, axis);
-    flux_energy_sh = roll(flux_energy, 1, axis);
+    flux_density_sh = flux_density.roll(1, axis);
+    flux_mom_n_sh = flux_mom_n.roll(1, axis);
+    flux_mom_t1_sh = flux_mom_t1.roll(1, axis);
+    flux_mom_t2_sh = flux_mom_t2.roll(1, axis);
+    flux_energy_sh = flux_energy.roll(1, axis);
 }
 
 GasGrid::GasGrid(const Config& conf)
@@ -234,6 +213,7 @@ void GasGrid::update_primitive_variables() {
 
     pressure.data = (config.GAMMA - 1.0) * (energy.data - kin_energy.data);
     pressure.data = (pressure.array() < 1e-12).select(1e-12, pressure.data);
+    energy.data = pressure.data / (config.GAMMA - 1.0) + kin_energy.data;
 }
 
 void GasGrid::hydro_step(double dt) {

@@ -18,12 +18,16 @@ void update_cosmology(SimState& state, const Config& config) {
     }
 }
 
-Grid3D compute_gravitational_acceleration(Grid3D& acc_x, Grid3D& acc_y,
-                                          Grid3D& acc_z, GasGrid& gas,
-                                          const Config& config,
-                                          const Grid3D& dm_rho) {
+void compute_gravitational_acceleration(SimState& state, const Config& config) {
     int N = config.MESH_SIZE;
-    Grid3D total_rho(N);
+    const GasGrid& gas = state.gas;
+    const Grid3D& dm_rho = state.dm.dm_rho;
+    Grid3D& total_rho = state.total_rho;
+    Grid3D& acc_x = state.gravity_x;
+    Grid3D& acc_y = state.gravity_y;
+    Grid3D& acc_z = state.gravity_z;
+
+    Grid3D& phi = state.phi;
     total_rho.data =
         dm_rho.data + (config.USE_HYDRO ? gas.get_density().data
                                         : Eigen::VectorXd::Zero(N * N * N));
@@ -72,7 +76,6 @@ Grid3D compute_gravitational_acceleration(Grid3D& acc_x, Grid3D& acc_y,
         }
     }
 
-    Grid3D phi(N);
     pocketfft::c2r(shape, stride_c, stride_r, {0, 1, 2}, false, phi_k.data(),
                    const_cast<double*>(phi.raw_data()), 1.0, 0);
 
@@ -95,8 +98,6 @@ Grid3D compute_gravitational_acceleration(Grid3D& acc_x, Grid3D& acc_y,
             }
         }
     }
-
-    return total_rho;
 }
 
 void apply_gas_kick(GasGrid& gas, const Grid3D& grav_x, const Grid3D& grav_y,
@@ -188,9 +189,7 @@ std::map<std::string, double> KDK_step(SimState& state, double dt,
     // COMPUTE FORCES (Update Accelerations)
     start_time = std::chrono::high_resolution_clock::now();
     state.dm.bin_and_assign_mass(config);
-    compute_gravitational_acceleration(state.gravity_x, state.gravity_y,
-                                       state.gravity_z, state.gas, config,
-                                       state.dm.dm_rho);
+    compute_gravitational_acceleration(state, config);
 
     std::vector<Vec3> pm_forces(state.dm.particles.size(), {0.0, 0.0, 0.0});
     if (config.USE_PM) {

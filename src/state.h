@@ -7,6 +7,9 @@ struct SimState {
     ParticleSystem dm;
     GasGrid gas;
 
+    Grid3D total_rho;
+    Grid3D phi;
+
     // Global Gravitational Field on the Eulerian Mesh
     Grid3D gravity_x;
     Grid3D gravity_y;
@@ -21,5 +24,7 @@ struct SimState {
           gas(config),
           gravity_x(config.MESH_SIZE),
           gravity_y(config.MESH_SIZE),
-          gravity_z(config.MESH_SIZE) {}
+          gravity_z(config.MESH_SIZE),
+          total_rho(config.MESH_SIZE),
+          phi(config.MESH_SIZE) {}
 };

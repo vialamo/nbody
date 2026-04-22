@@ -41,6 +41,8 @@ struct Grid3D {
     double minCoeff() const { return data.minCoeff(); }
     double maxCoeff() const { return data.maxCoeff(); }
     double sum() const { return data.sum(); }
+    
+    Grid3D roll(int shift, int axis);
 
     // For HDF5 pointers
     const double* raw_data() const { return data.data(); }

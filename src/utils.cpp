@@ -128,7 +128,7 @@ void Logger::log(const Diagnostics& diag) {
                  << diag.total_momentum_gas.z << "," << diag.total_momentum_dm.x
                  << "," << diag.total_momentum_dm.y << ","
                  << diag.total_momentum_dm.z << "," << diag.ke_gas << ","
-                 << diag.ke_dm << "," << diag.pe_dm << "," << diag.ie_gas << ","
+                 << diag.ke_dm << "," << diag.pe_total << "," << diag.ie_gas << ","
                  << diag.dt_cfl << "," << diag.dt_gravity << ","
                  << diag.dt_final << "," << diag.max_gas_density << ","
                  << diag.max_gas_pressure << "," << diag.max_gas_velocity << ","
@@ -166,7 +166,7 @@ void Logger::log(const Diagnostics& diag) {
 
     std::cout << "    - Energy (KE/PE/IE): "
               << format_double(diag.ke_dm + diag.ke_gas, 3, true) << " | "
-              << format_double(diag.pe_dm, 3, true) << " | "
+              << format_double(diag.pe_total, 3, true) << " | "
               << format_double(diag.ie_gas, 3, true)
               << " (Total: " << format_double(diag.total_energy(), 3, true)
               << ")" << "\n";
@@ -393,15 +393,45 @@ Diagnostics calculate_diagnostics(const SimState& state,
     }
 
     // Conservation (Particles)
-    for (const auto& p : state.dm.particles) {
-        diag.total_mass_dm += p.mass;
-        diag.total_momentum_dm.x += p.mass * p.vel.x;
-        diag.total_momentum_dm.y += p.mass * p.vel.y;
-        diag.total_momentum_dm.z += p.mass * p.vel.z;
+    double sum_mass = 0.0;
+    double sum_px = 0.0;
+    double sum_py = 0.0;
+    double sum_pz = 0.0;
+
+#pragma omp parallel for reduction(+ : sum_mass, sum_px, sum_py, sum_pz)
+    for (size_t i = 0; i < state.dm.particles.size(); ++i) {
+        const auto& p = state.dm.particles[i];
+        sum_mass += p.mass;
+        sum_px += p.mass * p.vel.x;
+        sum_py += p.mass * p.vel.y;
+        sum_pz += p.mass * p.vel.z;
     }
-    auto energies = state.dm.calculate_energies(state.scale_factor, config);
-    diag.ke_dm = energies.first;
-    diag.pe_dm = energies.second;
+
+    diag.total_mass_dm += sum_mass;
+    diag.total_momentum_dm.x += sum_px;
+    diag.total_momentum_dm.y += sum_py;
+    diag.total_momentum_dm.z += sum_pz;
+
+    diag.ke_dm = 0.0;
+    diag.pe_total = 0.0;
+    
+    if (config.ENABLE_ENERGY_DIAGNOSTICS) {
+        // 1. Dark Matter Kinetic Energy
+        diag.ke_dm = state.dm.calculate_kinetic_energy(state.scale_factor);
+
+        // 2. Total System Potential Energy (from the Eulerian grid)
+        double system_pe = 0.0;
+        int total_cells = config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
+        
+        // W = 1/2 * sum(rho * phi * dV)
+#pragma omp parallel for reduction(+ : system_pe)
+        for (int i = 0; i < total_cells; ++i) {
+            system_pe += 0.5 * state.total_rho.data[i] * state.phi.data[i] * config.CELL_VOLUME;
+        }
+        
+        // Convert from comoving potential to proper potential
+        diag.pe_total = system_pe / state.scale_factor;
+    }
 
     // Conservation (Gas)
     if (config.USE_HYDRO) {

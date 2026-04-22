@@ -9,51 +9,77 @@ set(CMAKE_BUILD_TYPE Release)
 # ---------------------------------------------------------------------
 # Dependencies
 # ---------------------------------------------------------------------
-
-# HDF5
 find_package(HDF5 REQUIRED COMPONENTS CXX)
-
-# Eigen (header-only, so no linking required)
 find_package(Eigen3 3.3 REQUIRED)
-
 find_package(OpenMP REQUIRED)
 
-# Include directories
-include_directories(
-    ${HDF5_INCLUDE_DIRS}
-    ${EIGEN3_INCLUDE_DIR}
-    ${CMAKE_SOURCE_DIR}
+# ---------------------------------------------------------------------
+# Core Simulation Library
+# ---------------------------------------------------------------------
+set(CORE_SOURCES
+    src/engine.cpp
+    src/gas.cpp
+    src/ics.cpp
+    src/integrator.cpp
+    src/particles.cpp
+    src/types.cpp
+    src/utils.cpp
 )
 
-# ---------------------------------------------------------------------
-# Target & Sources
-# ---------------------------------------------------------------------
-set(SOURCES
-    main.cpp
-    engine.cpp
-    gas.cpp
-    ics.cpp
-    integrator.cpp
-    particles.cpp
-    utils.cpp
-)
+add_library(SimulationCore ${CORE_SOURCES})
 
-add_executable(nbody ${SOURCES})
-
-target_link_libraries(nbody
-    PRIVATE
+target_link_libraries(SimulationCore
+    PUBLIC
     ${HDF5_CXX_LIBRARIES}
     ${HDF5_LIBRARIES}
     OpenMP::OpenMP_CXX
 )
 
-# Suppress the harmless HDF5 DLL warnings if compiling on Windows (MSVC)
+# Tell the compiler where to find your .h files!
+target_include_directories(SimulationCore 
+    PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+    ${HDF5_INCLUDE_DIRS}
+    ${EIGEN3_INCLUDE_DIR}
+)
+
+# ---------------------------------------------------------------------
+# Main Executable
+# ---------------------------------------------------------------------
+add_executable(nbody src/main.cpp)
+
+target_link_libraries(nbody PRIVATE SimulationCore)
+
 if(MSVC)
     target_compile_options(nbody PRIVATE /wd4251)
 endif()
 
 # ---------------------------------------------------------------------
-# Post-build: copy resource/config files next to the executable
+# Testing Infrastructure (Catch2)
+# ---------------------------------------------------------------------
+include(FetchContent)
+FetchContent_Declare(
+  Catch2
+  GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+  GIT_TAG        v3.5.3 
+)
+FetchContent_MakeAvailable(Catch2)
+
+enable_testing()
+
+# The test runner looks in the tests/ folder
+add_executable(run_tests tests/test_physics.cpp)
+
+target_link_libraries(run_tests PRIVATE SimulationCore Catch2::Catch2WithMain)
+# Tests need to include headers from src/
+target_include_directories(run_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+include(CTest)
+include(Catch)
+catch_discover_tests(run_tests)
+
+# ---------------------------------------------------------------------
+# Post-build: copy resource files
 # ---------------------------------------------------------------------
 set(RESOURCE_FILES
     ${CMAKE_SOURCE_DIR}/simulation.ini
@@ -72,18 +98,12 @@ foreach(RESOURCE_FILE ${RESOURCE_FILES})
 endforeach()
 
 # ---------------------------------------------------------------------
-# Status messages (for debug clarity)
-# ---------------------------------------------------------------------
-message(STATUS "HDF5 include dir: ${HDF5_INCLUDE_DIRS}")
-message(STATUS "Eigen include dir: ${EIGEN3_INCLUDE_DIR}")
-message(STATUS "Executable will be in: ${CMAKE_BINARY_DIR}")
-
-# ---------------------------------------------------------------------
-# Code suggestions
+# Clang-Tidy
 # ---------------------------------------------------------------------
 find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
 if(CLANG_TIDY_EXE)
     message(STATUS "clang-tidy found: ${CLANG_TIDY_EXE}")
+    set_target_properties(SimulationCore PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
     set_target_properties(nbody PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
 else()
     message(WARNING "clang-tidy not found!")

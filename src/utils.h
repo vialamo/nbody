@@ -26,7 +26,7 @@ struct Diagnostics {
     double total_mass_dm = 0.0;
     Vec3 total_momentum_gas = {0.0, 0.0, 0.0};
     Vec3 total_momentum_dm = {0.0, 0.0, 0.0};
-    double ke_gas = 0.0, ke_dm = 0.0, pe_dm = 0.0, ie_gas = 0.0;
+    double ke_gas = 0.0, ke_dm = 0.0, pe_total = 0.0, ie_gas = 0.0;
     double dt_cfl = 0.0, dt_gravity = 0.0, dt_final = 0.0;
     double max_gas_density = 0.0, max_gas_pressure = 0.0,
            max_gas_velocity = 0.0;
@@ -39,7 +39,7 @@ struct Diagnostics {
                 total_momentum_gas.y + total_momentum_dm.y,
                 total_momentum_gas.z + total_momentum_dm.z};
     }
-    double total_energy() const { return ke_gas + ke_dm + pe_dm + ie_gas; }
+    double total_energy() const { return ke_gas + ke_dm + pe_total + ie_gas; }
 };
 
 class Logger {

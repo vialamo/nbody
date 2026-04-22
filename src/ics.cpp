@@ -135,12 +135,12 @@ void initialize_dm(SimState& state, const Config& config,
                              static_cast<size_t>(iy) * M +
                              static_cast<size_t>(iz);
 
-                double dx =
-                    (zf.dx[idx] / zf.std_x) * state.scale_factor * config.SIGMA_RMS;
-                double dy =
-                    (zf.dy[idx] / zf.std_y) * state.scale_factor * config.SIGMA_RMS;
-                double dz =
-                    (zf.dz[idx] / zf.std_z) * state.scale_factor * config.SIGMA_RMS;
+                double dx = (zf.dx[idx] / zf.std_x) * state.scale_factor *
+                            config.SIGMA_RMS;
+                double dy = (zf.dy[idx] / zf.std_y) * state.scale_factor *
+                            config.SIGMA_RMS;
+                double dz = (zf.dz[idx] / zf.std_z) * state.scale_factor *
+                            config.SIGMA_RMS;
 
                 Particle p;
                 p.pos.x =
@@ -184,9 +184,12 @@ void initialize_gas(SimState& state, const Config& config,
     double initial_internal_energy = 1e-6;
 
     for (size_t i = 0; i < M3_real; ++i) {
-        double dx = (zf.dx[i] / zf.std_x) * state.scale_factor * config.SIGMA_RMS;
-        double dy = (zf.dy[i] / zf.std_y) * state.scale_factor * config.SIGMA_RMS;
-        double dz = (zf.dz[i] / zf.std_z) * state.scale_factor * config.SIGMA_RMS;
+        double dx =
+            (zf.dx[i] / zf.std_x) * state.scale_factor * config.SIGMA_RMS;
+        double dy =
+            (zf.dy[i] / zf.std_y) * state.scale_factor * config.SIGMA_RMS;
+        double dz =
+            (zf.dz[i] / zf.std_z) * state.scale_factor * config.SIGMA_RMS;
 
         double vx = config.STANDING_PARTICLES ? 0.0 : state.hubble_param * dx;
         double vy = config.STANDING_PARTICLES ? 0.0 : state.hubble_param * dy;
@@ -224,9 +227,7 @@ SimState initialize_state(Config& config) {
     initialize_gas(state, config, z_field);
 
     // 4. Forces Setup (UPDATED FOR NEW GRAVITY ARCHITECTURE)
-    Grid3D total_rho = compute_gravitational_acceleration(
-        state.gravity_x, state.gravity_y, state.gravity_z, state.gas, config,
-        state.dm.dm_rho);
+    compute_gravitational_acceleration(state, config);
 
     std::vector<Vec3> pp_forces, pm_forces;
     if (config.USE_PM) {
