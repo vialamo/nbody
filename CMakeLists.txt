@@ -35,7 +35,6 @@ target_link_libraries(SimulationCore
     OpenMP::OpenMP_CXX
 )
 
-# Tell the compiler where to find your .h files!
 target_include_directories(SimulationCore 
     PUBLIC
     ${CMAKE_SOURCE_DIR}/src
@@ -52,6 +51,29 @@ target_link_libraries(nbody PRIVATE SimulationCore)
 
 if(MSVC)
     target_compile_options(nbody PRIVATE /wd4251)
+endif()
+
+# ---------------------------------------------------------------------
+# High-Performance HPC Optimizations
+# ---------------------------------------------------------------------
+
+# 1. Architecture-specific Vectorization (Unlocks AVX for Eigen)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(SimulationCore PUBLIC "-march=native")
+elseif(MSVC)
+    # MSVC doesn't have an exact 'native' equivalent, but AVX2 is the modern standard
+    target_compile_options(SimulationCore PUBLIC "/arch:AVX2")
+endif()
+
+# 2. Interprocedural Optimization (Link-Time Optimization)
+include(CheckIPOSupported)
+check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
+if(ipo_supported)
+    message(STATUS "IPO / LTO enabled: compiler supports it.")
+    set_target_properties(SimulationCore PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+    set_target_properties(nbody PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+else()
+    message(STATUS "IPO / LTO not supported: ${ipo_error}")
 endif()
 
 # ---------------------------------------------------------------------
