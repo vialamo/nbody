@@ -1,0 +1,36 @@
+name: C++ CI Tests
+
+# Run this script every time there is a push or a pull request to the main branch
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  build-and-test:
+    # Use the latest Ubuntu Linux server provided for free by GitHub
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. Download code into the cloud server
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    # 2. Install the dependencies the CMakeLists.txt requires
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake g++ libhdf5-dev libomp-dev libeigen3-dev
+
+    # 3. Run CMake configuration
+    - name: Configure CMake
+      run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+    # 4. Compile the engine and tests
+    - name: Build Project
+      run: cmake --build build -j 4
+
+    # 5. Run Catch2 tests using CTest
+    - name: Run Tests
+      run: cd build && ctest --output-on-failure
