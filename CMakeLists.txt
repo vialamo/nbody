@@ -4,7 +4,13 @@ project(nbody LANGUAGES CXX)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_BUILD_TYPE Release)
+# Set a default build type if none was specified
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  message(STATUS "Setting build type to 'Release' as none was specified.")
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
+  # Set the possible values of build type for cmake-gui
+  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+endif()
 
 # ---------------------------------------------------------------------
 # Dependencies
@@ -17,6 +23,7 @@ find_package(OpenMP REQUIRED)
 # Core Simulation Library
 # ---------------------------------------------------------------------
 set(CORE_SOURCES
+    src/config.cpp
     src/engine.cpp
     src/gas.cpp
     src/ics.cpp
@@ -56,7 +63,6 @@ endif()
 # ---------------------------------------------------------------------
 # High-Performance HPC Optimizations
 # ---------------------------------------------------------------------
-
 # 1. Architecture-specific Vectorization (Unlocks AVX for Eigen)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(SimulationCore PUBLIC "-march=native")
@@ -90,7 +96,12 @@ FetchContent_MakeAvailable(Catch2)
 enable_testing()
 
 # The test runner looks in the tests/ folder
-add_executable(run_tests tests/test_physics.cpp)
+add_executable(run_tests 
+    tests/test_math.cpp
+    tests/test_gravity.cpp
+    tests/test_hydro.cpp
+    tests/test_ics.cpp
+)
 
 target_link_libraries(run_tests PRIVATE SimulationCore Catch2::Catch2WithMain)
 # Tests need to include headers from src/

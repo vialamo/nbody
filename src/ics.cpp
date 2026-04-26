@@ -6,19 +6,56 @@
 #include "particles.h"
 #include "pocketfft_hdronly.h"
 
-struct ZeldovichField {
-    std::vector<double> dx;
-    std::vector<double> dy;
-    std::vector<double> dz;
-    double std_x;
-    double std_y;
-    double std_z;
-};
+// The pure shape of the BBKS power spectrum (Unnormalized)
+static double unnormalized_pk(double k_h, const Config& config) {
+    // k_h is the wavenumber in units of h Mpc^-1
+    // Cosmological Shape Parameter (Gamma)
+    double Gamma = config.OMEGA_M * config.HUBBLE_PARAM;
 
-static ZeldovichField compute_zeldovich_field(const Config& config) {
+    // 'q' parameter for BBKS, scaled for Mpc/h units
+    double q = k_h / Gamma;
+
+    // BBKS Polynomial
+    double T_k = log(1.0 + 2.34 * q) / (2.34 * q) *
+                 pow(1.0 + 3.89 * q + pow(16.1 * q, 2) + pow(5.46 * q, 3) +
+                         pow(6.71 * q, 4),
+                     -0.25);
+
+    // P(k) = k^n_s * T(k)^2
+    return pow(k_h, config.SPECTRAL_INDEX) * T_k * T_k;
+}
+
+// Fourier transform of a spherical Top-Hat filter
+static double window_tophat(double kR) {
+    // Protect against division by zero at k=0 using Taylor expansion
+    if (kR < 1e-4) return 1.0 - (kR * kR / 10.0);
+    return 3.0 * (sin(kR) - kR * cos(kR)) / (kR * kR * kR);
+}
+
+ZeldovichField compute_zeldovich_field(double scale_factor,
+                                       const Config& config) {
+    double R = 8.0;  // The standard 8 Mpc/h scale
+    double unnorm_variance = 0.0;
+    double dk = 0.001;  // Integration step size
+
+    // Numerically integrate from very large scales to very small scales
+    for (double k = 0.001; k < 100.0; k += dk) {
+        double pk = unnormalized_pk(k, config);
+        double w = window_tophat(k * R);
+        unnorm_variance += pk * w * w * k * k * dk;
+    }
+    unnorm_variance /= (2.0 * M_PI * M_PI);
+
+    // The master normalization constant
+    double A = (config.SIGMA_8 * config.SIGMA_8) / unnorm_variance;
+
     int M = config.MESH_SIZE;
     size_t M3_real = static_cast<size_t>(M) * M * M;
     size_t M3_complex = static_cast<size_t>(M) * M * (M / 2 + 1);
+
+    double box_vol = pow(config.BOX_SIZE_MPC, 3.0);
+    double amplitude_scaling =
+        std::sqrt(static_cast<double>(M3_real) / box_vol);
 
     std::vector<double> real_space_random_field(M3_real);
     std::default_random_engine generator(config.SEED);
@@ -58,24 +95,41 @@ static ZeldovichField compute_zeldovich_field(const Config& config) {
                 auto ky_freq = static_cast<double>((j < M / 2) ? j : (j - M));
                 auto kz_freq = static_cast<double>(k);
 
-                double kx = kx_freq * 2.0 * M_PI / config.DOMAIN_SIZE;
-                double ky = ky_freq * 2.0 * M_PI / config.DOMAIN_SIZE;
-                double kz = kz_freq * 2.0 * M_PI / config.DOMAIN_SIZE;
-                double k2 = kx * kx + ky * ky + kz * kz;
-
                 size_t idx = static_cast<size_t>(i) * M * (M / 2 + 1) +
                              static_cast<size_t>(j) * (M / 2 + 1) +
                              static_cast<size_t>(k);
 
-                double power_spectrum_sqrt =
-                    sqrt(pow(k2, config.INITIAL_POWER_SPECTRUM_INDEX / 2.0));
+                double kx = kx_freq * 2.0 * M_PI / config.BOX_SIZE_MPC;
+                double ky = ky_freq * 2.0 * M_PI / config.BOX_SIZE_MPC;
+                double kz = kz_freq * 2.0 * M_PI / config.BOX_SIZE_MPC;
+                double k_mag = sqrt(kx * kx + ky * ky + kz * kz);
+                double k_h = k_mag / config.HUBBLE_PARAM;
+
+                // The BBKS Transfer Function T(k)
+                double power_spectrum_sqrt = 0.0;
+                if (k_mag > 0.0) {
+                    // Multiply the unnormalized shape by A
+                    double true_pk = A * unnormalized_pk(k_h, config);
+                    power_spectrum_sqrt = sqrt(true_pk) * amplitude_scaling;
+                }
+
+                // Apply the scaling to the Fourier amplitudes
                 std::complex<double> delta_k =
                     random_k[idx] * power_spectrum_sqrt;
-                std::complex<double> phi_k = -delta_k / k2;
 
-                disp_x_k[idx] = std::complex<double>(0, -1) * kx * phi_k;
-                disp_y_k[idx] = std::complex<double>(0, -1) * ky * phi_k;
-                disp_z_k[idx] = std::complex<double>(0, -1) * kz * phi_k;
+                // Convert density contrast to Zel'dovich displacement
+                // potential
+                double code_kx = kx_freq * 2.0 * M_PI / config.DOMAIN_SIZE;
+                double code_ky = ky_freq * 2.0 * M_PI / config.DOMAIN_SIZE;
+                double code_kz = kz_freq * 2.0 * M_PI / config.DOMAIN_SIZE;
+                double code_k2 =
+                    code_kx * code_kx + code_ky * code_ky + code_kz * code_kz;
+
+                std::complex<double> phi_k = -delta_k / code_k2;
+
+                disp_x_k[idx] = std::complex<double>(0, -1) * code_kx * phi_k;
+                disp_y_k[idx] = std::complex<double>(0, -1) * code_ky * phi_k;
+                disp_z_k[idx] = std::complex<double>(0, -1) * code_kz * phi_k;
             }
         }
     }
@@ -92,22 +146,19 @@ static ZeldovichField compute_zeldovich_field(const Config& config) {
     pocketfft::c2r(shape_ic, stride_c_ic, stride_r_ic, {0, 1, 2}, false,
                    disp_z_k.data(), field.dz.data(), 1.0);
 
-    double norm_ic = 1.0 / static_cast<double>(M3_real);
-    field.std_x = 0;
-    field.std_y = 0;
-    field.std_z = 0;
+    double norm_ic = scale_factor / static_cast<double>(M3_real);
 
     for (size_t i = 0; i < M3_real; ++i) {
         field.dx[i] *= norm_ic;
         field.dy[i] *= norm_ic;
         field.dz[i] *= norm_ic;
-        field.std_x += field.dx[i] * field.dx[i];
-        field.std_y += field.dy[i] * field.dy[i];
-        field.std_z += field.dz[i] * field.dz[i];
     }
-    field.std_x = sqrt(field.std_x / M3_real);
-    field.std_y = sqrt(field.std_y / M3_real);
-    field.std_z = sqrt(field.std_z / M3_real);
+
+    // Calculate the growth rate 'f' for LambdaCDM velocities
+    double a3 = pow(scale_factor, 3.0);
+    // Omega_m(a) = the matter density at the current scale factor
+    double Om_a = config.OMEGA_M / (config.OMEGA_M + config.OMEGA_LAMBDA * a3);
+    field.f = pow(Om_a, 0.55);  // The Peebles approximation
 
     return field;
 }
@@ -135,12 +186,9 @@ void initialize_dm(SimState& state, const Config& config,
                              static_cast<size_t>(iy) * M +
                              static_cast<size_t>(iz);
 
-                double dx = (zf.dx[idx] / zf.std_x) * state.scale_factor *
-                            config.SIGMA_RMS;
-                double dy = (zf.dy[idx] / zf.std_y) * state.scale_factor *
-                            config.SIGMA_RMS;
-                double dz = (zf.dz[idx] / zf.std_z) * state.scale_factor *
-                            config.SIGMA_RMS;
+                double dx = zf.dx[idx];
+                double dy = zf.dy[idx];
+                double dz = zf.dz[idx];
 
                 Particle p;
                 p.pos.x =
@@ -150,18 +198,43 @@ void initialize_dm(SimState& state, const Config& config,
                 p.pos.z =
                     fmod(qz + dz + config.DOMAIN_SIZE, config.DOMAIN_SIZE);
 
-                p.vel.x =
-                    config.STANDING_PARTICLES ? 0.0 : state.hubble_param * dx;
-                p.vel.y =
-                    config.STANDING_PARTICLES ? 0.0 : state.hubble_param * dy;
-                p.vel.z =
-                    config.STANDING_PARTICLES ? 0.0 : state.hubble_param * dz;
+                p.vel.x = config.STANDING_PARTICLES
+                              ? 0.0
+                              : state.hubble_param * dx * zf.f;
+                p.vel.y = config.STANDING_PARTICLES
+                              ? 0.0
+                              : state.hubble_param * dy * zf.f;
+                p.vel.z = config.STANDING_PARTICLES
+                              ? 0.0
+                              : state.hubble_param * dz * zf.f;
                 p.mass = config.DM_PARTICLE_MASS;
 
                 state.dm.particles.push_back(p);
             }
         }
     }
+}
+
+double get_internal_energy_from_temp_k(double T_kelvin, double hubble_param,
+                                       double box_size_mpc, double domain_size,
+                                       double gamma) {
+    // Physical internal energy (Joules/kg)
+    const double k_B = 1.380649e-23;
+    const double m_p = 1.67262192e-27;
+    const double mu = 1.22;
+    const double u_physical_m2_s2 =
+        (k_B * T_kelvin) / ((gamma - 1.0) * mu * m_p);
+
+    // Convert dimensionless 'h' (e.g., 0.7) to absolute H0 (70.0 km/s/Mpc)
+    double H0 = hubble_param * 100.0;
+
+    // Formula: V_unit = 1.5 * H0 * (Physical size of 1 code unit)
+    const double code_unit_mpc = box_size_mpc / domain_size;
+    const double V_unit_km_s = 1.5 * H0 * code_unit_mpc;
+    const double V_unit_m_s = V_unit_km_s * 1000.0;  // Convert km/s to m/s
+
+    // Convert to code units
+    return u_physical_m2_s2 / (V_unit_m_s * V_unit_m_s);
 }
 
 void initialize_gas(SimState& state, const Config& config,
@@ -172,28 +245,32 @@ void initialize_gas(SimState& state, const Config& config,
     double cell_size = config.DOMAIN_SIZE / M;
     size_t M3_real = static_cast<size_t>(M) * M * M;
 
-    double total_dm_mass = state.dm.particles.size() * config.DM_PARTICLE_MASS;
+    assert(state.dm.get_particles().size() > 0);
+    double total_dm_mass =
+        state.dm.get_particles().size() * config.DM_PARTICLE_MASS;
     double mass_ratio = config.GAS_TOTAL_MASS / total_dm_mass;
 
     auto& gas = state.gas;
 
-    gas.density.data = state.dm.dm_rho.data * mass_ratio;
+    gas.density.data = state.dm.get_rho().data * mass_ratio;
     gas.density.data = (gas.get_density().array() < 1e-12)
                            .select(1e-12, gas.get_density().data);
 
-    double initial_internal_energy = 1e-6;
+    const double initial_internal_energy = get_internal_energy_from_temp_k(
+        config.INITIAL_GAS_TEMPERATURE_K, config.HUBBLE_PARAM,
+        config.BOX_SIZE_MPC, config.DOMAIN_SIZE, config.GAMMA);
 
     for (size_t i = 0; i < M3_real; ++i) {
-        double dx =
-            (zf.dx[i] / zf.std_x) * state.scale_factor * config.SIGMA_RMS;
-        double dy =
-            (zf.dy[i] / zf.std_y) * state.scale_factor * config.SIGMA_RMS;
-        double dz =
-            (zf.dz[i] / zf.std_z) * state.scale_factor * config.SIGMA_RMS;
+        double dx = zf.dx[i];
+        double dy = zf.dy[i];
+        double dz = zf.dz[i];
 
-        double vx = config.STANDING_PARTICLES ? 0.0 : state.hubble_param * dx;
-        double vy = config.STANDING_PARTICLES ? 0.0 : state.hubble_param * dy;
-        double vz = config.STANDING_PARTICLES ? 0.0 : state.hubble_param * dz;
+        double vx =
+            config.STANDING_PARTICLES ? 0.0 : state.hubble_param * dx * zf.f;
+        double vy =
+            config.STANDING_PARTICLES ? 0.0 : state.hubble_param * dy * zf.f;
+        double vz =
+            config.STANDING_PARTICLES ? 0.0 : state.hubble_param * dz * zf.f;
 
         gas.velocity_x.data[i] = vx;
         gas.velocity_y.data[i] = vy;
@@ -216,41 +293,50 @@ SimState initialize_state(Config& config) {
     state.total_time = 0;
     update_cosmology(state, config);
 
-    // 1. Math Step
-    ZeldovichField z_field = compute_zeldovich_field(config);
+    // Math Step
+    ZeldovichField z_field =
+        compute_zeldovich_field(state.scale_factor, config);
 
-    // 2. Dark Matter Step
+    // Dark Matter Step
     initialize_dm(state, config, z_field);
     state.dm.bin_and_assign_mass(config);
 
-    // 3. Gas Step
+    // Gas Step
     initialize_gas(state, config, z_field);
 
-    // 4. Forces Setup (UPDATED FOR NEW GRAVITY ARCHITECTURE)
+    // Forces Setup
     compute_gravitational_acceleration(state, config);
 
+    const auto num_particles = state.dm.get_particles().size();
     std::vector<Vec3> pp_forces, pm_forces;
     if (config.USE_PM) {
         state.dm.interpolate_cic_forces(state.gravity_x, state.gravity_y,
                                         state.gravity_z, pm_forces, config);
     } else {
-        pm_forces.assign(state.dm.particles.size(), {0.0, 0.0, 0.0});
+        pm_forces.assign(num_particles, {0.0, 0.0, 0.0});
     }
 
     if (config.USE_PP) {
         state.dm.compute_pp_forces(pp_forces, config);
     } else {
-        pp_forces.assign(state.dm.particles.size(), {0.0, 0.0, 0.0});
+        pp_forces.assign(num_particles, {0.0, 0.0, 0.0});
     }
 
-    // 5. Apply Initial Forces
-    for (size_t i = 0; i < state.dm.particles.size(); ++i) {
-        state.dm.particles[i].acc.x =
-            (pp_forces[i].x + pm_forces[i].x) / state.dm.particles[i].mass;
-        state.dm.particles[i].acc.y =
-            (pp_forces[i].y + pm_forces[i].y) / state.dm.particles[i].mass;
-        state.dm.particles[i].acc.z =
-            (pp_forces[i].z + pm_forces[i].z) / state.dm.particles[i].mass;
+    // Apply Initial Forces
+    if (!config.STANDING_PARTICLES) {
+        state.dm.max_accel_sq = 1e-9;
+        for (size_t i = 0; i < state.dm.particles.size(); ++i) {
+            auto& p = state.dm.particles[i];
+            p.acc.x = (pp_forces[i].x + pm_forces[i].x) / p.mass;
+            p.acc.y = (pp_forces[i].y + pm_forces[i].y) / p.mass;
+            p.acc.z = (pp_forces[i].z + pm_forces[i].z) / p.mass;
+
+            double accel_sq =
+                p.acc.x * p.acc.x + p.acc.y * p.acc.y + p.acc.z * p.acc.z;
+            if (accel_sq > state.dm.max_accel_sq) {
+                state.dm.max_accel_sq = accel_sq;
+            }
+        }
     }
 
     return state;

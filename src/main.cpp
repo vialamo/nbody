@@ -8,14 +8,16 @@
 #include "engine.h"
 #include "utils.h"
 
-std::atomic<bool> keep_running{true};
+SimulationEngine* g_engine = nullptr;
 
 void signal_handler(int signal) {
     if (signal == SIGINT) {
         std::cout << "\n[Ctrl+C Detected] Finishing the current cycle and "
                      "shutting down safely..."
                   << std::endl;
-        keep_running = false;
+        if (g_engine != nullptr) {
+            g_engine->request_stop();
+        }
     }
 }
 
@@ -30,6 +32,12 @@ int main(int argc, char* argv[]) {
     Config config;
     try {
         config.load(config_filename);
+
+        if (config.OMEGA_BARYON > config.OMEGA_M) {
+            throw std::runtime_error(
+                "Error: OMEGA_BARYON cannot be larger than total OMEGA_M.");
+        }
+
     } catch (const std::exception& e) {
         std::cerr << "Error loading " << config_filename << ": " << e.what()
                   << std::endl;
@@ -37,12 +45,16 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "Successfully loaded " << config_filename << std::endl;
 
-    // Create the output directories safely
+    std::cout << "N(P,G): (" << config.N_PER_SIDE << "³," << config.MESH_SIZE
+              << "³) G: " << config.G << " fixed_dt: " << config.FIXED_DT
+              << std::endl;
+
+    // Create the output directories
     std::string timestamp = get_timestamp();
     std::string run_dir = "outputs/run_" + timestamp;
     std::filesystem::create_directories(run_dir);
 
-    // Copy the config file into the run directory for reproducibility!
+    // Copy the config file into the run directory for reproducibility
     std::filesystem::copy_file(
         "simulation.ini", run_dir + "/simulation.ini",
         std::filesystem::copy_options::overwrite_existing);
@@ -51,23 +63,26 @@ int main(int argc, char* argv[]) {
     Logger logger(run_dir);
 
     SimulationEngine engine(config, logger, h5_writer);
+    g_engine = &engine;
 
     try {
-        while (keep_running && engine.cycle_count < config.MAX_CYCLES &&
-               engine.state.scale_factor < config.MAX_SCALE_FACTOR) {
-            engine.step();
+        ExitStatus status = engine.run();
+        switch (status) {
+            case ExitStatus::UserAborted:
+                std::cout << "\nSimulation aborted by user (Ctrl+C)."
+                          << std::endl;
+                break;
+            case ExitStatus::ReachedMaxScaleFactor:
+                std::cout << "\nSimulation successfully reached target a = "
+                          << config.MAX_SCALE_FACTOR << "." << std::endl;
+                break;
+            case ExitStatus::ReachedMaxCycles:
+                std::cout << "\nSimulation reached maximum allowed cycles ("
+                          << config.MAX_CYCLES << ")" << std::endl;
+                break;
         }
     } catch (const std::exception& e) {
-        std::cerr << "\nSimulation crashed: " << e.what() << std::endl;
-    }
-
-    if (!keep_running) {
-        std::cout << "Simulation aborted by user." << std::endl;
-    } else if (engine.state.scale_factor >= config.MAX_SCALE_FACTOR) {
-        std::cout << "Simulation successfully reached a = "
-                  << config.MAX_SCALE_FACTOR << "." << std::endl;
-    } else {
-        std::cout << "Simulation reached MAX_CYCLES." << std::endl;
+        std::cerr << "\n[FATAL] Simulation crashed: " << e.what() << std::endl;
     }
 
     return 0;

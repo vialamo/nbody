@@ -32,7 +32,7 @@ This repository documents my experiments in cosmological N-body/hydrodynamics si
 ## Repository Structure
 
 * [`/src/`](src/): A high-performance C++ P³M + hydrodynamics cosmological simulation.
-* [`/docs/`](docs/): Contains a book titled **"Notes on N-Body/Hydrodynamics Simulation"** in Markdown format (also in epub and pdf). This document summarizes the concepts, derivations, and algorithms implemented in the code.
+* [`/docs/`](docs/): Contains a "living book" titled **"Notes on N-Body/Hydrodynamics Simulation"** in Markdown format. It includes a `Makefile` to automatically build the source notes into EPUB and PDF files.
 * [`/scripts/`](scripts/): Contains Python utilities for post-processing, including a 3D visualizer (`viewer.py`) and a physical validation suite (`verify_run.py`) to analyze the HDF5 outputs.
 
 ## Getting Started
@@ -98,6 +98,24 @@ While the C++ `ctest` suite verifies the internal math during compilation, the `
     ```
     The script will print a report verifying the physical consistency of each snapshot.
 
+### Building the Book (Documentation)
+The `/docs` folder contains a guide detailing the physics and algorithms used in this project. You can compile the Markdown source into EPUB and PDF documents.
+
+1.  **Prerequisites:** You need Pandoc and a LaTeX distribution to generate the PDF.
+    ```bash
+    sudo apt update
+    sudo apt install pandoc texlive-latex-base texlive-latex-extra
+    ```
+2.  **Build:** Navigate to the `docs` directory and use the provided `Makefile`.
+    ```bash
+    cd docs
+    make        # Builds both EPUB and PDF
+    
+    # Or build them individually:
+    make pdf
+    make epub
+    ```
+
 ## Learning Log & Guidebook
 
-This project is developed as a learning exercise. The companion document, [`docs/book.pdf`](docs/book.pdf), is a "living book" that organizes and explains all the physics and computer science concepts encountered during this process. It is written in the style of a guide that I would have found most helpful when I began.
+This project is developed as a learning exercise. The companion document, built from the source files in [`/docs/`](docs/), is a "living book" that organizes and explains all the physics and computer science concepts encountered during this process. It is written in the style of a guide that I would have found most helpful when I began.

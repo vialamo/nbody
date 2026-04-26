@@ -2,113 +2,59 @@
 #include <cmath>
 #include <string>
 
-#include "ini.h"
-
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
 struct Config {
-    double DOMAIN_SIZE;
-    int MESH_SIZE;
-    double OMEGA_BARYON;
-    int N_PER_SIDE;
-    bool USE_HYDRO;
-    double G;
-    double GAMMA;
-    bool STANDING_PARTICLES;
-    bool EXPANDING_UNIVERSE;
-    double EXPANSION_START_T;
-    double INITIAL_POWER_SPECTRUM_INDEX;
-    double SIGMA_RMS;
-    bool USE_PM;
-    bool USE_PP;
-    double CUTOFF_RADIUS_CELLS;
-    double CUTOFF_TRANSITION_WIDTH_FACTOR;
-    double DT_FACTOR;
-    double CFL_SAFETY_FACTOR;
-    double GRAVITY_DT_FACTOR;
-    bool USE_ADAPTIVE_DT;
-    int SAVE_HDF5_EVERY_CYCLES;
-    int DEBUG_INFO_EVERY_CYCLES;
-    bool ENABLE_ENERGY_DIAGNOSTICS;
-    int SEED;
-    int MAX_CYCLES;
-    double MAX_SCALE_FACTOR;
+    double DOMAIN_SIZE = 1.0;
+    int MESH_SIZE = 32;
+    double BOX_SIZE_MPC = 16.0;
+
+    double OMEGA_BARYON = 0.045;
+    double OMEGA_M = 0.3;
+    double OMEGA_LAMBDA = 0.7;
+    double HUBBLE_PARAM = 0.7;
+    bool EXPANDING_UNIVERSE = true;
+
+    int N_PER_SIDE = 32;
+    bool STANDING_PARTICLES = false;
+    double START_A = 0.02;
+    double SIGMA_8 = 0.81;
+    double SPECTRAL_INDEX = 0.96;
+    double INITIAL_GAS_TEMPERATURE_K = 50.0;
+    int SEED = 42;
+
+    bool USE_HYDRO = true;
+    double GAMMA = 5.0 / 3.0;
+
+    bool USE_PM = true;
+    bool USE_PP = true;
+    double CUTOFF_RADIUS_CELLS = 2.5;
+    double CUTOFF_TRANSITION_WIDTH_FACTOR = 0.2;
+
+    double DT_FACTOR = 1e-3;
+    double MAX_SCALE_FACTOR = 1.0;
+    double CFL_SAFETY_FACTOR = 0.5;
+    double GRAVITY_DT_FACTOR = 0.2;
+    bool USE_ADAPTIVE_DT = true;
+    int MAX_CYCLES = 1000000000;
+
+    double SAVE_HDF5_EVERY_DELTA_A = 0.005;
+    int DEBUG_INFO_EVERY_CYCLES = 40;
+    bool ENABLE_ENERGY_DIAGNOSTICS = true;
 
     // Derived Parameters
-    double CELL_SIZE, CELL_VOLUME, OMEGA_DM;
-    double CUTOFF_RADIUS, CUTOFF_RADIUS_SQUARED;
-    double CUTOFF_TRANSITION_WIDTH, R_SWITCH_START, R_SWITCH_START_SQ;
-    int NUM_DM_PARTICLES;
-    double TOTAL_MASS, DM_PARTICLE_MASS, GAS_TOTAL_MASS;
-    double SOFTENING_SQUARED;
-    double DYNAMICAL_TIME, FIXED_DT;
+    double G = 0.0;
+    double CELL_SIZE = 0.0, CELL_VOLUME = 0.0, OMEGA_DM = 0.0;
+    double CUTOFF_RADIUS = 0.0, CUTOFF_RADIUS_SQUARED = 0.0;
+    double CUTOFF_TRANSITION_WIDTH = 0.0, R_SWITCH_START = 0.0, R_SWITCH_START_SQ = 0.0;
+    int NUM_DM_PARTICLES = 0;
+    double DM_PARTICLE_MASS = 0.0, GAS_TOTAL_MASS = 0.0;
+    double SOFTENING_SQUARED = 0.0;
+    double FIXED_DT = 0.0;
 
-    void load(const std::string& filename) {
-        ini::Ini config_file;
-        config_file.load(filename);
-
-        DOMAIN_SIZE = config_file.get_double("domain", "domain_size", 1.0);
-        MESH_SIZE = config_file.get_int("domain", "mesh_size", 32);
-        OMEGA_BARYON = config_file.get_double("matter", "omega_baryon", 0.15);
-        N_PER_SIDE = config_file.get_int("matter", "n_per_side", 32);
-        USE_HYDRO = config_file.get_bool("matter", "use_hydro", true);
-        G = config_file.get_double("physics", "g_const", 1.0 / (6.0 * M_PI));
-        GAMMA = config_file.get_double("physics", "gamma", 5.0 / 3.0);
-        STANDING_PARTICLES =
-            config_file.get_bool("physics", "standing_particles", false);
-        EXPANDING_UNIVERSE =
-            config_file.get_bool("physics", "expanding_universe", true);
-        EXPANSION_START_T =
-            config_file.get_double("physics", "expansion_start_t", 0.005);
-        INITIAL_POWER_SPECTRUM_INDEX = config_file.get_double(
-            "physics", "initial_power_spectrum_index", -2.0);
-        SIGMA_RMS = config_file.get_double("physics", "sigma_RMS", 0.05);
-        USE_PM = config_file.get_bool("p3m", "use_pm", true);
-        USE_PP = config_file.get_bool("p3m", "use_pp", true);
-        CUTOFF_RADIUS_CELLS =
-            config_file.get_double("p3m", "cutoff_radius_cells", 2.0);
-        CUTOFF_TRANSITION_WIDTH_FACTOR = config_file.get_double(
-            "p3m", "cutoff_transition_width_factor", 0.2);
-        DT_FACTOR = config_file.get_double("time", "dt_factor", 1e-4);
-        CFL_SAFETY_FACTOR =
-            config_file.get_double("time", "cfl_safety_factor", 0.5);
-        GRAVITY_DT_FACTOR =
-            config_file.get_double("time", "gravity_dt_factor", 0.2);
-        USE_ADAPTIVE_DT = config_file.get_bool("time", "use_adaptive_dt", true);
-        MAX_SCALE_FACTOR =
-            config_file.get_double("time", "max_scale_factor", 1.0);
-        MAX_CYCLES = config_file.get_int("time", "max_cycles", 1000000000);
-        SAVE_HDF5_EVERY_CYCLES =
-            config_file.get_int("output", "save_hdf5_every_cycles", 100);
-        DEBUG_INFO_EVERY_CYCLES =
-            config_file.get_int("output", "debug_info_every_cycles", 40);
-        ENABLE_ENERGY_DIAGNOSTICS =
-            config_file.get_bool("output", "enable_energy_diagnostics", true);
-        SEED = config_file.get_int("output", "seed", 42);
-
-        CELL_SIZE = DOMAIN_SIZE / MESH_SIZE;
-        CELL_VOLUME = CELL_SIZE * CELL_SIZE * CELL_SIZE;
-        OMEGA_DM = 1.0 - OMEGA_BARYON;
-        CUTOFF_RADIUS = CUTOFF_RADIUS_CELLS * CELL_SIZE;
-        CUTOFF_RADIUS_SQUARED = CUTOFF_RADIUS * CUTOFF_RADIUS;
-        CUTOFF_TRANSITION_WIDTH =
-            CUTOFF_TRANSITION_WIDTH_FACTOR * CUTOFF_RADIUS;
-        R_SWITCH_START = CUTOFF_RADIUS - CUTOFF_TRANSITION_WIDTH;
-        R_SWITCH_START_SQ = R_SWITCH_START * R_SWITCH_START;
-
-        NUM_DM_PARTICLES = N_PER_SIDE * N_PER_SIDE * N_PER_SIDE;
-
-        TOTAL_MASS = 1.0;
-        DM_PARTICLE_MASS = (TOTAL_MASS * OMEGA_DM) / NUM_DM_PARTICLES;
-        GAS_TOTAL_MASS = TOTAL_MASS * OMEGA_BARYON;
-
-        double mean_interparticle_spacing =
-            DOMAIN_SIZE / std::cbrt((double)NUM_DM_PARTICLES);
-
-        SOFTENING_SQUARED = pow(mean_interparticle_spacing / 50.0, 2);
-        DYNAMICAL_TIME = 1.0 / sqrt(G);
-        FIXED_DT = DT_FACTOR * DYNAMICAL_TIME;
-    }
+    Config();
+    void load(const std::string& filename);
+    void compute_derived_data();
 };

@@ -128,8 +128,8 @@ void Logger::log(const Diagnostics& diag) {
                  << diag.total_momentum_gas.z << "," << diag.total_momentum_dm.x
                  << "," << diag.total_momentum_dm.y << ","
                  << diag.total_momentum_dm.z << "," << diag.ke_gas << ","
-                 << diag.ke_dm << "," << diag.pe_total << "," << diag.ie_gas << ","
-                 << diag.dt_cfl << "," << diag.dt_gravity << ","
+                 << diag.ke_dm << "," << diag.pe_total << "," << diag.ie_gas
+                 << "," << diag.dt_cfl << "," << diag.dt_gravity << ","
                  << diag.dt_final << "," << diag.max_gas_density << ","
                  << diag.max_gas_pressure << "," << diag.max_gas_velocity << ","
                  << diag.wall_time_total << "," << diag.wall_time_pm << ","
@@ -250,8 +250,8 @@ HDF5Writer::HDF5Writer(const std::string& run_dir, const Config& config)
 
 HDF5Writer::~HDF5Writer() {}
 
-double HDF5Writer::save_snapshot(int snapshot_index, const SimState& state,
-                                 const Config& config) {
+double HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
+                                 const SimState& state, const Config& config) {
     auto start_time = std::chrono::high_resolution_clock::now();
 
     char filename[256];
@@ -264,8 +264,12 @@ double HDF5Writer::save_snapshot(int snapshot_index, const SimState& state,
         H5::Group root_group = file.openGroup("/");
 
         set_attr_double(root_group, "domain_size", config.DOMAIN_SIZE);
+        set_attr_double(root_group, "box_size_mpc", config.BOX_SIZE_MPC);
         set_attr_int(root_group, "mesh_size", config.MESH_SIZE);
         set_attr_double(root_group, "omega_baryon", config.OMEGA_BARYON);
+        set_attr_double(root_group, "omega_M", config.OMEGA_M);
+        set_attr_double(root_group, "omega_lambda", config.OMEGA_LAMBDA);
+        set_attr_double(root_group, "hubble_param", config.HUBBLE_PARAM);
         set_attr_int(root_group, "n_per_side", config.N_PER_SIDE);
         set_attr_bool(root_group, "use_hydro", config.USE_HYDRO);
         set_attr_double(root_group, "g_const", config.G);
@@ -274,10 +278,10 @@ double HDF5Writer::save_snapshot(int snapshot_index, const SimState& state,
                       config.STANDING_PARTICLES);
         set_attr_bool(root_group, "expanding_universe",
                       config.EXPANDING_UNIVERSE);
-        set_attr_double(root_group, "expansion_start_t",
-                        config.EXPANSION_START_T);
-        set_attr_double(root_group, "initial_power_spectrum_index",
-                        config.INITIAL_POWER_SPECTRUM_INDEX);
+        set_attr_double(root_group, "initial_scale_factor", config.START_A);
+        set_attr_double(root_group, "primordial_index",
+                        config.SPECTRAL_INDEX);
+        set_attr_double(root_group, "sigma_8", config.SIGMA_8);
         set_attr_bool(root_group, "use_pm", config.USE_PM);
         set_attr_bool(root_group, "use_pp", config.USE_PP);
         set_attr_double(root_group, "cutoff_radius_cells",
@@ -294,7 +298,8 @@ double HDF5Writer::save_snapshot(int snapshot_index, const SimState& state,
         set_attr_double(root_group, "scale_factor", state.scale_factor);
 
         H5::Group particle_group = root_group.createGroup("particles");
-        size_t n_particles = state.dm.particles.size();
+        const auto& particles = state.dm.get_particles();
+        size_t n_particles = particles.size();
 
         std::vector<double> pos_x(n_particles), pos_y(n_particles),
             pos_z(n_particles);
@@ -305,19 +310,19 @@ double HDF5Writer::save_snapshot(int snapshot_index, const SimState& state,
         std::vector<double> mass(n_particles);
 
         for (size_t i = 0; i < n_particles; ++i) {
-            pos_x[i] = state.dm.particles[i].pos.x;
-            pos_y[i] = state.dm.particles[i].pos.y;
-            pos_z[i] = state.dm.particles[i].pos.z;
+            pos_x[i] = particles[i].pos.x;
+            pos_y[i] = particles[i].pos.y;
+            pos_z[i] = particles[i].pos.z;
 
-            vel_x[i] = state.dm.particles[i].vel.x;
-            vel_y[i] = state.dm.particles[i].vel.y;
-            vel_z[i] = state.dm.particles[i].vel.z;
+            vel_x[i] = particles[i].vel.x;
+            vel_y[i] = particles[i].vel.y;
+            vel_z[i] = particles[i].vel.z;
 
-            acc_x[i] = state.dm.particles[i].acc.x;
-            acc_y[i] = state.dm.particles[i].acc.y;
-            acc_z[i] = state.dm.particles[i].acc.z;
+            acc_x[i] = particles[i].acc.x;
+            acc_y[i] = particles[i].acc.y;
+            acc_z[i] = particles[i].acc.z;
 
-            mass[i] = state.dm.particles[i].mass;
+            mass[i] = particles[i].mass;
         }
 
         write_particle_vec(particle_group, "position_x", pos_x);
@@ -393,14 +398,15 @@ Diagnostics calculate_diagnostics(const SimState& state,
     }
 
     // Conservation (Particles)
+    const auto& particles = state.dm.get_particles();
     double sum_mass = 0.0;
     double sum_px = 0.0;
     double sum_py = 0.0;
     double sum_pz = 0.0;
 
 #pragma omp parallel for reduction(+ : sum_mass, sum_px, sum_py, sum_pz)
-    for (size_t i = 0; i < state.dm.particles.size(); ++i) {
-        const auto& p = state.dm.particles[i];
+    for (size_t i = 0; i < particles.size(); ++i) {
+        const auto& p = particles[i];
         sum_mass += p.mass;
         sum_px += p.mass * p.vel.x;
         sum_py += p.mass * p.vel.y;
@@ -414,21 +420,23 @@ Diagnostics calculate_diagnostics(const SimState& state,
 
     diag.ke_dm = 0.0;
     diag.pe_total = 0.0;
-    
+
     if (config.ENABLE_ENERGY_DIAGNOSTICS) {
-        // 1. Dark Matter Kinetic Energy
+        // Dark Matter Kinetic Energy
         diag.ke_dm = state.dm.calculate_kinetic_energy(state.scale_factor);
 
-        // 2. Total System Potential Energy (from the Eulerian grid)
+        // Total System Potential Energy (from the Eulerian grid)
         double system_pe = 0.0;
-        int total_cells = config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
-        
+        int total_cells =
+            config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
+
         // W = 1/2 * sum(rho * phi * dV)
 #pragma omp parallel for reduction(+ : system_pe)
         for (int i = 0; i < total_cells; ++i) {
-            system_pe += 0.5 * state.total_rho.data[i] * state.phi.data[i] * config.CELL_VOLUME;
+            system_pe += 0.5 * state.total_rho.data[i] * state.phi.data[i] *
+                         config.CELL_VOLUME;
         }
-        
+
         // Convert from comoving potential to proper potential
         diag.pe_total = system_pe / state.scale_factor;
     }

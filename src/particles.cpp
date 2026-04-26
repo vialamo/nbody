@@ -10,7 +10,8 @@
 ParticleSystem::ParticleSystem(const Config& config)
     : dm_rho(config.MESH_SIZE),
       cic_data(config.NUM_DM_PARTICLES),
-      cell_grid(config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE) {
+      cell_grid(config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE),
+      max_accel_sq(0.0) {
     particles.reserve(config.NUM_DM_PARTICLES);
 }
 
@@ -199,15 +200,15 @@ void ParticleSystem::compute_pp_forces(std::vector<Vec3>& pp_forces,
 
 double ParticleSystem::calculate_kinetic_energy(double a) const {
     double kinetic_energy = 0.0;
-    
+
 #pragma omp parallel for reduction(+ : kinetic_energy)
     for (size_t i = 0; i < particles.size(); ++i) {
         const auto& p = particles[i];
-        
+
         double proper_vel_sq = (a * p.vel.x) * (a * p.vel.x) +
                                (a * p.vel.y) * (a * p.vel.y) +
                                (a * p.vel.z) * (a * p.vel.z);
-                               
+
         kinetic_energy += 0.5 * p.mass * proper_vel_sq;
     }
     return kinetic_energy;
@@ -216,12 +217,6 @@ double ParticleSystem::calculate_kinetic_energy(double a) const {
 double ParticleSystem::get_gravity_timestep(const Config& config) const {
     if (particles.empty()) return std::numeric_limits<double>::infinity();
 
-    double max_accel_sq = 1e-9;
-    for (const auto& p : particles) {
-        double accel_sq =
-            p.acc.x * p.acc.x + p.acc.y * p.acc.y + p.acc.z * p.acc.z;
-        if (accel_sq > max_accel_sq) max_accel_sq = accel_sq;
-    }
     double dt_grav = sqrt(config.SOFTENING_SQUARED) / sqrt(max_accel_sq);
     return dt_grav * config.GRAVITY_DT_FACTOR;
 }

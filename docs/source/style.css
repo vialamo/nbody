@@ -1,0 +1,12 @@
+body {
+    font-family: "Georgia", serif;
+    text-align: justify;
+}
+
+p {
+    page-break-inside: avoid;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    text-align: left;
+}

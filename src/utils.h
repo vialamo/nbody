@@ -73,8 +73,8 @@ class HDF5Writer {
     HDF5Writer(const std::string& run_dir, const Config& config);
     ~HDF5Writer();
 
-    double save_snapshot(int snapshot_index, const SimState& state,
-                         const Config& config);
+    double save_snapshot(int snapshot_index, int cycle_count,
+                         const SimState& state, const Config& config);
 };
 
 Diagnostics calculate_diagnostics(const SimState& state,

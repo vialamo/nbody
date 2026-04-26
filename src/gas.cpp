@@ -50,10 +50,10 @@ RiemannSolver::RiemannSolver(int mesh_size)
       flux_mom_t2(mesh_size),
       flux_energy(mesh_size) {}
 
-Grid3D RiemannSolver::solve_hll(const Grid3D& FL, const Grid3D& FR,
-                                const Grid3D& UL, const Grid3D& UR) {
-    Grid3D flux(density.n);
-    flux.data =
+void RiemannSolver::solve_hll(const Grid3D& FL, const Grid3D& FR,
+                                const Grid3D& UL, const Grid3D& UR,
+                                Grid3D& out_flux) {
+    out_flux.data =
         (S_L.array() >= 0)
             .select(FL.array(),
                     (S_R.array() <= 0)
@@ -62,7 +62,6 @@ Grid3D RiemannSolver::solve_hll(const Grid3D& FL, const Grid3D& FR,
                                              S_L.array() * S_R.array() *
                                                  (UR.array() - UL.array())) /
                                                 S_R_minus_S_L.array()));
-    return flux;
 }
 
 void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
@@ -157,11 +156,11 @@ void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
         (S_R_minus_S_L.array().abs() < 1e-9).select(1e-9, S_R_minus_S_L.data);
 
     // --- 5. Solve for Intercell Fluxes using HLL ---
-    flux_density = solve_hll(F_dens_L, F_dens_R, rho_L, rho_R);
-    flux_mom_n = solve_hll(F_momn_L, F_momn_R, mom_n_L, mom_n_R);
-    flux_mom_t1 = solve_hll(F_momt1_L, F_momt1_R, mom_t1_L, mom_t1_R);
-    flux_mom_t2 = solve_hll(F_momt2_L, F_momt2_R, mom_t2_L, mom_t2_R);
-    flux_energy = solve_hll(F_en_L, F_en_R, E_L, E_R);
+    solve_hll(F_dens_L, F_dens_R, rho_L, rho_R, flux_density);
+    solve_hll(F_momn_L, F_momn_R, mom_n_L, mom_n_R, flux_mom_n);
+    solve_hll(F_momt1_L, F_momt1_R, mom_t1_L, mom_t1_R, flux_mom_t1);
+    solve_hll(F_momt2_L, F_momt2_R, mom_t2_L, mom_t2_R, flux_mom_t2);
+    solve_hll(F_en_L, F_en_R, E_L, E_R, flux_energy);
 
     // --- 6. Pre-calculate shifted fluxes for the grid update ---
     flux_density_sh = flux_density.roll(1, axis);

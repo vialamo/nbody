@@ -24,8 +24,8 @@ class RiemannSolver {
 
    public:
     RiemannSolver(int mesh_size);
-    Grid3D solve_hll(const Grid3D& FL, const Grid3D& FR, const Grid3D& UL,
-                     const Grid3D& UR);
+    void solve_hll(const Grid3D& FL, const Grid3D& FR, const Grid3D& UL,
+                     const Grid3D& UR, Grid3D& out_flux);
     void compute_fluxes(const GasGrid& grid, int axis, double gamma);
 
     const Grid3D& get_flux_density() const { return flux_density; }

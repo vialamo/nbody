@@ -8,20 +8,47 @@
 #include "pocketfft_hdronly.h"
 
 void update_cosmology(SimState& state, const Config& config) {
-    if (config.EXPANDING_UNIVERSE) {
-        double expansion_time = config.EXPANSION_START_T + state.total_time;
-        state.scale_factor = std::pow(expansion_time, 2.0 / 3.0);
-        state.hubble_param = (2.0 / 3.0) / expansion_time;
-    } else {
+    if (!config.EXPANDING_UNIVERSE) {
         state.scale_factor = 1.0;
         state.hubble_param = 0.0;
+        return;
+    }
+
+    if (config.OMEGA_LAMBDA == 0.0) {
+        // Einstein-de Sitter
+        double t_start = std::pow(config.START_A, 1.5);
+        double current_cosmo_time = t_start + state.total_time;
+        state.scale_factor = std::pow(current_cosmo_time, 2.0 / 3.0);
+        state.hubble_param = (2.0 / 3.0) / current_cosmo_time;
+    } else {
+        // Lambda-CDM
+        const double Om = config.OMEGA_M;
+        const double Ol = config.OMEGA_LAMBDA;
+        const double H0 = 2.0 / (3.0 * std::sqrt(Om));
+        double factor = std::sqrt(Ol / Om);
+
+        // Reverse-engineer the physical time of the Big Bang from START_A
+        double t_start = (2.0 / (3.0 * H0 * std::sqrt(Ol))) *
+                         std::asinh(factor * std::pow(config.START_A, 1.5));
+
+        // Add elapsed simulation time
+        double current_t = t_start + state.total_time;
+
+        // Calculate current scale factor
+        double sinh_term = std::sinh(1.5 * H0 * std::sqrt(Ol) * current_t);
+        state.scale_factor =
+            std::pow(Om / Ol, 1.0 / 3.0) * std::pow(sinh_term, 2.0 / 3.0);
+
+        // Calculate current Hubble parameter H(a)
+        double a3 = std::pow(state.scale_factor, 3.0);
+        state.hubble_param = H0 * std::sqrt(Om / a3 + Ol);
     }
 }
 
 void compute_gravitational_acceleration(SimState& state, const Config& config) {
     int N = config.MESH_SIZE;
     const GasGrid& gas = state.gas;
-    const Grid3D& dm_rho = state.dm.dm_rho;
+    const Grid3D& dm_rho = state.dm.get_rho();
     Grid3D& total_rho = state.total_rho;
     Grid3D& acc_x = state.gravity_x;
     Grid3D& acc_y = state.gravity_y;
@@ -134,8 +161,8 @@ void apply_gas_kick(GasGrid& gas, const Grid3D& grav_x, const Grid3D& grav_y,
     gas.energy.array() += power_density.array() * dt;
 }
 
-void apply_dm_kick(std::vector<Particle>& particles, double dt, double a,
-                   double H) {
+static void apply_dm_kick(std::vector<Particle>& particles, double dt, double a,
+                          double H) {
     double a3 = a * a * a;
     for (auto& p : particles) {
         double total_ax_p = (p.acc.x / a3) - (2 * H * p.vel.x);
@@ -144,6 +171,32 @@ void apply_dm_kick(std::vector<Particle>& particles, double dt, double a,
         p.vel.x += total_ax_p * dt;
         p.vel.y += total_ay_p * dt;
         p.vel.z += total_az_p * dt;
+    }
+}
+
+static void apply_dm_drift(std::vector<Particle>& particles, double dt,
+                           double domain_size) {
+    for (auto& p : particles) {
+        p.pos.x = fmod(p.pos.x + p.vel.x * dt + domain_size, domain_size);
+        p.pos.y = fmod(p.pos.y + p.vel.y * dt + domain_size, domain_size);
+        p.pos.z = fmod(p.pos.z + p.vel.z * dt + domain_size, domain_size);
+    }
+}
+
+static void update_particles_accel(ParticleSystem& dm,
+                                   const std::vector<Vec3>& pm_forces,
+                                   const std::vector<Vec3>& pp_forces) {
+    dm.max_accel_sq = 1e-9;
+    for (size_t i = 0; i < dm.particles.size(); ++i) {
+        auto& p = dm.particles[i];
+        p.acc.x = (pp_forces[i].x + pm_forces[i].x) / p.mass;
+        p.acc.y = (pp_forces[i].y + pm_forces[i].y) / p.mass;
+        p.acc.z = (pp_forces[i].z + pm_forces[i].z) / p.mass;
+        double accel_sq =
+            p.acc.x * p.acc.x + p.acc.y * p.acc.y + p.acc.z * p.acc.z;
+        if (accel_sq > dm.max_accel_sq) {
+            dm.max_accel_sq = accel_sq;
+        }
     }
 }
 
@@ -162,14 +215,7 @@ std::map<std::string, double> KDK_step(SimState& state, double dt,
                   state.hubble_param);
 
     // DRIFT
-    for (auto& p : state.dm.particles) {
-        p.pos.x = fmod(p.pos.x + p.vel.x * dt + config.DOMAIN_SIZE,
-                       config.DOMAIN_SIZE);
-        p.pos.y = fmod(p.pos.y + p.vel.y * dt + config.DOMAIN_SIZE,
-                       config.DOMAIN_SIZE);
-        p.pos.z = fmod(p.pos.z + p.vel.z * dt + config.DOMAIN_SIZE,
-                       config.DOMAIN_SIZE);
-    }
+    apply_dm_drift(state.dm.particles, dt, config.DOMAIN_SIZE);
 
     // HYDRO DYNAMICS
     start_time = std::chrono::high_resolution_clock::now();
@@ -211,18 +257,9 @@ std::map<std::string, double> KDK_step(SimState& state, double dt,
                         end_time - start_time)
                         .count();
 
-    // Assign final accelerations back to particles (Separated from Kick logic!)
-    for (size_t i = 0; i < state.dm.particles.size(); ++i) {
-        auto& p = state.dm.particles[i];
-        p.acc.x = config.STANDING_PARTICLES
-                      ? 0.0
-                      : (pp_forces[i].x + pm_forces[i].x) / p.mass;
-        p.acc.y = config.STANDING_PARTICLES
-                      ? 0.0
-                      : (pp_forces[i].y + pm_forces[i].y) / p.mass;
-        p.acc.z = config.STANDING_PARTICLES
-                      ? 0.0
-                      : (pp_forces[i].z + pm_forces[i].z) / p.mass;
+    // Assign final accelerations back to particles
+    if (!config.STANDING_PARTICLES) {
+        update_particles_accel(state.dm, pm_forces, pp_forces);
     }
 
     // KICK 2 (Half step)

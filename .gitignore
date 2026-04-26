@@ -1,5 +1,5 @@
-# Ignore CMake build folders
-build/
+# Ignore CMake build folder
+/build/
 
 # Ignore the C++ IntelliSense database
 compile_commands.json

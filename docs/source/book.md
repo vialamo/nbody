@@ -505,6 +505,28 @@ Let's break down these two terms, which are the fundamental modifications needed
 
 By solving this new equation of motion, our simulation correctly captures the delicate interplay between the cosmic expansion that tries to pull everything apart and the force of gravity that tries to pull everything together.
 
+### Cosmological Models and the Friedmann Equations
+
+The equation of motion we just derived tells us how particles respond to gravity and expansion, but it relies on two crucial background variables: the scale factor, $a(t)$, and the Hubble parameter, $H(t)$. To actually integrate the particle trajectories, our simulation needs to know exactly how these values evolve. Their behavior is not arbitrary; it is dictated by the fundamental laws of General Relativity.
+
+General Relativity is governed by **Einstein's Field Equations**. At their core, these equations describe the delicate balance between the geometry of the cosmos and the "stuff" inside it. They are elegantly summarized in tensor notation:
+
+$$G_{\mu\nu} + \Lambda g_{\mu\nu} = \frac{8\pi G}{c^4} T_{\mu\nu}$$
+
+In this formulation, the left side represents the canvas of spacetime itself: $G_{\mu\nu}$ measures the geometric curvature, $g_{\mu\nu}$ is the metric defining how distances are measured, and $\Lambda$ is the cosmological constant representing the inherent energy of the vacuum. The right side represents the contents: $T_{\mu\nu}$ is the stress-energy tensor, which tallies up all the mass, light, and fluid pressure in a given region. As physicist John Archibald Wheeler famously summarized: *"Spacetime tells matter how to move; matter tells spacetime how to curve."* However, because this compact line actually hides ten grueling, interconnected differential equations, solving it directly for an irregular, clumpy universe filled with billions of scattered galaxies is mathematically impossible.
+
+In the 1920s, physicist Alexander Friedmann simplified Einstein's field equations for a universe that is assumed to be uniform and isotropic on large scales. The resulting **Friedmann equation** acts as the master blueprint for cosmic expansion. Mathematically, it relates the universe's expansion rate to its matter density, geometric curvature, and the cosmological constant:
+
+$$H(t)^2 = \left( \frac{1}{a} \frac{da}{dt} \right)^2 = \frac{8\pi G}{3} \rho - \frac{kc^2}{a^2} + \frac{\Lambda c^2}{3}$$
+
+Here, $G$ is the gravitational constant, $\rho$ represents the density of matter and radiation, $k$ is a constant representing the overall geometric curvature of space, and $\Lambda$ (Lambda) is the cosmological constant—a term representing the inherent energy of the vacuum itself. 
+
+Observations of the real universe strongly indicate that our cosmos is geometrically "flat," meaning $k = 0$. This simplifies the equation significantly. 
+
+A **cosmological model** is simply a specific "recipe" of these cosmic ingredients. By defining what our virtual universe is made of (the amount of matter $\rho$ and vacuum energy $\Lambda$) and plugging them into the Friedmann equation, we can mathematically solve for the exact historical trajectory of the expansion. 
+
+For the purposes of our N-body simulation, there are two primary models of interest: the classic, matter-dominated model (Einstein-de Sitter) and the modern, dark-energy-driven model ($\Lambda$CDM).
+
 ### An Einstein-de Sitter Universe
 
 For a simulation to be physically meaningful, it must be based on a self-consistent cosmological model. The simplest and most classic model for a matter-dominated universe is the **Einstein-de Sitter (EdS)** model. This is a specific solution to Einstein's Friedmann equations that describes a flat, expanding universe containing only matter and no cosmological constant:
@@ -518,9 +540,9 @@ $$H(t) = \frac{2}{3t}$$
 
 #### Critical Density and Model Consistency
 
-The defining feature of a flat universe is that its average density, $\rho(t)$, is equal to a special value known as the **critical density**, $\rho_c(t)$. The critical density is the precise density required to halt the cosmic expansion after an infinite amount of time, and it is defined by the Hubble parameter and the gravitational constant, $G$:
+As demonstrated by the Friedmann equation, if we define a universe with a flat geometry ($k = 0$) and no cosmological constant ($\Lambda = 0$), the expansion rate is perfectly balanced by the density of the universe. This specific equilibrium point is known as the **critical density**, $\rho_c(t)$. In a universe without dark energy, it represents the precise density required to halt the cosmic expansion after an infinite amount of time, defined entirely by the Hubble parameter and the gravitational constant, $G$:
 $$\rho_c(t) = \frac{3H(t)^2}{8\pi G}$$
-For our simulation to be a consistent representation of an EdS universe, the mean density of our simulation box must be equal to this critical density at all times. The mean density of the box is the total mass, $M_{total}$, divided by the proper (physical) volume, $V = (aL)^3$:
+Because an Einstein-de Sitter universe perfectly matches these exact conditions—it is flat and contains exclusively matter—its average **matter density** must equal this critical density at all times. For our simulation to be a consistent representation of this model, the mean density of our simulation box—the total mass, $M_{total}$, divided by the proper (physical) volume, $V = (aL)^3$—must also satisfy this requirement:
 $$\rho_{mean}(t) = \frac{M_{total}}{(a(t)L)^3}$$
 By equating $\rho_{mean} = \rho_c$ and substituting the EdS relations for $a(t)$ and $H(t)$, we find that the simulation parameters are not independent but must be linked by a **consistency relation**.
 
@@ -537,8 +559,117 @@ $$G = \frac{3H(t)^2 (a(t)L)^3}{8\pi M_{total}} = \frac{L^3}{6\pi M_{total}} = \f
 
 By using this specific value for $G$, we ensure that the strength of gravity in our simulation is perfectly balanced against the expansion rate, allowing for the realistic, hierarchical growth of structure.
 
+### The $\Lambda$CDM Model and Dark Energy
+
+The Einstein-de Sitter (EdS) model is mathematically elegant and perfectly describes a universe dominated entirely by the gravity of matter. For decades, it was the standard model of cosmology. However, in 1998, observations of distant supernovae revealed a shocking truth: the expansion of our universe is not slowing down due to gravity; it is accelerating.
+
+To model the real universe, we must upgrade from EdS to the **$\Lambda$CDM (Lambda Cold Dark Matter)** model. This model introduces a new component to the cosmos: **Dark Energy**, represented by the cosmological constant, $\Lambda$. Dark energy acts as a repulsive negative pressure inherent to space itself, pushing the universe apart.
+
+In a flat $\Lambda$CDM universe, the total density is made up of matter ($\Omega_m \approx 0.3$) and dark energy ($\Omega_\Lambda \approx 0.7$), such that $\Omega_m + \Omega_\Lambda = 1$. The Friedmann equation expands to include this new term:
+
+$$H(t)^2 = H_0^2 \left( \frac{\Omega_m}{a(t)^3} + \Omega_\Lambda \right)$$
+
+Notice that the matter density dilutes as the universe expands ($1/a^3$), but the dark energy density ($\Omega_\Lambda$) remains perfectly constant. This creates a fascinating cosmic tug-of-war. 
+
+#### The Evolution of the Scale Factor
+
+In the early universe, when $a(t)$ was very small, the matter term completely dominated the Friedmann equation. The universe behaved almost exactly like an EdS universe, decelerating as gravity pulled matter together. However, as space expanded and matter diluted, the constant push of dark energy eventually overtook the fading pull of gravity. Today, dark energy dominates, and the expansion is accelerating.
+
+The exact solution for the scale factor $a(t)$ in a flat $\Lambda$CDM universe gracefully captures both of these eras—the early deceleration and the late acceleration—using a hyperbolic sine function:
+
+$$a(t) = \left( \frac{\Omega_m}{\Omega_\Lambda} \right)^{1/3} \sinh^{2/3} \left( \frac{3}{2} H_0 \sqrt{\Omega_\Lambda} t \right)$$
+
+By using this equation, along with its corresponding Hubble parameter $H(a)$, our simulation smoothly transitions from the matter-dominated epoch (where structures rapidly form) into the dark-energy-dominated epoch (where the cosmic web is stretched and frozen in place).
+
+Dark energy actively fights against the formation of galaxies. In a pure matter universe, structures grow steadily. But in a $\Lambda$CDM universe, the accelerated stretching of space pulls matter apart faster than gravity can pull it together.
+
+#### Natural Units in a $\Lambda$CDM Universe
+
+Because the $\Lambda$CDM model also describes a geometrically flat universe, its total energy density must still equal the critical density, $\rho_c$. However, in our simulation, the particles only represent matter; they do not represent the vacuum energy. Therefore, the mean density of our computational grid accounts only for the matter fraction: $\bar{\rho}_m = \Omega_m \rho_c$.
+
+At first glance, it seems like we need to modify our gravitational constant, $G$, to account for this diluted matter fraction. However, the elegance of our natural unit system reveals a beautiful mathematical cancellation. 
+
+The critical density is defined by the present-day Hubble parameter, $H_0$:
+$$\rho_c = \frac{3H_0^2}{8\pi G}$$
+
+In our simulation units, $H_0$ is intrinsically linked to the matter density to ensure the correct timeline for cosmic expansion, defined mathematically as $H_0 = \frac{2}{3\sqrt{\Omega_m}}$. If we plug this into our equation for the mean matter density, we get:
+$$\bar{\rho}_m = \Omega_m \left( \frac{3 \left( \frac{2}{3\sqrt{\Omega_m}} \right)^2}{8\pi G} \right)$$
+
+When we expand the squared Hubble term, the $\Omega_m$ in the denominator perfectly cancels out the $\Omega_m$ scaling the equation:
+$$\bar{\rho}_m = \Omega_m \left( \frac{3 \left( \frac{4}{9\Omega_m} \right)}{8\pi G} \right) = \frac{12}{72\pi G} = \frac{1}{6\pi G}$$
+
+The mean density of our simulation box is defined by the total mass, $M_{total}$, divided by its volume, $L^3$. Equating our grid density to the physical matter density gives us our final equation for $G$:
+$$\frac{M_{total}}{L^3} = \frac{1}{6\pi G}$$
+$$G = \frac{L^3}{6\pi M_{total}}$$
+
+Remarkably, the $\Omega_m$ parameter completely drops out of the calculation for $G$. Because the definition of our expansion rate ($H_0$) already absorbs the matter fraction, the natural units derived for the simple Einstein-de Sitter model remain perfectly valid and exact for a complex $\Lambda$CDM universe. While we typically set $M_{total} = 1$ and $L = 1$ in practice, keeping $M_{total}$ explicit ensures that the strength of gravity remains physically accurate if the total mass of the simulated system is ever modified.
+
+#### Hubble: Physical vs. Code Units
+
+When looking at the mathematical derivation above, a sharp reader might spot an apparent contradiction. We defined the present-day Hubble parameter mathematically as $H_0 = \frac{2}{3\sqrt{\Omega_m}}$. However, in observational cosmology, the matter density ($\Omega_m$) and the Hubble constant ($H_0$) are completely independent parameters. You can physically have a universe where $\Omega_m = 0.3$ and $H_0 = 70$ km/s/Mpc, or one where $\Omega_m = 1.0$ and $H_0 = 50$ km/s/Mpc. 
+
+So, why does our simulation mathematically force them to be linked? 
+
+The answer lies in a famously confusing naming collision in computational cosmology. The symbol $H_0$ actually carries two entirely different meanings depending on whether we are looking at the *real world* or the *internal code*. A robust simulation must handle both independently:
+
+* **The Physical Hubble Parameter ($h$):** In observational astronomy, the Hubble constant is typically written as $H_0 = 100 \cdot h$ km/s/Mpc, where $h$ is a dimensionless scaling factor (often around 0.7). This parameter anchors the simulation to **real-world physical scales**. It is used during the generation of the initial conditions to calculate the physical size of the primordial density fluctuations (the power spectrum) and to convert physical gas temperatures (Kelvin) into the dimensionless energy units used by the hydrodynamic solver.
+* **The Internal Code-Unit Hubble Parameter:** The equation $H_0 = \frac{2}{3\sqrt{\Omega_m}}$ does not represent a physical speed in km/s/Mpc. Instead, it is the **internal time-scaling factor** demanded by our choice of natural units ($M_{total} = 1$, $L = 1$). Because we stripped away the standard units of kilograms and meters, the simulation must invent its own internal "clock." This specific equation defines the exact ticking rate of that internal clock required to ensure that the gravitational collapse of our dimensionless mass perfectly balances against the dimensionless expansion of our grid. 
+
+In practice, a simulation isolates these two concepts. The time integrator uses the internal code-unit $H_0$ to stretch the scale factor $a(t)$ and apply the Hubble drag to the particles, intentionally ignoring the physical expansion rate. Meanwhile, the initial condition generator uses the physical $h$ parameter to shape the physical geometry of the cosmos. By separating them, the code remains physically accurate while allowing the user to independently configure both $\Omega_m$ and $h$ to match whatever observational dataset they choose to simulate.
+
 *Key Literature & Further Reading*  
 Springel, V. (2005). The cosmological simulation code GADGET-2. *Monthly Notices of the Royal Astronomical Society*, 364(4), 1105-1134. Available at: [https://arxiv.org/abs/astro-ph/0505010](https://arxiv.org/abs/astro-ph/0505010)
+
+## Scale and Cosmic Variance
+
+Before we can populate our simulation with particles, we must make a fundamental decision: how much of the universe are we going to simulate, and in how much detail? 
+
+Because computational resources are finite, choosing the parameters of our simulation requires navigating a strict physical trade-off between the overall size of our simulated box (the macroscopic scale) and the size of our individual grid cells (the microscopic resolution). If we choose poorly, our virtual universe will either fail to form galaxies or fail to represent the actual cosmos.
+
+### Cosmic Variance and the Minimum Box Size
+
+Our goal is usually to simulate a "representative" patch of the universe. This means that the statistical properties of our simulation box—the number of galaxy clusters, the sizes of the voids, the web-like structure of the filaments—should look identical to any other randomly selected patch of the real universe of the same size.
+
+However, the universe is only uniform on extremely large scales. If you look at a small patch of space (e.g., 10 Megaparsecs across), you might accidentally center your view on a massive supercluster, or you might look at an entirely empty void. This statistical uncertainty is known as **Cosmic Variance**.
+
+If a simulation box is too small, it suffers from severe cosmic variance. A small box physically cannot contain the longest wavelengths of the density field, meaning it will never form massive superstructures. Furthermore, the periodic boundary conditions will cause the few structures that do form to artificially interact with themselves across the boundaries.
+
+In professional cosmology, the accepted threshold for a simulation volume to be considered statistically representative of the large-scale structure is a comoving box length of roughly **100 Mpc** (Megaparsecs) or larger. At this scale, the simulation volume is vast enough to contain a healthy, statistically average mix of all cosmic environments, from the deepest voids to the most massive cluster nodes.
+
+### The Resolution Limit for Halo Formation
+
+While the box must be large enough to capture the cosmic web, the grid cells must be small enough to capture the galaxies within it.
+
+In our Particle-Mesh and P³M algorithms, the grid cell size ($L_{\text{cell}} = \text{Box Size} / \text{Mesh Size}$) determines the fundamental resolution limit of the simulation. Because forces are smoothed at the scale of the grid cells to ensure numerical stability, the simulation physically cannot form "clumps" of matter that are smaller than a few grid cells across. 
+
+In the real universe, the dark matter halos that host standard galaxies (like our Milky Way) have radii on the order of 0.1 to 0.5 Mpc. Therefore, to successfully resolve distinct, tightly collapsed galactic halos, a cosmological simulation requires a spatial resolution of roughly **0.3 to 0.5 Mpc** per cell. 
+
+If the resolution is significantly coarser than this (for example, 3.0 Mpc per cell), gravity will still pull matter together, but the small-scale smoothing will prevent sharp collapse. The resulting universe will look "blurry," with matter smeared out into thick filaments rather than forming distinct, highly non-linear galactic nodes.
+
+### The Computational Trade-off
+
+These two physical constraints—a minimum box size of 100 Mpc and a target resolution of ~0.4 Mpc—dictate the minimum computational requirements for a realistic simulation.
+
+Because $\text{Resolution} = \text{Box Size} / \text{Mesh Size}$, achieving a 0.39 Mpc resolution in a 100 Mpc box requires a 3D grid with a mesh size of 256. Simulating this requires $256^3$ (roughly 16.7 million) dark matter particles and an equal number of Eulerian gas cells. 
+
+This $O(N^3)$ scaling is the harsh reality of 3D hydrodynamics. Doubling the resolution of a simulation requires $2^3 = 8$ times more memory, and vastly more processing time due to the smaller required timesteps.
+
+When testing code or running experiments on smaller machines, it is entirely valid to run smaller "toy models" (for instance, a 24 Mpc box with a $48^3$ grid). This perfectly preserves the critical 0.5 Mpc resolution necessary to watch gravity violently collapse halos and shock-heat the gas. However, one must simply keep in mind that such a "dwarf volume" is essentially a zoom-in on a single cosmic neighborhood, sacrificing the grand scale of the cosmic web in exchange for computational speed.
+
+### A Reference for Cosmic Scales
+
+Because the Megaparsec (Mpc) is an unfathomably vast unit of distance (1 Mpc $\approx 3.26$ million light-years), it can be difficult to build an intuition for the scale of a simulation grid. To help anchor these numbers to reality, here is a quick-reference guide to the approximate diameters of common astronomical structures:
+
+| Structure | Approximate Diameter (Mpc) | Notes |
+| :--- | :--- | :--- |
+| **Earth-Sun Distance (1 AU)** | $\sim 5 \times 10^{-12} \text{ Mpc}$ | The distance light travels in 8 minutes. |
+| **The Solar System** | $\sim 0.00001 \text{ Mpc}$ | Reaching out to the edge of the Oort Cloud. |
+| **Milky Way (Visible Stellar Disk)** | $\sim 0.03 \text{ Mpc}$ | The glowing spiral of stars and gas we can see. |
+| **Milky Way (Dark Matter Halo)** | $\sim 0.3 \text{ Mpc}$ | The invisible gravitational well hosting our galaxy. |
+| **The Local Group** | $\sim 3.0 \text{ Mpc}$ | Our local neighborhood, including Andromeda. |
+| **Typical Galaxy Cluster** | $\sim 2.0 \text{ to } 10.0 \text{ Mpc}$ | Hundreds of galaxies bound in a single hot gas node. |
+| **Typical Cosmic Void** | $\sim 20.0 \text{ to } 50.0 \text{ Mpc}$ | Vast, underdense regions between filaments. |
+| **Representative Simulation Box** | $\mathbf{100.0+ \text{ Mpc}}$ | The minimum scale required to combat Cosmic Variance. |
 
 ## Initial Conditions
 
@@ -575,15 +706,13 @@ Although we only use it to generate a single initial snapshot, the Zel'dovich Ap
 
 The full, time-dependent displacement field can therefore be written as:
 $$\boldsymbol{\Psi}(\mathbf{x}, t) = D(t) \boldsymbol{\Psi}_0(\mathbf{x})$$
-Here, $\boldsymbol{\Psi}_0(\mathbf{x})$ is the primordial displacement pattern at some reference time (conventionally, today, where $D=1$), and $D(t)$ scales this entire pattern up or down depending on the cosmic epoch. In the simple Einstein-de Sitter universe we are modeling, the growth factor is conveniently proportional to the scale factor, $D(t) \propto a(t)$.
+Here, $\boldsymbol{\Psi}_0(\mathbf{x})$ is the primordial displacement pattern at some reference time (conventionally, today, where $D=1$), and $D(t)$ scales this entire pattern up or down depending on the cosmic epoch. In a simple Einstein-de Sitter universe model, the growth factor is conveniently proportional to the scale factor, $D(t) \propto a(t)$.
 
-This separability is incredibly powerful. It means we only need to compute the complex spatial pattern, $\boldsymbol{\Psi}_0(\mathbf{x})$, once. The state of the universe at any early time is then known simply by scaling this pattern by the appropriate value of $D(t)$.
+This separability is incredibly powerful. It means we only need to compute the complex spatial pattern, $\boldsymbol{\Psi}_0(\mathbf{x})$, once. The state of the universe at any early time is then known simply by scaling this pattern by the appropriate value of $D(t)$. In cosmological simulations, we define this starting epoch not with a physical time $t$, but with the initial scale factor, $a_{\text{initial}}$ (e.g., $a = 0.02$). Because the initial growth factor for the Einstein-de Sitter model is simply equal to the scale factor ($D \propto a$), this parameter acts as the universal master clock for scaling our initial conditions.
 
 #### Generating the Displacement Pattern
 
-The process of generating the spatial pattern, $\boldsymbol{\Psi}_0(\mathbf{x})$, begins in Fourier space with the **power spectrum**, $P(k)$. The power spectrum is the statistical recipe for our universe's initial conditions, specifying the amplitude of density fluctuations at different spatial scales, $k$. While more complex options exist, for simplicity, we can use a power-law form:
-$$P(k) = A k^n$$
-Where $A$ is a normalization constant and $n$ is the spectral index, which determines the character of the fluctuations. In practice, however, $A$ and $n$ are chosen so that $P(k)$ matches the **$\Lambda$CDM (Lambda-Cold Dark Matter)** cosmological power spectrum, which is derived from precise observations of the Cosmic Microwave Background and large-scale structure surveys.
+The process of generating the spatial pattern, $\boldsymbol{\Psi}_0(\mathbf{x})$, begins in Fourier space with the **power spectrum**, $P(k)$. The power spectrum is the statistical recipe for our universe's initial conditions, specifying the amplitude of density fluctuations at different spatial scales, or wavenumbers ($k$). 
 
 The spectral index, $n$, is the most important term for defining the *character* of the initial cosmic structure, controlling the balance of power between large-scale (low frequency, $k$) and small-scale (high frequency, $k$) fluctuations.
 
@@ -593,38 +722,64 @@ In cosmology, the special "flat" or **scale-invariant** spectrum is defined by a
 * If **$n < 1$**, we have a **"red-tilted"** spectrum. There is more power in large-scale (low $k$) fluctuations and less power in small-scale (high $k$) ones, compared to the scale-invariant case. This results in a universe with large, gentle, rolling waves of density.
 * If **$n > 1$**, we have a **"blue-tilted"** spectrum. There is less power on large scales and more power on small scales, compared to the scale-invariant case.
 
-Observations of the early universe show that our cosmos has a **"red-tilted"** spectrum, with a spectral index $n$ very close to 1 (specifically, $n \approx 0.96$). This means the initial density ripples were slightly stronger on larger scales than on small ones, providing the seeds for the vast cosmic web we see today.
-
-The normalization constant, $A$, sets the overall **strength** or **amplitude** of the density fluctuations across all scales. A larger value of $A$ would correspond to a lumpier, more violently-collapsing early universe, while a smaller value would lead to a smoother universe where structures form more slowly.
+Observations of the early universe show that our cosmos has a **"red-tilted"** spectrum, with a primordial spectral index $n_s$ very close to 1 (specifically, $n_s \approx 0.96$). This means the initial density ripples were slightly stronger on larger scales than on small ones, providing the seeds for the vast cosmic web we see today.
 
 To generate the displacement pattern, $\boldsymbol{\Psi}_0(\mathbf{x})$, we use the following steps:
 
-1.  **Generate a random field in Fourier space.** We start by creating a grid of random complex numbers, $\delta(\mathbf{k})$, that satisfies **conjugate symmetry**, $\delta(\mathbf{k}) = \delta^*(-\mathbf{k})$, to ensure the final field in real space is real-valued.
-
-2.  **Shape the random field according to the power spectrum.** Each Fourier mode is then scaled so that its amplitude follows the desired **power spectrum** $P(k)$:
-    $$\delta_\rho(\mathbf{k}) = \delta(\mathbf{k}) \sqrt{P(k)}$$
-
-3.  **Compute the gravitational potential and displacement field.** From Poisson’s equation, the gravitational potential $\hat{\Phi}(\mathbf{k})$ is related to the density field by $\hat{\Phi}(\mathbf{k}) \propto -\delta_\rho(\mathbf{k})/k^2$. The displacement field is proportional to the gradient of this potential. In Fourier space, taking a gradient corresponds to multiplying by $i\mathbf{k}$:
+1.  **Define the Physical Scale.** To simulate the real universe, our computational grid cannot be an arbitrary size; it must be anchored to a physical scale. By defining the comoving size of our simulation box in Megaparsecs ($L_{\text{box}}$), we can calculate the physical spatial frequency, or wavenumber ($k$), for every wave in our Fourier grid:
+    $$k = \sqrt{k_x^2 + k_y^2 + k_z^2}$$
+    Where $k_{x,y,z} \propto 2\pi / L_{\text{box}}$. This physical wavenumber tells the simulation exactly what size structure each wave represents, from massive superclusters to small dwarf galaxies.
+ 
+2.  **Generate and Shape the Random Field.** We start by creating a grid of random complex numbers, $\delta(\mathbf{k})$, that satisfies **conjugate symmetry**, $\delta(\mathbf{k}) = \delta^*(-\mathbf{k})$, to ensure the final field in real space is real-valued. Each Fourier mode is then scaled so its amplitude follows the **$\Lambda$CDM power spectrum**. 
+    While the primordial universe started with a nearly scale-invariant spectrum ($k^{n_s}$), the presence of intense radiation in the early cosmos suppressed the gravitational collapse of small-scale structures. To capture this physics, we multiply the primordial spectrum by a **Cosmological Transfer Function**, $T(k)$. A standard analytical approximation for this is the **BBKS Transfer Function** (Bardeen, Bond, Kaiser, Szalay, 1986). 
+    The final shaped power spectrum is defined as:
+    $$P(k) = A \cdot k^{n_s} T(k)^2$$
+    Here, $A$ is a master normalization constant that scales the overall strength of the fluctuations. Each random mode is scaled by the square root of this power spectrum: $\delta_\rho(\mathbf{k}) = \delta(\mathbf{k}) \sqrt{P(k)}$.
+ 
+3.  **Compute the displacement field.** From Poisson’s equation, the gravitational potential $\hat{\Phi}(\mathbf{k})$ is related to the density field by $\hat{\Phi}(\mathbf{k}) \propto -\delta_\rho(\mathbf{k})/k^2$. The displacement field is proportional to the gradient of this potential. In Fourier space, taking a gradient corresponds to multiplying by $i\mathbf{k}$:
     $$\hat{\boldsymbol{\Psi}}_0(\mathbf{k}) \propto i\mathbf{k} \frac{\delta_\rho(\mathbf{k})}{k^2}$$
-
+    *(Note: The $k^2$ in the denominator here represents the dimensionless code-unit wavenumber to satisfy the Poisson equation on the grid, distinct from the physical $k$ used for the transfer function).*
+ 
 4.  **Transform back to real space.** Finally, we apply the inverse Fourier transform to recover the displacement pattern in real space:
     $$\boldsymbol{\Psi}_0(\mathbf{x}) = \mathcal{F}^{-1}\{\hat{\boldsymbol{\Psi}}_0(\mathbf{k})\}$$
 
+#### Normalizing the Power Spectrum ($\sigma_8$)
+
+In the previous step, we left the overall amplitude multiplier, $A$, undefined. To anchor our initial conditions to observational reality, this amplitude cannot be arbitrary. In cosmology, it is pinned to a standard measured value known as **$\sigma_8$** (Sigma-8).
+ 
+$\sigma_8$ represents the root-mean-square (RMS) variance of mass density fluctuations within a sphere of radius 8 Mpc/$h$ in the present-day universe. If you were to drop spheres of this size randomly throughout the cosmos, the mass inside them would vary depending on whether they landed in an empty void or a dense supercluster. $\sigma_8$ quantifies this variance. Current observations (such as those from the Planck satellite) show that for our universe, $\sigma_8 \approx 0.81$.
+ 
+To enforce this in our simulation, we must normalize our theoretical power spectrum so that its mathematical variance at $R = 8 \text{ Mpc}/h$ exactly equals $\sigma_8^2$. The variance $\sigma_R^2$ of a field smoothed over a physical scale $R$ is found by integrating the power spectrum multiplied by a "window function," $\tilde{W}(kR)$, in Fourier space:
+$$\sigma_R^2 = \frac{1}{2\pi^2} \int_0^\infty P_{\text{unnorm}}(k) \tilde{W}^2(kR) k^2 dk$$
+ 
+For a spherical volume, the appropriate filter is the **spherical top-hat window function**, whose Fourier transform is:
+$$\tilde{W}(kR) = \frac{3 \left(\sin(kR) - kR \cos(kR)\right)}{(kR)^3}$$
+ 
+By numerically integrating our unnormalized BBKS power spectrum (where $A=1$) using this window function at $R=8$, we calculate the unnormalized variance. The master normalization constant, $A$, is then simply the ratio of the target observational variance to this theoretical variance:
+$$A = \frac{\sigma_8^2}{\sigma_{R=8, \text{unnorm}}^2}$$
+ 
+Applying this constant $A$ ensures that the resulting displacement field possesses the exact statistical "clumpiness" observed in the real universe.
+
 #### Applying the Displacements and Velocities
 
-With the spatial pattern $\boldsymbol{\Psi}_0(\mathbf{x})$ calculated, we can now set the initial state of our simulation at its starting time, $t_{initial}$.
+With the spatial pattern $\boldsymbol{\Psi}_0(\mathbf{x})$ calculated and perfectly normalized to the present-day universe ($a=1$), we can now set the initial state of our simulation at its starting time. Because the normalization is baked into the field, applying it to the early universe relies entirely on cosmological scaling.
 
-The final initial position of each particle is its grid position plus the displacement field, scaled by the growth factor at the start time:
-$$\mathbf{x}_{\text{final}}(t_{initial}) = \mathbf{x}_{\text{grid}} + D(t_{initial}) \boldsymbol{\Psi}_0(\mathbf{x}_{\text{grid}})$$
+The final initial position of each particle is its grid position plus the displacement field, scaled back in time by the initial linear growth factor, $D(t)$. In the very early universe (e.g., $a = 0.02$), matter overwhelmingly dominates over Dark Energy. Because of this, we can safely approximate that the early growth factor scales directly with the expansion of space, $D(a) \approx a$. 
+$$\mathbf{x}_{\text{final}} = \mathbf{x}_{\text{grid}} + a_{\text{initial}} \boldsymbol{\Psi}_0(\mathbf{x}_{\text{grid}})$$
 
-This initial value of the growth factor is determined by the overall amplitude of the power spectrum. This amplitude is typically normalized by observations of large-scale structure today, which by convention sets the growth factor at the present day to one, $D(\text{today})=1$. Accordingly, the initial growth factor for the Einstein-de Sitter model, where $D(t) \propto a(t)$, is simply equal to the initial scale factor, $D(t_{initial}) = a_{initial}$.
+However, calculating the initial "peculiar" velocity (a particle's motion on top of the Hubble flow) requires more care. The velocity is the time derivative of the comoving displacement, meaning it depends on the *rate of change* of the growth factor:
+$$\mathbf{v}_{\text{pec}} = \frac{dD(t)}{dt}\bigg|_{\text{initial}} \boldsymbol{\Psi}_0(\mathbf{x}_{\text{grid}})$$
 
-The initial "peculiar" velocity of a particle (its motion on top of the Hubble flow) is the time derivative of its comoving displacement. It is therefore proportional to the displacement field itself, but scaled by the *rate of change* of the growth factor:
-$$\mathbf{v}_{\text{pec}}(t_{initial}) = \frac{dD(t)}{dt}\bigg|_{t_{initial}} \boldsymbol{\Psi}_0(\mathbf{x}_{\text{grid}})$$
-In the linear regime of an Einstein-de Sitter universe, the growth factor is proportional to the scale factor, which leads to the simple relationship $\frac{dD}{dt} = H(t)D(t)$. This allows us to rewrite the initial velocity as:
-$$\mathbf{v}_{\text{pec}}(t_{initial}) = H(t_{initial}) D(t_{initial}) \boldsymbol{\Psi}_0(\mathbf{x}_{\text{grid}})$$
+In a pure Einstein-de Sitter universe, this derivative simplifies neatly to $\frac{dD}{dt} = H(t)D(t)$. But in a full $\Lambda$CDM universe, we must account for the fact that Dark Energy is actively suppressing the rate at which these structures grow. To express this physically, cosmologists define the **Logarithmic Growth Rate**, $f$:
+$$f = \frac{d \ln D}{d \ln a}$$
 
-This method produces a self-consistent set of initial conditions for both position and velocity, where the particle motions are correlated over large distances, forming the beginnings of the filaments and voids that will later evolve into galaxies and clusters.
+A highly accurate standard approximation for this rate (Peebles, 1980) depends on the matter density at that specific epoch:
+$$f \approx \Omega_m(a)^{0.55}$$
+
+By substituting this growth rate into our derivative, we arrive at the generalized, fully cosmological equation for the initial peculiar velocities. It is proportional to the displacement field itself, scaled by the Hubble parameter, the scale factor, and the critical suppression factor $f$:
+$$\mathbf{v}_{\text{pec}} = H_{\text{initial}} \cdot a_{\text{initial}} \cdot f \cdot \boldsymbol{\Psi}_0(\mathbf{x}_{\text{grid}})$$
+
+This method produces a self-consistent set of initial conditions for both position and velocity, perfectly tailored to the chosen cosmology. The particle motions are correlated over large distances, forming the beginnings of the filaments and voids that will later evolve into galaxies and clusters.
 
 *Key Literature & Further Reading*  
 Sirko, E. (2005). *Initial Conditions to Cosmological N-Body Simulations, or Translations from the Power Spectrum to Real Space*. arXiv:astro-ph/0503106. Available at [https://arxiv.org/abs/astro-ph/0503106](https://arxiv.org/abs/astro-ph/0503106)
