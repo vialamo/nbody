@@ -50,7 +50,7 @@ int main(int argc, char* argv[]) {
               << std::endl;
 
     // Create the output directories
-    std::string timestamp = get_timestamp();
+    std::string timestamp = utils::get_timestamp();
     std::string run_dir = "outputs/run_" + timestamp;
     std::filesystem::create_directories(run_dir);
 
@@ -61,8 +61,9 @@ int main(int argc, char* argv[]) {
 
     HDF5Writer h5_writer(run_dir, config);
     Logger logger(run_dir);
+    Diagnostics diagnostics;
 
-    SimulationEngine engine(config, logger, h5_writer);
+    SimulationEngine engine(config, logger, h5_writer, diagnostics);
     g_engine = &engine;
 
     try {

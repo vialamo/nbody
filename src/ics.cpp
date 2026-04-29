@@ -3,6 +3,7 @@
 #include <random>
 
 #include "integrator.h"
+#include "math_utils.h"
 #include "particles.h"
 #include "pocketfft_hdronly.h"
 
@@ -165,7 +166,6 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
 
 void initialize_dm(SimState& state, const Config& config,
                    const ZeldovichField& zf) {
-    state.dm.particles.clear();
     int M = config.MESH_SIZE;
     double cell_size = config.DOMAIN_SIZE / M;
     int N_part = config.N_PER_SIDE;
@@ -190,26 +190,26 @@ void initialize_dm(SimState& state, const Config& config,
                 double dy = zf.dy[idx];
                 double dz = zf.dz[idx];
 
-                Particle p;
-                p.pos.x =
+                double p_x =
                     fmod(qx + dx + config.DOMAIN_SIZE, config.DOMAIN_SIZE);
-                p.pos.y =
+                double p_y =
                     fmod(qy + dy + config.DOMAIN_SIZE, config.DOMAIN_SIZE);
-                p.pos.z =
+                double p_z =
                     fmod(qz + dz + config.DOMAIN_SIZE, config.DOMAIN_SIZE);
 
-                p.vel.x = config.STANDING_PARTICLES
-                              ? 0.0
-                              : state.hubble_param * dx * zf.f;
-                p.vel.y = config.STANDING_PARTICLES
-                              ? 0.0
-                              : state.hubble_param * dy * zf.f;
-                p.vel.z = config.STANDING_PARTICLES
-                              ? 0.0
-                              : state.hubble_param * dz * zf.f;
-                p.mass = config.DM_PARTICLE_MASS;
+                double v_x = config.STANDING_PARTICLES
+                                 ? 0.0
+                                 : state.hubble_param * dx * zf.f;
+                double v_y = config.STANDING_PARTICLES
+                                 ? 0.0
+                                 : state.hubble_param * dy * zf.f;
+                double v_z = config.STANDING_PARTICLES
+                                 ? 0.0
+                                 : state.hubble_param * dz * zf.f;
+                double mass = config.DM_PARTICLE_MASS;
 
-                state.dm.particles.push_back(p);
+                state.dm.add_particle(p_x, p_y, p_z, v_x, v_y, v_z,
+                                      config.DM_PARTICLE_MASS);
             }
         }
     }
@@ -245,9 +245,8 @@ void initialize_gas(SimState& state, const Config& config,
     double cell_size = config.DOMAIN_SIZE / M;
     size_t M3_real = static_cast<size_t>(M) * M * M;
 
-    assert(state.dm.get_particles().size() > 0);
-    double total_dm_mass =
-        state.dm.get_particles().size() * config.DM_PARTICLE_MASS;
+    assert(state.dm.num_particles > 0);
+    double total_dm_mass = state.dm.num_particles * config.DM_PARTICLE_MASS;
     double mass_ratio = config.GAS_TOTAL_MASS / total_dm_mass;
 
     auto& gas = state.gas;
@@ -293,7 +292,6 @@ SimState initialize_state(Config& config) {
     state.total_time = 0;
     update_cosmology(state, config);
 
-    // Math Step
     ZeldovichField z_field =
         compute_zeldovich_field(state.scale_factor, config);
 
@@ -304,39 +302,47 @@ SimState initialize_state(Config& config) {
     // Gas Step
     initialize_gas(state, config, z_field);
 
-    // Forces Setup
+    // Forces
     compute_gravitational_acceleration(state, config);
 
-    const auto num_particles = state.dm.get_particles().size();
-    std::vector<Vec3> pp_forces, pm_forces;
     if (config.USE_PM) {
+        // This directly overwrites state.dm.acc_x/y/z
         state.dm.interpolate_cic_forces(state.gravity_x, state.gravity_y,
-                                        state.gravity_z, pm_forces, config);
+                                        state.gravity_z, config);
     } else {
-        pm_forces.assign(num_particles, {0.0, 0.0, 0.0});
+        // If PM is off, we must ensure the acceleration arrays start at zero
+        std::fill(state.dm.acc_x.begin(), state.dm.acc_x.end(), 0.0);
+        std::fill(state.dm.acc_y.begin(), state.dm.acc_y.end(), 0.0);
+        std::fill(state.dm.acc_z.begin(), state.dm.acc_z.end(), 0.0);
     }
 
     if (config.USE_PP) {
-        state.dm.compute_pp_forces(pp_forces, config);
-    } else {
-        pp_forces.assign(num_particles, {0.0, 0.0, 0.0});
+        // This adds PP accelerations directly on top of the PM accelerations
+        state.dm.compute_pp_forces(config);
     }
 
-    // Apply Initial Forces
     if (!config.STANDING_PARTICLES) {
-        state.dm.max_accel_sq = 1e-9;
-        for (size_t i = 0; i < state.dm.particles.size(); ++i) {
-            auto& p = state.dm.particles[i];
-            p.acc.x = (pp_forces[i].x + pm_forces[i].x) / p.mass;
-            p.acc.y = (pp_forces[i].y + pm_forces[i].y) / p.mass;
-            p.acc.z = (pp_forces[i].z + pm_forces[i].z) / p.mass;
+        double local_max = 1e-9;
 
-            double accel_sq =
-                p.acc.x * p.acc.x + p.acc.y * p.acc.y + p.acc.z * p.acc.z;
-            if (accel_sq > state.dm.max_accel_sq) {
-                state.dm.max_accel_sq = accel_sq;
-            }
+        // Grab raw pointers for vectorization
+        const size_t n = state.dm.num_particles;
+        const double* ax = state.dm.acc_x.data();
+        const double* ay = state.dm.acc_y.data();
+        const double* az = state.dm.acc_z.data();
+
+        // Find the maximum acceleration
+        for (size_t i = 0; i < n; ++i) {
+            double accel_sq = ax[i] * ax[i] + ay[i] * ay[i] + az[i] * az[i];
+            local_max = (accel_sq > local_max) ? accel_sq : local_max;
         }
+
+        state.dm.max_accel_sq = local_max;
+    } else {
+        // If particles are frozen, wipe the accelerations clean
+        std::fill(state.dm.acc_x.begin(), state.dm.acc_x.end(), 0.0);
+        std::fill(state.dm.acc_y.begin(), state.dm.acc_y.end(), 0.0);
+        std::fill(state.dm.acc_z.begin(), state.dm.acc_z.end(), 0.0);
+        state.dm.max_accel_sq = 1e-9;
     }
 
     return state;

@@ -43,7 +43,7 @@ TEST_CASE("Initial internal energy scales correctly with code units",
 
 TEST_CASE("initialize_state produces physically sound macro-states",
           "[ics][system]") {
-    // 1. Manually build the configuration
+    // Manually build the configuration
     Config config;
     config.DOMAIN_SIZE = 1.0;
     config.MESH_SIZE = 32;
@@ -54,12 +54,12 @@ TEST_CASE("initialize_state produces physically sound macro-states",
 
     config.compute_derived_data();
 
-    // 2. Initialize the entire simulation state
+    // Initialize the entire simulation state
     SimState state = initialize_state(config);
 
     SECTION("Conservation of Mass") {
         double total_dm_mass =
-            state.dm.particles.size() * config.DM_PARTICLE_MASS;
+            state.dm.num_particles * config.DM_PARTICLE_MASS;
 
         double total_gas_mass = 0.0;
         int N3 = config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
@@ -78,8 +78,8 @@ TEST_CASE("initialize_state produces physically sound macro-states",
 
     SECTION("Conservation of Momentum") {
         double p_dm_x = 0.0;
-        for (const auto &p : state.dm.particles) {
-            p_dm_x += p.vel.x * p.mass;
+        for (size_t i = 0; i < state.dm.num_particles; ++i) {
+            p_dm_x += state.dm.vel_x[i] * state.dm.mass[i];
         }
 
         double p_gas_x_density = 0.0;
@@ -98,8 +98,8 @@ TEST_CASE("initialize_state produces physically sound macro-states",
 
     SECTION("Velocities are mathematically bound to cosmic expansion") {
         double max_v_dm = 0.0;
-        for (const auto &p : state.dm.particles) {
-            max_v_dm = std::max(max_v_dm, std::abs(p.vel.x));
+        for (size_t i = 0; i < state.dm.num_particles; ++i) {
+            max_v_dm = std::max(max_v_dm, std::abs(state.dm.vel_x[i]));
         }
 
         // At a=0.02, H(a) is ~129 code units.
@@ -169,23 +169,23 @@ TEST_CASE("Peculiar velocities exactly obey Zel'dovich kinematics",
     double expected_ratio = H * f;
 
     // Verify every single particle obeys the velocity-displacement law
-    for (const auto &p : state.dm.particles) {
+    for (size_t i = 0; i < state.dm.num_particles; ++i) {
         // Skip stationary particles at perfectly zero displacement
-        if (std::abs(p.vel.x) < 1e-14) continue;
+        if (std::abs(state.dm.vel_x[i]) < 1e-14) continue;
 
         // Reverse engineer the displacement from the velocity
-        double inferred_dx = p.vel.x / expected_ratio;
-        double inferred_dy = p.vel.y / expected_ratio;
-        double inferred_dz = p.vel.z / expected_ratio;
+        double inferred_dx = state.dm.vel_x[i] / expected_ratio;
+        double inferred_dy = state.dm.vel_y[i] / expected_ratio;
+        double inferred_dz = state.dm.vel_z[i] / expected_ratio;
 
         // Check that pos = unperturbed_pos + displacement
         // (Taking into account periodic boundary conditions)
         double unperturbed_x = std::fmod(
-            p.pos.x - inferred_dx + config.DOMAIN_SIZE, config.DOMAIN_SIZE);
+            state.dm.pos_x[i] - inferred_dx + config.DOMAIN_SIZE, config.DOMAIN_SIZE);
         double unperturbed_y = std::fmod(
-            p.pos.y - inferred_dy + config.DOMAIN_SIZE, config.DOMAIN_SIZE);
+            state.dm.pos_y[i] - inferred_dy + config.DOMAIN_SIZE, config.DOMAIN_SIZE);
         double unperturbed_z = std::fmod(
-            p.pos.z - inferred_dz + config.DOMAIN_SIZE, config.DOMAIN_SIZE);
+            state.dm.pos_z[i] - inferred_dz + config.DOMAIN_SIZE, config.DOMAIN_SIZE);
 
         // The unperturbed positions should perfectly align with the regular
         // lattice spacing
@@ -218,7 +218,7 @@ TEST_CASE("Gas density perfectly traces Dark Matter density", "[ics][hydro]") {
 
     SimState state = initialize_state(config);
 
-    double total_dm_mass = state.dm.particles.size() * config.DM_PARTICLE_MASS;
+    double total_dm_mass = state.dm.num_particles * config.DM_PARTICLE_MASS;
     double expected_mass_ratio = config.GAS_TOTAL_MASS / total_dm_mass;
 
     int N3 = config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
@@ -282,14 +282,14 @@ TEST_CASE("STANDING_PARTICLES flag explicitly zeroes all initial velocities",
 
     SimState state = initialize_state(config);
 
-    // 1. Check Dark Matter
-    for (const auto &p : state.dm.particles) {
-        REQUIRE(p.vel.x == 0.0);
-        REQUIRE(p.vel.y == 0.0);
-        REQUIRE(p.vel.z == 0.0);
+    // Check Dark Matter
+    for (size_t i = 0; i < state.dm.num_particles; ++i) {
+        REQUIRE(state.dm.vel_x[i] == 0.0);
+        REQUIRE(state.dm.vel_y[i] == 0.0);
+        REQUIRE(state.dm.vel_z[i] == 0.0);
     }
 
-    // 2. Check Gas Momentum
+    // Check Gas Momentum
     int N3 = config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
     for (int i = 0; i < N3; ++i) {
         REQUIRE(state.gas.get_momentum_x().data[i] == 0.0);

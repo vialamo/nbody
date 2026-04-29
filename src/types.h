@@ -2,17 +2,6 @@
 #include <vector>
 #include <Eigen/Dense>
 
-struct Vec3 {
-    double x = 0.0, y = 0.0, z = 0.0;
-};
-
-struct Particle {
-    Vec3 pos;
-    Vec3 vel;
-    Vec3 acc;
-    double mass;
-};
-
 struct Grid3D {
     int n;
     Eigen::VectorXd data;
@@ -47,9 +36,6 @@ struct Grid3D {
     // For HDF5 pointers
     const double* raw_data() const { return data.data(); }
 };
-
-// Use a flat std::vector of vectors for the 3D cell grid
-using CellGrid = std::vector<std::vector<int>>;
 
 struct CIC_Data {
     int ix, iy, iz;

@@ -2,8 +2,7 @@
 
 #include <omp.h>
 
-#include <chrono>
-
+#include "math_utils.h"
 #include "particles.h"
 #include "pocketfft_hdronly.h"
 
@@ -109,19 +108,24 @@ void compute_gravitational_acceleration(SimState& state, const Config& config) {
     double norm = 1.0 / ((double)N * N * N);
     double factor = -norm / (2.0 * config.CELL_SIZE);
 
-#pragma omp parallel for collapse(3)
+    // Only collapse the outer two loops so we can optimize the index math
+#pragma omp parallel for collapse(2)
     for (int i = 0; i < N; ++i) {
         for (int j = 0; j < N; ++j) {
+            // Calculate i and j boundaries ONCE per column
+            int ip1 = (i + 1 == N) ? 0 : i + 1;
+            int im1 = (i == 0) ? N - 1 : i - 1;
+            int jp1 = (j + 1 == N) ? 0 : j + 1;
+            int jm1 = (j == 0) ? N - 1 : j - 1;
+
+#pragma omp simd
             for (int k = 0; k < N; ++k) {
-                acc_x(i, j, k) =
-                    (phi((i + 1) % N, j, k) - phi((i - 1 + N) % N, j, k)) *
-                    factor;
-                acc_y(i, j, k) =
-                    (phi(i, (j + 1) % N, k) - phi(i, (j - 1 + N) % N, k)) *
-                    factor;
-                acc_z(i, j, k) =
-                    (phi(i, j, (k + 1) % N) - phi(i, j, (k - 1 + N) % N)) *
-                    factor;
+                int kp1 = (k + 1 == N) ? 0 : k + 1;
+                int km1 = (k == 0) ? N - 1 : k - 1;
+
+                acc_x(i, j, k) = (phi(ip1, j, k) - phi(im1, j, k)) * factor;
+                acc_y(i, j, k) = (phi(i, jp1, k) - phi(i, jm1, k)) * factor;
+                acc_z(i, j, k) = (phi(i, j, kp1) - phi(i, j, km1)) * factor;
             }
         }
     }
@@ -161,112 +165,111 @@ void apply_gas_kick(GasGrid& gas, const Grid3D& grav_x, const Grid3D& grav_y,
     gas.energy.array() += power_density.array() * dt;
 }
 
-static void apply_dm_kick(std::vector<Particle>& particles, double dt, double a,
-                          double H) {
+static void apply_dm_kick(ParticleSystem& dm, double dt, double a, double H) {
     double a3 = a * a * a;
-    for (auto& p : particles) {
-        double total_ax_p = (p.acc.x / a3) - (2 * H * p.vel.x);
-        double total_ay_p = (p.acc.y / a3) - (2 * H * p.vel.y);
-        double total_az_p = (p.acc.z / a3) - (2 * H * p.vel.z);
-        p.vel.x += total_ax_p * dt;
-        p.vel.y += total_ay_p * dt;
-        p.vel.z += total_az_p * dt;
+    double dt_over_a3 = dt / a3;
+    double dt_2H = dt * 2.0 * H;
+
+    const size_t n = dm.num_particles;
+
+#pragma omp parallel for simd
+    for (size_t i = 0; i < n; i++) {
+        dm.vel_x[i] += dm.acc_x[i] * dt_over_a3 - dm.vel_x[i] * dt_2H;
+        dm.vel_y[i] += dm.acc_y[i] * dt_over_a3 - dm.vel_y[i] * dt_2H;
+        dm.vel_z[i] += dm.acc_z[i] * dt_over_a3 - dm.vel_z[i] * dt_2H;
     }
 }
 
-static void apply_dm_drift(std::vector<Particle>& particles, double dt,
-                           double domain_size) {
-    for (auto& p : particles) {
-        p.pos.x = fmod(p.pos.x + p.vel.x * dt + domain_size, domain_size);
-        p.pos.y = fmod(p.pos.y + p.vel.y * dt + domain_size, domain_size);
-        p.pos.z = fmod(p.pos.z + p.vel.z * dt + domain_size, domain_size);
+static void apply_dm_drift(ParticleSystem& dm, double dt, double domain_size) {
+    double inv_domain = 1.0 / domain_size;
+    const size_t n = dm.num_particles;
+
+#pragma omp parallel for simd
+    for (size_t i = 0; i < n; i++) {
+        double nx = dm.pos_x[i] + dm.vel_x[i] * dt;
+        double ny = dm.pos_y[i] + dm.vel_y[i] * dt;
+        double nz = dm.pos_z[i] + dm.vel_z[i] * dt;
+
+        // SIMD-friendly periodic boundary
+        dm.pos_x[i] = nx - domain_size * std::floor(nx * inv_domain);
+        dm.pos_y[i] = ny - domain_size * std::floor(ny * inv_domain);
+        dm.pos_z[i] = nz - domain_size * std::floor(nz * inv_domain);
     }
 }
 
-static void update_particles_accel(ParticleSystem& dm,
-                                   const std::vector<Vec3>& pm_forces,
-                                   const std::vector<Vec3>& pp_forces) {
-    dm.max_accel_sq = 1e-9;
-    for (size_t i = 0; i < dm.particles.size(); ++i) {
-        auto& p = dm.particles[i];
-        p.acc.x = (pp_forces[i].x + pm_forces[i].x) / p.mass;
-        p.acc.y = (pp_forces[i].y + pm_forces[i].y) / p.mass;
-        p.acc.z = (pp_forces[i].z + pm_forces[i].z) / p.mass;
-        double accel_sq =
-            p.acc.x * p.acc.x + p.acc.y * p.acc.y + p.acc.z * p.acc.z;
-        if (accel_sq > dm.max_accel_sq) {
-            dm.max_accel_sq = accel_sq;
-        }
+static void calculate_max_acceleration(ParticleSystem& dm) {
+    double local_max = 1e-9;
+    const size_t n = dm.num_particles;
+    const double* ax = dm.acc_x.data();
+    const double* ay = dm.acc_y.data();
+    const double* az = dm.acc_z.data();
+
+    for (size_t i = 0; i < n; ++i) {
+        double accel_sq = ax[i] * ax[i] + ay[i] * ay[i] + az[i] * az[i];
+        local_max = (accel_sq > local_max) ? accel_sq : local_max;
     }
+
+    dm.max_accel_sq = local_max;
 }
 
-std::map<std::string, double> KDK_step(SimState& state, double dt,
-                                       Config& config) {
-    std::map<std::string, double> timings;
-    auto start_time = std::chrono::high_resolution_clock::now();
-    auto end_time = start_time;
-
+void KDK_step(SimState& state, double dt, Config& config, Diagnostics& diag) {
     update_cosmology(state, config);
 
     // KICK 1 (Half step)
     apply_gas_kick(state.gas, state.gravity_x, state.gravity_y, state.gravity_z,
                    dt / 2.0, state.scale_factor, state.hubble_param, config);
-    apply_dm_kick(state.dm.particles, dt / 2.0, state.scale_factor,
-                  state.hubble_param);
+    apply_dm_kick(state.dm, dt / 2.0, state.scale_factor, state.hubble_param);
 
     // DRIFT
-    apply_dm_drift(state.dm.particles, dt, config.DOMAIN_SIZE);
+    apply_dm_drift(state.dm, dt, config.DOMAIN_SIZE);
 
     // HYDRO DYNAMICS
-    start_time = std::chrono::high_resolution_clock::now();
     if (config.USE_HYDRO) {
+        ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
         state.gas.hydro_step(dt);
     }
-    end_time = std::chrono::high_resolution_clock::now();
-    timings["hydro"] =
-        std::chrono::duration_cast<std::chrono::duration<double>>(end_time -
-                                                                  start_time)
-            .count();
 
     // UPDATE COSMOLOGY to t + dt
     state.total_time += dt;
     update_cosmology(state, config);
 
     // COMPUTE FORCES (Update Accelerations)
-    start_time = std::chrono::high_resolution_clock::now();
-    state.dm.bin_and_assign_mass(config);
-    compute_gravitational_acceleration(state, config);
+    {
+        ScopedTimer pm_timer(diag, TimerRegion::PM);
+        state.dm.bin_and_assign_mass(config);
+        compute_gravitational_acceleration(state, config);
 
-    std::vector<Vec3> pm_forces(state.dm.particles.size(), {0.0, 0.0, 0.0});
-    if (config.USE_PM) {
-        state.dm.interpolate_cic_forces(state.gravity_x, state.gravity_y,
-                                        state.gravity_z, pm_forces, config);
+        if (config.USE_PM) {
+            // Overwrites state.dm.acc_x/y/z directly
+            state.dm.interpolate_cic_forces(state.gravity_x, state.gravity_y,
+                                            state.gravity_z, config);
+        } else {
+            // If PM is off, we must zero out the arrays before PP adds to them
+            std::fill(state.dm.acc_x.begin(), state.dm.acc_x.end(), 0.0);
+            std::fill(state.dm.acc_y.begin(), state.dm.acc_y.end(), 0.0);
+            std::fill(state.dm.acc_z.begin(), state.dm.acc_z.end(), 0.0);
+        }
     }
-    end_time = std::chrono::high_resolution_clock::now();
-    timings["pm"] = std::chrono::duration_cast<std::chrono::duration<double>>(
-                        end_time - start_time)
-                        .count();
 
-    start_time = std::chrono::high_resolution_clock::now();
-    std::vector<Vec3> pp_forces(state.dm.particles.size(), {0.0, 0.0, 0.0});
     if (config.USE_PP) {
-        state.dm.compute_pp_forces(pp_forces, config);
+        ScopedTimer pp_timer(diag, TimerRegion::PP);
+        // Adds PP acceleration directly onto the existing PM acceleration
+        state.dm.compute_pp_forces(config);
     }
-    end_time = std::chrono::high_resolution_clock::now();
-    timings["pp"] = std::chrono::duration_cast<std::chrono::duration<double>>(
-                        end_time - start_time)
-                        .count();
 
     // Assign final accelerations back to particles
     if (!config.STANDING_PARTICLES) {
-        update_particles_accel(state.dm, pm_forces, pp_forces);
+        calculate_max_acceleration(state.dm);
+    } else {
+        // If particles are frozen for testing, erase all computed accelerations
+        std::fill(state.dm.acc_x.begin(), state.dm.acc_x.end(), 0.0);
+        std::fill(state.dm.acc_y.begin(), state.dm.acc_y.end(), 0.0);
+        std::fill(state.dm.acc_z.begin(), state.dm.acc_z.end(), 0.0);
+        state.dm.max_accel_sq = 1e-9;
     }
 
     // KICK 2 (Half step)
     apply_gas_kick(state.gas, state.gravity_x, state.gravity_y, state.gravity_z,
                    dt / 2.0, state.scale_factor, state.hubble_param, config);
-    apply_dm_kick(state.dm.particles, dt / 2.0, state.scale_factor,
-                  state.hubble_param);
-
-    return timings;
+    apply_dm_kick(state.dm, dt / 2.0, state.scale_factor, state.hubble_param);
 }

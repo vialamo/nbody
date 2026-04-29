@@ -7,8 +7,13 @@
 #include "integrator.h"
 #include "particles.h"
 
-SimulationEngine::SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5)
-    : config(conf), logger(log), h5_writer(h5), state(initialize_state(conf)) {
+SimulationEngine::SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5,
+                                   Diagnostics& diag)
+    : config(conf),
+      logger(log),
+      h5_writer(h5),
+      diagnostics(diag),
+      state(initialize_state(conf)) {
     // Determine initial timestep
     double dt_cfl = state.gas.get_cfl_timestep();
     double dt_grav = state.dm.get_gravity_timestep(config);
@@ -17,9 +22,8 @@ SimulationEngine::SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5)
                      : config.FIXED_DT;
 
     // Log initial state (Cycle 0)
-    std::map<std::string, double> initial_timings;
-    Diagnostics diag = calculate_diagnostics(state, initial_timings, current_dt,
-                                             cycle_count, config);
+    diagnostics.update_physics(state, current_dt, config);
+
     logger.log(diag);
 
     if (config.SAVE_HDF5_EVERY_DELTA_A > 0.0) {
@@ -30,8 +34,13 @@ SimulationEngine::SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5)
 }
 
 void SimulationEngine::step() {
-    // Advance Physics
-    std::map<std::string, double> timings = KDK_step(state, current_dt, config);
+    {
+        ScopedTimer step_timer(diagnostics, TimerRegion::Step);
+        KDK_step(state, current_dt, config, diagnostics);
+    }
+
+    diagnostics.increment_cycle();
+
     cycle_count++;
 
     // Update Timestep for next cycle
@@ -45,25 +54,24 @@ void SimulationEngine::step() {
                         cycle_count < config.MAX_CYCLES;
 
     // I/O and Logging
-    double io_time = 0.0;
     bool must_save_snapshot = state.scale_factor >= next_output_a;
     if (config.SAVE_HDF5_EVERY_DELTA_A > 0.0 &&
         (!needs_more_cycles || must_save_snapshot)) {
-        io_time =
-            h5_writer.save_snapshot(snapshot_count, cycle_count, state, config);
+        ScopedTimer io_timer(diagnostics, TimerRegion::IO);
+        h5_writer.save_snapshot(snapshot_count, cycle_count, state, config);
+
         snapshot_count++;
         while (next_output_a <= state.scale_factor) {
             next_output_a += config.SAVE_HDF5_EVERY_DELTA_A;
         }
     }
-    timings["io"] = io_time;
 
     if (config.DEBUG_INFO_EVERY_CYCLES > 0 &&
         (!needs_more_cycles ||
          cycle_count % config.DEBUG_INFO_EVERY_CYCLES == 0)) {
-        Diagnostics diag = calculate_diagnostics(state, timings, current_dt,
-                                                 cycle_count, config);
-        logger.log(diag);
+        diagnostics.update_physics(state, current_dt, config);
+        logger.log(diagnostics);
+        diagnostics.reset_accumulators();
     }
 }
 

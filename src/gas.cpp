@@ -1,4 +1,5 @@
 #include "gas.h"
+
 #include <omp.h>
 
 RiemannSolver::RiemannSolver(int mesh_size)
@@ -51,8 +52,8 @@ RiemannSolver::RiemannSolver(int mesh_size)
       flux_energy(mesh_size) {}
 
 void RiemannSolver::solve_hll(const Grid3D& FL, const Grid3D& FR,
-                                const Grid3D& UL, const Grid3D& UR,
-                                Grid3D& out_flux) {
+                              const Grid3D& UL, const Grid3D& UR,
+                              Grid3D& out_flux) {
     out_flux.data =
         (S_L.array() >= 0)
             .select(FL.array(),
@@ -66,7 +67,7 @@ void RiemannSolver::solve_hll(const Grid3D& FL, const Grid3D& FR,
 
 void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
                                    double gamma) {
-    // --- 1. Map Global Grid to Local Coordinate System (Normal/Transverse) ---
+    // Map Global Grid to Local Coordinate System (Normal/Transverse)
     this->density = grid.get_density();
     this->energy = grid.get_energy();
     this->pressure = grid.get_pressure();
@@ -94,7 +95,7 @@ void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
         v_t2 = grid.get_velocity_y();
     }
 
-    // --- 2. Reconstruct Left (L) and Right (R) States ---
+    // Reconstruct Left (L) and Right (R) States
     // In this first-order scheme, L is the current cell and R is the neighbor
     // in +axis direction
     const int rollDir = -1;
@@ -118,7 +119,7 @@ void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
     mom_t2_L = mom_t2;
     mom_t2_R = mom_t2_L.roll(rollDir, axis);
 
-    // --- 3. Compute Sound Speeds and Wave Signal Speeds ---
+    // Compute Sound Speeds and Wave Signal Speeds
     cs_L.data = (gamma * p_L.array() / rho_L.array()).sqrt();
     cs_R.data = (gamma * p_R.array() / rho_R.array()).sqrt();
 
@@ -134,7 +135,7 @@ void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
     S_R.data =
         (vn_L.array() + cs_L.array()).cwiseMax(vn_R.array() + cs_R.array());
 
-    // --- 4. Evaluate Physical Fluxes for Left and Right states ---
+    // Evaluate Physical Fluxes for Left and Right states
     F_dens_L.data = rho_L.array() * vn_L.array();
     F_dens_R.data = rho_R.array() * vn_R.array();
 
@@ -155,14 +156,14 @@ void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
     S_R_minus_S_L.data =
         (S_R_minus_S_L.array().abs() < 1e-9).select(1e-9, S_R_minus_S_L.data);
 
-    // --- 5. Solve for Intercell Fluxes using HLL ---
+    // Solve for Intercell Fluxes using HLL
     solve_hll(F_dens_L, F_dens_R, rho_L, rho_R, flux_density);
     solve_hll(F_momn_L, F_momn_R, mom_n_L, mom_n_R, flux_mom_n);
     solve_hll(F_momt1_L, F_momt1_R, mom_t1_L, mom_t1_R, flux_mom_t1);
     solve_hll(F_momt2_L, F_momt2_R, mom_t2_L, mom_t2_R, flux_mom_t2);
     solve_hll(F_en_L, F_en_R, E_L, E_R, flux_energy);
 
-    // --- 6. Pre-calculate shifted fluxes for the grid update ---
+    // Pre-calculate shifted fluxes for the grid update
     flux_density_sh = flux_density.roll(1, axis);
     flux_mom_n_sh = flux_mom_n.roll(1, axis);
     flux_mom_t1_sh = flux_mom_t1.roll(1, axis);
@@ -184,35 +185,69 @@ GasGrid::GasGrid(const Config& conf)
       config(conf) {}
 
 void GasGrid::update_primitive_variables() {
-    int total_cells = config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
+    const int total_cells =
+        config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
 
-    #pragma omp parallel for
+    // Pre-calculate constants to avoid doing it inside the loop
+    const double gamma_minus_1 = config.GAMMA - 1.0;
+    const double inv_gamma_minus_1 = 1.0 / gamma_minus_1;
+    const double floor = 1e-12;
+
+    // Extract raw pointers so the compiler can use AVX SIMD
+    // vectorization
+    double* rho = density.array().data();
+    double* mx = momentum_x.array().data();
+    double* my = momentum_y.array().data();
+    double* mz = momentum_z.array().data();
+    double* en = energy.array().data();
+    double* vx = velocity_x.array().data();
+    double* vy = velocity_y.array().data();
+    double* vz = velocity_z.array().data();
+    double* pr = pressure.array().data();
+
+#pragma omp parallel for schedule(static)
     for (int i = 0; i < total_cells; ++i) {
-        if (density.data[i] > 1e-12) {
-            velocity_x.data[i] = momentum_x.data[i] / density.data[i];
-            velocity_y.data[i] = momentum_y.data[i] / density.data[i];
-            velocity_z.data[i] = momentum_z.data[i] / density.data[i];
+        double local_rho = rho[i];
+
+        if (local_rho > floor) {
+            // Compute velocities (multiplication by inverse is faster
+            // than division)
+            double inv_rho = 1.0 / local_rho;
+            double local_vx = mx[i] * inv_rho;
+            double local_vy = my[i] * inv_rho;
+            double local_vz = mz[i] * inv_rho;
+
+            vx[i] = local_vx;
+            vy[i] = local_vy;
+            vz[i] = local_vz;
+
+            // Compute Kinetic Energy directly in registers
+            double ke = 0.5 * local_rho *
+                        (local_vx * local_vx + local_vy * local_vy +
+                         local_vz * local_vz);
+
+            // Compute Pressure
+            double p = gamma_minus_1 * (en[i] - ke);
+
+            // Apply pressure floor
+            if (p < floor) {
+                p = floor;
+            }
+
+            pr[i] = p;
+
+            // Sync total energy with the pressure floor
+            en[i] = p * inv_gamma_minus_1 + ke;
+
         } else {
-            velocity_x.data[i] = velocity_y.data[i] = velocity_z.data[i] = 0.0;
+            // Vacuum cell handling
+            vx[i] = 0.0;
+            vy[i] = 0.0;
+            vz[i] = 0.0;
+            pr[i] = floor;
+            en[i] = floor * inv_gamma_minus_1;  // Kinetic energy is 0
         }
     }
-
-    Grid3D kin_energy(config.MESH_SIZE);
-    kin_energy.data =
-        0.5 * (momentum_x.array().square() + momentum_y.array().square() +
-               momentum_z.array().square());
-
-    #pragma omp parallel for
-    for (int i = 0; i < total_cells; ++i) {
-        if (density.data[i] > 1e-12)
-            kin_energy.data[i] /= density.data[i];
-        else
-            kin_energy.data[i] = 0.0;
-    }
-
-    pressure.data = (config.GAMMA - 1.0) * (energy.data - kin_energy.data);
-    pressure.data = (pressure.array() < 1e-12).select(1e-12, pressure.data);
-    energy.data = pressure.data / (config.GAMMA - 1.0) + kin_energy.data;
 }
 
 void GasGrid::hydro_step(double dt) {

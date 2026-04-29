@@ -11,13 +11,17 @@ This repository documents my experiments in cosmological N-body/hydrodynamics si
 * **Cosmology:**
     * **Expanding Universe:** Simulation in comoving coordinates within an Einstein-de Sitter (EdS) model.
     * **Cosmological Integrator:** A Kick-Drift-Kick (KDK) Leapfrog scheme that correctly handles Hubble drag.
-    * **Initial Conditions:** Particle generation on a lattice with perturbations applied via a simplified Zel'dovich Approximation using a power-law power spectrum.
+    * **Initial Conditions:** Advanced cosmological initial conditions. Particles are perturbed from a uniform lattice using the full 3D Zel'dovich Approximation, deriving physical displacements and velocities from a Gaussian random field generated in Fourier space via a cosmological power spectrum.
     * **Adaptive Timestepping:** Dynamic calculation of the global timestep based on the Courant-Friedrichs-Lewy (CFL) hydro condition and maximum gravitational acceleration.
 * **Hydrodynamics:**
     * **Grid-Based (Eulerian) Solver:** Implements a finite-volume solver for the adiabatic Euler equations on a fixed grid, tracking conservative variables (density, momentum, energy).
     * **HLL Riemann Solver:** Uses the Harten-Lax-van Leer (HLL) approximate Riemann solver to compute fluxes between cells.
     * **Operator Splitting:** Employs directional splitting (sequential X, Y, and Z-sweeps) to update the multidimensional grid.
     * **Two-Way Coupling:** The gas density contributes to the total gravitational field via the PM solver, and the gas momentum/energy is updated by gravitational source terms during the KDK kicks.
+* **High-Performance Computing (HPC):**
+    * **OpenMP Multithreading:** Heavy loops (such as the Riemann solver, mass assignment, and grid calculations) are parallelized across available CPU cores.
+    * **SIMD Vectorization:** Core CPU mathematics leverage Eigen and AVX vectorization for cache-friendly, contiguous memory speedups.
+    * **GPU Offloading:** The computationally expensive direct-summation particle forces can be optionally offloaded to NVIDIA GPUs using OpenMP `#pragma omp target` directives and the Clang/LLVM toolchain.
 * **Numerical Methods:**
     * **Cloud-in-Cell (CIC):** A symmetric mass-assignment and force-interpolation scheme for the PM grid to ensure strict momentum conservation.
     * **Periodic Boundary Conditions:** A "wrap-around" universe to model a representative patch of a larger cosmos.
@@ -40,20 +44,31 @@ This repository documents my experiments in cosmological N-body/hydrodynamics si
 ### C++ Cosmological code
 
 1.  **Prerequisites (Linux/Ubuntu):**
-    You need a C++ compiler, CMake, and the development libraries for HDF5, and Eigen.
+    You need a C++ compiler, CMake, and the development libraries for HDF5, Eigen, and OpenMP. To utilize GPU offloading, the Clang/LLVM toolchain is also required.
 
     ```bash
     sudo apt update
     sudo apt install build-essential cmake libhdf5-dev libeigen3-dev libomp-dev
+    # Optional: Install Clang for GPU Offloading support
+    sudo apt install clang lld
     ```
 
 2.  **Compile (with CMake):**
-    This project uses Modern CMake to find dependencies, download testing frameworks, and build the executables. The build is done in a separate `build` directory to keep the source folder clean.
+    This project uses Modern CMake to find dependencies, download testing frameworks, and build the executables. You can build the project for standard CPU execution (using AVX/SIMD) or enable NVIDIA GPU offloading.
 
+    **Option A: Standard CPU Build (Default)**
     ```bash
-    # From the project's root directory, configure the build system:
-    cmake -B build
-    cmake --build build
+    mkdir build && cd build
+    cmake ..
+    make -j
+    ```
+
+    **Option B: GPU Offload Build (Requires Clang & NVIDIA GPU)**
+    ```bash
+    mkdir build && cd build
+    # Force CMake to use Clang and enable the GPU offload toggle
+    CXX=clang++ CC=clang cmake -DUSE_GPU_OFFLOAD=ON ..
+    make -j
     ```
 
     This will create two executables inside the `build` directory: the main simulation `nbody` and the automated test suite `run_tests`.
@@ -62,8 +77,6 @@ This repository documents my experiments in cosmological N-body/hydrodynamics si
     The build process automatically copies the `simulation.ini` file into the `build` directory. You can run the simulation from there:
 
     ```bash
-    # Navigate to the build directory:
-    cd build
     # From inside the 'build' directory:
     ./nbody
     ```

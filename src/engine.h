@@ -1,7 +1,9 @@
 #pragma once
 #include "config.h"
 #include "state.h"
-#include "utils.h"
+#include "logger.h"
+#include "diagnostics.h"
+#include "hdf5_writter.h"
 
 enum class ExitStatus { ReachedMaxScaleFactor, ReachedMaxCycles, UserAborted };
 
@@ -16,6 +18,7 @@ class SimulationEngine {
 
     Config& config;
     Logger& logger;
+    Diagnostics& diagnostics;
     HDF5Writer& h5_writer;
 
     SimState state;
@@ -24,7 +27,7 @@ class SimulationEngine {
 
    public:
 
-    SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5);
+    SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5, Diagnostics& diag);
 
     ExitStatus run();
     void request_stop() { stop_requested = true; }

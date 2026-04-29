@@ -1,6 +1,9 @@
 #include "config.h"
 
+#include <cmath>
+
 #include "ini.h"
+#include "math_utils.h"
 
 Config::Config() { compute_derived_data(); }
 
