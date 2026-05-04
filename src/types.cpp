@@ -1,11 +1,12 @@
 #include "types.h"
+
 #include <omp.h>
 
-Grid3D Grid3D::roll(int shift, int axis) {
+Grid3D Grid3D::roll(int shift, int axis) const {
     Grid3D res(n);
-    
-    // Collapse flattens the 3 nested loops into 1 for perfect thread distribution
-    #pragma omp parallel for collapse(3)
+
+// Collapse flattens the 3 nested loops into 1 for perfect thread distribution
+#pragma omp parallel for collapse(3)
     for (int i = 0; i < n; ++i) {
         for (int j = 0; j < n; ++j) {
             for (int k = 0; k < n; ++k) {

@@ -1,14 +1,62 @@
-# Notes on N-Body/Hydrodynamics Simulation
+# Notes on Cosmological Simulations
 
 This is a living document—a collection of knowledge that I have gathered while learning about cosmological simulations. It is not a formal text but rather a journal, an attempt to solidify concepts by structuring and explaining them in my own way.
 
-Along the way, I have been developing a proof-of-concept engine—a simple N-body/hydrodynamics simulation, which allowed me to understand algorithms by implementing them, and to appreciate physical principles by seeing their effects in a virtual universe. The explanations in this document are reflected in this practical work.
+Along the way, I have been developing a proof-of-concept N-body/hydrodynamics simulation, which allowed me to understand algorithms by implementing them, and to appreciate physical principles by seeing their effects in a virtual universe. The explanations in this document are reflected in this practical work.
 
 This is my best effort to present this knowledge in the way that I would have found most helpful at the start of my learning process.
 
 Victor Alamo  
 vialamo@gmail.com  
 https://github.com/vialamo/nbody
+
+## Introduction
+
+At its core, a cosmological simulation is a computational time machine. Because astrophysicists cannot physically experiment on stars or galaxies in a laboratory, they use computers to build virtual patches of the cosmos. By seeding a simulation volume with the initial mathematical conditions of the Big Bang and stepping it forward in time using the laws of physics, we can watch 13.8 billion years of cosmic evolution unfold in a matter of days or weeks.
+
+**The Origins**
+
+The endeavor to simulate the cosmos began in the 1970s. Early pioneers, such as Jim Peebles, ran the very first N-body simulations using just a few hundred particles to study how galaxies might cluster together under gravity. By the 1980s, researchers were running the first 3-dimensional models of Cold Dark Matter (CDM). These early simulations were severely limited by the computers of their time; they treated entire galaxies as single points of mass and modeled only the force of gravity, completely ignoring the complex fluid dynamics of gas. 
+
+**Modern Applications**
+
+Today, cosmological simulations are some of the most intensive computational tasks on Earth. Projects like the Millennium Simulation, Illustris, and EAGLE utilize supercomputing clusters to track billions—and sometimes trillions—of particles. 
+
+Nowadays, these virtual universes are used as the primary theoretical laboratories for astrophysics, serving three main purposes:
+
+* **Testing the Standard Model:** We can easily alter the parameters of a simulation—adding more dark energy, changing the mass of dark matter particles, or altering the laws of gravity. By comparing the resulting "mock universe" to the real one we see through telescopes, we can prove or disprove fundamental theories of physics.
+* **Calibrating Telescope Data:** Massive modern observatories (like the James Webb Space Telescope and the Euclid satellite) gather an overwhelming amount of data. Simulations provide the theoretical maps required to interpret those observations, helping astronomers distinguish between optical illusions (like redshift-space distortions) and true physical structures.
+* **Probing the Unobservable:** While a telescope can only capture a frozen snapshot of a galaxy at one specific moment in its life, a simulation allows us to continuously watch the dynamic, billion-year processes of galaxy mergers, black hole feeding, and cosmic web formation from beginning to end.
+
+### The Anatomy of a Cosmological Simulation
+
+Before diving into the specific mathematics and algorithms, it is helpful to outline exactly what we are trying to simulate. A modern cosmological simulation is not a single, monolithic algorithm. Rather, it is a carefully coupled system of different physical frameworks designed to mimic the actual composition and behavior of the universe. 
+
+To build a realistic virtual patch of the cosmos, a simulation must continuously balance three distinct computational pillars:
+
+* **Collisionless Dark Matter :** Dark matter accounts for roughly 85% of the matter in the universe and dominates its gravitational landscape. Because it does not interact with light or experience thermodynamic pressure, we treat it as a "collisionless" fluid. Computationally, this is handled by an **N-body solver**, which tracks millions (or billions) of discrete, massive particles moving purely under the influence of gravity to form the filaments and halos of the cosmic web.
+* **Baryonic Gas:** Normal, visible matter (hydrogen and helium) behaves very differently from dark matter. Gas clouds crash into each other, heat up, form shockwaves, and exert pressure. To simulate this, gravity alone is insufficient; we require a **Hydrodynamics solver**. This typically involves dividing the simulation volume into a 3D grid (an Eulerian approach) to strictly track the conservation of mass, momentum, and energy as the fluid flows through space.
+* **The Expanding Background:** Unlike a simulation of a single, static solar system, a cosmological simulation takes place in an expanding universe. The coordinate grid itself stretches over time. Both the N-body particles and the hydrodynamic gas must be subjected to a cosmological background model (driven by the Friedmann equations) to properly account for the dilution of density and the slowing of velocities due to cosmic expansion.
+
+Because gravity is the universal language that links the dark matter and the gas together, it is the most critical component to get right. We will begin by breaking down the foundational engine that drives the formation of all large-scale structure: calculating the gravitational pull of $N$ interacting particles.
+
+### The Major Cosmological Codes
+
+The global astrophysical community relies on a handful of massive, highly optimized, open-source software packages to run these supercomputer simulations. 
+
+It is helpful to know that almost all modern codes are split by their philosophical approach to fluid dynamics: some treat gas as a collection of individual moving particles (**Lagrangian** methods like SPH), while others treat gas as a fluid flowing through a fixed or adaptive 3D grid (**Eulerian** methods like AMR). 
+
+Here is a summary of the most prominent cosmological codes used in modern research and the underlying engines that drive them:
+
+| Code Name | Gravity Solver | Hydrodynamics Solver | Notable Simulations |
+| :--- | :--- | :--- | :--- |
+| **GADGET** | TreePM (Tree-based + Particle-Mesh) | SPH (Smoothed Particle Hydrodynamics) | Millennium, EAGLE |
+| **RAMSES** | AMR-coupled Particle-Mesh | AMR (Adaptive Mesh Refinement) | Horizon-AGN |
+| **ENZO** | Particle-Mesh | AMR (Adaptive Mesh Refinement) | Renaissance Simulations |
+| **AREPO** | TreePM | Moving Voronoi Mesh (Unstructured grid) | Illustris, IllustrisTNG |
+| **SWIFT** | Fast Multipole Method (Tree) | Modern SPH / Meshless Finite Mass | Flamingo |
+
+These codes represent decades of collaborative optimization. We will dive into the core mechanics of how gravity and gas interact on a discrete grid in the following chapters.
 
 ## The N-Body Problem
 
@@ -525,7 +573,7 @@ Observations of the real universe strongly indicate that our cosmos is geometric
 
 A **cosmological model** is simply a specific "recipe" of these cosmic ingredients. By defining what our virtual universe is made of (the amount of matter $\rho$ and vacuum energy $\Lambda$) and plugging them into the Friedmann equation, we can mathematically solve for the exact historical trajectory of the expansion. 
 
-For the purposes of our N-body simulation, there are two primary models of interest: the classic, matter-dominated model (Einstein-de Sitter) and the modern, dark-energy-driven model ($\Lambda$CDM).
+For the purposes of our simulation, there are two primary models of interest: the classic, matter-dominated model (Einstein-de Sitter) and the modern, dark-energy-driven model ($\Lambda$CDM).
 
 ### An Einstein-de Sitter Universe
 
@@ -569,6 +617,8 @@ In a flat $\Lambda$CDM universe, the total density is made up of matter ($\Omega
 
 $$H(t)^2 = H_0^2 \left( \frac{\Omega_m}{a(t)^3} + \Omega_\Lambda \right)$$
 
+Where $H_0$ is the **Hubble Constant**—the exact rate at which the universe is expanding right now, that is, the value of the Hubble Parameter ($H(t)$) measured at the present.
+
 Notice that the matter density dilutes as the universe expands ($1/a^3$), but the dark energy density ($\Omega_\Lambda$) remains perfectly constant. This creates a fascinating cosmic tug-of-war. 
 
 #### The Evolution of the Scale Factor
@@ -602,20 +652,84 @@ The mean density of our simulation box is defined by the total mass, $M_{total}$
 $$\frac{M_{total}}{L^3} = \frac{1}{6\pi G}$$
 $$G = \frac{L^3}{6\pi M_{total}}$$
 
-Remarkably, the $\Omega_m$ parameter completely drops out of the calculation for $G$. Because the definition of our expansion rate ($H_0$) already absorbs the matter fraction, the natural units derived for the simple Einstein-de Sitter model remain perfectly valid and exact for a complex $\Lambda$CDM universe. While we typically set $M_{total} = 1$ and $L = 1$ in practice, keeping $M_{total}$ explicit ensures that the strength of gravity remains physically accurate if the total mass of the simulated system is ever modified.
+Remarkably, the $\Omega_m$ parameter completely drops out of the calculation for $G$. Because the definition of our expansion rate ($H_0$) already absorbs the matter fraction, the natural units derived for the simple Einstein-de Sitter model remain perfectly valid and exact for a complex $\Lambda$CDM universe.
 
 #### Hubble: Physical vs. Code Units
 
-When looking at the mathematical derivation above, a sharp reader might spot an apparent contradiction. We defined the present-day Hubble parameter mathematically as $H_0 = \frac{2}{3\sqrt{\Omega_m}}$. However, in observational cosmology, the matter density ($\Omega_m$) and the Hubble constant ($H_0$) are completely independent parameters. You can physically have a universe where $\Omega_m = 0.3$ and $H_0 = 70$ km/s/Mpc, or one where $\Omega_m = 1.0$ and $H_0 = 50$ km/s/Mpc. 
+When looking at the mathematical derivation above, a sharp reader might spot an apparent contradiction. We defined the present-day Hubble parameter (the Hubble constant) mathematically as $H_0 = \frac{2}{3\sqrt{\Omega_m}}$. However, in observational cosmology, the matter density ($\Omega_m$) and the Hubble constant ($H_0$) are completely independent parameters. You can physically have a universe where $\Omega_m = 0.3$ and $H_0 = 70$ km/s/Mpc, or one where $\Omega_m = 1.0$ and $H_0 = 50$ km/s/Mpc. 
 
 So, why does our simulation mathematically force them to be linked? 
 
-The answer lies in a famously confusing naming collision in computational cosmology. The symbol $H_0$ actually carries two entirely different meanings depending on whether we are looking at the *real world* or the *internal code*. A robust simulation must handle both independently:
+The answer lies in our choice of **dimensionless code units**. Conceptually, $H_0$ always represents the exact same thing: the present-day expansion rate of the universe. However, because our simulation strips away standard physical units, we lose the ability to measure speed in kilometers or time in seconds. 
 
-* **The Physical Hubble Parameter ($h$):** In observational astronomy, the Hubble constant is typically written as $H_0 = 100 \cdot h$ km/s/Mpc, where $h$ is a dimensionless scaling factor (often around 0.7). This parameter anchors the simulation to **real-world physical scales**. It is used during the generation of the initial conditions to calculate the physical size of the primordial density fluctuations (the power spectrum) and to convert physical gas temperatures (Kelvin) into the dimensionless energy units used by the hydrodynamic solver.
-* **The Internal Code-Unit Hubble Parameter:** The equation $H_0 = \frac{2}{3\sqrt{\Omega_m}}$ does not represent a physical speed in km/s/Mpc. Instead, it is the **internal time-scaling factor** demanded by our choice of natural units ($M_{total} = 1$, $L = 1$). Because we stripped away the standard units of kilograms and meters, the simulation must invent its own internal "clock." This specific equation defines the exact ticking rate of that internal clock required to ensure that the gravitational collapse of our dimensionless mass perfectly balances against the dimensionless expansion of our grid. 
+Specifically, we set our box length to $L=1$ and our total mass to $M_{total}=1$ (which permanently locks our average density at $\bar{\rho}_0 = 1$). Furthermore, we scaled our gravitational constant to exactly $G = \frac{1}{6\pi}$. When you plug these dimensionless code values into the standard real-world Friedmann equation, $$\Omega_m = \frac{8\pi G \bar{\rho}_0}{3 H_0^2}$$ the constants mathematically collapse, yielding our exact internal equation: $H_0 = \frac{2}{3\sqrt{\Omega_m}}$. 
 
-In practice, a simulation isolates these two concepts. The time integrator uses the internal code-unit $H_0$ to stretch the scale factor $a(t)$ and apply the Hubble drag to the particles, intentionally ignoring the physical expansion rate. Meanwhile, the initial condition generator uses the physical $h$ parameter to shape the physical geometry of the cosmos. By separating them, the code remains physically accurate while allowing the user to independently configure both $\Omega_m$ and $h$ to match whatever observational dataset they choose to simulate.
+To remain physically accurate, a robust simulation must handle the translation between the physical world and this internal code grid by splitting the parameter into two roles:
+
+* **The Physical Hubble Parameter ($h$):** In observational astronomy, the Hubble constant is typically written as $H_0 = 100 \cdot h$ **km/s/Mpc**, where $h$ is a dimensionless scaling factor (often around 0.7). This parameter represents the real-world expansion speed. It is used during the setup phase to generate the initial conditions, calculating the true physical size of the primordial density fluctuations and converting physical gas temperatures into internal energy.
+* **The Internal Code-Unit Hubble Parameter:** Once the simulation starts running, it stops thinking in kilometers and seconds. Because we fixed our grid's mass, volume, and gravity to arbitrary values, the collapsed Friedmann equation ($H_0 = \frac{2}{3\sqrt{\Omega_m}}$) calculates the exact internal "ticking rate" our code clock requires to ensure the gravitational collapse of our dimensionless mass perfectly balances the expansion of our grid.
+
+In practice, a simulation isolates these two systems. The time integrator uses the internal code-unit $H_0$ to stretch the scale factor $a(t)$ and apply the Hubble drag to the particles natively on the grid. Meanwhile, the physical $h$ parameter is used to shape the initial conditions and translate the final outputs back into physical miles, kilograms, and Kelvin. By managing this unit conversion, the code remains mathematically stable while allowing the user to input any combination of $\Omega_m$ and $h$ they choose.
+
+### The Cosmic Timeline
+
+#### The Scale Factor ($a$) and Redshift ($z$)
+
+Before we look at the timeline of the universe, we need to define how cosmologists actually tell time. While it is intuitive to talk about "years since the Big Bang," it is incredibly difficult to calculate. Instead, astronomers rely on two interlocked variables to track the evolution of the cosmos: the scale factor ($a$) and cosmological redshift ($z$).
+
+**The Scale Factor ($a$)**
+As we established, $a(t)$ is the mathematical engine of the universe's expansion. It tracks the relative, physical size of the coordinate grid. By convention, the scale factor today is set to exactly $a = 1$. When the universe was a quarter of its current size, $a = 0.25$. As we run our code forward from the early universe, $a$ continuously ticks upward toward 1.
+
+**Cosmological Redshift ($z$)**
+While $a$ is perfect for writing computer code, an astronomer cannot point a telescope at the sky and directly measure the "size of the coordinate grid." What they *can* measure is light. 
+
+As a photon travels across the universe to reach our telescopes, the space it is traveling through is expanding. This expansion physically stretches the photon's wavelength, shifting its color toward the red end of the spectrum. We call this stretching **Cosmological Redshift**, denoted by the letter **$z$**. 
+
+**The Mathematical Link**
+Because the stretching of the light is tied exactly to the stretching of space itself, redshift and the scale factor are inversely related by a very simple, but universally important equation:
+
+$$a = \frac{1}{1+z}$$
+
+Because redshift is the actual, tangible thing we measure in the real world, it has become the universal "clock" for the history of the universe. In literature we will almost always see time denoted by $z$:
+
+* **$z = 0$:** Today ($a = 1$).
+* **$z = 1$:** The universe was exactly half its current size ($a = 0.5$).
+* **$z = 9$:** The universe was 1/10th its current size ($a = 0.1$).
+* **$z = 49$:** A typical starting time for generating simulation's initial conditions ($a = 0.02$).
+* **$z = 1100$:** The release of the Cosmic Microwave Background ($a \approx 0.0009$).
+* **$z \to \infty$:** The Big Bang ($a \to 0$).
+
+When reading cosmological texts, we can think of redshift as a measure of looking backward: the higher the $z$, the further back in time we are looking, the further away the object is, and the smaller and denser the universe was when that light was emitted.
+
+#### Eras and epochs
+
+In cosmology, we divide the 13.8-billion-year history of the universe into distinct "eras." These divisions are not arbitrary historical chapters; they are strictly defined by the mathematics of the Friedmann equation. 
+$$H^2(a) = H_0^2 \left( \Omega_{r,0} a^{-4} + \Omega_{m,0} a^{-3} + \Omega_{k,0} a^{-2} + \Omega_{\Lambda,0} \right)$$ 
+Whichever component of the universe (radiation, matter, or dark energy) has the highest energy density dictates the expansion rate of space and the physical rules for how structures form.
+
+For the purposes of cosmological simulations, the universe's history is defined by three major eras:
+
+##### The Radiation-Dominated Era (The Big Bang to ~50,000 Years)
+In the very early universe, space was incredibly small, dense, and unimaginably hot. During this time, the universe's energy budget was completely dominated by the kinetic energy of photons and relativistic particles (neutrinos).
+
+* **The Physics:** Because radiation exerts a massive outward pressure, space expanded very rapidly. This intense photon pressure outpaced the gravitational pull of dark matter, completely stalling the growth of small-scale density fluctuations (the Mészáros effect). 
+* **Simulation Context:** We rarely simulate this era directly with N-body codes. Instead, its effects are mathematically "baked in" to our initial conditions. The suppression of small-scale structures during this era is exactly what creates the mathematical curve of the **BBKS Transfer Function**.
+* **The Transition:** As the universe expanded, radiation diluted much faster than physical matter. Around 50,000 years after the Big Bang, the density of radiation dropped below the density of matter, marking a monumental shift in cosmic physics. Shortly after this transition (at about 380,000 years, or a redshift of roughly z = 1100), the universe cooled enough for the first neutral atoms to form, releasing the Cosmic Microwave Background (CMB).
+
+##### The Matter-Dominated Era (~50,000 Years to ~9.8 Billion Years)
+Once the radiation cleared, the gravity of cold dark matter and baryonic gas took absolute control of the universe. Because matter exerts no large-scale outward pressure, the expansion of the universe began to slow down.
+
+* **The Physics:** This is the golden age of structure formation. With radiation pressure gone and the expansion slowing, gravity was finally free to pull matter together. The tiny primordial ripples left over from the Big Bang collapsed into the cosmic web, forming the first stars, galaxies, and galaxy clusters. 
+* **Simulation Context:** This era is the primary sandbox for computational cosmology. Our simulations typically start right near the beginning of this era (e.g., at redshift z = 49). Because dark energy is negligible here, the universe behaves like a simple Einstein-de Sitter model where the linear growth factor scales perfectly with the size of the universe: $D(t) \propto a(t)$. 
+* **Key Epochs:** Inside this era, hydrodynamic simulations track two vital milestones:
+    * *The Dark Ages:* The time before the first stars ignited, when the universe was filled with cold, neutral hydrogen gas.
+    * *Cosmic Dawn & The Epoch of Reionization:* The violent period when the first massive stars and quasars emitted so much ultraviolet light that they blasted the neutral hydrogen gas back into a hot plasma, fundamentally changing the hydrodynamics of the intergalactic medium.
+
+##### The Dark Energy-Dominated Era (~9.8 Billion Years to Present)
+Matter dilutes as the universe expands, but the density of Dark Energy (the cosmological constant, $\Lambda$) remains perfectly constant. About 9.8 billion years after the Big Bang (around redshift z = 0.3), the density of matter finally diluted so much that Dark Energy became the dominant force in the cosmos.
+
+* **The Physics:** Dark Energy acts as a repulsive pressure inherent to the vacuum of space. Under its dominance, the expansion of the universe stopped slowing down and began to violently accelerate.
+* **Simulation Context:** This late-time acceleration physically stretches the cosmic web apart faster than gravity can pull it together. This marks the epoch where the growth factor $D(t)$ stalls out and stops tracking the scale factor. Large-scale mergers between galaxy clusters become increasingly rare, and the largest structures begin to freeze in place. 
 
 *Key Literature & Further Reading*  
 Springel, V. (2005). The cosmological simulation code GADGET-2. *Monthly Notices of the Royal Astronomical Society*, 364(4), 1105-1134. Available at: [https://arxiv.org/abs/astro-ph/0505010](https://arxiv.org/abs/astro-ph/0505010)
@@ -671,9 +785,16 @@ Because the Megaparsec (Mpc) is an unfathomably vast unit of distance (1 Mpc $\a
 | **Typical Cosmic Void** | $\sim 20.0 \text{ to } 50.0 \text{ Mpc}$ | Vast, underdense regions between filaments. |
 | **Representative Simulation Box** | $\mathbf{100.0+ \text{ Mpc}}$ | The minimum scale required to combat Cosmic Variance. |
 
+
 ## Initial Conditions
 
-The outcome of a simulation is critically dependent on its starting point. We cannot simply place particles randomly in a box; to model our universe, we must create a snapshot that reflects the state of the cosmos at a very early time. This snapshot needs to account for the primordial density fluctuations that acted as the seeds for all future structure.
+The outcome of a cosmological simulation is critically dependent on its starting point. We cannot simply scatter particles randomly into a box; to accurately model our universe, we must generate a physical snapshot that perfectly captures the primordial density fluctuations that seeded all future cosmic structure.
+
+Fortunately, in the very early universe, these density fluctuations were incredibly tiny. Because the variations in the gravitational field were so weak and smooth, the initial clustering of matter was entirely **linear**. This is a massive advantage for computational cosmology: it means we do not need to waste immense computational resources running an N-body solver from the very beginning of time. 
+
+Instead, we can fast-forward through the earliest epochs using a highly accurate analytical framework called the **Zel'dovich Approximation**. Because the physics were still linear, this mathematical approximation can perfectly predict exactly how those tiny primordial ripples displaced matter over millions of years. 
+
+However, as matter gradually clumps together, local gravity becomes exponentially stronger and wildly non-linear. Eventually, dark matter streams cross and gas violently collides. At this point, the linear Zel'dovich approximation completely breaks down. That breaking point is our simulation's starting line: we use the Zel'dovich approximation to instantly generate the universe's geometry right up to the edge of the linear regime—typically around a scale factor of $a = 0.02$, roughly 50 million years after the Big Bang. Exactly where this analytical approximation starts to fail, our full numerical solvers take over to compute the chaotic, non-linear birth of galaxies.
 
 ### The Unperturbed State
 
@@ -706,9 +827,11 @@ Although we only use it to generate a single initial snapshot, the Zel'dovich Ap
 
 The full, time-dependent displacement field can therefore be written as:
 $$\boldsymbol{\Psi}(\mathbf{x}, t) = D(t) \boldsymbol{\Psi}_0(\mathbf{x})$$
-Here, $\boldsymbol{\Psi}_0(\mathbf{x})$ is the primordial displacement pattern at some reference time (conventionally, today, where $D=1$), and $D(t)$ scales this entire pattern up or down depending on the cosmic epoch. In a simple Einstein-de Sitter universe model, the growth factor is conveniently proportional to the scale factor, $D(t) \propto a(t)$.
+Here, $\boldsymbol{\Psi}_0(\mathbf{x})$ is the primordial displacement pattern at some reference time (conventionally, today, where $a=1$ and $D=1$), and $D(t)$ scales this entire pattern up or down depending on the cosmic epoch. In a simple Einstein-de Sitter universe model (or a very early $\Lambda$CDM, e.g., $a = 0.02$), the growth factor is conveniently proportional to the scale factor, $D(t) \propto a(t)$.
 
-This separability is incredibly powerful. It means we only need to compute the complex spatial pattern, $\boldsymbol{\Psi}_0(\mathbf{x})$, once. The state of the universe at any early time is then known simply by scaling this pattern by the appropriate value of $D(t)$. In cosmological simulations, we define this starting epoch not with a physical time $t$, but with the initial scale factor, $a_{\text{initial}}$ (e.g., $a = 0.02$). Because the initial growth factor for the Einstein-de Sitter model is simply equal to the scale factor ($D \propto a$), this parameter acts as the universal master clock for scaling our initial conditions.
+It is crucial to understand that $\boldsymbol{\Psi}_0(\mathbf{x})$ does not describe the actual highly non-linear universe today. Rather, it is a linearly extrapolated field: a mathematical representation of what the universe would look like today if gravity had remained perfectly linear for 13.8 billion years.
+
+The $D(t) \boldsymbol{\Psi}_0(\mathbf{x})$ separability is incredibly powerful. It means we only need to compute this complex spatial pattern, $\boldsymbol{\Psi}_0(\mathbf{x})$, once, anchoring it to present-day observational parameters (like $\sigma_8$). To generate the actual state of the universe at our starting epoch, we simply scale this pattern backward in time by multiplying it by the appropriate value of $D(t)$. In cosmological simulations, we define this starting epoch not with a physical time $t$, but with the initial scale factor, $a_{\text{initial}}$ (e.g., $a = 0.02$). Because the fluctuations at this early time are tiny, the linear Zel'dovich approximation becomes physically highly accurate, providing the perfect initial conditions for our N-body particles before gravity drives them into non-linear collapse.
 
 #### Generating the Displacement Pattern
 
@@ -726,24 +849,26 @@ Observations of the early universe show that our cosmos has a **"red-tilted"** s
 
 To generate the displacement pattern, $\boldsymbol{\Psi}_0(\mathbf{x})$, we use the following steps:
 
-1.  **Define the Physical Scale.** To simulate the real universe, our computational grid cannot be an arbitrary size; it must be anchored to a physical scale. By defining the comoving size of our simulation box in Megaparsecs ($L_{\text{box}}$), we can calculate the physical spatial frequency, or wavenumber ($k$), for every wave in our Fourier grid:
-    $$k = \sqrt{k_x^2 + k_y^2 + k_z^2}$$
-    Where $k_{x,y,z} \propto 2\pi / L_{\text{box}}$. This physical wavenumber tells the simulation exactly what size structure each wave represents, from massive superclusters to small dwarf galaxies.
+1.  **Define the Wavevectors and Physical Scale.** In a 3D Fourier grid, every wave is defined by a **wavevector**, $\mathbf{k} = (k_x, k_y, k_z)$, which points in the direction the wave is traveling. The magnitude of this vector is the **wavenumber**, $k = |\mathbf{k}|$, which represents the wave's spatial frequency. 
+To simulate the real universe, we must anchor our discrete grid to a physical scale. By defining the comoving size of our simulation box in Megaparsecs ($L_{\text{box}}$), we can calculate the exact physical wavenumber for every mode:
+$$k_{\text{phys}} = \sqrt{k_x^2 + k_y^2 + k_z^2} \cdot \left( \frac{2\pi}{L_{\text{box}}} \right)$$
+This physical wavenumber tells the simulation exactly what size structure each wave represents, from massive superclusters to small dwarf galaxies.
  
 2.  **Generate and Shape the Random Field.** We start by creating a grid of random complex numbers, $\delta(\mathbf{k})$, that satisfies **conjugate symmetry**, $\delta(\mathbf{k}) = \delta^*(-\mathbf{k})$, to ensure the final field in real space is real-valued. Each Fourier mode is then scaled so its amplitude follows the **$\Lambda$CDM power spectrum**. 
-    While the primordial universe started with a nearly scale-invariant spectrum ($k^{n_s}$), the presence of intense radiation in the early cosmos suppressed the gravitational collapse of small-scale structures. To capture this physics, we multiply the primordial spectrum by a **Cosmological Transfer Function**, $T(k)$. A standard analytical approximation for this is the **BBKS Transfer Function** (Bardeen, Bond, Kaiser, Szalay, 1986). 
-    The final shaped power spectrum is defined as:
-    $$P(k) = A \cdot k^{n_s} T(k)^2$$
-    Here, $A$ is a master normalization constant that scales the overall strength of the fluctuations. Each random mode is scaled by the square root of this power spectrum: $\delta_\rho(\mathbf{k}) = \delta(\mathbf{k}) \sqrt{P(k)}$.
- 
-3.  **Compute the displacement field.** From Poisson’s equation, the gravitational potential $\hat{\Phi}(\mathbf{k})$ is related to the density field by $\hat{\Phi}(\mathbf{k}) \propto -\delta_\rho(\mathbf{k})/k^2$. The displacement field is proportional to the gradient of this potential. In Fourier space, taking a gradient corresponds to multiplying by $i\mathbf{k}$:
-    $$\hat{\boldsymbol{\Psi}}_0(\mathbf{k}) \propto i\mathbf{k} \frac{\delta_\rho(\mathbf{k})}{k^2}$$
-    *(Note: The $k^2$ in the denominator here represents the dimensionless code-unit wavenumber to satisfy the Poisson equation on the grid, distinct from the physical $k$ used for the transfer function).*
+While the primordial universe started with a nearly scale-invariant spectrum ($k^{n_s}$), the presence of intense radiation in the early cosmos suppressed the gravitational collapse of small-scale structures. To capture this physics, we multiply the primordial spectrum by a **Cosmological Transfer Function**, $T(k)$. A standard analytical approximation for this is the **BBKS Transfer Function** (Bardeen, Bond, Kaiser, Szalay, 1986)—explained later. 
+The final shaped power spectrum is evaluated using our physical wavenumbers:
+$$P(k_{\text{phys}}) = A \cdot k_{\text{phys}}^{n_s} T(k_{\text{phys}})^2$$
+Here, $A$ is a master normalization constant that scales the overall strength of the fluctuations. Each random mode is scaled by the square root of this power spectrum: $\delta_\rho(\mathbf{k}) = \delta(\mathbf{k}) \sqrt{P(k_{\text{phys}})}$.
+
+3.  **Compute the displacement field.** The random field $\delta_\rho(\mathbf{k})$ we just generated is a scalar map of density (where the mass is). However, our goal is the displacement field $\boldsymbol{\Psi}_0(\mathbf{x})$, which is a vector map telling particles which way to move. To bridge this gap, we must use the physics of gravity. 
+In the Zel'dovich approximation, particles are displaced by falling down the gradient of the gravitational potential created by the density fluctuations. First, we use Poisson’s equation to convert the density field into a gravitational potential $\hat{\Phi}(\mathbf{k})$, which requires an inverse Laplacian operation (dividing by $-k^2$). Second, we take the gradient of this potential to find the displacement vector, which in Fourier space corresponds to multiplying by $i\mathbf{k}$.
+Because this derivative is taking place purely on our discrete grid, we drop the physical Megaparsec scaling and strictly use the dimensionless internal grid-unit wavevectors ($\mathbf{k}_{\text{grid}}$):
+$$\hat{\boldsymbol{\Psi}}_0(\mathbf{k}) \propto i\mathbf{k}_{\text{grid}} \frac{\delta_\rho(\mathbf{k})}{k_{\text{grid}}^2}$$
  
 4.  **Transform back to real space.** Finally, we apply the inverse Fourier transform to recover the displacement pattern in real space:
-    $$\boldsymbol{\Psi}_0(\mathbf{x}) = \mathcal{F}^{-1}\{\hat{\boldsymbol{\Psi}}_0(\mathbf{k})\}$$
+$$\boldsymbol{\Psi}_0(\mathbf{x}) = \mathcal{F}^{-1}\{\hat{\boldsymbol{\Psi}}_0(\mathbf{k})\}$$
 
-#### Normalizing the Power Spectrum ($\sigma_8$)
+##### Normalizing the Power Spectrum ($\sigma_8$)
 
 In the previous step, we left the overall amplitude multiplier, $A$, undefined. To anchor our initial conditions to observational reality, this amplitude cannot be arbitrary. In cosmology, it is pinned to a standard measured value known as **$\sigma_8$** (Sigma-8).
  
@@ -759,6 +884,31 @@ By numerically integrating our unnormalized BBKS power spectrum (where $A=1$) us
 $$A = \frac{\sigma_8^2}{\sigma_{R=8, \text{unnorm}}^2}$$
  
 Applying this constant $A$ ensures that the resulting displacement field possesses the exact statistical "clumpiness" observed in the real universe.
+
+##### The Physics of the Transfer Function: BBKS
+
+If the universe contained only dark matter, the primordial power spectrum ($P(k) \propto k^{n_s}$) would remain nearly a straight line across all scales. However, the early universe was a chaotic, boiling soup dominated by intense radiation. This radiation fundamentally altered how structures of different sizes were allowed to grow, a process we capture mathematically using the **Cosmological Transfer Function**, $T(k)$.
+
+The shape of $T(k)$ is driven by a cosmic race between gravity and the expansion of space, dictated by the **horizon** (the maximum distance light, and therefore any causal physical interaction, could have traveled since the Big Bang). 
+
+1.  **Large Scales (Small $k$):** These density fluctuations were physically larger than the cosmic horizon in the early universe. Because gravity cannot act faster than light, these regions were effectively "frozen" outside the horizon. By the time the horizon grew large enough to encompass them, the universe had already cooled and transitioned into the **matter-dominated era**. In this calm era, gravity easily took over, and these large scales began to collapse normally. Therefore, for small $k$, the transfer function does nothing: $T \approx 1$.
+2.  **Small Scales (Large $k$):** These tiny fluctuations were small enough to enter the horizon very early on, right in the middle of the **radiation-dominated era**. During this epoch, the pressure of the radiation drove a tremendously fast expansion of space. This expansion was so violent that it outpaced the gravitational pull of the dark matter. The growth of these small-scale density ripples was completely stalled—a phenomenon known as the **Mészáros effect**. They could only start growing later, once the radiation cleared. Because they lost millions of years of growth time, their final amplitude is heavily suppressed. 
+
+To calculate the exact shape of this suppression, cosmologists must solve complex, coupled differential equations tracking dark matter, baryons, photons, and neutrinos. In 1986, Bardeen, Bond, Kaiser, and Szalay (BBKS) published a masterful analytical fitting formula that approximates the result of these complex calculations.
+
+The BBKS transfer function depends on a scaled wavenumber, $q$, which adjusts the physical wavenumber $k$ (measured in $\text{Mpc}^{-1}$) based on the density of the universe. For a standard model, it is approximated as:
+$$q = \frac{k}{\Omega_m h^2 \exp(-\Omega_b - \sqrt{2h} \Omega_b / \Omega_m)}$$
+*(Note: In purely dark-matter-dominated, simplified models, the denominator is often reduced to simply the "shape parameter" $\Gamma \approx \Omega_m h$.)*
+
+The BBKS formula itself is:
+$$T(q) = \frac{\ln(1 + 2.34q)}{2.34q} \left[ 1 + 3.89q + (16.1q)^2 + (5.46q)^3 + (6.71q)^4 \right]^{-0.25}$$
+
+Mathematically, this equation perfectly captures the physics of the early universe:
+
+* As $q \to 0$ (huge cosmic scales), the function approaches $1$, preserving the primordial $k^{n_s}$ shape.
+* As $q \to \infty$ (tiny cosmic scales), the function falls off proportionally to $q^{-2}$. 
+
+Because the final power spectrum is proportional to $T(k)^2$, this causes the small-scale power to drop off by a massive factor of $k^{-4}$. This creates a distinct "turnover" peak in the total power spectrum—a critical signature of the transition from the radiation era to the matter era, and the defining mathematical curve that dictates the sizes of galaxies in our simulation.
 
 #### Applying the Displacements and Velocities
 
@@ -900,7 +1050,15 @@ Dehnen, W., & Read, J. I. (2011). *N-body simulations of gravitational dynamics*
 
 A simulation that focuses on the evolution of collisionless N-body particles is an excellent model for the dark matter that forms the universe's invisible scaffolding. However, to simulate the formation of the luminous structures—stars, galaxies, and galaxy clusters—it must include the physics of **baryonic matter**. In cosmology, "baryons" is the term for all normal matter, which primarily exists as a vast, diffuse **gas**.
 
-Unlike dark matter, gas is not collisionless. Its particles (atoms and ions) interact with each other, giving rise to familiar fluid properties like **pressure** and **temperature**. To model this behavior, a simulation must include the laws of **hydrodynamics**.
+Unlike dark matter, gas is not collisionless. Its particles (atoms and ions) interact with each other, giving rise to familiar fluid properties like **pressure** and **temperature**. 
+
+However, it is natural to wonder how a medium so incredibly empty—often containing just a single atom in a volume the size of a small room—can behave like a fluid and push back against gravity. The answer lies in the sheer scale of the universe and the physics of plasmas.
+
+Out in the deep cosmic voids, the primordial gas is very cold and diffuse. However, because cosmological structures are millions of light-years across, the distance an atom travels before colliding with another is still microscopic compared to the size of the system. On these vast scales, even a near-vacuum experiences enough microscopic collisions to possess macroscopic fluid properties like pressure and density.
+
+The physics changes dramatically when this cold gas falls into the immense gravity of a dark matter halo. As the gas crashes into the halo at hypersonic speeds, shockwaves heat it to millions of degrees, turning it into a highly energetic plasma. In this state, the charged ions and electrons do not need to physically collide like billiard balls to interact. Instead, they repel each other across vast distances via electromagnetic forces and are threaded together by large-scale magnetic fields. These long-range interactions ensure that even inside the hottest, most violent galaxy clusters, the diffuse matter continues to act as a cohesive fluid.
+
+To mathematically model this continuous behavior across both the cold voids and the hot halos, a simulation must solve the laws of **hydrodynamics**.
 
 ### The Euler Equations
 
@@ -914,17 +1072,50 @@ This law states that the change in the mass density ($\rho$) in a given cell is 
 
 $$\frac{\partial \rho}{\partial t} + \nabla \cdot (\rho \mathbf{v}) = 0$$
 
-Here, $\mathbf{v}$ is the velocity of the gas, and the term $\nabla \cdot (\rho \mathbf{v})$ represents the divergence, or the "outflow," of the mass flux.
+Here, $\mathbf{v}$ is the velocity of the gas, and the term $\nabla \cdot (\rho \mathbf{v})$ represents the divergence, or the "outflow," of the mass flux. The divergence of this vector is simply the sum of the partial spatial derivatives of each component along its respective axis:
+
+$$\nabla \cdot (\rho \mathbf{v}) = \frac{\partial (\rho v_x)}{\partial x} + \frac{\partial (\rho v_y)}{\partial y} + \frac{\partial (\rho v_z)}{\partial z}$$
 
 **2. Conservation of Momentum**
 
-It states that the change in the gas's momentum ($\rho\mathbf{v}$) is caused by the forces acting on it. In a cosmological simulation, there are two crucial forces: pressure and gravity.
+This law states that the change in the gas's momentum ($\rho\mathbf{v}$) is caused by the forces acting on it. In a cosmological simulation, there are two crucial forces: pressure and gravity.
 
 $$\frac{\partial (\rho \mathbf{v})}{\partial t} + \nabla \cdot (\rho \mathbf{v} \otimes \mathbf{v}) = -\nabla P + \rho \mathbf{g}$$
 
-The right-hand side represents the forces:
+To understand this equation, we can break it down into the flow of momentum (the left side) and the forces causing it to change (the right side).
 
-* **$-\nabla P$ (The Pressure Gradient Force):** This is the key new piece of physics. It describes the force that causes gas to flow from regions of high pressure to regions of low pressure. This is the force that allows the gas to resist gravitational collapse. 
+The left-hand side describes the movement of the fluid:
+
+* **$\frac{\partial (\rho \mathbf{v})}{\partial t}$:** The local rate of change of momentum density over time.
+* **$\nabla \cdot (\rho \mathbf{v} \otimes \mathbf{v})$ (Momentum Advection):** This term describes how the bulk flow of the fluid carries its own momentum across space. The outer product ($\otimes$) creates a tensor (a 3x3 matrix) that tracks how each directional component of momentum (e.g., $y$-momentum) is transported along every spatial axis (e.g., flowing along the $x$-axis).
+$$
+\rho \mathbf{v} \otimes \mathbf{v} = 
+\begin{bmatrix}
+\rho v_x v_x & \rho v_x v_y & \rho v_x v_z \\
+\rho v_y v_x & \rho v_y v_y & \rho v_y v_z \\
+\rho v_z v_x & \rho v_z v_y & \rho v_z v_z
+\end{bmatrix}
+$$
+$$
+\nabla \cdot (\rho \mathbf{v} \otimes \mathbf{v}) = 
+\begin{bmatrix}
+\frac{\partial}{\partial x}(\rho v_x v_x) + \frac{\partial}{\partial y}(\rho v_x v_y) + \frac{\partial}{\partial z}(\rho v_x v_z) \\ \\
+\frac{\partial}{\partial x}(\rho v_y v_x) + \frac{\partial}{\partial y}(\rho v_y v_y) + \frac{\partial}{\partial z}(\rho v_y v_z) \\ \\
+\frac{\partial}{\partial x}(\rho v_z v_x) + \frac{\partial}{\partial y}(\rho v_z v_y) + \frac{\partial}{\partial z}(\rho v_z v_z)
+\end{bmatrix}
+$$
+
+The right-hand side represents the physical forces acting on the fluid:
+
+* **$-\nabla P$ (The Pressure Gradient Force):** This is the key new piece of physics. It describes the force that causes gas to flow from regions of high pressure to regions of low pressure. This is the force that allows the gas to resist gravitational collapse.
+$$
+-\nabla P = 
+\begin{bmatrix}
+-\frac{\partial P}{\partial x} \\ \\
+-\frac{\partial P}{\partial y} \\ \\
+-\frac{\partial P}{\partial z}
+\end{bmatrix}
+$$
 * **$\rho \mathbf{g}$ (The Gravitational Force):** This is the familiar force of gravity. The gravitational acceleration, $\mathbf{g}$, is calculated from the density of **all** matter (both dark matter and gas) using the existing Particle-Mesh solver. This term is the link that couples the gas to the underlying cosmic web.
 
 **3. Conservation of Energy and the Equation of State**
@@ -950,7 +1141,58 @@ Where:
 
 * $\mathbf{U}$ is the vector of conserved state variables (density, momentum density, energy density).
 * $\nabla \cdot \mathbf{F}(\mathbf{U})$ is the "flux" term, which describes how quantities move due to pressure and advection (the fluid flowing).
-* $\mathbf{S}(\mathbf{U})$ is the "source" term, which describes changes due to external forces, namely gravity ($\rho\mathbf{g}$) and cosmic expansion (the Hubble drag).
+* $\mathbf{S}(\mathbf{U})$ is the "source" term, which describes changes due to external forces, like gravity ($\rho\mathbf{g}$).
+
+While standard fluid dynamics relies only on those three fundamental conservation laws, simulating the universe requires a mathematical safety net. In cosmological flows, gas often moves at extreme, hypersonic speeds. In these conditions, a cell's kinetic energy becomes so massive that trying to numerically extract the tiny fraction of internal thermal energy from the total energy ($E$) leads to catastrophic floating-point errors. 
+
+To solve this, our code explicitly tracks a fourth variable: **internal energy density ($ie$)**. Therefore, for the remainder of this text, we will expand our state vector to a four-element array:
+
+$$\mathbf{U} = [\rho, \rho\mathbf{v}, E, ie]$$
+
+The precise mechanics of this issue and how this fourth variable is evolved alongside the others is known as the **Dual Energy Formalism**, which will be explored in detail in a later section.
+
+This is the perfect place to formally expand the equation to four rows. It solidifies the "pivot" we just made and gives the reader the complete, unified mathematical picture of your code's exact architecture.
+
+When we add the internal energy ($ie$) row, its flux is simply the advection of that thermal energy. However, its "source" term requires a bit of care: gravity doesn't directly heat up the gas (it changes the bulk kinetic energy), but the gas *does* heat up or cool down as it compresses or expands. Therefore, the source term for row 4 is the internal $PdV$ work.
+
+To reflect our 4-element state vector $\mathbf{U}$, the expanded system of equations looks like this:
+
+$$
+\frac{\partial}{\partial t}
+\begin{bmatrix} 
+\rho \\ \\ 
+\rho \mathbf{v} \\ \\ 
+E \\ \\
+ie
+\end{bmatrix} + \nabla \cdot 
+\begin{bmatrix} 
+\rho \mathbf{v} \\ \\ 
+\rho \mathbf{v} \otimes \mathbf{v} + P\mathbf{I} \\ \\ 
+(E + P)\mathbf{v} \\ \\
+ie\mathbf{v}
+\end{bmatrix} = 
+\begin{bmatrix} 
+0 \\ \\ 
+\rho \mathbf{g} \\ \\ 
+\rho \mathbf{v} \cdot \mathbf{g} \\ \\
+-P(\nabla \cdot \mathbf{v})
+\end{bmatrix}
+$$
+
+Here is the breakdown of exactly what each row represents:
+
+* **Row 1 (Conservation of Mass):**
+    * **Flux:** $\rho \mathbf{v}$ is the advection of mass.
+    * **Source:** $0$, because the universe does not spontaneously create or destroy mass.
+* **Row 2 (Conservation of Momentum):**
+    * **Flux:** $\rho \mathbf{v} \otimes \mathbf{v} + P\mathbf{I}$. This combines the momentum advection tensor ($\rho \mathbf{v} \otimes \mathbf{v}$) with the thermal pressure ($P$). The $\mathbf{I}$ is the identity matrix, which is just a mathematical way of ensuring the pressure only acts perpendicular to the cell faces (which exactly matches the $-\nabla P$ term when the divergence operator is applied).
+    * **Source:** $\rho \mathbf{g}$, the external acceleration due to gravity pulling on the gas.
+* **Row 3 (Conservation of Total Energy):**
+    * **Flux:** $(E + P)\mathbf{v}$. This is the total energy sliding along with the gas ($E\mathbf{v}$), plus the mechanical $PdV$ work being done by the fluid as it compresses and expands against its neighbors ($P\mathbf{v}$).
+    * **Source:** $\rho \mathbf{v} \cdot \mathbf{g}$. This is the mechanical work done *by gravity*. As gas falls into a dark matter halo (velocity aligns with gravity), gravity does work on the gas, adding to its total energy.
+* **Row 4 (Internal Energy / Dual Energy Formalism):**
+    * **Flux:** $ie\mathbf{v}$. This is the pure advection of thermal energy (hot gas flowing from one place to another).
+    * **Source:** $-P(\nabla \cdot \mathbf{v})$. This is the internal thermodynamic source term. Gravity does not directly heat the gas; instead, the gas heats up or cools down purely based on how its volume changes. As the fluid converges and compresses ($\nabla \cdot \mathbf{v} < 0$), this term becomes positive, acting as a source that heats the gas.
 
 Solving this equation all at once is difficult. A common and effective technique called **operator splitting** breaks the problem into simpler, sequential steps.
 
@@ -958,42 +1200,83 @@ Here is the step-by-step process to advance the gas grid from time $t$ to $t+\De
 
 #### Step 1: Convert to Primitive Variables
 
+*(A quick note on notation: In the generalized Euler equations above, we used $\mathbf{S}(\mathbf{U})$ to represent the full "Source Vector." However, from this point forward, we will adopt the standard simulation nomenclature where the vector $\mathbf{S}$ (and its components $S_x, S_y, S_z$) refers specifically to the **momentum density**, $\rho\mathbf{v}$.)*
+
 The solver begins with the grid of **conserved variables** ($\rho$, $S_x = \rho v_x$, $S_y = \rho v_y$, $E$) from the previous step. To calculate fluxes and forces, it first computes the **primitive variables** (velocity $\mathbf{v}$ and pressure $P$):
 
 $$v_x = \frac{S_x}{\rho} \quad , \quad v_y = \frac{S_y}{\rho}$$
 $$P = (\gamma - 1) \left( E - \frac{1}{2} \rho |\mathbf{v}|^2 \right)$$
 
-#### Step 2: Gravity Half-Step
+#### Step 2: Gravity Half-Step (Kick)
 
-First, the "source" terms from gravity are applied for half a time step, $\Delta t/2$. The gravitational acceleration field, $\mathbf{g}$, can be provided by the Particle-Mesh solver. The acceleration field must be derived from the **total matter density**—the sum of the dark matter density (from the N-body particles) and the gas density (from the hydro grid). This step updates the momentum and total energy of the gas:
+First, the external forces from gravity are applied for half a time step, $\Delta t/2$. The gravitational acceleration field, $\mathbf{g}$, can be provided by the Particle-Mesh solver. The acceleration field must be derived from the **total matter density**—the sum of the dark matter density (from the N-body particles) and the gas density (from the hydro grid). This step updates the momentum and total energy of the gas:
 
 $$\mathbf{S}(t + \tfrac{1}{2}\Delta t) = \mathbf{S}(t) + (\rho \mathbf{g}) \frac{\Delta t}{2}$$
 $$E(t + \tfrac{1}{2}\Delta t) = E(t) + (\mathbf{v} \cdot \rho \mathbf{g}) \frac{\Delta t}{2}$$
 
 The energy is updated by the **power density** (Force Density $\cdot$ Velocity, or $\mathbf{v} \cdot \rho \mathbf{g}$), which is the rate at which the gravitational field does work on the gas.
 
-#### Step 3: Hydrodynamic Full-Step
+#### Step 3: Hydrodynamic Full-Step (Drift)
 
-Next, the code solves the pure hydrodynamic equations (the "flux" part) for a full time step, $\Delta t$. This is done using a **finite-volume** method based on the conservation law:
+With the gravitational source terms applied, we can solve the pure hydrodynamic equations (the "flux" part) for a full time step, $\Delta t$. To calculate how much gas flows from one cell to the next, we must first estimate the fluid's properties exactly at the boundary between them—a process known as **spatial reconstruction**. 
 
-> The change of a quantity in a cell = (Flux In) - (Flux Out)
+If we use a high-accuracy, second-order spatial reconstruction scheme (like MUSCL, detailed in the next section), taking a simple first-order "forward Euler" step in time would introduce instabilities and dampen the sharp shocks that we need to resolve. Instead, we must match the spatial accuracy with **second-order time integration**. A highly robust method for finite-volume hydrodynamics is the **Strong Stability Preserving Runge-Kutta (SSP-RK2)** scheme.
 
-For any conserved variable $\mathbf{U}$ in a 1D cell `i`, the update equation is:
-$$\mathbf{U}_{i}^{new} = \mathbf{U}_{i}^{old} - \frac{\Delta t}{L} \left( \mathbf{F}_{i+1/2} - \mathbf{F}_{i-1/2} \right)$$
-Where $L$ is the cell size, and $\mathbf{F}_{i\pm1/2}$ is the flux vector across the cell's right and left interfaces. 
+Because operator splitting temporarily isolates the fluid's motion (the "Drift" stage) into a purely hydrodynamic problem, we are free to solve it using its own specialized mathematical engine. Therefore, nested inside the global KDK loop, this step utilizes the SSP-RK2 scheme. KDK orchestrates the overall physics, while SSP-RK2 acts as the high-precision sub-engine that actually pushes the gas across the grid.
 
-To solve this complex problem in a multi-dimensional case, the code uses a technique called **dimensional splitting**. This approach approximates the full multi-dimensional update by breaking it into a sequence of simpler, one-dimensional "sweeps," one for each spatial axis.
+In multi-stage Runge-Kutta methods, it is standard to denote the fluid state at the current time $t$ using the step index $n$ (written as $\mathbf{U}^n$), and the final state at $t + \Delta t$ as $\mathbf{U}^{n+1}$. The SSP-RK2 method achieves second-order accuracy by breaking the fluid advection into two intermediate mathematical stages (denoted by parenthetical superscripts) and averaging the results:
 
-The 1D flux equation is solved sequentially, one dimension at a time.
+**1. The Predictor Stage:** The solver takes a full Euler step using the current fluid state ($\mathbf{U}^n$) to calculate the fluxes. This generates an intermediate, predicted state:
+$$\mathbf{U}^{(1)} = \mathbf{U}^n + \Delta t \cdot \mathbf{L}(\mathbf{U}^n)$$
 
-1.  **First Sweep:** The fluxes are calculated along the first dimension (e.g., the x-axis) for the entire grid. These fluxes are then used to update the state of every cell.
-2.  **Subsequent Sweeps:** Using this **newly updated state** as the input, the process is repeated for the second dimension (e.g., the y-axis), and then again for the third (e.g., the z-axis), and so on, until all dimensions have been processed.
+Where $\mathbf{L}(\mathbf{U})$ acts as the **discrete spatial operator**. Earlier in the chapter, the fluid's motion was described by the continuous calculus term $\nabla \cdot \mathbf{F}(\mathbf{U})$. Because our simulation cannot perform infinite calculus, $\mathbf{L}(\mathbf{U})$ serves as the numerical approximation of that physics on a discrete grid. Mathematically, it is defined as:
 
-For each of these 1D sweeps, the fluxes at the interfaces are calculated using an **approximate Riemann solver** (specifically, the Harten-Lax-van Leer, or HLL, method). This solver determines the flow of mass, momentum, and energy between adjacent cells based on their current states.
+$$\mathbf{L}(\mathbf{U}) \approx -\nabla \cdot \mathbf{F}(\mathbf{U}) + \mathbf{S}_{\text{internal}}$$
 
-This process updates the gas based only on its own internal pressure and flow, advecting it across the grid.
+Here, the negative sign appears because divergence ($\nabla \cdot \mathbf{F}$) measures the net **outflow**, whereas $\mathbf{L}(\mathbf{U})$ calculates the net **influx** across the cell boundaries (which is evaluated using the HLLC Riemann solver). The $\mathbf{S}_{\text{internal}}$ term accounts for internal thermodynamics, specifically the $PdV$ work required by the Dual Energy Formalism. Noticeably absent is the external gravity source term ($\rho \mathbf{g}$); because we are using an operator-split Kick-Drift-Kick architecture, gravity is handled entirely separately during the half-steps.
 
-#### Step 4: Second Gravity Half-Step
+To see exactly how this discrete spatial operator updates the fluid, we can expand the equation $\mathbf{U}^{(1)} = \mathbf{U}^n + \Delta t \cdot \mathbf{L}(\mathbf{U}^n)$ into its full column-vector form. 
+
+By mapping the state vector $\mathbf{U}$ to our four tracked variables (mass, momentum, total energy, and internal energy) and expanding $\mathbf{L}(\mathbf{U})$ into its flux and source components, the predictor stage looks like this:
+
+$$
+\begin{bmatrix} 
+\rho^{(1)} \\ \\ 
+(\rho \mathbf{v})^{(1)} \\ \\ 
+E^{(1)} \\ \\ 
+ie^{(1)}
+\end{bmatrix} =
+\begin{bmatrix} 
+\rho^{n} \\ \\ 
+(\rho \mathbf{v})^{n} \\ \\ 
+E^{n} \\ \\ 
+ie^{n}
+\end{bmatrix} +
+\Delta t \cdot
+\begin{bmatrix} 
+-\nabla \cdot (\rho \mathbf{v})^n \\ \\ 
+-\nabla \cdot (\rho \mathbf{v} \otimes \mathbf{v} + P\mathbf{I})^n \\ \\ 
+-\nabla \cdot ((E + P)\mathbf{v})^n \\ \\ 
+-\nabla \cdot (ie \mathbf{v})^n - P^n(\nabla \cdot \mathbf{v}^n)
+\end{bmatrix}
+$$
+
+Looking at the $\mathbf{L}(\mathbf{U}^n)$ operator (the rightmost matrix), you can see exactly how the physics are applied:
+
+* **Rows 1 through 3:** These are the pure flux divergences ($-\nabla \cdot \mathbf{F}$). The Riemann solver calculates the flow of mass, momentum, and total energy across the cell boundaries.
+* **Row 4 (Internal Energy):** This row explicitly shows the Dual Energy Formalism at work. It includes both the advection of thermal energy ($-\nabla \cdot (ie \mathbf{v})$) *and* the internal thermodynamics source term ($- P\nabla \cdot \mathbf{v}$), which acts to heat or cool the gas as it compresses or expands during the time step.
+
+**2. The Corrector Stage:**
+The solver calculates an entirely new set of fluxes based on the *intermediate* state ($\mathbf{U}^{(1)}$). It takes another full Euler step from this intermediate state to generate a second state:
+$$\mathbf{U}^{(2)} = \mathbf{U}^{(1)} + \Delta t \cdot \mathbf{L}(\mathbf{U}^{(1)})$$
+
+**3. Final Averaging:**
+Finally, the true state at the next time step ($\mathbf{U}^{n+1}$) is found by averaging the original state and the twice-stepped state:
+$$\mathbf{U}^{n+1} = \frac{1}{2} \mathbf{U}^n + \frac{1}{2} \mathbf{U}^{(2)}$$
+
+This staggered, averaging approach allows the gas to flow across the grid with true second-order accuracy in both space and time. While calculating the fluxes twice per cycle essentially doubles the computational cost of the hydrodynamics, the dramatic improvement in shock resolution and overall stability makes it a strict requirement for modern cosmological simulations.
+
+#### Step 4: Second Gravity Half-Step (Kick)
 
 Finally, the gravitational source terms are applied again for the second half of the time step, $\Delta t/2$, using the updated values from the "Drift" step:
 
@@ -1002,43 +1285,112 @@ $$E(t + \Delta t) = E(t + \tfrac{1}{2}\Delta t) + (\mathbf{v} \cdot \rho \mathbf
 
 At the end of this sequence, the conserved variables of the gas grid have been fully advanced to time $t+\Delta t$, accounting for both the internal fluid dynamics and the external force of gravity.
 
-#### The HLL Solver
+#### Spatial Reconstruction and the MUSCL Scheme
 
-The Harten-Lax-van Leer (HLL) solver is an **approximate Riemann solver** used to determine the flux $\mathbf{F}_{i+1/2}$ at the interface between two cells, $i$ and $i+1$. These two cells define the "Left" state ($\mathbf{U}_L = \mathbf{U}_i$) and the "Right" state ($\mathbf{U}_R = \mathbf{U}_{i+1}$) of a Riemann problem—a classic, one-dimensional "shock-tube" problem that describes what happens when two different fluid states collide.
+In a basic finite-volume grid, the simplest way to determine the state of the fluid at the interface between two cells is to assume the fluid properties (density, velocity, pressure) are constant across the entire cell. This is known as **Piecewise Constant** reconstruction. 
 
-In a real physical system, this collision generates a complex wave structure (often composed of shock and rarefaction waves) that propagates away from the interface. While an exact solution for this structure is computationally expensive, the HLL method provides a robust and efficient approximation by assuming this entire structure can be simplified to a three-region model: the original Left and Right states, separated by a single, constant "star" state ($\mathbf{U}^*$).
+While computationally cheap, piecewise constant reconstruction is highly diffusive. It acts like a blur filter, smearing out sharp shock waves across many grid cells. To capture the sharp, violent shocks of a cosmological simulation, we need a higher-order approach. 
 
-The HLL solver takes advantage of the fact that this entire simplified structure is bounded by the fastest wave moving left, $S_L$, and the fastest wave moving right, $S_R$. These two "signal velocities" are the only parameters the solver needs to determine the correct flux at the interface, bypassing the need to solve for the complex "star" state.
+The **MUSCL (Monotonic Upstream-centered Scheme for Conservation Laws)** scheme upgrades our spatial resolution to second-order by replacing the flat constant states with **Piecewise Linear** slopes. Instead of assuming a fluid variable $q$ (which represents $\rho, \mathbf{v},$ or $P$) is flat inside cell $i$, we calculate a gradient (slope) based on its neighbors, $i-1$ and $i+1$. We then use this slope, $\Delta q_i$, to linearly extrapolate the fluid's properties from the cell center to the left and right interfaces of the cell.
 
-The calculation of the HLL flux at the interface ($\mathbf{F}_{HLL}$) proceeds in three steps:
+Mathematically, to find the fluid states on the exact left ($L$) and right ($R$) sides of the interface located between cell $i$ and cell $i+1$, we extrapolate outwards from the cell centers:
+$$q_{L, i+1/2} = q_i + \frac{1}{2} \Delta q_i$$
+$$q_{R, i+1/2} = q_{i+1} - \frac{1}{2} \Delta q_{i+1}$$
 
-**1. Calculate Left/Right Fluxes**
+However, a naive linear extrapolation creates a disastrous numerical artifact at shock fronts. When a steep slope tries to extrapolate across a discontinuous shock, it inevitably overshoots the true value, causing wild, unphysical oscillations (ringing) known as the Gibbs phenomenon. 
 
-First, the flux vectors, $\mathbf{F}_L$ and $\mathbf{F}_R$, are computed directly from the primitive variables of the Left and Right states. For a 1D sweep along the normal direction $n$, the flux vector $\mathbf{F}$ for the conserved quantities $\mathbf{U} = [\rho, S_n, S_t, E]$ is:
+To safely use linear reconstruction, we must introduce a **Slope Limiter**. A slope limiter acts as a localized safety switch. We first calculate two separate slopes for cell $i$: the backward difference (looking left) and the forward difference (looking right):
+$$\Delta q_{\text{backward}} = q_i - q_{i-1}$$ $$\Delta q_{\text{forward}} = q_{i+1} - q_i$$
 
-$$\mathbf{F}(\mathbf{U}) = \begin{bmatrix} \rho v_n \\ \rho v_n^2 + P \\ \rho v_n v_t \\ (E+P)v_n \end{bmatrix}$$
-Where $v_n$ is the velocity normal to the interface, $v_t$ is the velocity tangential to it, $S_n$ and $S_t$ are the normal and tangential components of the momentum density vector $\mathbf{S} = (\rho v_x, \rho v_y)$. The fluxes $\mathbf{F}_L = \mathbf{F}(\mathbf{U}_L)$ and $\mathbf{F}_R = \mathbf{F}(\mathbf{U}_R)$ are calculated from their respective states.
+* If the fluid is smooth, these two slopes will be similar, and the limiter allows the second-order linear slope.
+* If a shock is present, the slopes will violently disagree or change signs. The limiter detects this extremum and immediately forces the slope $\Delta q_i$ to zero, temporarily dropping the local reconstruction back to a safe, flat first-order state just for that specific shock front.
 
-**2. Estimate Signal Velocities ($S_L, S_R$)**
+A common and highly robust choice is the **Minmod limiter**. It compares the forward and backward slopes and selects the one with the smallest magnitude if they point in the same direction, returning zero if they point in opposite directions:
 
-Next, the solver must estimate the fastest signal speeds, $S_L$ and $S_R$, at which information propagates away from the interface. This requires the sound speed, $c_s = \sqrt{\gamma P / \rho}$, for both the Left and Right states ($c_{s,L}$ and $c_{s,R}$).
+$$
+\text{minmod}(a, b) = 
+\begin{cases} 
+a & \text{if } |a| < |b| \text{ and } ab > 0 \\
+b & \text{if } |b| < |a| \text{ and } ab > 0 \\
+0 & \text{if } ab \le 0 
+\end{cases}
+$$
 
-A common and robust estimate for these wave speeds, which guarantees stability, is given by:
+By setting our cell slope to $\Delta q_i = \text{minmod}(\Delta q_{\text{backward}}, \Delta q_{\text{forward}})$, we guarantee that the reconstructed values at the interfaces will never create new, artificial extrema. By applying this MUSCL reconstruction to the primitive variables ($\rho, \mathbf{v}, P$), the simulation can resolve incredibly sharp shock fronts without sacrificing stability.
+
+#### The HLLC Riemann Solver
+
+Once the fluid states have been extrapolated to the left ($\mathbf{U}_L$) and right ($\mathbf{U}_R$) sides of an interface, the code must determine the flux of mass, momentum, and energy passing through it. This is done using an **approximate Riemann solver**.
+
+When two different fluid states collide at an interface, they spawn a complex fan of waves propagating outwards. The Harten-Lax-van Leer (HLL) solver is a classic approximation that assumes this complex interaction can be simplified into just two waves: the fastest wave moving left and the fastest wave moving right. These wave speeds are denoted by the scalar variables **$S_L$** and **$S_R$** (where $S$ stands for "Signal velocity", which should not be confused with the momentum density vector $\mathbf{S}$ used earlier in the macroscopic solver). 
+
+While incredibly stable, the standard HLL solver has a fatal flaw: it ignores the middle of the wave structure. Specifically, it completely misses the **Contact Discontinuity**—a wave where fluid density and temperature jump abruptly, but pressure and velocity remain continuous. Because HLL averages over this middle region, it heavily smears out contact discontinuities and shear flows, which are vital for resolving the intricate gas filaments of the cosmic web.
+
+To fix this, modern cosmological codes use the **HLLC** solver (where "C" stands for Contact). The HLLC solver restores the missing middle physics by introducing a third wave speed, $S_*$, which represents the speed of the contact discontinuity. As the left and right waves move outward from the interface over the time step, they sweep out an expanding region of interacting gas. The $S_*$ wave divides this middle region into two distinct "star" states: $\mathbf{U}_L^*$ and $\mathbf{U}_R^*$.
+
+The calculation of the HLLC flux at the interface ($\mathbf{F}_{HLLC}$) proceeds as follows:
+
+**1. Estimate the Signal Velocities**
+First, the local sound speeds for the left ($c_{s,L}$) and right ($c_{s,R}$) states are calculated using the adiabatic index $\gamma$, pressure $P$, and density $\rho$:
+$$c_s = \sqrt{\frac{\gamma P}{\rho}}$$
+
+These sound speeds, along with the normal velocities of the fluid ($v_{n,L}$ and $v_{n,R}$), are used to estimate the outermost wave speeds bounding the Riemann problem. To guarantee numerical stability, the solver must encompass the fastest possible waves traveling in either direction. A robust and standard estimate achieves this by taking the minimum and maximum possible signal velocities across the interface:
 $$S_L = \min(v_{n,L} - c_{s,L}, v_{n,R} - c_{s,R})$$ $$S_R = \max(v_{n,L} + c_{s,L}, v_{n,R} + c_{s,R})$$
-Here, $v_n$ represents the normal velocity (e.g., $v_x$ during an x-sweep).
 
-**3. Calculate the HLL Flux**
+**2. Calculate the Contact Wave Speed ($S_*$)**
+The speed of the middle contact wave is derived directly from the conservation of momentum across the interface:
+$$S_* = \frac{P_R - P_L + \rho_L v_{n,L}(S_L - v_{n,L}) - \rho_R v_{n,R}(S_R - v_{n,R})}{\rho_L(S_L - v_{n,L}) - \rho_R(S_R - v_{n,R})}$$
 
-The solver determines the flux at the interface based on the direction of these wave speeds.
+**3. Compute the Star States**
+Using the contact wave speed $S_*$, the solver can calculate the exact conserved variables for the intermediate "star" regions ($\mathbf{U}_L^*$ and $\mathbf{U}_R^*$) wedged between the shock fronts and the contact discontinuity. 
 
-* If $S_L > 0$, the entire wave structure is moving to the right, away from the interface. The flux at the interface is simply the original Left flux:
-    $$\mathbf{F}_{HLL} = \mathbf{F}_L$$
-* If $S_R < 0$, the entire wave structure is moving to the left. The flux at the interface is the original Right flux:
-    $$\mathbf{F}_{HLL} = \mathbf{F}_R$$
-* If $S_L < 0 < S_R$, the interface is inside the wave structure, between the two fastest waves. In this case, the HLL flux is a weighted average of the fluxes and the states, given by the central formula:
-    $$\mathbf{F}_{HLL} = \frac{S_R \mathbf{F}_L - S_L \mathbf{F}_R + S_L S_R (\mathbf{U}_R - \mathbf{U}_L)}{S_R - S_L}$$
+For either the Left or Right state (denoted by the subscript $K$, where $K \in \{L, R\}$), the density of the star state is determined by mass conservation across the outermost wave:
+$$\rho_K^* = \rho_K \left( \frac{S_K - v_{n,K}}{S_K - S_*} \right)$$
 
-This resulting $\mathbf{F}_{HLL}$ is the single, consistent flux vector used in the finite-volume update for that interface. This process is repeated for every interface in the 1D sweep, advecting the gas based on its own internal pressure and flow.
+Next, we must determine the velocities and energy of these star states by looking at the physics of the contact discontinuity itself. This middle wave ($S_*$) is the literal boundary where the two original gas masses meet. Because they are pushing against each other with matching pressure and velocity, they do not mix; the interface acts as an impermeable wall that moves with the fluid. 
+
+Since no mass actually flows across this boundary, any property tied strictly to the fluid mass—specifically the transverse velocities ($v_{t1}, v_{t2}$) and the specific internal energy ($ie / \rho$)—remains constant and simply slides along with the flow. Meanwhile, the normal velocity of the fluid, by definition of moving perfectly with the boundary, becomes exactly $S_*$. 
+
+Therefore, the full vector of conserved variables for the star state $\mathbf{U}_K^* = [\rho^*, (\rho v_n)^*, (\rho v_{t})^*, E^*, ie^*]_K$ is given by:
+
+$$
+\mathbf{U}_K^* = \rho_K^*
+\begin{bmatrix}
+1 \\
+S_* \\
+v_{t,K} \\
+\frac{E_K}{\rho_K} + (S_* - v_{n,K}) \left( S_* + \frac{P_K}{\rho_K(S_K - v_{n,K})} \right) \\
+\frac{ie_K}{\rho_K}
+\end{bmatrix}
+$$
+
+**4. Calculate the Final Flux**
+The solver determines the flux at the interface based on the direction of these three wave speeds:
+
+* If $S_L \ge 0$, the entire wave structure is moving right. The flux is simply the original Left flux: $\mathbf{F}_L$.
+* If $S_L < 0 \le S_*$, the interface is inside the left star region. The flux is: $\mathbf{F}_L^* = \mathbf{F}_L + S_L(\mathbf{U}_L^* - \mathbf{U}_L)$.
+* If $S_* < 0 \le S_R$, the interface is inside the right star region. The flux is: $\mathbf{F}_R^* = \mathbf{F}_R + S_R(\mathbf{U}_R^* - \mathbf{U}_R)$.
+* If $S_R \le 0$, the entire wave structure is moving left. The flux is the original Right flux: $\mathbf{F}_R$.
+
+By properly resolving the contact wave, the HLLC solver accurately tracks the boundaries between hot and cold gas, allowing the simulation to capture the complex, multi-phase thermodynamics of galaxy formation.
+
+#### The Dual Energy Formalism
+
+In cosmology, gas falling into a dark matter halo routinely hits hypersonic speeds, reaching Mach 10 to Mach 100+ (because the primordial intergalactic gas is very cold, its local speed of sound is exceptionally low, allowing infalling gas to achieve massive Mach numbers). At these extreme velocities, the macroscopic kinetic energy ($E_{kin}$) of the gas completely dominates its internal thermal energy ($E_{int}$). 
+
+This creates a catastrophic numerical problem. In a standard finite-volume solver, we only track the total energy ($E_{tot} = E_{kin} + E_{int}$). To find the gas pressure, we must extract the internal energy by subtracting the kinetic energy:
+$$E_{int} = E_{tot} - E_{kin}$$
+
+When $E_{kin}$ is 99.999% of $E_{tot}$, the limits of floating-point arithmetic cause catastrophic cancellation. The subtraction destroys the precision of the thermal energy, often resulting in exactly zero or even negative internal energies, which instantly crashes the simulation with unphysical negative pressures.
+
+To solve this, modern cosmological codes employ the **Dual Energy Formalism**. Alongside the standard conserved variables, the simulation tracks the internal energy density as an independent, actively advected fluid field. This independent field is updated by its own fluxes and the physical work done by compression or expansion ($-P \nabla \cdot \mathbf{v}$).
+
+The code then employs a dynamic "switch" during the calculation of the primitive variables:
+
+* If the local flow is subsonic or undergoing a strong shock (e.g., where thermal energy is $> 0.1\%$ of the total energy), the code relies on the standard Total Energy equation. This guarantees perfect energy conservation across shock fronts.
+* If the local flow is hypersonic ($E_{int} / E_{tot} < 0.001$), the total energy calculation is deemed mathematically polluted. The code "switches" to calculating pressure strictly from the independently tracked internal energy.
+
+This dual-tracking approach guarantees that the gas temperature remains physically valid even when plummeting into the deepest gravitational wells of the cosmic web.
 
 ### Coupling Hydrodynamics to the Expanding Universe
 
@@ -1046,20 +1398,20 @@ In a static box, the hydrodynamic equations are only sourced by gravity and thei
 
 To correctly model this, the standard Euler equations must be modified with new "source terms" that account for the expansion. These terms are mathematically identical to the ones used for the N-body particles.
 
-The cosmological effects are applied as "source terms" in the main integrator "Kick" steps, alongside the gravity. During each "Kick" step, a **total acceleration** is applied to the gas in every grid cell, which is the sum of two components:
+The cosmological effects are applied as "source terms" in the main integrator "Kick" steps, alongside the gravity. During each "Kick" step, an **external source acceleration** is applied to the gas in every grid cell, which is the sum of two components:
 
 1.  **Modified Gravity:** The comoving gravitational acceleration, $\mathbf{g}_{\text{comoving}}$, is calculated from the total density of *both* dark matter and gas. This acceleration is then scaled by $1/a^3$ to account for the dilution of physical density as the universe's volume ($V \propto a^3$) increases.
 2.  **Hubble Drag:** A velocity-dependent "friction" term, $-2H\mathbf{v}$, is added. This term, where $H$ is the Hubble parameter and $\mathbf{v}$ is the gas's peculiar velocity, correctly damps the gas's peculiar momentum as space stretches.
 
-The **total acceleration** applied to the gas in each cell is therefore:
-$$\mathbf{a}_{\text{total}} = \frac{\mathbf{g}_{\text{comoving}}}{a^3} - 2H\mathbf{v}$$
-This total acceleration, which is a force per unit mass, is then used to update the gas grid's conserved quantities over the half-time-step ($\Delta t/2$):
+The **external source acceleration** applied to the gas in each cell is therefore:
+$$\mathbf{a}_{\text{source}} = \frac{\mathbf{g}_{\text{comoving}}}{a^3} - 2H\mathbf{v}$$
+This acceleration, which is a force per unit mass, is then used to update the gas grid's conserved quantities over the half-time-step ($\Delta t/2$):
 
-* **Momentum Update:** The momentum density $\mathbf{S} = \rho \mathbf{v}$ is updated by the force density ($\rho \mathbf{a}_{\text{total}}$):
-    $$\Delta \mathbf{S} = (\rho \mathbf{a}_{\text{total}}) \frac{\Delta t}{2}$$
+* **Momentum Update:** The momentum density $\mathbf{S} = \rho \mathbf{v}$ is updated by the force density ($\rho \mathbf{a}_{\text{source}}$):
+    $$\Delta \mathbf{S} = (\rho \mathbf{a}_{\text{source}}) \frac{\Delta t}{2}$$
 
 * **Energy Update:** The total energy density $E$ is updated by the power density (Force $\cdot$ Velocity) delivered by these forces:
-    $$\Delta E = (\mathbf{v} \cdot \rho \mathbf{a}_{\text{total}}) \frac{\Delta t}{2}$$
+    $$\Delta E = (\mathbf{v} \cdot \rho \mathbf{a}_{\text{source}}) \frac{\Delta t}{2}$$
 
 By applying these cosmological source terms to the gas grid within the same KDK integrator as the dark matter particles, we ensure that both components feel the same gravity and the same cosmic expansion, allowing them to evolve in a physically consistent manner.
 
@@ -1067,7 +1419,7 @@ By applying these cosmological source terms to the gas grid within the same KDK 
 
 In cosmological simulations, the baryonic gas and the dark matter must be initialized to reflect the physical reality of the universe long after the epoch of recombination. By the time a typical simulation begins, the gas has already spent millions of years falling into the gravitational potential wells excavated by the dark matter. 
 
-Therefore, treating the gas as a smooth, static fluid is physically incorrect and will result in artificial decoupling. Instead, the gaseous component must be initialized in lockstep with the dark matter, sharing its exact density fluctuations and bulk velocity flows, governed by the Zel'dovich approximation.
+Therefore, the gaseous component must be initialized in lockstep with the dark matter, sharing its exact density fluctuations and bulk velocity flows, governed by the Zel'dovich approximation.
 
 **1. Initial Density**
 The gas density, $\rho_{\text{gas}}$, is not uniform; it must perfectly trace the initial density perturbations of the dark matter. Once the dark matter particles are displaced to their starting positions, their mass is mapped to the Eulerian grid (via schemes like Cloud-in-Cell) to establish the primordial dark matter density field. The gas density in each cell is then set directly proportional to this field, scaled by the cosmic baryon fraction—the ratio of total gas mass to total dark matter mass in the simulation. 
@@ -1076,7 +1428,7 @@ The gas density, $\rho_{\text{gas}}$, is not uniform; it must perfectly trace th
 The gas cannot start "at rest". Because it has been gravitationally influenced by the dark matter for millions of years prior to the start of the simulation, the gas shares the same large-scale velocity flows. To achieve this synchronization, the continuous primordial velocity field is calculated natively on the high-resolution Eulerian grid using the Zel'dovich approximation. The gas grid is directly populated with these continuous velocity vectors, $\mathbf{v}_{\text{pec}}$. The collisionless dark matter particles, rather than carrying the grid, simply sample their individual initial velocities from this same continuous background field based on their starting coordinates.
 
 **3. Initial Energy**
-The total energy of the gas grid is initialized as the sum of its kinetic and internal (thermal) energies. Because the gas is now moving, it possesses a macroscopic kinetic energy density dictated by its initial momentum ($E_k = \frac{1}{2}\rho v^2$). The *internal* energy is initialized to a very low, uniform baseline. This ensures the gas starts "cold," meaning its thermal pressure is negligible and too weak to artificially resist the initial gravitational collapse.
+Because we employ the **Dual Energy Formalism**, we must initialize two separate energy fields. First, the explicitly tracked *internal* energy is initialized to a very low, uniform baseline. This ensures the gas starts "cold," meaning its thermal pressure is negligible and too weak to artificially resist the initial gravitational collapse. Second, the *total* energy of the gas grid is initialized as the sum of this internal thermal energy and the macroscopic kinetic energy ($E_k = \frac{1}{2}\rho v^2$) dictated by its initial primordial momentum.
 
 This setup creates a physically robust initial state. At $t=0$, the simulation consists of two distinct but perfectly synchronized fluids: a collisionless dark matter component and a hydrodynamic gas component, both sharing the exact same primordial density peaks and velocity flows. When the simulation begins, the cosmic web collapses cohesively, with the gas naturally shocking and heating as it flows into the deepening dark matter halos.
 
@@ -1102,33 +1454,29 @@ The most fundamental test is to ensure the solver correctly conserves all quanti
 This test has a known, exact analytical solution (the **Sod Shock Tube** is the most famous variant) that validates the code's ability to handle all three fundamental wave structures.
 
 * **The Setup:** A 1D tube of gas is initialized with a "diaphragm" at its center. The gas on the "Left" state has a high density and pressure, while the gas on the "Right" state has a low density and pressure. At $t=0$, the diaphragm is removed.
-* **The Expected Result:** The collision of the two states generates a complex, self-similar wave structure.
+* **The Expected Result:** The collision of the two states generates a self-similar wave structure (meaning its shape remains perfectly constant as it stretches over time). This structure is complex, splitting into three distinct features (see below).
 * **The Validation:** After evolving the system to a time $t$, a snapshot of the simulation's density, pressure, and velocity along the 1D line is plotted. This numerical result must be compared directly against the known, exact mathematical solution. A successful test will correctly capture the speed, position, and amplitude of the three key features:
     1.  A **Shock Wave** (an abrupt, discontinuous compression) propagating into the low-density region.
     2.  A **Rarefaction Fan** (a smooth, continuous expansion) propagating back into the high-density region.
-    3.  A **Contact Discontinuity** (a jump in density, but not pressure) separating the two materials.
-
-
+    3.  A **Contact Discontinuity** (a jump in density, but not pressure) separating the two materials. Capturing this specific feature sharply, without excessive smearing, is the primary benchmark for the **HLLC Riemann solver**.
 
 #### The Sedov-Taylor Blast Wave (Point Explosion)
 
 This is the classic multi-dimensional test for how a code handles a powerful, symmetric explosion, such as a supernova.
 
-* **The Setup:** A uniform, low-density gas fills the 2D or 3D grid, initially at rest. At $t=0$, a very large amount of thermal energy is deposited into a single central cell.
-* **The Expected Result:** A strong, spherical (or circular in 2D) shock wave propagates outwards from the center, sweeping the surrounding gas into a dense, hot shell.
+* **The Setup:** A uniform, low-density gas fills the grid, initially at rest. At $t=0$, a very large amount of thermal energy is deposited into a single central cell.
+* **The Expected Result:** A strong, spherical shock wave propagates outwards from the center, sweeping the surrounding gas into a dense, hot shell. Because this explosion creates extreme hypersonic velocities (high Mach numbers), this is a premier stress-test for the **Dual Energy Formalism** and the **MUSCL slope limiters**, proving the code can handle violent energy conversions without crashing due to negative pressures.
 * **The Validation:** This test has a known self-similar solution and is validated in two ways:
-    1.  **Symmetry:** The shock front must remain perfectly circular (in 2D). Any "boxy" or distorted shape indicates that the dimensional splitting in the solver is introducing errors.
-    2.  **Propagation Speed:** The radius of the shock front, $R$, must grow with time, $t$, according to a specific power law. For a 3D explosion in a uniform medium, this is $R(t) \propto t^{2/5}$. A log-log plot of radius versus time must produce a straight line with a slope of 2/5.
+    1.  **Symmetry:** The shock front must remain perfectly spherical. Any "boxy" or distorted shape indicates that the dimensional splitting in the solver is introducing errors.
+    2.  **Propagation Speed:** The radius of the shock front, $R$, must grow with time, $t$, according to a specific power law. For an explosion in a uniform medium, this is $R(t) \propto t^{2/5}$. A log-log plot of radius versus time must produce a straight line with a slope of 2/5.
 
 #### The Kelvin-Helmholtz Instability
 
 This test is not about shocks, but about the code's ability to correctly model fluid mixing and the growth of instabilities.
 
 * **The Setup:** A 2D box is initialized with two layers of fluid sliding past each other in opposite directions. For example, the top half has a velocity $v_x = +v$ and the bottom half has $v_x = -v$. A tiny, sinusoidal perturbation is introduced at the interface.
-* **The Expected Result:** The shear at the interface is unstable. The small initial perturbation should grow exponentially, causing the interface to roll up into a characteristic series of vortices.
-* **The Validation:** This is a test of the solver's numerical diffusion. A good solver will capture the growth of these vortices. A poor or overly-diffusive solver will smear out the interface, artificially damping the instability and preventing the vortices from ever forming.
-
-
+* **The Expected Result:** The shear at the interface is unstable. The small initial perturbation should grow exponentially, causing the interface to roll up into a characteristic series of vortices. 
+* **The Validation:** This is a test of the solver's numerical diffusion. Resolving these vortices correctly is a major victory for **second-order spatial reconstruction** and the **HLLC solver**. Simpler, first-order solvers (like standard HLL) introduce so much artificial viscosity that they smear out the interface, artificially damping the instability and preventing the vortices from ever forming.
 
 Passing this standard suite of tests provides strong confidence that a hydrodynamic code is correctly solving the Euler equations and is ready for use in complex physical simulations.
 
@@ -1170,8 +1518,10 @@ The rate of cooling is highly dependent on the density and temperature of the ga
 
 *Key Literature & Further Reading*  
 Teyssier, R. (2002). *Cosmological hydrodynamics with adaptive mesh refinement. A new high-resolution code called RAMSES*. arXiv:astro-ph/0111367. Available at [https://arxiv.org/abs/astro-ph/0111367](https://arxiv.org/abs/astro-ph/0111367)
+**Riemann Solvers & MUSCL Schemes:**  
+Toro, E. F. (2009). *Riemann Solvers and Numerical Methods for Fluid Dynamics: A Practical Introduction* (3rd ed.). Springer.
 
-### Adaptive Timestep
+## Adaptive Timestep
 
 Computational cosmology simulations are filled with different components. Dark matter particles interact only through gravity, a long-range force that can be relatively slow. Baryonic gas, however, also interacts through hydrodynamic pressure, leading to shock waves and sound waves that propagate at very high speeds.
 
@@ -1181,7 +1531,7 @@ If we were to use a single, "fixed" timestep ($\Delta t$) for the entire simulat
 
 The solution is the **adaptive timestep**. At every cycle, the shortest timescale required to maintain stability for every physical component is computed. The final timestep used to advance the simulation is the minimum of all of these, ensuring both physical accuracy and computational efficiency.
 
-#### The Courant-Friedrichs-Lewy (CFL) Condition for hydrodynamics
+### The Courant-Friedrichs-Lewy (CFL) Condition for hydrodynamics
 
 For the grid-based hydrodynamic solver, the most restrictive limit is the **Courant-Friedrichs-Lewy (CFL) condition**. This condition is based on the principle that information (i.e., a sound wave or the fluid itself) must not be allowed to travel more than one grid cell ($\Delta x$) in a single timestep ($\Delta t$).
 
@@ -1196,7 +1546,7 @@ The simulation must find the maximum signal velocity across all $N$ cells, $v_{\
 
 $$\Delta t_{\text{CFL}} = C_{\text{CFL}} \cdot \frac{\Delta x}{v_{\text{max}}}$$
 
-#### The Gravitational Timestep
+### The Gravitational Timestep
 
 For the N-body (particle) integrator, a different stability criterion applies. Particles in a strong gravitational field (e.g., near a dense halo or during a close encounter) experience high acceleration. If the timestep is too large, the integrator will "overshoot" the correct trajectory, artificially adding energy to the system and making it unstable.
 
@@ -1210,7 +1560,7 @@ $$\Delta t_{\text{grav}} = C_{\text{grav}} \cdot \sqrt{\frac{\epsilon}{a_{\text{
 
 Where $C_{\text{grav}}$ is a dimensionless safety factor (e.g., $0.1$ to $0.3$) that controls the accuracy of the particle integration.
 
-#### The Global Timestep
+### The Global Timestep
 
 At each cycle, the simulation computes all relevant timestep limits. The **global timestep**, $\Delta t$, which will be used to advance *all* components (particles and gas) from time $t$ to $t + \Delta t$, must be the single most restrictive (smallest) value.
 

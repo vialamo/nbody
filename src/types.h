@@ -6,9 +6,7 @@ struct Grid3D {
     int n;
     Eigen::VectorXd data;
 
-    // Default constructor needed for structs/arrays
     Grid3D() : n( 0 ) {}
-
     Grid3D( int size ) : n( size ), data( size* size* size ) {
         data.setZero();
     }
@@ -31,7 +29,7 @@ struct Grid3D {
     double maxCoeff() const { return data.maxCoeff(); }
     double sum() const { return data.sum(); }
     
-    Grid3D roll(int shift, int axis);
+    Grid3D roll(int shift, int axis) const;
 
     // For HDF5 pointers
     const double* raw_data() const { return data.data(); }

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(nbody LANGUAGES CXX)
+project(asimov LANGUAGES CXX)
 
 # ==============================================================================
 # GLOBAL BUILD OPTIONS
@@ -85,7 +85,7 @@ if(USE_GPU_OFFLOAD)
         message(FATAL_ERROR "GPU Offloading requires Clang/LLVM. Run: CXX=clang++ cmake -DUSE_GPU_OFFLOAD=ON ..")
     endif()
 
-    # This PUBLIC definition automatically passes down to nbody and run_tests
+    # This PUBLIC definition automatically passes down
     target_compile_definitions(SimulationCore PUBLIC USE_GPU)
 
     # Auto-detect NVIDIA GPU Architecture
@@ -124,20 +124,20 @@ endif()
 # ==============================================================================
 # MAIN EXECUTABLE
 # ==============================================================================
-add_executable(nbody src/main.cpp)
-target_link_libraries(nbody PRIVATE SimulationCore)
+add_executable(${PROJECT_NAME} src/main.cpp)
+target_link_libraries(${PROJECT_NAME} PRIVATE SimulationCore)
 
 if(MSVC)
-    target_compile_options(nbody PRIVATE /wd4251)
+    target_compile_options(${PROJECT_NAME} PRIVATE /wd4251)
 endif()
 
 # Copy resource files post-build
 if(EXISTS ${CMAKE_SOURCE_DIR}/simulation.ini)
     add_custom_command(
-        TARGET nbody POST_BUILD
+        TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_SOURCE_DIR}/simulation.ini
-            $<TARGET_FILE_DIR:nbody>/
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/
         COMMENT "Copying simulation.ini to executable directory"
     )
 endif()
@@ -178,7 +178,7 @@ check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
 if(ipo_supported)
     message(STATUS "IPO / LTO enabled: compiler supports it.")
     set_target_properties(SimulationCore PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
-    set_target_properties(nbody PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+    set_target_properties(${PROJECT_NAME} PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
     set_target_properties(run_tests PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
 else()
     message(STATUS "IPO / LTO disabled (or unsupported): ${ipo_error}")
@@ -192,7 +192,7 @@ if(USE_CLANG_TIDY)
     if(CLANG_TIDY_EXE)
         message(STATUS "clang-tidy found: ${CLANG_TIDY_EXE}")
         set_target_properties(SimulationCore PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
-        set_target_properties(nbody PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
+        set_target_properties(${PROJECT_NAME} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
     else()
         message(WARNING "clang-tidy not found!")
     endif()

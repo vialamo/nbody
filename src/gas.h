@@ -1,5 +1,4 @@
 #pragma once
-#include <limits>
 
 #include "config.h"
 #include "types.h"
@@ -10,22 +9,35 @@ struct ZeldovichField;
 
 class RiemannSolver {
    private:
-    Grid3D density, mom_n, mom_t1, mom_t2, energy, v_n, v_t1, v_t2, pressure;
     Grid3D rho_L, p_L, vn_L, vt1_L, vt2_L, E_L, mom_n_L, mom_t1_L, mom_t2_L;
     Grid3D rho_R, p_R, vn_R, vt1_R, vt2_R, E_R, mom_n_R, mom_t1_R, mom_t2_R;
-    Grid3D cs_L, cs_R, S_L, S_R, S_R_minus_S_L;
+    Grid3D cs_L, cs_R, S_L, S_R;
     Grid3D F_dens_L, F_dens_R, F_momn_L, F_momn_R, F_momt1_L, F_momt1_R,
         F_momt2_L, F_momt2_R, F_en_L, F_en_R;
     Grid3D flux_density, flux_mom_n, flux_mom_t1, flux_mom_t2, flux_energy;
     Grid3D flux_density_sh, flux_mom_n_sh, flux_mom_t1_sh, flux_mom_t2_sh,
         flux_energy_sh;
+    Grid3D ie_L, ie_R, F_ie_L, F_ie_R, flux_ie, flux_ie_sh;
+    Grid3D q_minus, q_plus, dq_L, dq_R, slope;
+
+    Eigen::ArrayXd den_star, S_star, omega_L, omega_R, denom_L, denom_R;
+    Eigen::ArrayXd mom_n_star_L, mom_n_star_R, mom_t1_star_L, mom_t1_star_R;
+    Eigen::ArrayXd mom_t2_star_L, mom_t2_star_R, E_star_L, E_star_R, ie_star_L,
+        ie_star_R;
 
     friend struct RiemannSolverTestAccess;
 
+    inline void reconstruct_muscl(const Grid3D& q, Grid3D& q_L, Grid3D& q_R,
+                                  int axis);
+
+    inline void apply_hllc_flux(const Grid3D& F_L, const Grid3D& F_R,
+                                const Grid3D& U_L, const Grid3D& U_R,
+                                const Eigen::ArrayXd& U_star_L,
+                                const Eigen::ArrayXd& U_star_R,
+                                const Eigen::ArrayXd& S_star, Grid3D& F_out);
+
    public:
     RiemannSolver(int mesh_size);
-    void solve_hll(const Grid3D& FL, const Grid3D& FR, const Grid3D& UL,
-                     const Grid3D& UR, Grid3D& out_flux);
     void compute_fluxes(const GasGrid& grid, int axis, double gamma);
 
     const Grid3D& get_flux_density() const { return flux_density; }
@@ -38,21 +50,29 @@ class RiemannSolver {
     const Grid3D& get_flux_mom_t2_sh() const { return flux_mom_t2_sh; }
     const Grid3D& get_flux_energy() const { return flux_energy; }
     const Grid3D& get_flux_energy_sh() const { return flux_energy_sh; }
+    const Grid3D& get_flux_ie() const { return flux_ie; }
+    const Grid3D& get_flux_ie_sh() const { return flux_ie_sh; }
 };
 
 class GasGrid {
+   private:
     Grid3D density, momentum_x, momentum_y, momentum_z, energy;
     Grid3D pressure, velocity_x, velocity_y, velocity_z;
+    Grid3D internal_energy;
 
     RiemannSolver solver;
     const Config& config;
 
+    friend struct GasGridTestAccess;
     friend void initialize_gas(SimState& state, const Config& config,
                                const ZeldovichField& zf);
     friend void apply_gas_kick(GasGrid& gas, const Grid3D& grav_x,
                                const Grid3D& grav_y, const Grid3D& grav_z,
                                double dt, double a, double H,
                                const Config& config);
+
+    void update_primitive_variables();
+    void compute_and_apply_fluxes(double dt);
 
    public:
     GasGrid(const Config& conf);
@@ -71,6 +91,5 @@ class GasGrid {
     const Grid3D& get_velocity_y() const { return velocity_y; }
     const Grid3D& get_velocity_z() const { return velocity_z; }
 
-   private:
-    void update_primitive_variables();
+    const Grid3D& get_internal_energy() const { return internal_energy; }
 };

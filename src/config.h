@@ -30,7 +30,7 @@ struct Config {
 
     double DT_FACTOR = 1e-3;
     double MAX_SCALE_FACTOR = 1.0;
-    double CFL_SAFETY_FACTOR = 0.5;
+    double CFL_SAFETY_FACTOR = 0.4;
     double GRAVITY_DT_FACTOR = 0.2;
     bool USE_ADAPTIVE_DT = true;
     int MAX_CYCLES = 1000000000;

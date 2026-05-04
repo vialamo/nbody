@@ -5,7 +5,7 @@ SRC = source/book.md
 CSS = source/style.css
 PDF_OUT = build/book.pdf
 EPUB_OUT = build/book.epub
-TITLE = "Notes on N-Body/Hydrodynamics Simulation"
+TITLE = "Notes on Cosmological Simulations"
 
 # Default target runs both
 all: epub pdf

@@ -1,6 +1,6 @@
-# Cosmological N-Body/Hydro Simulation Experiments
+# Cosmological Simulations
 
-This repository documents my experiments in cosmological N-body/hydrodynamics simulations. It contains a "toy model" simulation program in C++, along with a book that explains the underlying physics and algorithms. This C++ implementation serves as a high-performance algorithmic testbed and uses Eigen and PocketFFT to explore memory-contiguous architectures and optimized linear algebra.
+This repository documents my experiments in cosmological N-body/hydrodynamics simulations. It contains a simulation program in C++, along with a book that explains the underlying physics and algorithms. This C++ implementation serves as a high-performance algorithmic testbed to explore memory-contiguous architectures and optimized linear algebra.
 
 ## Key Features Implemented
 
@@ -31,17 +31,18 @@ This repository documents my experiments in cosmological N-body/hydrodynamics si
     * **Snapshot Output:** Simulation snapshots (including particle data, gas grids, and metadata) are saved periodically using the HDF5 (Hierarchical Data Format) file format.
     * **Diagnostics:** Real-time logging of conservation metrics (mass, momentum, energy) and performance timings to stdout and CSV.
     
-![N-Body Simulation Animation](simulation.gif)
+![Cosmological Simulation Animation](simulation.gif)
 
 ## Repository Structure
 
 * [`/src/`](src/): A high-performance C++ P³M + hydrodynamics cosmological simulation.
-* [`/docs/`](docs/): Contains a "living book" titled **"Notes on N-Body/Hydrodynamics Simulation"** in Markdown format. It includes a `Makefile` to automatically build the source notes into EPUB and PDF files.
+* [`/docs/`](docs/): Contains a "living book" titled **"Notes on Cosmological Simulations"** in Markdown format. It includes a `Makefile` to automatically build the source notes into EPUB and PDF files.
 * [`/scripts/`](scripts/): Contains Python utilities for post-processing, including a 3D visualizer (`viewer.py`) and a physical validation suite (`verify_run.py`) to analyze the HDF5 outputs.
 
 ## Getting Started
 
 ### C++ Cosmological code
+This section refers to the ASIMOV (Advanced Simulation of Intergalactic Matter and Observable Voids) code.
 
 1.  **Prerequisites (Linux/Ubuntu):**
     You need a C++ compiler, CMake, and the development libraries for HDF5, Eigen, and OpenMP. To utilize GPU offloading, the Clang/LLVM toolchain is also required.
@@ -71,14 +72,14 @@ This repository documents my experiments in cosmological N-body/hydrodynamics si
     make -j
     ```
 
-    This will create two executables inside the `build` directory: the main simulation `nbody` and the automated test suite `run_tests`.
+    This will create two executables inside the `build` directory: the main simulation `asimov` and the automated test suite `run_tests`.
 
 3.  **Run:**
     The build process automatically copies the `simulation.ini` file into the `build` directory. You can run the simulation from there:
 
     ```bash
     # From inside the 'build' directory:
-    ./nbody
+    ./asimov
     ```
 
     The program will start and automatically load its configuration from `simulation.ini` and create a uniquely timestamped folder inside an `outputs/` directory to safely store all snapshots and diagnostics.
@@ -107,7 +108,7 @@ While the C++ `ctest` suite verifies the internal math during compilation, the `
 1.  **Prerequisites:** Requires `numpy` and `h5py` (which are already included if you installed the Viewer prerequisites).
 2.  **Run:** Navigate to your project root and execute the script, passing the directory containing your `.hdf5` snapshots as an argument:
     ```bash
-    python scripts/verify_run.py build/outputs/your_timestamped_folder/
+    python scripts/verify_run.py build/outputs/timestamped_folder/
     ```
     The script will print a report verifying the physical consistency of each snapshot.
 

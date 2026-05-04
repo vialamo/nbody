@@ -13,7 +13,7 @@ void Diagnostics::add_time(TimerRegion region, double time_sec) {
     accumulated_times[static_cast<size_t>(region)] += time_sec;
 }
 
-void Diagnostics::increment_cycle() { accumulated_cycles++; }
+void Diagnostics::increment_cycle() { cycle++; accumulated_cycles++; }
 
 double Diagnostics::get_average(TimerRegion region) const {
     if (accumulated_cycles == 0) return 0.0;

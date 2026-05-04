@@ -1,5 +1,6 @@
 #include "ics.h"
 
+#include <cassert>
 #include <random>
 
 #include "integrator.h"
@@ -282,6 +283,7 @@ void initialize_gas(SimState& state, const Config& config,
 
         double kin_energy = 0.5 * rho * (vx * vx + vy * vy + vz * vz);
         gas.energy.data[i] = (rho * initial_internal_energy) + kin_energy;
+        gas.internal_energy.data[i] = rho * initial_internal_energy;
     }
 
     gas.update_primitive_variables();
@@ -310,7 +312,7 @@ SimState initialize_state(Config& config) {
         state.dm.interpolate_cic_forces(state.gravity_x, state.gravity_y,
                                         state.gravity_z, config);
     } else {
-        // If PM is off, we must ensure the acceleration arrays start at zero
+        // If PM is off, acceleration arrays start at zero
         std::fill(state.dm.acc_x.begin(), state.dm.acc_x.end(), 0.0);
         std::fill(state.dm.acc_y.begin(), state.dm.acc_y.end(), 0.0);
         std::fill(state.dm.acc_z.begin(), state.dm.acc_z.end(), 0.0);
