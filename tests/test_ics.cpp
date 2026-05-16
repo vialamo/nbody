@@ -4,40 +4,47 @@
 #include "config.h"
 #include "ics.h"
 
+// ---------------------------------------------------------------------
+// Thermodynamics & Initial Conditions Tests
+// ---------------------------------------------------------------------
 TEST_CASE("Initial internal energy scales correctly with code units",
           "[hydro][thermodynamics][units]") {
     // Baseline configuration parameters
     double T_kelvin = 50.0;
-    double h_param = 0.7;
-    double box_mpc = 100.0;
-    double domain = 1.0;
     double gamma = 5.0 / 3.0;
 
-    SECTION("Changing Domain Size dynamically updates the velocity unit") {
-        // Baseline: Domain of 1.0
+    // We pick a clean baseline velocity unit for easy math
+    double V_unit_kms_base = 10000.0; // 10,000 km/s
+
+    SECTION("Halving the velocity unit quadruples the resulting code energy") {
+        // Baseline computation
         double u_code_base = get_internal_energy_from_temp_k(
-            T_kelvin, h_param, box_mpc, 1.0, gamma);
+            T_kelvin, V_unit_kms_base, gamma);
 
-        // Domain of 2.0 means 1 code unit = 50 Mpc instead of 100 Mpc.
-        // This halves V_unit. Since u_code is divided by V_unit^2,
+        // Halving V_unit. Since u_code is divided by V_unit^2,
         // halving V_unit should exactly quadruple the final u_code result.
-        double u_code_double_domain = get_internal_energy_from_temp_k(
-            T_kelvin, h_param, box_mpc, 2.0, gamma);
+        double V_unit_kms_half = V_unit_kms_base / 2.0;
+        double u_code_half_v = get_internal_energy_from_temp_k(
+            T_kelvin, V_unit_kms_half, gamma);
 
-        REQUIRE(u_code_double_domain == Catch::Approx(u_code_base * 4.0));
+        REQUIRE(u_code_half_v == Catch::Approx(u_code_base * 4.0));
     }
 
     SECTION("Expected mathematical output is physically accurate") {
-        double u_code = get_internal_energy_from_temp_k(T_kelvin, h_param,
-                                                        box_mpc, domain, gamma);
+        double u_code = get_internal_energy_from_temp_k(
+            T_kelvin, V_unit_kms_base, gamma);
 
-        // Manual calculation check:
-        // u_phys = (1.380649e-23 * 50) / ((2/3) * 1.22 * 1.67262192e-27) ≈
-        // 507442.7 m^2/s^2 V_unit = 1.5 * 70.0 * 100.0 = 10500 km/s ->
-        // 10,500,000 m/s V_unit^2 = 1.1025e14 u_code = 507442.7 / 1.1025e14
-        // ≈ 4.60265e-9
+        // Manual calculation check (using CGS):
+        // k_B = 1.380649e-16 erg/K
+        // m_p = 1.6726219e-24 g
+        // mu = 1.22
+        // u_phys = (k_B * T) / ((gamma - 1) * mu * m_p)
+        // u_phys = (1.380649e-16 * 50) / ((2/3) * 1.22 * 1.6726219e-24) ≈ 5.074427e9 erg/g (cm^2/s^2)
+        // V_unit_cgs = 10000.0 km/s * 1e5 = 1.0e9 cm/s
+        // V_unit_cgs^2 = 1.0e18 cm^2/s^2
+        // u_code = 5.074427e9 / 1.0e18 ≈ 5.074427e-9
 
-        REQUIRE(u_code == Catch::Approx(4.60265e-9).margin(1e-13));
+        REQUIRE(u_code == Catch::Approx(5.074427e-9).margin(1e-13));
     }
 }
 

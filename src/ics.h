@@ -4,8 +4,7 @@
 
 SimState initialize_state(Config& config);
 
-double get_internal_energy_from_temp_k(double T_kelvin, double hubble_param,
-                                       double box_size_mpc, double domain_size,
+double get_internal_energy_from_temp_k(double T_kelvin, double V_unit_km_s,
                                        double gamma);
 
 struct ZeldovichField {

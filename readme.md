@@ -133,3 +133,69 @@ The `/docs` folder contains a guide detailing the physics and algorithms used in
 ## Learning Log & Guidebook
 
 This project is developed as a learning exercise. The companion document, built from the source files in [`/docs/`](docs/), is a "living book" that organizes and explains all the physics and computer science concepts encountered during this process. It is written in the style of a guide that I would have found most helpful when I began.
+
+## Configuration Parameters
+
+The simulation is configured using a standard INI file format. The configuration dictates the physical properties of the simulated universe, the grid resolution, the integration timesteps, and the data output frequency. Below is a breakdown of all available parameters by section.
+
+### `[domain]`
+
+Defines the spatial properties and resolution of the simulation box.
+
+* **`domain_size`**: The internal code-unit length of the box (typically set to `1.0` for natural units).
+* **`mesh_size`**: The number of grid cells along one axis for the Poisson solver and hydrodynamics (e.g., `32` creates a 32x32x32 computational grid).
+* **`box_size_mpc`**: The physical comoving size of the simulation box in Megaparsecs (Mpc). Used to map internal code units back to physical reality.
+
+### `[cosmology]`
+
+Defines the cosmological model, specifically the energy budget and expansion rate of the universe.
+
+* **`omega_baryon`**: The density parameter for normal (baryonic) matter.
+* **`omega_M`**: The total matter density parameter (baryons + dark matter). Dark energy is dynamically assumed to be `1.0 - omega_M` for a flat universe.
+* **`omega_lambda`**: The dark energy density parameter (cosmological constant).
+* **`hubble_param`**: The dimensionless physical Hubble parameter (*h*), where H0 = 100 * h km/s/Mpc.
+* **`expanding_universe`**: Boolean (`true` or `false`). If true, the code applies Hubble drag and stretches the comoving grid over time.
+
+### `[initial_conditions]`
+
+Controls the generation of the primordial density field and particle distributions.
+
+* **`spectral_index`**: The primordial power spectrum index (*n_s*), typically `0.96` based on Planck data.
+* **`start_a`**: The scale factor at which the simulation begins (e.g., `0.02` corresponds to redshift z = 49).
+* **`sigma_8`**: The normalization of the power spectrum, defining the amplitude of density fluctuations at an 8 Mpc/h scale.
+* **`initial_gas_temp_k`**: The physical temperature of the baryonic gas at `start_a`, in Kelvin.
+* **`n_per_side`**: The number of N-body particles along one axis (e.g., `32` creates 32,768 total particles). Often matched to `mesh_size` to avoid interpolation artifacts.
+* **`standing_particles`**: Boolean. If `true`, all N-body particles remain completely stationary throughout the entire duration of the simulation. Their positions and velocities are never updated. This is strictly a debugging feature, useful for isolating and testing other components of the code, such as observing how the hydrodynamics solver behaves around a static gravitational potential.
+* **`seed`**: Integer seed for the random number generator, ensuring reproducible initial density fields.
+
+### `[hydro]`
+
+Configures the fluid dynamics solver for the baryonic gas.
+
+* **`use_hydro`**: Boolean flag to enable or disable the hydrodynamics solver. If `false`, the code runs as a dark-matter-only N-body simulation.
+* **`gamma`**: The adiabatic index (ratio of specific heats) of the gas. Set to `1.6666666667` (5/3) for a monatomic, non-relativistic ideal gas.
+
+### `[p3m]`
+
+Configures the Particle-Particle Particle-Mesh (P³M) gravity solver.
+
+* **`use_pm`**: Boolean. Enables the long-range Particle-Mesh (PM) force calculation via Fast Fourier Transform.
+* **`use_pp`**: Boolean. Enables the short-range Particle-Particle (PP) direct summation for sub-grid resolution.
+* **`cutoff_radius_cells`**: The matching radius (*r_c*) where the algorithm switches from short-range PP forces to long-range PM forces, defined in units of grid cells.
+* **`cutoff_transition_width_factor`**: Determines the width of the smoothing kernel used to seamlessly blend the PP and PM forces at the cutoff boundary to avoid unphysical jumps in acceleration.
+
+### `[time]`
+
+Controls the adaptive timestepping and integration limits.
+
+* **`dt_factor`**: A global multiplier for the gravitational timestep, acting as a fraction of the system's local dynamical time.
+* **`cfl_safety_factor`**: The Courant-Friedrichs-Lewy (CFL) number. Restricts the hydrodynamics timestep to ensure information does not travel further than one grid cell per step (must be < 1.0, typically `0.4`).
+* **`max_scale_factor`**: The scale factor at which the simulation terminates. Set to `1.0` to run up to the present day (z = 0).
+
+### `[output]`
+
+Manages how and when the simulation writes data to disk.
+
+* **`save_hdf5_every_delta_a`**: The interval for writing full snapshot files (particles, mesh densities, velocities) to disk, measured in scale factor increments.
+* **`debug_info_every_cycles`**: The frequency (in integration steps) at which the code prints its current status, timestep, and performance metrics to the console/log.
+* **`enable_energy_diagnostics`**: Boolean. If `true`, the code continuously calculates and verifies the conservation of energy and momentum, writing the error margins to a diagnostic file.

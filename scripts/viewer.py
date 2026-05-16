@@ -118,6 +118,15 @@ class True3DViewer:
             sim_time = f.attrs.get('simulation_time', 0.0)
             a = f.attrs.get('scale_factor', 1.0)
             z = (1.0 / a) - 1.0 if a > 0 else 0.0
+
+            # Default to 1.0 in case we open a snapshot without these attributes
+            unit_time_gyr = f.attrs.get('UnitTime_in_Gyr', 1.0)
+            unit_length_mpc = f.attrs.get('UnitLength_in_Mpc', 1.0)
+            
+            # Calculate physical time and sizes
+            time_gyr = sim_time * unit_time_gyr
+            comoving_box_mpc = self.domain_size * unit_length_mpc
+            physical_box_mpc = comoving_box_mpc * a
             
             # Particles
             pos_x = f['particles/position_x'][:]
@@ -129,9 +138,27 @@ class True3DViewer:
 
             # Gas
             p_max = 0
+            t_max = 0
             if self.use_hydro and 'gas' in f:
                 pressure = f['gas/pressure'][:]
                 pressure = pressure.transpose(2, 1, 0)
+
+                # We need density to compute specific energy (P/rho)
+                density = f['gas/density'][:]
+                density = density.transpose(2, 1, 0)
+
+                # Compute Physical Temperature (Kelvin)
+                KB = 1.380649e-16
+                M_H = 1.6726219e-24
+                MU = 0.59  # Assuming ionized gas for the peak temperature
+                
+                v_unit_cgs = f.attrs.get('UnitVelocity_in_CGS', 1.0)
+                
+                # P/rho * v_unit^2 gives physical specific energy in CGS
+                specific_energy_cgs = (pressure / density) * (v_unit_cgs**2)
+                temperature = specific_energy_cgs * (MU * M_H / KB)
+                
+                t_max = np.max(temperature)
                 
                 p_min, p_max = np.min(pressure), np.max(pressure)
                 if p_max > p_min:
@@ -142,10 +169,10 @@ class True3DViewer:
         # HUD
         hud_str = (
             f"Frame: {frame_idx:04d} / {self.num_frames-1}\n"
-            f"Time:  {sim_time:.4f}\n"
-            f"Scale: {a:.4f}\n"
-            f"z:     {z:.2f}\n"
-            f"Max P: {p_max:.2e}"
+            f"Epoch: a = {a:.4f}  |  z = {z:.2f}\n"
+            f"Time:  {sim_time:.4f} code  ({time_gyr:.2f} Gyr)\n"
+            f"Size:  {comoving_box_mpc:.1f} Mpc comoving  ({physical_box_mpc:.1f} Mpc physical)\n"
+            f"Max T: {t_max:.2e} K"
         )
         self.hud_text.text = hud_str
         self.canvas.update()

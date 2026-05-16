@@ -5,6 +5,27 @@
 #include "ini.h"
 #include "math_utils.h"
 
+static void init_derived_units(Config& config) {
+    // 1. Length
+    config.UNIT_LENGTH_MPC = config.BOX_SIZE_MPC / config.DOMAIN_SIZE;
+
+    // 2. Time
+    double H0_phys_gyr_inv = 0.10227 * config.HUBBLE_PARAM;
+    double H0_code = 2.0 / (3.0 * std::sqrt(config.OMEGA_M));
+    config.UNIT_TIME_GYR = H0_code / H0_phys_gyr_inv;
+
+    // 3. Velocity
+    config.UNIT_VELOCITY_KMS = config.UNIT_LENGTH_MPC * 150.0 *
+                               config.HUBBLE_PARAM * std::sqrt(config.OMEGA_M);
+    config.UNIT_VELOCITY_CGS = config.UNIT_VELOCITY_KMS * 1e5;
+
+    // 4. Mass
+    double rho_crit = 2.775e11 * (config.HUBBLE_PARAM * config.HUBBLE_PARAM);
+    double box_volume_mpc3 = std::pow(config.BOX_SIZE_MPC, 3);
+    double total_mass_msun = config.OMEGA_M * rho_crit * box_volume_mpc3;
+    config.UNIT_MASS_MSUN = total_mass_msun / Config::TOTAL_MASS;
+}
+
 Config::Config() { compute_derived_data(); }
 
 void Config::load(const std::string& filename) {
@@ -82,13 +103,12 @@ void Config::compute_derived_data() {
 
     NUM_DM_PARTICLES = N_PER_SIDE * N_PER_SIDE * N_PER_SIDE;
 
-    const double total_mass = 1.0;
-    G = std::pow(DOMAIN_SIZE, 3) / (6.0 * M_PI * total_mass);
+    G = std::pow(DOMAIN_SIZE, 3) / (6.0 * M_PI * TOTAL_MASS);
 
     const double baryon_fraction = OMEGA_BARYON / OMEGA_M;
-    const double dm_total_mass = total_mass * (1.0 - baryon_fraction);
+    const double dm_total_mass = TOTAL_MASS * (1.0 - baryon_fraction);
     DM_PARTICLE_MASS = dm_total_mass / NUM_DM_PARTICLES;
-    GAS_TOTAL_MASS = total_mass * baryon_fraction;
+    GAS_TOTAL_MASS = TOTAL_MASS * baryon_fraction;
 
     double mean_interparticle_spacing =
         DOMAIN_SIZE / std::cbrt(static_cast<double>(NUM_DM_PARTICLES));
@@ -96,4 +116,6 @@ void Config::compute_derived_data() {
     SOFTENING_SQUARED = std::pow(mean_interparticle_spacing / 50.0, 2);
     const double dynamical_time = 1.0 / std::sqrt(G);
     FIXED_DT = DT_FACTOR * dynamical_time;
+
+    init_derived_units(*this);
 }

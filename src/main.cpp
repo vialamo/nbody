@@ -10,6 +10,15 @@
 
 SimulationEngine* g_engine = nullptr;
 
+void print_internal_units(const Config& config) {
+    std::cout << "Internal Unit System\n";
+    std::cout << "1.0 Code Length   = " << config.UNIT_LENGTH_MPC << " comoving Mpc\n";
+    std::cout << "1.0 Code Time     = " << config.UNIT_TIME_GYR << " Gyr\n";
+    std::cout << "1.0 Code Velocity = " << config.UNIT_VELOCITY_KMS << " km/s\n";
+    std::cout << "1.0 Code Mass     = " << config.UNIT_MASS_MSUN << " Solar Masses\n";
+    std::cout << "G = " << config.G << "\n" << std::endl;
+}
+
 void signal_handler(int signal) {
     if (signal == SIGINT) {
         std::cout << "\n[Ctrl+C Detected] Finishing the current cycle and "
@@ -45,9 +54,7 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "Successfully loaded " << config_filename << std::endl;
 
-    std::cout << "N(P,G): (" << config.N_PER_SIDE << "³," << config.MESH_SIZE
-              << "³) G: " << config.G << " fixed_dt: " << config.FIXED_DT
-              << std::endl;
+    print_internal_units(config);
 
     // Create the output directories
     std::string timestamp = utils::get_timestamp();

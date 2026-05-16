@@ -98,6 +98,12 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         set_attr_double(root_group, "simulation_time", state.total_time);
         set_attr_double(root_group, "scale_factor", state.scale_factor);
 
+        set_attr_double(root_group, "UnitLength_in_Mpc", config.UNIT_LENGTH_MPC);
+        set_attr_double(root_group, "UnitTime_in_Gyr", config.UNIT_TIME_GYR);
+        set_attr_double(root_group, "UnitVelocity_in_kms", config.UNIT_VELOCITY_KMS);
+        set_attr_double(root_group, "UnitVelocity_in_CGS", config.UNIT_VELOCITY_CGS);
+        set_attr_double(root_group, "UnitMass_in_Msun", config.UNIT_MASS_MSUN);
+
         H5::Group particle_group = root_group.createGroup("particles");
 
         write_particle_vec(particle_group, "position_x", state.dm.pos_x);

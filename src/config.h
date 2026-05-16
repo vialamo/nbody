@@ -43,11 +43,22 @@ struct Config {
     double G = 0.0;
     double CELL_SIZE = 0.0, CELL_VOLUME = 0.0, OMEGA_DM = 0.0;
     double CUTOFF_RADIUS = 0.0, CUTOFF_RADIUS_SQUARED = 0.0;
-    double CUTOFF_TRANSITION_WIDTH = 0.0, R_SWITCH_START = 0.0, R_SWITCH_START_SQ = 0.0;
+    double CUTOFF_TRANSITION_WIDTH = 0.0, R_SWITCH_START = 0.0,
+           R_SWITCH_START_SQ = 0.0;
     int NUM_DM_PARTICLES = 0;
     double DM_PARTICLE_MASS = 0.0, GAS_TOTAL_MASS = 0.0;
     double SOFTENING_SQUARED = 0.0;
     double FIXED_DT = 0.0;
+
+    // Derived unit conversions (calculated once)
+    double UNIT_LENGTH_MPC = 0.0;    // 1 code length = X Mpc
+    double UNIT_TIME_GYR = 0.0;      // 1 code time = X Gyr
+    double UNIT_VELOCITY_KMS = 0.0;  // 1 code velocity = X km/s
+    double UNIT_VELOCITY_CGS = 0.0;  // 1 code velocity = X cm/s
+    double UNIT_MASS_MSUN = 0.0;     // 1 code mass = X Solar Masses
+
+    // Constant Parameters
+    static constexpr double TOTAL_MASS = 1;
 
     Config();
     void load(const std::string& filename);
