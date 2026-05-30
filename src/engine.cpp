@@ -17,8 +17,9 @@ SimulationEngine::SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5,
     // Determine initial timestep
     double dt_cfl = state.gas.get_cfl_timestep();
     double dt_grav = state.dm.get_gravity_timestep(config);
+    double dt_cool = state.gas.get_cooling_timestep(state.scale_factor);
     current_dt = config.USE_ADAPTIVE_DT
-                     ? std::min({dt_cfl, dt_grav, config.FIXED_DT})
+                     ? std::min({dt_cfl, dt_grav, dt_cool, config.FIXED_DT})
                      : config.FIXED_DT;
 
     // Log initial state (Cycle 0)
@@ -47,7 +48,8 @@ void SimulationEngine::step() {
     if (config.USE_ADAPTIVE_DT) {
         double dt_cfl = state.gas.get_cfl_timestep();
         double dt_grav = state.dm.get_gravity_timestep(config);
-        current_dt = std::min({dt_cfl, dt_grav, config.FIXED_DT});
+        double dt_cool = state.gas.get_cooling_timestep(state.scale_factor);
+        current_dt = std::min({dt_cfl, dt_grav, dt_cool, config.FIXED_DT});
     }
 
     needs_more_cycles = state.scale_factor < config.MAX_SCALE_FACTOR &&

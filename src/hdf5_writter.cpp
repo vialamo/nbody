@@ -2,6 +2,8 @@
 
 #include <iostream>
 
+#include "cooling.h"
+
 void HDF5Writer::set_attr_double(H5::H5Object& obj, const char* attr_name,
                                  double value) {
     H5::DataSpace scalar_space(H5S_SCALAR);
@@ -76,6 +78,7 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         set_attr_bool(root_group, "use_hydro", config.USE_HYDRO);
         set_attr_double(root_group, "g_const", config.G);
         set_attr_double(root_group, "gamma", config.GAMMA);
+        set_attr_double(root_group, "primordial_mu", config.PRIMORDIAL_MU);
         set_attr_bool(root_group, "standing_particles",
                       config.STANDING_PARTICLES);
         set_attr_bool(root_group, "expanding_universe",
@@ -98,11 +101,18 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         set_attr_double(root_group, "simulation_time", state.total_time);
         set_attr_double(root_group, "scale_factor", state.scale_factor);
 
-        set_attr_double(root_group, "UnitLength_in_Mpc", config.UNIT_LENGTH_MPC);
+        set_attr_double(root_group, "UnitLength_in_Mpc",
+                        config.UNIT_LENGTH_MPC);
         set_attr_double(root_group, "UnitTime_in_Gyr", config.UNIT_TIME_GYR);
-        set_attr_double(root_group, "UnitVelocity_in_kms", config.UNIT_VELOCITY_KMS);
-        set_attr_double(root_group, "UnitVelocity_in_CGS", config.UNIT_VELOCITY_CGS);
+        set_attr_double(root_group, "UnitVelocity_in_kms",
+                        config.UNIT_VELOCITY_KMS);
+        set_attr_double(root_group, "UnitVelocity_in_CGS",
+                        config.UNIT_VELOCITY_CGS);
         set_attr_double(root_group, "UnitMass_in_Msun", config.UNIT_MASS_MSUN);
+
+        set_attr_double(root_group, "UnitDensity_in_cgs",
+                        config.UNIT_DENSITY_CGS);
+        set_attr_double(root_group, "Factor_U_to_T", config.FACTOR_U_TO_T);
 
         H5::Group particle_group = root_group.createGroup("particles");
 
@@ -123,12 +133,35 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
 
         if (config.USE_HYDRO) {
             H5::Group gas_group = root_group.createGroup("gas");
+            set_attr_double(gas_group, "Cumulative_Radiated_Energy",
+                            state.gas.get_accumulated_radiated_energy());
             write_grid(gas_group, "density", state.gas.get_density());
             write_grid(gas_group, "momentum_x", state.gas.get_momentum_x());
             write_grid(gas_group, "momentum_y", state.gas.get_momentum_y());
             write_grid(gas_group, "momentum_z", state.gas.get_momentum_z());
             write_grid(gas_group, "energy", state.gas.get_energy());
             write_grid(gas_group, "pressure", state.gas.get_pressure());
+
+            if (config.ENABLE_COOLING) {
+                Grid3D temp_grid(config.MESH_SIZE);
+                const Grid3D& rho = state.gas.get_density();
+                const Grid3D& ie = state.gas.get_internal_energy();
+
+                int total_cells =
+                    config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
+                for (int i = 0; i < total_cells; ++i) {
+                    if (rho.data[i] > 1e-12) {
+                        double u = ie.data[i] / rho.data[i];
+                        temp_grid.data[i] =
+                            cooling::get_temp_from_internal_energy(
+                                u, state.scale_factor, config);
+                    } else {
+                        temp_grid.data[i] = 10.0;  // Floor
+                    }
+                }
+                write_grid(gas_group, "temperature", temp_grid);
+            }
+
             gas_group.close();
         }
         root_group.close();

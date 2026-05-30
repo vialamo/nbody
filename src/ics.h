@@ -4,9 +4,6 @@
 
 SimState initialize_state(Config& config);
 
-double get_internal_energy_from_temp_k(double T_kelvin, double V_unit_km_s,
-                                       double gamma);
-
 struct ZeldovichField {
     std::vector<double> dx;
     std::vector<double> dy;

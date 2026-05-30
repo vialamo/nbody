@@ -98,17 +98,36 @@ def validate_snapshot(file_path, initial_mass=None):
         if use_hydro:
             g_rho = f['gas/density'][:]
             g_eng = f['gas/energy'][:]
+            g_px = f['gas/momentum_x'][:]
+            g_py = f['gas/momentum_y'][:]
+            g_pz = f['gas/momentum_z'][:]
+            g_press = f['gas/pressure'][:]
             
             cell_size = domain_size / mesh_size
             cell_volume = cell_size ** 3
             
-            run_check(not np.isnan(g_rho).any(), "Gas density array valid (No NaNs)", "NaNs detected in gas density!")
-            run_check(np.all(g_rho > 0), "Gas density strictly positive", "Negative gas density detected (Safety floor failed)!")
-            run_check(np.all(g_eng > 0), "Gas energy strictly positive", "Negative gas energy detected (Safety floor failed)!")
+            run_check(np.isfinite(g_rho).all(), "Gas density finite (No NaNs/Infs)", "NaNs/Infs detected in gas density!")
+            run_check(np.isfinite(g_eng).all(), "Gas energy finite (No NaNs/Infs)", "NaNs/Infs detected in gas energy!")
+            run_check(np.isfinite(g_px).all() and np.isfinite(g_py).all() and np.isfinite(g_pz).all(), 
+                      "Gas momentum finite (No NaNs/Infs)", "NaNs/Infs detected in gas momentum!")
+            run_check(np.isfinite(g_press).all(), "Gas pressure finite (No NaNs/Infs)", "NaNs/Infs detected in gas pressure!")
+            
+            # Check Physical Bounds (Strictly Positive)
+            run_check(np.all(g_rho > 0), "Gas density strictly positive", "Negative or zero gas density detected (Floor failed)!")
+            run_check(np.all(g_eng > 0), "Gas energy strictly positive", "Negative or zero gas energy detected (Floor failed)!")
+            run_check(np.all(g_press > 0), "Gas pressure strictly positive", "Negative or zero gas pressure detected (Floor failed)!")
+            
+            # Check Temperature (Only if exported/cooling enabled)
+            if 'gas/temperature' in f:
+                g_temp = f['gas/temperature'][:]
+                run_check(np.isfinite(g_temp).all(), "Gas temperature finite (No NaNs/Infs)", "NaNs/Infs detected in gas temperature!")
+                run_check(np.all(g_temp > 0), "Gas temperature strictly positive", "Negative or zero gas temperature detected!")
             
             gas_mass = np.sum(g_rho) * cell_volume
             total_mass += gas_mass
             print(f"    {BLUE}[INFO]{RESET} Max Gas Density: {np.max(g_rho):.5e}")
+            if 'gas/temperature' in f:
+                print(f"    {BLUE}[INFO]{RESET} Max Temperature: {np.max(g_temp):.5e} K")
         else:
             print(f"    {BLUE}[INFO]{RESET} Hydro disabled (Dark Matter only).")
 
@@ -151,11 +170,11 @@ def run_validation_suite(snapshot_dir):
         prev_var = prev_state['dm_variance']
         curr_var = curr_state['dm_variance']
         
-        # Clumpiness Evolution Check
+        # Structure Growth Check
         if curr_a > prev_a:
-            # Did gravity work at all? (Variance must increase)
+            # Variance must increase
             run_check(curr_var > prev_var, 
-                      f"Clumpiness increased (\u03c3\u00b2: {prev_var:.3e} -> {curr_var:.3e})", 
+                      f"Structure growth detected (\u03c3\u00b2: {prev_var:.3e} -> {curr_var:.3e})", 
                       f"Universe got smoother! (\u03c3\u00b2 dropped to {curr_var:.3e})")
             
             # Did it grow at the right cosmological rate?
@@ -170,12 +189,11 @@ def run_validation_suite(snapshot_dir):
         prev_state = curr_state
         print("") # Blank line for readability
         
-    # Final Clumpiness Report
+    # Final Structure Growth Report
     final_state = prev_state
-    print(f"{BLUE}=== Final Clumpiness Report ==={RESET}")
+    print(f"{BLUE}=== Final Structure Growth Report ==={RESET}")
     print(f"    Initial Variance (a={initial_state['scale_factor']:.4f}): {initial_state['dm_variance']:.5e}")
     print(f"    Final Variance   (a={final_state['scale_factor']:.4f}): {final_state['dm_variance']:.5e}")
-    
     if initial_state['dm_variance'] > 0:
         actual_growth = final_state['dm_variance'] / initial_state['dm_variance']
         theory_growth = (final_state['scale_factor'] / initial_state['scale_factor'])**2

@@ -2,6 +2,8 @@
 
 #include <omp.h>
 
+#include "cooling.h"
+
 RiemannSolver::RiemannSolver(int mesh_size)
     : rho_L(mesh_size),
       p_L(mesh_size),
@@ -284,6 +286,8 @@ GasGrid::GasGrid(const Config& conf)
       velocity_z(conf.MESH_SIZE),
       internal_energy(conf.MESH_SIZE),
       solver(conf.MESH_SIZE),
+      cooling_failed_cells(0),
+      accumulated_radiated_energy(0.0),
       config(conf) {}
 
 void GasGrid::update_primitive_variables() {
@@ -335,7 +339,7 @@ void GasGrid::update_primitive_variables() {
                 ie_tracked[i] =
                     p * inv_gamma_minus_1;  // Sync tracked IE to prevent drift
             } else {
-                // Hypersonic regime! Total energy is polluted. Trust tracked
+                // Hypersonic regime: Total energy is polluted. Trust tracked
                 // IE.
                 p = gamma_minus_1 * ie_tracked[i];
                 en[i] = p * inv_gamma_minus_1 + ke;  // Sync Total Energy
@@ -506,4 +510,83 @@ double GasGrid::get_cfl_timestep() const {
     if (max_signal_vel < 1e-9) return std::numeric_limits<double>::infinity();
 
     return (config.CELL_SIZE / max_signal_vel) * config.CFL_SAFETY_FACTOR;
+}
+
+double GasGrid::apply_cooling(double dt, double a) {
+    if (!config.ENABLE_COOLING) return 0.0;
+
+    int total_cells = config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
+
+    double* d_rho = density.array().data();
+    double* d_en = energy.array().data();
+    double* d_ie = internal_energy.array().data();
+
+    const double density_floor = 1e-12;
+    double total_radiated = 0.0;
+    size_t non_converged_count = 0;
+
+#pragma omp parallel for schedule(static) \
+    reduction(+ : total_radiated, non_converged_count)
+    for (int i = 0; i < total_cells; ++i) {
+        double local_rho = d_rho[i];
+
+        if (local_rho > density_floor) {
+            double u_old = d_ie[i] / local_rho;
+            int iters = 0;
+            double u_new = cooling::solve_cooling_implicit(u_old, local_rho, a,
+                                                           dt, config, iters);
+
+            if (iters >= cooling::MAX_ITER) {
+                non_converged_count++;
+            }
+
+            double delta_u = u_old - u_new;
+
+            if (delta_u > 0.0) {
+                double delta_E_vol = delta_u * local_rho;
+                d_ie[i] -= delta_E_vol;
+                d_en[i] -= delta_E_vol;
+
+                // Accumulate total physical energy lost in this cell
+                total_radiated += delta_E_vol * config.CELL_VOLUME * (a * a);
+            }
+        }
+    }
+
+    this->cooling_failed_cells = non_converged_count;
+    this->accumulated_radiated_energy += total_radiated;
+
+    update_primitive_variables();
+    return total_radiated;
+}
+
+double GasGrid::get_cooling_timestep(double a) const {
+    if (!config.ENABLE_COOLING) return std::numeric_limits<double>::infinity();
+
+    double min_dt_cool = std::numeric_limits<double>::infinity();
+    int total_cells = config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
+
+    const double* d_rho = density.array().data();
+    const double* d_ie = internal_energy.array().data();
+    const double density_floor = 1e-12;
+
+#pragma omp parallel for reduction(min : min_dt_cool)
+    for (int i = 0; i < total_cells; ++i) {
+        if (d_rho[i] > density_floor) {
+            double u = d_ie[i] / d_rho[i];
+            double lambda =
+                cooling::compute_cooling_rate(u, d_rho[i], a, config);
+
+            if (lambda > 0.0) {
+                // Restrict timestep so internal energy changes by at most 10%
+                // per step
+                double dt_cool = 0.1 * (u / lambda);
+                if (dt_cool < min_dt_cool) {
+                    min_dt_cool = dt_cool;
+                }
+            }
+        }
+    }
+
+    return min_dt_cool;
 }

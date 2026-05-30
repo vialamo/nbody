@@ -76,8 +76,8 @@ void Logger::write_header() {
         << "total_mass_gas,total_mass_dm,total_momentum_gas_x,total_"
            "momentum_gas_y,total_momentum_gas_z,total_momentum_dm_x,total_"
            "momentum_dm_y,total_momentum_dm_z,"
-        << "ke_gas,ke_dm,pe_dm,ie_gas,"
-        << "dt_cfl,dt_gravity,dt_final,"
+        << "ke_gas,ke_dm,pe_dm,ie_gas,radiated_energy,"
+        << "dt_cfl,dt_gravity,dt_cool,dt_final,"
         << "max_gas_density,max_gas_pressure,max_gas_velocity,"
         << "wall_time_total,wall_time_pm,wall_time_pp,wall_time_hydro,"
            "wall_time_io,cumulative_wall_time,memory_peak,memory_current\n";
@@ -109,7 +109,8 @@ void Logger::log(const Diagnostics& diag) {
                  << diag.total_momentum_dm.y() << ","
                  << diag.total_momentum_dm.z() << "," << diag.ke_gas << ","
                  << diag.ke_dm << "," << diag.pe_total << "," << diag.ie_gas
-                 << "," << diag.dt_cfl << "," << diag.dt_gravity << ","
+                 << "," << diag.total_radiated_energy << "," << diag.dt_cfl
+                 << "," << diag.dt_gravity << "," << diag.dt_cool << ","
                  << diag.dt_final << "," << diag.max_gas_density << ","
                  << diag.max_gas_pressure << "," << diag.max_gas_velocity << ","
                  << diag.get_average(TimerRegion::Step) << ","
@@ -146,16 +147,18 @@ void Logger::log(const Diagnostics& diag) {
               << format_double(diag.total_momentum_gas.z(), 1, true) << ")"
               << "\n";
 
-    std::cout << "    - Energy (KE/PE/IE): "
+    std::cout << "    - Energy (KE/PE/IE/Rad): "
               << format_double(diag.ke_dm + diag.ke_gas, 3, true) << " | "
               << format_double(diag.pe_total, 3, true) << " | "
-              << format_double(diag.ie_gas, 3, true)
+              << format_double(diag.ie_gas, 3, true) << " | "
+              << format_double(diag.total_radiated_energy, 3, true)
               << " (Total: " << format_double(diag.total_energy(), 3, true)
               << ")" << "\n";
 
     std::cout << "  [Stability]" << "\n";
     std::cout << "    - Timestep (CFL): " << format_double(diag.dt_cfl, 2, true)
               << " | (Grav): " << format_double(diag.dt_gravity, 2, true)
+              << " | (Cool): " << format_double(diag.dt_cool, 2, true)
               << " | (Final): " << format_double(diag.dt_final, 2, true)
               << "\n";
     std::cout << "    - Max(rho): "
@@ -182,4 +185,9 @@ void Logger::log(const Diagnostics& diag) {
     std::cout << "-------------------------------------------------------------"
                  "---------"
               << "\n";
+
+    if (diag.non_converged_cooling_cells > 0) {
+        std::cout << "  [WARNING] Cooling solver failed to converge in " 
+                  << diag.non_converged_cooling_cells << " cells!\n";
+    }
 }

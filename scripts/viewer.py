@@ -137,35 +137,43 @@ class True3DViewer:
             self.particles.set_data(positions, face_color=(1, 1, 1, 0.5), edge_width=0, size=2.0)
 
             # Gas
-            p_max = 0
             t_max = 0
             if self.use_hydro and 'gas' in f:
-                pressure = f['gas/pressure'][:]
-                pressure = pressure.transpose(2, 1, 0)
+                # Read or Calculate Temperature
+                if 'gas/temperature' in f:
+                    # If cooling is enabled, use file temp
+                    temperature = f['gas/temperature'][:]
+                    temperature = temperature.transpose(2, 1, 0)
+                else:
+                    # Fallback for adiabatic runs without the temperature grid
+                    pressure = f['gas/pressure'][:].transpose(2, 1, 0)
+                    density = f['gas/density'][:].transpose(2, 1, 0)
+                    
+                    KB = 1.380649e-16
+                    M_H = 1.6726219e-24
+                    MU = f.attrs.get('primordial_mu', 1.22)
+                    
+                    v_unit_cgs = f.attrs.get('UnitVelocity_in_CGS', 1.0)
+                    specific_energy_cgs = (pressure / density) * (v_unit_cgs**2)
+                    temperature = specific_energy_cgs * (MU * M_H / KB)
 
-                # We need density to compute specific energy (P/rho)
-                density = f['gas/density'][:]
-                density = density.transpose(2, 1, 0)
-
-                # Compute Physical Temperature (Kelvin)
-                KB = 1.380649e-16
-                M_H = 1.6726219e-24
-                MU = 0.59  # Assuming ionized gas for the peak temperature
-                
-                v_unit_cgs = f.attrs.get('UnitVelocity_in_CGS', 1.0)
-                
-                # P/rho * v_unit^2 gives physical specific energy in CGS
-                specific_energy_cgs = (pressure / density) * (v_unit_cgs**2)
-                temperature = specific_energy_cgs * (MU * M_H / KB)
-                
                 t_max = np.max(temperature)
                 
-                p_min, p_max = np.min(pressure), np.max(pressure)
-                if p_max > p_min:
-                    normalized_pressure = (pressure - p_min) / (p_max - p_min)
-                    self.volume.set_data(normalized_pressure)
+                # Render Logarithmic Temperature
+                # because a linear scale makes cold filaments invisible
+                
+                # Prevent log(0) warnings by clipping to the 10.0K floor
+                safe_temp = np.clip(temperature, 10.0, None) 
+                log_temp = np.log10(safe_temp)
+                
+                t_min_log, t_max_log = np.min(log_temp), np.max(log_temp)
+                
+                if t_max_log > t_min_log:
+                    normalized_temp = (log_temp - t_min_log) / (t_max_log - t_min_log)
+                    gamma = 2.5
+                    normalized_temp = normalized_temp ** gamma
+                    self.volume.set_data(normalized_temp)
                     self.volume.clim = [0.0, 1.0]
-
         # HUD
         hud_str = (
             f"Frame: {frame_idx:04d} / {self.num_frames-1}\n"

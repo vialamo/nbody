@@ -163,6 +163,11 @@ void apply_gas_kick(GasGrid& gas, const Grid3D& grav_x, const Grid3D& grav_y,
     gas.momentum_y.array() += g_mom_y_source.array() * dt;
     gas.momentum_z.array() += g_mom_z_source.array() * dt;
     gas.energy.array() += power_density.array() * dt;
+
+    // Comoving energy must decay as a^-4 for adiabatic expansion
+    Eigen::ArrayXd expansion_cooling = 4.0 * H * gas.get_pressure().array() * dt;
+    gas.energy.array()          -= expansion_cooling;
+    gas.internal_energy.array() -= expansion_cooling;
 }
 
 static void apply_dm_kick(ParticleSystem& dm, double dt, double a, double H) {
@@ -223,10 +228,15 @@ void KDK_step(SimState& state, double dt, Config& config, Diagnostics& diag) {
     // DRIFT
     apply_dm_drift(state.dm, dt, config.DOMAIN_SIZE);
 
-    // HYDRO DYNAMICS
+    // HYDRODYNAMICS
     if (config.USE_HYDRO) {
         ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
         state.gas.hydro_step(dt);
+
+        if (config.ENABLE_COOLING) {
+            double e_lost = state.gas.apply_cooling(dt, state.scale_factor);
+            diag.add_radiated_energy(e_lost);  // Log lost energy
+        }
     }
 
     // UPDATE COSMOLOGY to t + dt

@@ -22,6 +22,10 @@ struct Config {
 
     bool USE_HYDRO = true;
     double GAMMA = 5.0 / 3.0;
+    bool ENABLE_COOLING = true;
+    double PRIMORDIAL_MU = 1.22;  // Mean molecular weight for neutral
+                                  // primordial gas (76% H, 24% He)
+    double TEMP_FLOOR_KELVIN = 10.0;
 
     bool USE_PM = true;
     bool USE_PP = true;
@@ -56,6 +60,13 @@ struct Config {
     double UNIT_VELOCITY_KMS = 0.0;  // 1 code velocity = X km/s
     double UNIT_VELOCITY_CGS = 0.0;  // 1 code velocity = X cm/s
     double UNIT_MASS_MSUN = 0.0;     // 1 code mass = X Solar Masses
+
+    // Thermodynamics
+    double FACTOR_U_TO_T = 0.0;  // 1 code specific internal energy = X Kelvin
+    double FACTOR_T_TO_U = 0.0;  // 1 Kelvin = X code specific internal energy
+    double UNIT_DENSITY_CGS = 0.0;  // 1 code density = X g/cm^3
+    double COOLING_CONVERSION_FACTOR =
+        0.0;  // Converts physical cooling rate (erg/g/s) to code units (du/dt)
 
     // Constant Parameters
     static constexpr double TOTAL_MASS = 1;

@@ -12,12 +12,13 @@ This repository documents my experiments in cosmological N-body/hydrodynamics si
     * **Expanding Universe:** Simulation in comoving coordinates within an Einstein-de Sitter (EdS) model.
     * **Cosmological Integrator:** A Kick-Drift-Kick (KDK) Leapfrog scheme that correctly handles Hubble drag.
     * **Initial Conditions:** Advanced cosmological initial conditions. Particles are perturbed from a uniform lattice using the full 3D Zel'dovich Approximation, deriving physical displacements and velocities from a Gaussian random field generated in Fourier space via a cosmological power spectrum.
-    * **Adaptive Timestepping:** Dynamic calculation of the global timestep based on the Courant-Friedrichs-Lewy (CFL) hydro condition and maximum gravitational acceleration.
+    * **Adaptive Timestepping:** Dynamic calculation of the global timestep based on the Courant-Friedrichs-Lewy (CFL) hydro condition, maximum gravitational acceleration, and a stiff radiative cooling timescale limiter.
 * **Hydrodynamics:**
     * **Grid-Based (Eulerian) Solver:** Implements a finite-volume solver for the adiabatic Euler equations on a fixed grid, tracking conservative variables (density, momentum, energy).
     * **HLL Riemann Solver:** Uses the Harten-Lax-van Leer (HLL) approximate Riemann solver to compute fluxes between cells.
     * **Operator Splitting:** Employs directional splitting (sequential X, Y, and Z-sweeps) to update the multidimensional grid.
     * **Two-Way Coupling:** The gas density contributes to the total gravitational field via the PM solver, and the gas momentum/energy is updated by gravitational source terms during the KDK kicks.
+    * **Radiative Cooling:** Implements an unconditionally stable, implicit Backward Euler solver (using Newton-Raphson root-finding) to calculate energy loss via Bremsstrahlung radiation, while strictly preserving kinetic energy via the Dual Energy Formalism.
 * **High-Performance Computing (HPC):**
     * **OpenMP Multithreading:** Heavy loops (such as the Riemann solver, mass assignment, and grid calculations) are parallelized across available CPU cores.
     * **SIMD Vectorization:** Core CPU mathematics leverage Eigen and AVX vectorization for cache-friendly, contiguous memory speedups.
@@ -37,7 +38,7 @@ This repository documents my experiments in cosmological N-body/hydrodynamics si
 
 * [`/src/`](src/): A high-performance C++ P³M + hydrodynamics cosmological simulation.
 * [`/docs/`](docs/): Contains a "living book" titled **"Notes on Cosmological Simulations"** in Markdown format. It includes a `Makefile` to automatically build the source notes into EPUB and PDF files.
-* [`/scripts/`](scripts/): Contains Python utilities for post-processing, including a 3D visualizer (`viewer.py`) and a physical validation suite (`verify_run.py`) to analyze the HDF5 outputs.
+* [`/scripts/`](scripts/): Contains Python utilities for post-processing, including a 3D visualizer (`viewer.py`) and a physical validation suite (`verify_run.py`), and an  analytical macro-observatory (`cosmology_dashboard.py`) to analyze the HDF5 outputs.
 
 ## Getting Started
 
@@ -112,6 +113,19 @@ While the C++ `ctest` suite verifies the internal math during compilation, the `
     ```
     The script will print a report verifying the physical consistency of each snapshot.
 
+### Cosmology Dashboard
+The `cosmology_dashboard.py` script generates a visual diagnostic suite. It tracks the macroscopic state of the simulation, including cosmic expansion, structure growth, shock-heating, energy conservation, and thermodynamic phase diagrams.
+
+1.  **Prerequisites:** Requires `matplotlib` in addition to `numpy` and `h5py`.
+    ```bash
+    pip install matplotlib
+    ```
+2.  **Run:** Navigate to your project root and execute the script, passing the directory containing your `.hdf5` snapshots as an argument:
+    ```bash
+    python scripts/cosmology_dashboard.py build/outputs/timestamped_folder/
+    ```
+    This will open a window displaying the physical metrics of the run.
+
 ### Building the Book (Documentation)
 The `/docs` folder contains a guide detailing the physics and algorithms used in this project. You can compile the Markdown source into EPUB and PDF documents.
 
@@ -174,6 +188,9 @@ Configures the fluid dynamics solver for the baryonic gas.
 
 * **`use_hydro`**: Boolean flag to enable or disable the hydrodynamics solver. If `false`, the code runs as a dark-matter-only N-body simulation.
 * **`gamma`**: The adiabatic index (ratio of specific heats) of the gas. Set to `1.6666666667` (5/3) for a monatomic, non-relativistic ideal gas.
+* **`enable_cooling`**: Boolean. If `true`, the code activates the implicit radiative cooling solver to extract thermal energy from the gas over time.
+* **`primordial_mu`**: The mean molecular weight of the gas (e.g., `1.22` for neutral primordial hydrogen/helium gas). Used to accurately map internal energy to physical temperatures.
+* **`temp_floor_k`**: The absolute minimum temperature (in Kelvin) the gas is allowed to reach via radiative cooling. Physically, this ensures the gas does not cool below the baseline heat of the universe, such as the Cosmic Microwave Background (CMB). Numerically, it acts as a safety limit; simulators often artificially raise this floor (e.g., to 10000.0) to prevent dense gas from collapsing beyond the spatial resolution of the grid, which would otherwise lead to unphysical numerical errors known as artificial Jeans fragmentation.
 
 ### `[p3m]`
 
@@ -199,3 +216,52 @@ Manages how and when the simulation writes data to disk.
 * **`save_hdf5_every_delta_a`**: The interval for writing full snapshot files (particles, mesh densities, velocities) to disk, measured in scale factor increments.
 * **`debug_info_every_cycles`**: The frequency (in integration steps) at which the code prints its current status, timestep, and performance metrics to the console/log.
 * **`enable_energy_diagnostics`**: Boolean. If `true`, the code continuously calculates and verifies the conservation of energy and momentum, writing the error margins to a diagnostic file.
+
+## HDF5 Snapshot Format & Units
+
+ASIMOV exports simulation data using the industry-standard HDF5 format. To prevent floating-point underflow and guarantee bit-for-bit lossless restarts, the engine uses a **Comoving Eulerian Formulation**. This means that almost all arrays are exported in raw **comoving code units**.
+
+It is the responsibility of the post-processing tools (like the included Python dashboard) to use the scale factor ($a$) and the conversion multipliers in the file header to map these arrays back to physical reality.
+
+Every snapshot contains the following internal structure:
+
+### Root Attributes (`/`)
+
+The root group serves as the header. It contains a complete dump of the `simulation.ini` configuration used to run the simulation, guaranteeing that every snapshot is fully self-describing.
+
+Crucially, it also contains the instantaneous state of the universe and the physical unit conversions:
+
+* **`scale_factor`**: The current scale factor $a$ of the universe.
+* **`simulation_time`**: The current physical time elapsed (in code units).
+* **`UnitLength_in_Mpc`**: Multiplier to convert code length to comoving Megaparsecs.
+* **`UnitTime_in_Gyr`**: Multiplier to convert code time to Gigayears.
+* **`UnitVelocity_in_kms`** / **`UnitVelocity_in_CGS`**: Multipliers for peculiar velocity.
+* **`UnitMass_in_Msun`**: Multiplier to convert code mass to Solar Masses.
+* **`UnitDensity_in_cgs`**: Multiplier to convert the raw code density to comoving CGS density ($\text{g/cm}^3$). To calculate the true physical density, you must multiply the code density by this factor, and then divide the result by $a^3$.
+* **`Factor_U_to_T`**: Multiplier to convert the specific internal energy ($U$) of the gas in code units directly into Physical Temperature in Kelvin. This bundles the mean molecular weight ($\mu$), adiabatic index ($\gamma$), and Boltzmann constant into a single convenient factor. *(Note: To get specific internal energy $U$ from the HDF5 file, you must take the `energy` array, subtract the kinetic energy, and divide by the `density` array).*
+
+### Dark Matter Particles (`/particles`)
+
+This group contains flat 1D arrays for all N-body dark matter particles.
+
+* **`position_[x,y,z]`**: Comoving spatial coordinates. Bound between `[0, domain_size]`. To get the true physical distance, apply the conversion factors and scale by $a$.
+* **`velocity_[x,y,z]`**: Peculiar velocities in code units. To get physical peculiar velocities, apply the conversion factors and scale by $a$.
+* **`acceleration_[x,y,z]`**: Gravitational acceleration in code units.
+* **`mass`**: Particle mass in code units.
+
+### Baryonic Gas (`/gas`)
+
+If hydrodynamics is enabled (`use_hydro = true`), this group contains the fluid state of the simulation.
+
+**Group Attributes:**
+
+* **`Cumulative_Radiated_Energy`**: *(Only present if `enable_cooling = true`)*. The total, integrated energy radiated away by the gas up to the current snapshot in code units. To convert this value to true physical energy (Ergs), multiply it by the physical energy unit conversion factor and **multiply by $a^2$**.
+
+**3D Eulerian Grids:**
+These datasets are flattened into 1D arrays in row-major order:
+
+* **`density`**: The *comoving* mass density. Because the physical volume of the grid cells expands with the universe, to calculate the true physical density, you must extract this array, multiply by the physical mass/volume unit conversions and **divide by $a^3$**.
+* **`momentum_[x,y,z]`**: Comoving momentum density.
+* **`energy`**: The total comoving energy density (Kinetic + Internal). To convert this grid to true physical energy, you must apply the conversion factors and **multiply by $a^2$**.
+* **`pressure`**: Comoving thermal pressure. Like energy, it must be scaled by $a^2$ to reflect physical pressure.
+* **`temperature`**: *(Only present if `enable_cooling = true`)*. Unlike the other grids, the simulation engine explicitly converts the internal energy of the gas into **Physical Kelvin** before writing this array to disk. No scale factor corrections are needed for this dataset.

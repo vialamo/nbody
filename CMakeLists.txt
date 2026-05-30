@@ -29,6 +29,7 @@ find_package(OpenMP REQUIRED)
 # ==============================================================================
 set(CORE_SOURCES
     src/config.cpp
+    src/cooling.cpp
     src/diagnostics.cpp
     src/engine.cpp
     src/gas.cpp
@@ -156,6 +157,7 @@ FetchContent_MakeAvailable(Catch2)
 enable_testing()
 
 add_executable(run_tests 
+    tests/test_cooling.cpp    
     tests/test_math.cpp
     tests/test_gravity.cpp
     tests/test_hydro.cpp

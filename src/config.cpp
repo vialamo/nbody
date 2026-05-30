@@ -2,28 +2,48 @@
 
 #include <cmath>
 
+#include "constants.h"
 #include "ini.h"
 #include "math_utils.h"
 
 static void init_derived_units(Config& config) {
-    // 1. Length
+    // Length
     config.UNIT_LENGTH_MPC = config.BOX_SIZE_MPC / config.DOMAIN_SIZE;
 
-    // 2. Time
+    // Time
     double H0_phys_gyr_inv = 0.10227 * config.HUBBLE_PARAM;
     double H0_code = 2.0 / (3.0 * std::sqrt(config.OMEGA_M));
     config.UNIT_TIME_GYR = H0_code / H0_phys_gyr_inv;
 
-    // 3. Velocity
+    // Velocity
     config.UNIT_VELOCITY_KMS = config.UNIT_LENGTH_MPC * 150.0 *
                                config.HUBBLE_PARAM * std::sqrt(config.OMEGA_M);
     config.UNIT_VELOCITY_CGS = config.UNIT_VELOCITY_KMS * 1e5;
 
-    // 4. Mass
+    // Mass
     double rho_crit = 2.775e11 * (config.HUBBLE_PARAM * config.HUBBLE_PARAM);
     double box_volume_mpc3 = std::pow(config.BOX_SIZE_MPC, 3);
     double total_mass_msun = config.OMEGA_M * rho_crit * box_volume_mpc3;
     config.UNIT_MASS_MSUN = total_mass_msun / Config::TOTAL_MASS;
+
+    // Thermodynamics derived factors
+    // T = u * (gamma - 1) * mu * m_p / k_B
+    double V_unit_m_s = config.UNIT_VELOCITY_KMS * 1000.0;
+    config.FACTOR_U_TO_T = (V_unit_m_s * V_unit_m_s) * (config.GAMMA - 1.0) *
+                           config.PRIMORDIAL_MU * constants::M_P_SI /
+                           constants::K_B_SI;
+    config.FACTOR_T_TO_U = 1.0 / config.FACTOR_U_TO_T;
+
+    // Density conversion: Code -> CGS (g/cm^3)
+    double mass_cgs = config.UNIT_MASS_MSUN * constants::MSUN_CGS;
+    double length_cgs = config.UNIT_LENGTH_MPC * constants::MPC_CGS;
+    double vol_cgs = length_cgs * length_cgs * length_cgs;
+    config.UNIT_DENSITY_CGS = mass_cgs / vol_cgs;
+
+    // Cooling rate conversion: (erg/g/s) -> Code (u_code / t_code)
+    double u_unit_cgs = config.UNIT_VELOCITY_CGS * config.UNIT_VELOCITY_CGS;
+    double t_unit_cgs = config.UNIT_TIME_GYR * constants::GYR_CGS;
+    config.COOLING_CONVERSION_FACTOR = t_unit_cgs / u_unit_cgs;
 }
 
 Config::Config() { compute_derived_data(); }
@@ -61,6 +81,12 @@ void Config::load(const std::string& filename) {
 
     USE_HYDRO = config_file.get_bool("hydro", "use_hydro", USE_HYDRO);
     GAMMA = config_file.get_double("hydro", "gamma", GAMMA);
+    ENABLE_COOLING =
+        config_file.get_bool("hydro", "enable_cooling", ENABLE_COOLING);
+    PRIMORDIAL_MU =
+        config_file.get_double("hydro", "primordial_mu", PRIMORDIAL_MU);
+    TEMP_FLOOR_KELVIN =
+        config_file.get_double("hydro", "temp_floor_k", TEMP_FLOOR_KELVIN);
 
     USE_PM = config_file.get_bool("p3m", "use_pm", USE_PM);
     USE_PP = config_file.get_bool("p3m", "use_pp", USE_PP);

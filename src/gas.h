@@ -59,6 +59,8 @@ class GasGrid {
     Grid3D density, momentum_x, momentum_y, momentum_z, energy;
     Grid3D pressure, velocity_x, velocity_y, velocity_z;
     Grid3D internal_energy;
+    size_t cooling_failed_cells;
+    double accumulated_radiated_energy;
 
     RiemannSolver solver;
     const Config& config;
@@ -78,7 +80,9 @@ class GasGrid {
     GasGrid(const Config& conf);
 
     void hydro_step(double dt);
+    double apply_cooling(double dt, double a);
     double get_cfl_timestep() const;
+    double get_cooling_timestep(double a) const;
 
     const Grid3D& get_density() const { return density; }
     const Grid3D& get_momentum_x() const { return momentum_x; }
@@ -92,4 +96,11 @@ class GasGrid {
     const Grid3D& get_velocity_z() const { return velocity_z; }
 
     const Grid3D& get_internal_energy() const { return internal_energy; }
+
+    const size_t get_cooling_failed_cells() const {
+        return cooling_failed_cells;
+    }
+    double get_accumulated_radiated_energy() const {
+        return accumulated_radiated_energy;
+    }
 };

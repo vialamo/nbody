@@ -2,6 +2,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "config.h"
+#include "constants.h"
+#include "cooling.h"
 #include "ics.h"
 
 // ---------------------------------------------------------------------
@@ -9,42 +11,54 @@
 // ---------------------------------------------------------------------
 TEST_CASE("Initial internal energy scales correctly with code units",
           "[hydro][thermodynamics][units]") {
-    // Baseline configuration parameters
-    double T_kelvin = 50.0;
-    double gamma = 5.0 / 3.0;
+    Config config;
+    config.GAMMA = 5.0 / 3.0;
+    config.PRIMORDIAL_MU = 1.22;
 
-    // We pick a clean baseline velocity unit for easy math
-    double V_unit_kms_base = 10000.0; // 10,000 km/s
+    // Let the config initialize its derived units naturally
+    config.compute_derived_data();
+
+    double T_kelvin = 50.0;
+    double a = 1.0;
 
     SECTION("Halving the velocity unit quadruples the resulting code energy") {
-        // Baseline computation
-        double u_code_base = get_internal_energy_from_temp_k(
-            T_kelvin, V_unit_kms_base, gamma);
+        // Get the base energy using the default box size (default velocity unit)
+        double u_code_base =
+            cooling::get_internal_energy_from_temp(T_kelvin, a, config);
 
-        // Halving V_unit. Since u_code is divided by V_unit^2,
-        // halving V_unit should exactly quadruple the final u_code result.
-        double V_unit_kms_half = V_unit_kms_base / 2.0;
-        double u_code_half_v = get_internal_energy_from_temp_k(
-            T_kelvin, V_unit_kms_half, gamma);
+        // To safely halve the velocity unit, we halve the BOX_SIZE_MPC.
+        // As seen in init_derived_units, UNIT_VELOCITY_KMS scales linearly with 
+        // UNIT_LENGTH_MPC, which scales linearly with BOX_SIZE_MPC.
+        config.BOX_SIZE_MPC /= 2.0;
 
+        // Force the Config to rebuild the thermodynamics bridge naturally
+        config.compute_derived_data();
+
+        // Calculate the new energy
+        double u_code_half_v =
+            cooling::get_internal_energy_from_temp(T_kelvin, a, config);
+
+        // Because V is squared in the denominator of the conversion,
+        // halving V (via the box size) must exactly quadruple the code energy.
         REQUIRE(u_code_half_v == Catch::Approx(u_code_base * 4.0));
     }
 
     SECTION("Expected mathematical output is physically accurate") {
-        double u_code = get_internal_energy_from_temp_k(
-            T_kelvin, V_unit_kms_base, gamma);
+        double u_code =
+            cooling::get_internal_energy_from_temp(T_kelvin, a, config);
 
-        // Manual calculation check (using CGS):
-        // k_B = 1.380649e-16 erg/K
-        // m_p = 1.6726219e-24 g
-        // mu = 1.22
-        // u_phys = (k_B * T) / ((gamma - 1) * mu * m_p)
-        // u_phys = (1.380649e-16 * 50) / ((2/3) * 1.22 * 1.6726219e-24) ≈ 5.074427e9 erg/g (cm^2/s^2)
-        // V_unit_cgs = 10000.0 km/s * 1e5 = 1.0e9 cm/s
-        // V_unit_cgs^2 = 1.0e18 cm^2/s^2
-        // u_code = 5.074427e9 / 1.0e18 ≈ 5.074427e-9
+        // Calculate the exact physical specific internal energy (in erg/g)
+        double u_phys_cgs =
+            (constants::K_B_CGS * T_kelvin) /
+            ((config.GAMMA - 1.0) * config.PRIMORDIAL_MU * constants::M_P_CGS);
 
-        REQUIRE(u_code == Catch::Approx(5.074427e-9).margin(1e-13));
+        // Read the EXACT velocity unit the config actually generated
+        double v_unit_cgs = config.UNIT_VELOCITY_KMS * 1.0e5;
+
+        // Compute the dynamic expected answer
+        double expected_u_code = u_phys_cgs / (v_unit_cgs * v_unit_cgs);
+
+        REQUIRE(u_code == Catch::Approx(expected_u_code).margin(1e-13));
     }
 }
 
@@ -65,8 +79,7 @@ TEST_CASE("initialize_state produces physically sound macro-states",
     SimState state = initialize_state(config);
 
     SECTION("Conservation of Mass") {
-        double total_dm_mass =
-            state.dm.num_particles * config.DM_PARTICLE_MASS;
+        double total_dm_mass = state.dm.num_particles * config.DM_PARTICLE_MASS;
 
         double total_gas_mass = 0.0;
         int N3 = config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
@@ -187,12 +200,15 @@ TEST_CASE("Peculiar velocities exactly obey Zel'dovich kinematics",
 
         // Check that pos = unperturbed_pos + displacement
         // (Taking into account periodic boundary conditions)
-        double unperturbed_x = std::fmod(
-            state.dm.pos_x[i] - inferred_dx + config.DOMAIN_SIZE, config.DOMAIN_SIZE);
-        double unperturbed_y = std::fmod(
-            state.dm.pos_y[i] - inferred_dy + config.DOMAIN_SIZE, config.DOMAIN_SIZE);
-        double unperturbed_z = std::fmod(
-            state.dm.pos_z[i] - inferred_dz + config.DOMAIN_SIZE, config.DOMAIN_SIZE);
+        double unperturbed_x =
+            std::fmod(state.dm.pos_x[i] - inferred_dx + config.DOMAIN_SIZE,
+                      config.DOMAIN_SIZE);
+        double unperturbed_y =
+            std::fmod(state.dm.pos_y[i] - inferred_dy + config.DOMAIN_SIZE,
+                      config.DOMAIN_SIZE);
+        double unperturbed_z =
+            std::fmod(state.dm.pos_z[i] - inferred_dz + config.DOMAIN_SIZE,
+                      config.DOMAIN_SIZE);
 
         // The unperturbed positions should perfectly align with the regular
         // lattice spacing

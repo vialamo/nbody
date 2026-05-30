@@ -19,9 +19,11 @@ class Diagnostics {
     Eigen::Vector3d total_momentum_gas = {0.0, 0.0, 0.0};
     Eigen::Vector3d total_momentum_dm = {0.0, 0.0, 0.0};
     double ke_gas = 0.0, ke_dm = 0.0, pe_total = 0.0, ie_gas = 0.0;
-    double dt_cfl = 0.0, dt_gravity = 0.0, dt_final = 0.0;
+    double dt_cfl = 0.0, dt_gravity = 0.0, dt_cool = 0.0, dt_final = 0.0;
     double max_gas_density = 0.0, max_gas_pressure = 0.0,
            max_gas_velocity = 0.0;
+    double total_radiated_energy = 0.0;
+    size_t non_converged_cooling_cells = 0;
 
     // Performance State
     std::array<double, static_cast<size_t>(TimerRegion::NUM_REGIONS)>
@@ -45,6 +47,8 @@ class Diagnostics {
     double total_energy() const;
 
     void update_physics(const SimState& state, double dt, const Config& config);
+
+    void add_radiated_energy(double e) { total_radiated_energy += e; }
 };
 
 class ScopedTimer {

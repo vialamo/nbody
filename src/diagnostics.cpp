@@ -41,7 +41,7 @@ double Diagnostics::total_mass() const {
     return total_mass_dm + total_mass_gas;
 }
 double Diagnostics::total_energy() const {
-    return ke_dm + ke_gas + ie_gas + pe_total;
+    return ke_dm + ke_gas + ie_gas + pe_total + total_radiated_energy;
 }
 
 void Diagnostics::update_physics(const SimState& state, double dt,
@@ -53,6 +53,7 @@ void Diagnostics::update_physics(const SimState& state, double dt,
     // Stability
     this->dt_cfl = state.gas.get_cfl_timestep();
     this->dt_gravity = state.dm.get_gravity_timestep(config);
+    this->dt_cool = state.gas.get_cooling_timestep(state.scale_factor);
     this->dt_final = dt;
 
     if (config.USE_HYDRO) {
@@ -63,6 +64,8 @@ void Diagnostics::update_physics(const SimState& state, double dt,
                                   state.gas.get_velocity_z().array().square())
                                      .sqrt()
                                      .maxCoeff();
+
+        this->non_converged_cooling_cells = state.gas.get_cooling_failed_cells();
     }
 
     // Conservation (Particles)

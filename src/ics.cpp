@@ -3,6 +3,7 @@
 #include <cassert>
 #include <random>
 
+#include "cooling.h"
 #include "integrator.h"
 #include "math_utils.h"
 #include "particles.h"
@@ -216,21 +217,6 @@ void initialize_dm(SimState& state, const Config& config,
     }
 }
 
-double get_internal_energy_from_temp_k(double T_kelvin, double V_unit_km_s,
-                                       double gamma) {
-    // Physical internal energy (Joules/kg)
-    const double k_B = 1.380649e-23;
-    const double m_p = 1.67262192e-27;
-    const double mu = 1.22;
-    const double u_physical_m2_s2 =
-        (k_B * T_kelvin) / ((gamma - 1.0) * mu * m_p);
-
-    const double V_unit_m_s = V_unit_km_s * 1000.0;  // Convert km/s to m/s
-
-    // Convert to code units
-    return u_physical_m2_s2 / (V_unit_m_s * V_unit_m_s);
-}
-
 void initialize_gas(SimState& state, const Config& config,
                     const ZeldovichField& zf) {
     if (!config.USE_HYDRO) return;
@@ -250,8 +236,8 @@ void initialize_gas(SimState& state, const Config& config,
                            .select(1e-12, gas.get_density().data);
 
     const double initial_internal_energy =
-        get_internal_energy_from_temp_k(config.INITIAL_GAS_TEMPERATURE_K,
-                                        config.UNIT_VELOCITY_KMS, config.GAMMA);
+        cooling::get_internal_energy_from_temp(config.INITIAL_GAS_TEMPERATURE_K,
+                                               state.scale_factor, config);
 
     for (size_t i = 0; i < M3_real; ++i) {
         double dx = zf.dx[i];
