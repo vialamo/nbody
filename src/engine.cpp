@@ -15,12 +15,7 @@ SimulationEngine::SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5,
       diagnostics(diag),
       state(initialize_state(conf)) {
     // Determine initial timestep
-    double dt_cfl = state.gas.get_cfl_timestep();
-    double dt_grav = state.dm.get_gravity_timestep(config);
-    double dt_cool = state.gas.get_cooling_timestep(state.scale_factor);
-    current_dt = config.USE_ADAPTIVE_DT
-                     ? std::min({dt_cfl, dt_grav, dt_cool, config.FIXED_DT})
-                     : config.FIXED_DT;
+    current_dt = get_timestep();
 
     // Log initial state (Cycle 0)
     diagnostics.update_physics(state, current_dt, config);
@@ -34,6 +29,44 @@ SimulationEngine::SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5,
     }
 }
 
+double SimulationEngine::get_timestep() const {
+    double dt = config.FIXED_DT;
+
+    if (config.USE_ADAPTIVE_DT) {
+        double dt_cfl = state.gas.get_cfl_timestep();
+        double dt_grav = state.dm.get_gravity_timestep(config);
+        double dt_cool = state.gas.get_cooling_timestep(state.scale_factor);
+
+        // Cosmological Expansion Limiter
+        double dt_expansion = std::numeric_limits<double>::infinity();
+        if (config.EXPANDING_UNIVERSE && state.hubble_param > 0.0) {
+            // Restrict timestep so the universe expands by at most 1% per step
+            dt_expansion = 0.01 / state.hubble_param;
+        }
+
+        dt =
+            std::min({dt_cfl, dt_grav, dt_cool, dt_expansion, config.FIXED_DT});
+    }
+
+    // Force the simulation to land exactly on the next output target
+    if (config.SAVE_HDF5_EVERY_DELTA_A > 0.0 && config.EXPANDING_UNIVERSE) {
+        double t_start = get_time_from_scale_factor(config.START_A, config);
+        double current_t = t_start + state.total_time;
+
+        // Target absolute code time for the snapshot
+        double target_t = get_time_from_scale_factor(next_output_a, config);
+
+        double dt_snapshot = target_t - current_t;
+
+        // If the snapshot is the most imminent event, shrink dt to match it
+        if (dt_snapshot > 0.0 && dt_snapshot < dt) {
+            dt = dt_snapshot;
+        }
+    }
+
+    return dt;
+}
+
 void SimulationEngine::step() {
     {
         ScopedTimer step_timer(diagnostics, TimerRegion::Step);
@@ -45,12 +78,7 @@ void SimulationEngine::step() {
     cycle_count++;
 
     // Update Timestep for next cycle
-    if (config.USE_ADAPTIVE_DT) {
-        double dt_cfl = state.gas.get_cfl_timestep();
-        double dt_grav = state.dm.get_gravity_timestep(config);
-        double dt_cool = state.gas.get_cooling_timestep(state.scale_factor);
-        current_dt = std::min({dt_cfl, dt_grav, dt_cool, config.FIXED_DT});
-    }
+    current_dt = get_timestep();
 
     needs_more_cycles = state.scale_factor < config.MAX_SCALE_FACTOR &&
                         cycle_count < config.MAX_CYCLES;

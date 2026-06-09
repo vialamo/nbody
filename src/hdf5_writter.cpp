@@ -67,54 +67,75 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
 
         H5::Group root_group = file.openGroup("/");
 
-        set_attr_double(root_group, "domain_size", config.DOMAIN_SIZE);
-        set_attr_double(root_group, "box_size_mpc", config.BOX_SIZE_MPC);
-        set_attr_int(root_group, "mesh_size", config.MESH_SIZE);
-        set_attr_double(root_group, "omega_baryon", config.OMEGA_BARYON);
-        set_attr_double(root_group, "omega_M", config.OMEGA_M);
-        set_attr_double(root_group, "omega_lambda", config.OMEGA_LAMBDA);
-        set_attr_double(root_group, "hubble_param", config.HUBBLE_PARAM);
-        set_attr_int(root_group, "n_per_side", config.N_PER_SIDE);
-        set_attr_bool(root_group, "use_hydro", config.USE_HYDRO);
-        set_attr_double(root_group, "g_const", config.G);
-        set_attr_double(root_group, "gamma", config.GAMMA);
-        set_attr_double(root_group, "primordial_mu", config.PRIMORDIAL_MU);
-        set_attr_bool(root_group, "standing_particles",
-                      config.STANDING_PARTICLES);
-        set_attr_bool(root_group, "expanding_universe",
-                      config.EXPANDING_UNIVERSE);
-        set_attr_double(root_group, "initial_scale_factor", config.START_A);
-        set_attr_double(root_group, "primordial_index", config.SPECTRAL_INDEX);
-        set_attr_double(root_group, "sigma_8", config.SIGMA_8);
-        set_attr_bool(root_group, "use_pm", config.USE_PM);
-        set_attr_bool(root_group, "use_pp", config.USE_PP);
-        set_attr_double(root_group, "cutoff_radius_cells",
-                        config.CUTOFF_RADIUS_CELLS);
-        set_attr_double(root_group, "dt_factor", config.DT_FACTOR);
-        set_attr_double(root_group, "cfl_safety_factor",
-                        config.CFL_SAFETY_FACTOR);
-        set_attr_double(root_group, "gravity_dt_factor",
-                        config.GRAVITY_DT_FACTOR);
-        set_attr_bool(root_group, "use_adaptive_dt", config.USE_ADAPTIVE_DT);
-        set_attr_int(root_group, "seed", config.SEED);
+        // ====================================================================
+        // SNAPSHOT HEADER
+        // ====================================================================
+        H5::Group header_group = root_group.createGroup("Header");
+        set_attr_double(header_group, "scale_factor", state.scale_factor);
+        set_attr_double(header_group, "simulation_time", state.total_time);
+        header_group.close();
 
-        set_attr_double(root_group, "simulation_time", state.total_time);
-        set_attr_double(root_group, "scale_factor", state.scale_factor);
+        // ====================================================================
+        // CONFIGURATION
+        // ====================================================================
+        H5::Group config_group = root_group.createGroup("Config");
+        
+        // [domain]
+        set_attr_double(config_group, "domain_size", config.DOMAIN_SIZE);
+        set_attr_double(config_group, "box_size_mpc", config.BOX_SIZE_MPC);
+        set_attr_int(config_group, "mesh_size", config.MESH_SIZE);
+        
+        // [cosmology]
+        set_attr_double(config_group, "omega_baryon", config.OMEGA_BARYON);
+        set_attr_double(config_group, "omega_M", config.OMEGA_M);
+        set_attr_double(config_group, "omega_lambda", config.OMEGA_LAMBDA);
+        set_attr_double(config_group, "hubble_param", config.HUBBLE_PARAM);
+        set_attr_bool(config_group, "expanding_universe", config.EXPANDING_UNIVERSE);
+        
+        // [initial_conditions]
+        set_attr_double(config_group, "spectral_index", config.SPECTRAL_INDEX);
+        set_attr_double(config_group, "start_a", config.START_A);
+        set_attr_double(config_group, "sigma_8", config.SIGMA_8);
+        set_attr_int(config_group, "n_per_side", config.N_PER_SIDE);
+        set_attr_bool(config_group, "standing_particles", config.STANDING_PARTICLES);
+        set_attr_int(config_group, "seed", config.SEED);
+        
+        // [hydro]
+        set_attr_bool(config_group, "use_hydro", config.USE_HYDRO);
+        set_attr_double(config_group, "gamma", config.GAMMA);
+        set_attr_bool(config_group, "enable_cooling", config.ENABLE_COOLING);
+        set_attr_double(config_group, "primordial_mu", config.PRIMORDIAL_MU);
+        set_attr_double(config_group, "temp_floor_k", config.TEMP_FLOOR_KELVIN);
+        
+        // [p3m]
+        set_attr_bool(config_group, "use_pm", config.USE_PM);
+        set_attr_bool(config_group, "use_pp", config.USE_PP);
+        set_attr_double(config_group, "pm_smoothing_cells", config.PM_SMOOTHING_CELLS);
+        set_attr_double(config_group, "cutoff_radius_factor", config.CUTOFF_RADIUS_FACTOR);
+        
+        // [time]
+        set_attr_double(config_group, "dt_factor", config.DT_FACTOR);
+        set_attr_double(config_group, "cfl_safety_factor", config.CFL_SAFETY_FACTOR);
+        set_attr_bool(config_group, "use_adaptive_dt", config.USE_ADAPTIVE_DT);
+        
+        // Global system physics
+        set_attr_double(config_group, "G", config.G);
+        config_group.close();
 
-        set_attr_double(root_group, "UnitLength_in_Mpc",
-                        config.UNIT_LENGTH_MPC);
-        set_attr_double(root_group, "UnitTime_in_Gyr", config.UNIT_TIME_GYR);
-        set_attr_double(root_group, "UnitVelocity_in_kms",
-                        config.UNIT_VELOCITY_KMS);
-        set_attr_double(root_group, "UnitVelocity_in_CGS",
-                        config.UNIT_VELOCITY_CGS);
-        set_attr_double(root_group, "UnitMass_in_Msun", config.UNIT_MASS_MSUN);
+        // ====================================================================
+        // PHYSICAL UNITS
+        // ====================================================================
+        H5::Group units_group = root_group.createGroup("Units");
+        set_attr_double(units_group, "unit_length_in_mpc", config.UNIT_LENGTH_MPC);
+        set_attr_double(units_group, "unit_time_in_gyr", config.UNIT_TIME_GYR);
+        set_attr_double(units_group, "unit_velocity_in_kms", config.UNIT_VELOCITY_KMS);
+        set_attr_double(units_group, "unit_velocity_in_cgs", config.UNIT_VELOCITY_CGS);
+        set_attr_double(units_group, "unit_mass_in_msun", config.UNIT_MASS_MSUN);
+        set_attr_double(units_group, "unit_density_in_cgs", config.UNIT_DENSITY_CGS);
+        set_attr_double(units_group, "factor_u_to_t", config.FACTOR_U_TO_T);
+        units_group.close();
 
-        set_attr_double(root_group, "UnitDensity_in_cgs",
-                        config.UNIT_DENSITY_CGS);
-        set_attr_double(root_group, "Factor_U_to_T", config.FACTOR_U_TO_T);
-
-        H5::Group particle_group = root_group.createGroup("particles");
+        H5::Group particle_group = root_group.createGroup("Particles");
 
         write_particle_vec(particle_group, "position_x", state.dm.pos_x);
         write_particle_vec(particle_group, "position_y", state.dm.pos_y);
@@ -132,8 +153,8 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         particle_group.close();
 
         if (config.USE_HYDRO) {
-            H5::Group gas_group = root_group.createGroup("gas");
-            set_attr_double(gas_group, "Cumulative_Radiated_Energy",
+            H5::Group gas_group = root_group.createGroup("Gas");
+            set_attr_double(gas_group, "cumulative_radiated_energy",
                             state.gas.get_accumulated_radiated_energy());
             write_grid(gas_group, "density", state.gas.get_density());
             write_grid(gas_group, "momentum_x", state.gas.get_momentum_x());

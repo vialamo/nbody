@@ -35,8 +35,7 @@ static double window_tophat(double kR) {
     return 3.0 * (sin(kR) - kR * cos(kR)) / (kR * kR * kR);
 }
 
-ZeldovichField compute_zeldovich_field(double scale_factor,
-                                       const Config& config) {
+static double compute_normalization_constant(const Config& config) {
     double R = 8.0;  // The standard 8 Mpc/h scale
     double unnorm_variance = 0.0;
     double dk = 0.001;  // Integration step size
@@ -49,8 +48,26 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
     }
     unnorm_variance /= (2.0 * M_PI * M_PI);
 
+    // The normalization constant A = (sigma_8^2) / (unnormalized variance)
+    return (config.SIGMA_8 * config.SIGMA_8) / unnorm_variance;
+}
+
+/* Computes the initial Zel'dovich displacement field and velocity growth rate.
+ This function generates a Gaussian random field shaped by the LambdaCDM
+ power spectrum (using the BBKS transfer function) and normalized to the
+ present-day sigma_8 variance. It solves Poisson's equation in Fourier space
+ and takes the negative gradient to produce the displacement vectors.
+ Returns a ZeldovichField struct containing:
+ * The 3D displacement vectors in internal CODE UNITS (scaled to DOMAIN_SIZE).
+ They have already been multiplied by the initial scale factor (a)
+ and are ready to be directly added to the unperturbed particle lattice.
+ * The logarithmic growth rate (d ln D / d ln a) evaluated at the
+ initial epoch, required by the caller to calculate peculiar velocities.
+ */
+ZeldovichField compute_zeldovich_field(double scale_factor,
+                                              const Config& config) {
     // The master normalization constant
-    double A = (config.SIGMA_8 * config.SIGMA_8) / unnorm_variance;
+    double A = compute_normalization_constant(config);
 
     int M = config.MESH_SIZE;
     size_t M3_real = static_cast<size_t>(M) * M * M;
@@ -60,6 +77,7 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
     double amplitude_scaling =
         std::sqrt(static_cast<double>(M3_real) / box_vol);
 
+    // Create Gaussian random field
     std::vector<double> real_space_random_field(M3_real);
     std::default_random_engine generator(config.SEED);
     std::normal_distribution<double> distribution(0.0, 1.0);
@@ -94,14 +112,13 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
                     continue;
                 }
 
-                auto kx_freq = static_cast<double>((i < M / 2) ? i : (i - M));
-                auto ky_freq = static_cast<double>((j < M / 2) ? j : (j - M));
-                auto kz_freq = static_cast<double>(k);
-
                 size_t idx = static_cast<size_t>(i) * M * (M / 2 + 1) +
                              static_cast<size_t>(j) * (M / 2 + 1) +
                              static_cast<size_t>(k);
 
+                auto kx_freq = static_cast<double>((i < M / 2) ? i : (i - M));
+                auto ky_freq = static_cast<double>((j < M / 2) ? j : (j - M));
+                auto kz_freq = static_cast<double>(k);
                 double kx = kx_freq * 2.0 * M_PI / config.BOX_SIZE_MPC;
                 double ky = ky_freq * 2.0 * M_PI / config.BOX_SIZE_MPC;
                 double kz = kz_freq * 2.0 * M_PI / config.BOX_SIZE_MPC;
@@ -109,12 +126,14 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
                 double k_h = k_mag / config.HUBBLE_PARAM;
 
                 // The BBKS Transfer Function T(k)
-                double power_spectrum_sqrt = 0.0;
-                if (k_mag > 0.0) {
-                    // Multiply the unnormalized shape by A
-                    double true_pk = A * unnormalized_pk(k_h, config);
-                    power_spectrum_sqrt = sqrt(true_pk) * amplitude_scaling;
-                }
+                // Multiply the unnormalized shape by A
+                double true_pk = A * unnormalized_pk(k_h, config);
+                // The power spectrum P(k) represents the variance of the
+                // density field. To scale our Gaussian white noise (which has a
+                // variance of 1.0), we need the amplitude (standard deviation),
+                // hence the square root. We also apply the grid-to-physical
+                // volume scaling to bridge the discrete/continuous gap.
+                double power_spectrum_sqrt = sqrt(true_pk) * amplitude_scaling;
 
                 // Apply the scaling to the Fourier amplitudes
                 std::complex<double> delta_k =
@@ -130,6 +149,11 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
 
                 std::complex<double> phi_k = -delta_k / code_k2;
 
+                // Calculate the Zel'dovich displacement by taking the negative
+                // gradient of the potential (-nabla Phi). In Fourier space,
+                // taking the negative gradient translates to multiplying by -i
+                // * k. std::complex<double>(0, -1) is the exact C++
+                // representation of -i.
                 disp_x_k[idx] = std::complex<double>(0, -1) * code_kx * phi_k;
                 disp_y_k[idx] = std::complex<double>(0, -1) * code_ky * phi_k;
                 disp_z_k[idx] = std::complex<double>(0, -1) * code_kz * phi_k;
@@ -149,15 +173,19 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
     pocketfft::c2r(shape_ic, stride_c_ic, stride_r_ic, {0, 1, 2}, false,
                    disp_z_k.data(), field.dz.data(), 1.0);
 
+    // Finalize the real-space displacement vectors. This loop does two things:
+    // * Divides by M^3 to correct the unnormalized output of the inverse FFT.
+    // * Multiplies by the initial scale factor (a) to wind the present-day
+    //   displacements back to the starting epoch, utilizing the early-universe
+    //   linear growth approximation D(a) ~ a.
     double norm_ic = scale_factor / static_cast<double>(M3_real);
-
     for (size_t i = 0; i < M3_real; ++i) {
         field.dx[i] *= norm_ic;
         field.dy[i] *= norm_ic;
         field.dz[i] *= norm_ic;
     }
 
-    // Calculate the growth rate 'f' for LambdaCDM velocities
+    // Calculate the growth rate 'f' (d ln D / d ln a)
     double a3 = pow(scale_factor, 3.0);
     // Omega_m(a) = the matter density at the current scale factor
     double Om_a = config.OMEGA_M / (config.OMEGA_M + config.OMEGA_LAMBDA * a3);
@@ -222,7 +250,6 @@ void initialize_gas(SimState& state, const Config& config,
     if (!config.USE_HYDRO) return;
 
     int M = config.MESH_SIZE;
-    double cell_size = config.DOMAIN_SIZE / M;
     size_t M3_real = static_cast<size_t>(M) * M * M;
 
     assert(state.dm.num_particles > 0);
@@ -283,48 +310,8 @@ SimState initialize_state(Config& config) {
     // Gas Step
     initialize_gas(state, config, z_field);
 
-    // Forces
-    compute_gravitational_acceleration(state, config);
-
-    if (config.USE_PM) {
-        // This directly overwrites state.dm.acc_x/y/z
-        state.dm.interpolate_cic_forces(state.gravity_x, state.gravity_y,
-                                        state.gravity_z, config);
-    } else {
-        // If PM is off, acceleration arrays start at zero
-        std::fill(state.dm.acc_x.begin(), state.dm.acc_x.end(), 0.0);
-        std::fill(state.dm.acc_y.begin(), state.dm.acc_y.end(), 0.0);
-        std::fill(state.dm.acc_z.begin(), state.dm.acc_z.end(), 0.0);
-    }
-
-    if (config.USE_PP) {
-        // This adds PP accelerations directly on top of the PM accelerations
-        state.dm.compute_pp_forces(config);
-    }
-
-    if (!config.STANDING_PARTICLES) {
-        double local_max = 1e-9;
-
-        // Grab raw pointers for vectorization
-        const size_t n = state.dm.num_particles;
-        const double* ax = state.dm.acc_x.data();
-        const double* ay = state.dm.acc_y.data();
-        const double* az = state.dm.acc_z.data();
-
-        // Find the maximum acceleration
-        for (size_t i = 0; i < n; ++i) {
-            double accel_sq = ax[i] * ax[i] + ay[i] * ay[i] + az[i] * az[i];
-            local_max = (accel_sq > local_max) ? accel_sq : local_max;
-        }
-
-        state.dm.max_accel_sq = local_max;
-    } else {
-        // If particles are frozen, wipe the accelerations clean
-        std::fill(state.dm.acc_x.begin(), state.dm.acc_x.end(), 0.0);
-        std::fill(state.dm.acc_y.begin(), state.dm.acc_y.end(), 0.0);
-        std::fill(state.dm.acc_z.begin(), state.dm.acc_z.end(), 0.0);
-        state.dm.max_accel_sq = 1e-9;
-    }
+    Diagnostics dummy_diag;
+    compute_forces(state, config, dummy_diag);
 
     return state;
 }

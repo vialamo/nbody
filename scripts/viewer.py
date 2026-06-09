@@ -41,8 +41,9 @@ class True3DViewer:
             if initial and self.num_frames > 0:
                 # Extract static simulation parameters from the first snapshot
                 with h5py.File(self.snapshot_files[0], 'r', libver='latest', swmr=True) as f:
-                    self.domain_size = f.attrs.get('domain_size', 1.0)
-                    self.use_hydro = bool(f.attrs.get('use_hydro', 0))
+                    config_attr = f['Config'].attrs
+                    self.domain_size = config_attr.get('domain_size', 1.0)
+                    self.use_hydro = bool(config_attr.get('use_hydro', 0))
             
             if not initial:
                 print(f"Refreshed: Now seeing {self.num_frames} frames.")
@@ -78,7 +79,7 @@ class True3DViewer:
             self.volume = Volume(np.zeros((2, 2, 2)), cmap=self.custom_cmap, method='translucent', parent=self.view.scene)
             # Read mesh size from the first file to scale the volume properly
             with h5py.File(self.snapshot_files[0], 'r') as f:
-                N = f.attrs.get('mesh_size', 64)
+                N = f['Config'].attrs.get('mesh_size', 64)
             scale_factor = self.domain_size / N
             self.volume.transform = scene.transforms.STTransform(scale=(scale_factor, scale_factor, scale_factor))
 
@@ -113,15 +114,18 @@ class True3DViewer:
     def update_frame(self, frame_idx):
         filepath = self.snapshot_files[frame_idx]
         
-        # Open the file, read what we need, and let the 'with' block close it automatically
         with h5py.File(filepath, 'r', libver='latest', swmr=True) as f:
-            sim_time = f.attrs.get('simulation_time', 0.0)
-            a = f.attrs.get('scale_factor', 1.0)
+            header_attr = f['Header'].attrs
+            config_attr = f['Config'].attrs
+            units_attr  = f['Units'].attrs
+
+            # Pull dynamic telemetry from /Header
+            sim_time = header_attr.get('simulation_time', 0.0)
+            a = header_attr.get('scale_factor', 1.0)
             z = (1.0 / a) - 1.0 if a > 0 else 0.0
 
-            # Default to 1.0 in case we open a snapshot without these attributes
-            unit_time_gyr = f.attrs.get('UnitTime_in_Gyr', 1.0)
-            unit_length_mpc = f.attrs.get('UnitLength_in_Mpc', 1.0)
+            unit_time_gyr = units_attr.get('unit_time_in_gyr', 1.0)
+            unit_length_mpc = units_attr.get('unit_length_in_mpc', 1.0)
             
             # Calculate physical time and sizes
             time_gyr = sim_time * unit_time_gyr
@@ -129,38 +133,33 @@ class True3DViewer:
             physical_box_mpc = comoving_box_mpc * a
             
             # Particles
-            pos_x = f['particles/position_x'][:]
-            pos_y = f['particles/position_y'][:]
-            pos_z = f['particles/position_z'][:]
+            pos_x = f['Particles/position_x'][:]
+            pos_y = f['Particles/position_y'][:]
+            pos_z = f['Particles/position_z'][:]
             positions = np.c_[pos_x, pos_y, pos_z]
             
             self.particles.set_data(positions, face_color=(1, 1, 1, 0.5), edge_width=0, size=2.0)
 
             # Gas
             t_max = 0
-            if self.use_hydro and 'gas' in f:
-                # Read or Calculate Temperature
-                if 'gas/temperature' in f:
-                    # If cooling is enabled, use file temp
-                    temperature = f['gas/temperature'][:]
+            if self.use_hydro and 'Gas' in f:
+                if 'Gas/temperature' in f:
+                    temperature = f['Gas/temperature'][:]
                     temperature = temperature.transpose(2, 1, 0)
                 else:
-                    # Fallback for adiabatic runs without the temperature grid
-                    pressure = f['gas/pressure'][:].transpose(2, 1, 0)
-                    density = f['gas/density'][:].transpose(2, 1, 0)
+                    # Fallback for adiabatic runs without the temperature
+                    pressure = f['Gas/pressure'][:].transpose(2, 1, 0)
+                    density = f['Gas/density'][:].transpose(2, 1, 0)
                     
                     KB = 1.380649e-16
                     M_H = 1.6726219e-24
-                    MU = f.attrs.get('primordial_mu', 1.22)
+                    MU = config_attr.get('primordial_mu', 1.22)
+                    v_unit_cgs = units_attr.get('unit_velocity_in_cgs', 1.0)
                     
-                    v_unit_cgs = f.attrs.get('UnitVelocity_in_CGS', 1.0)
                     specific_energy_cgs = (pressure / density) * (v_unit_cgs**2)
                     temperature = specific_energy_cgs * (MU * M_H / KB)
 
                 t_max = np.max(temperature)
-                
-                # Render Logarithmic Temperature
-                # because a linear scale makes cold filaments invisible
                 
                 # Prevent log(0) warnings by clipping to the 10.0K floor
                 safe_temp = np.clip(temperature, 10.0, None) 

@@ -137,9 +137,6 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
         config.USE_PM = true;
         config.CUTOFF_RADIUS = 2.0;
         config.CUTOFF_RADIUS_SQUARED = 4.0;
-        config.R_SWITCH_START = 1.0;
-        config.R_SWITCH_START_SQ = 1.0;
-        config.CUTOFF_TRANSITION_WIDTH = 1.0;
 
         sys.bin_and_assign_mass(config);
 

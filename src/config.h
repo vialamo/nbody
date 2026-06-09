@@ -29,8 +29,8 @@ struct Config {
 
     bool USE_PM = true;
     bool USE_PP = true;
-    double CUTOFF_RADIUS_CELLS = 2.5;
-    double CUTOFF_TRANSITION_WIDTH_FACTOR = 0.2;
+    double CUTOFF_RADIUS_FACTOR = 4.5;
+    double PM_SMOOTHING_CELLS = 1.25;
 
     double DT_FACTOR = 1e-3;
     double MAX_SCALE_FACTOR = 1.0;
@@ -46,9 +46,8 @@ struct Config {
     // Derived Parameters
     double G = 0.0;
     double CELL_SIZE = 0.0, CELL_VOLUME = 0.0, OMEGA_DM = 0.0;
+    double CUTOFF_RADIUS_CELLS = 0;
     double CUTOFF_RADIUS = 0.0, CUTOFF_RADIUS_SQUARED = 0.0;
-    double CUTOFF_TRANSITION_WIDTH = 0.0, R_SWITCH_START = 0.0,
-           R_SWITCH_START_SQ = 0.0;
     int NUM_DM_PARTICLES = 0;
     double DM_PARTICLE_MASS = 0.0, GAS_TOTAL_MASS = 0.0;
     double SOFTENING_SQUARED = 0.0;

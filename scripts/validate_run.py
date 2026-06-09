@@ -60,20 +60,23 @@ def compute_cic_variance(p_x, p_y, p_z, p_mass, domain_size, mesh_size):
 def validate_snapshot(file_path, initial_mass=None):
     """Runs physical validations on a single HDF5 snapshot."""
     with h5py.File(file_path, 'r') as f:
-        # Read Root Attributes
-        domain_size = f.attrs['domain_size']
-        mesh_size = f.attrs['mesh_size']
-        use_hydro = bool(f.attrs['use_hydro'])
-        sim_time = f.attrs['simulation_time']
-        scale_factor = f.attrs['scale_factor']
+        header_attr = f['Header'].attrs
+        config_attr = f['Config'].attrs
+        
+        domain_size = config_attr['domain_size']
+        mesh_size = config_attr['mesh_size']
+        use_hydro = bool(config_attr['use_hydro'])
+        
+        sim_time = header_attr['simulation_time']
+        scale_factor = header_attr['scale_factor']
         
         print(f"{BLUE}>> Validating {os.path.basename(file_path)} {RESET}| t={sim_time:.4f} | a={scale_factor:.4f}")
         
         # Load Particle Data
-        p_x = f['particles/position_x'][:]
-        p_y = f['particles/position_y'][:]
-        p_z = f['particles/position_z'][:]
-        p_mass = f['particles/mass'][:]
+        p_x = f['Particles/position_x'][:]
+        p_y = f['Particles/position_y'][:]
+        p_z = f['Particles/position_z'][:]
+        p_mass = f['Particles/mass'][:]
         
         total_mass = np.sum(p_mass)
         
@@ -96,12 +99,12 @@ def validate_snapshot(file_path, initial_mass=None):
 
         # Conditionally Load and Check Gas Data
         if use_hydro:
-            g_rho = f['gas/density'][:]
-            g_eng = f['gas/energy'][:]
-            g_px = f['gas/momentum_x'][:]
-            g_py = f['gas/momentum_y'][:]
-            g_pz = f['gas/momentum_z'][:]
-            g_press = f['gas/pressure'][:]
+            g_rho = f['Gas/density'][:]
+            g_eng = f['Gas/energy'][:]
+            g_px = f['Gas/momentum_x'][:]
+            g_py = f['Gas/momentum_y'][:]
+            g_pz = f['Gas/momentum_z'][:]
+            g_press = f['Gas/pressure'][:]
             
             cell_size = domain_size / mesh_size
             cell_volume = cell_size ** 3
@@ -118,15 +121,15 @@ def validate_snapshot(file_path, initial_mass=None):
             run_check(np.all(g_press > 0), "Gas pressure strictly positive", "Negative or zero gas pressure detected (Floor failed)!")
             
             # Check Temperature (Only if exported/cooling enabled)
-            if 'gas/temperature' in f:
-                g_temp = f['gas/temperature'][:]
+            if 'Gas/temperature' in f:
+                g_temp = f['Gas/temperature'][:]
                 run_check(np.isfinite(g_temp).all(), "Gas temperature finite (No NaNs/Infs)", "NaNs/Infs detected in gas temperature!")
                 run_check(np.all(g_temp > 0), "Gas temperature strictly positive", "Negative or zero gas temperature detected!")
             
             gas_mass = np.sum(g_rho) * cell_volume
             total_mass += gas_mass
             print(f"    {BLUE}[INFO]{RESET} Max Gas Density: {np.max(g_rho):.5e}")
-            if 'gas/temperature' in f:
+            if 'Gas/temperature' in f:
                 print(f"    {BLUE}[INFO]{RESET} Max Temperature: {np.max(g_temp):.5e} K")
         else:
             print(f"    {BLUE}[INFO]{RESET} Hydro disabled (Dark Matter only).")

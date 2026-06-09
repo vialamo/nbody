@@ -33,14 +33,45 @@ TEST_CASE("Cooling rate behaves physically", "[cooling][physics]") {
     config.compute_derived_data();
     double a = 1.0;
     double rho = 1.0;
+    double dt = 1e10; // Large timestep to force significant cooling
+    int iterations = 0;
 
-    SECTION("Cooling shuts off at the temperature floor") {
-        double cold_temp = config.TEMP_FLOOR_KELVIN / 2.0;
-        double u_cold =
-            cooling::get_internal_energy_from_temp(cold_temp, a, config);  // 5K
+    SECTION("compute_cooling_rate acts as a continuous mathematical curve") {
+        double cold_temp = 50.0; 
+        double u_cold = cooling::get_internal_energy_from_temp(cold_temp, a, config);
+        
         double lambda = cooling::compute_cooling_rate(u_cold, rho, a, config);
 
-        REQUIRE(lambda == 0.0);
+        // It must NOT be zero. The solver relies on this function 
+        // returning a valid derivative everywhere.
+        REQUIRE(lambda > 0.0);
+    }
+
+    SECTION("Implicit solver pre-check blocks cooling for cold primordial gas") {
+        double cold_temp = 50.0; // Well below the 10,000 K physical floor
+        double u_cold = cooling::get_internal_energy_from_temp(cold_temp, a, config);
+        
+        double u_new = cooling::solve_cooling_implicit(u_cold, rho, a, dt, config, iterations);
+
+        // The solver should return immediately without altering the energy
+        REQUIRE(u_new == u_cold);
+        REQUIRE(iterations == 0);
+    }
+
+    SECTION("Implicit solver clamps aggressively cooling gas to the physical floor") {
+        double hot_temp = 10500.0; // Just above the floor
+        double u_hot = cooling::get_internal_energy_from_temp(hot_temp, a, config);
+        
+        // Target physical floor defined in the solver
+        double expected_floor_k = std::max(10000.0, config.TEMP_FLOOR_KELVIN);
+        double target_u_floor = cooling::get_internal_energy_from_temp(expected_floor_k, a, config);
+
+        // With a massive dt, it will attempt to cool well below 10,000 K
+        double massive_dt = 1e15;
+        double u_new = cooling::solve_cooling_implicit(u_hot, rho, a, massive_dt, config, iterations);
+
+        // The solver must intercept the overshoot and clamp exactly to the threshold
+        REQUIRE(u_new == Catch::Approx(target_u_floor).epsilon(1e-5));
     }
 
     SECTION("Cooling scales with density squared (Bremsstrahlung)") {
@@ -76,9 +107,11 @@ TEST_CASE("Implicit backward Euler solver is unconditionally stable",
         double T_final =
             cooling::get_temp_from_internal_energy(u_final, a, config);
 
+        double expected_floor_k = std::max(10000.0, config.TEMP_FLOOR_KELVIN);
+
         REQUIRE(u_final > 0.0);
         // It should have safely caught itself at the floor
-        REQUIRE(T_final == Catch::Approx(config.TEMP_FLOOR_KELVIN).margin(1e-5));
+        REQUIRE(T_final == Catch::Approx(expected_floor_k).margin(1e-5));
     }
 
     SECTION("A normal timestep cools the gas a physical amount") {

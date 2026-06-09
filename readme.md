@@ -1,22 +1,22 @@
 # Cosmological Simulations
 
-This repository documents my experiments in cosmological N-body/hydrodynamics simulations. It contains a simulation program in C++, along with a book that explains the underlying physics and algorithms. This C++ implementation serves as a high-performance algorithmic testbed to explore memory-contiguous architectures and optimized linear algebra.
+This repository documents my experiments in cosmological N-body/hydrodynamics simulations. It contains a simulation program in C++, along with a book that explains the underlying physics and algorithms.
 
 ## Key Features Implemented
 
 * **Gravity Solvers:**
     * **Particle-Particle (PP):** Direct summation for high-accuracy short-range forces.
     * **Particle-Mesh (PM):** FFT-based Poisson solver for efficient long-range forces.
-    * **P³M (Particle-Particle Particle-Mesh):** A hybrid method combining PP and PM with a subtractive scheme and a smooth tapering function.
+    * **Fourier-Split PM:** A hybrid method combining PP and PM with a Gaussian frequency filter ($\exp(-k^2 r_s^2)$) in Fourier space, yielding an analytical short-range Complementary Error Function ($\text{erfc}$) force that guarantees monotonic force matching.
 * **Cosmology:**
-    * **Expanding Universe:** Simulation in comoving coordinates within an Einstein-de Sitter (EdS) model.
+    * **Expanding Universe:** Simulation in comoving coordinates supporting generalized flat **$\Lambda$CDM** cosmologies (including Einstein-de Sitter).
     * **Cosmological Integrator:** A Kick-Drift-Kick (KDK) Leapfrog scheme that correctly handles Hubble drag.
-    * **Initial Conditions:** Advanced cosmological initial conditions. Particles are perturbed from a uniform lattice using the full 3D Zel'dovich Approximation, deriving physical displacements and velocities from a Gaussian random field generated in Fourier space via a cosmological power spectrum.
+    * **Initial Conditions:** Computation of cosmological initial conditions. Particles are perturbed from a uniform lattice using the Zel'dovich Approximation, deriving physical displacements and velocities from a Gaussian random field generated in Fourier space using the **BBKS (Bardeen-Bond-Kaiser-Szalay) transfer function** to model the Cold Dark Matter power spectrum.
     * **Adaptive Timestepping:** Dynamic calculation of the global timestep based on the Courant-Friedrichs-Lewy (CFL) hydro condition, maximum gravitational acceleration, and a stiff radiative cooling timescale limiter.
 * **Hydrodynamics:**
     * **Grid-Based (Eulerian) Solver:** Implements a finite-volume solver for the adiabatic Euler equations on a fixed grid, tracking conservative variables (density, momentum, energy).
-    * **HLL Riemann Solver:** Uses the Harten-Lax-van Leer (HLL) approximate Riemann solver to compute fluxes between cells.
-    * **Operator Splitting:** Employs directional splitting (sequential X, Y, and Z-sweeps) to update the multidimensional grid.
+    * **HLLC Riemann Solver:** Uses the Harten-Lax-van Leer-Contact (HLLC) approximate Riemann solver to compute fluxes between cells, accurately capturing shocks and contact discontinuities without excessive numerical diffusion.
+    * **Operator Splitting:** Employs a multi-physics fractional step method to safely decouple and integrate the distinct differential equations for hydrodynamics, gravitational kicks, and radiative cooling within a single global timestep.
     * **Two-Way Coupling:** The gas density contributes to the total gravitational field via the PM solver, and the gas momentum/energy is updated by gravitational source terms during the KDK kicks.
     * **Radiative Cooling:** Implements an unconditionally stable, implicit Backward Euler solver (using Newton-Raphson root-finding) to calculate energy loss via Bremsstrahlung radiation, while strictly preserving kinetic energy via the Dual Energy Formalism.
 * **High-Performance Computing (HPC):**
@@ -42,7 +42,7 @@ This repository documents my experiments in cosmological N-body/hydrodynamics si
 
 ## Getting Started
 
-### C++ Cosmological code
+### C++ Cosmological Code
 This section refers to the ASIMOV (Advanced Simulation of Intergalactic Matter and Observable Voids) code.
 
 1.  **Prerequisites (Linux/Ubuntu):**
@@ -198,8 +198,8 @@ Configures the Particle-Particle Particle-Mesh (P³M) gravity solver.
 
 * **`use_pm`**: Boolean. Enables the long-range Particle-Mesh (PM) force calculation via Fast Fourier Transform.
 * **`use_pp`**: Boolean. Enables the short-range Particle-Particle (PP) direct summation for sub-grid resolution.
-* **`cutoff_radius_cells`**: The matching radius (*r_c*) where the algorithm switches from short-range PP forces to long-range PM forces, defined in units of grid cells.
-* **`cutoff_transition_width_factor`**: Determines the width of the smoothing kernel used to seamlessly blend the PP and PM forces at the cutoff boundary to avoid unphysical jumps in acceleration.
+* **`pm_smoothing_cells`**: The fundamental mathematical scale ($r_s$) of the Fourier-space Gaussian filter, defined in units of grid cells. Determines how smoothly the grid force is blunted to avoid anisotropic grid artifacts. Minimum mathematically sound value is 1.0.
+* **`cutoff_radius_factor`**: A multiplier that dictates the absolute physical cutoff radius relative to the smoothing scale ($r_c = \text{factor} \times r_s$). Because the short-range force is an $\text{erfc}$ exponential decay, the cutoff must be placed far enough out to avoid force discontinuity. Professional codes typically require a factor of at least 3.5 (sacrificing speed for symplectic stability).
 
 ### `[time]`
 
@@ -225,22 +225,30 @@ It is the responsibility of the post-processing tools (like the included Python 
 
 Every snapshot contains the following internal structure:
 
-### Root Attributes (`/`)
+### Metadata Subgroups (`/Header`, `/Config`, `/Units`)
 
-The root group serves as the header. It contains a complete dump of the `simulation.ini` configuration used to run the simulation, guaranteeing that every snapshot is fully self-describing.
+To keep the snapshots cleanly organized, all metadata attributes are divided into three distinct subgroups:
 
-Crucially, it also contains the instantaneous state of the universe and the physical unit conversions:
+**1. `/Header`**
+This group contains the instantaneous dynamic telemetry of the simulation for this exact snapshot:
 
 * **`scale_factor`**: The current scale factor $a$ of the universe.
 * **`simulation_time`**: The current physical time elapsed (in code units).
-* **`UnitLength_in_Mpc`**: Multiplier to convert code length to comoving Megaparsecs.
-* **`UnitTime_in_Gyr`**: Multiplier to convert code time to Gigayears.
-* **`UnitVelocity_in_kms`** / **`UnitVelocity_in_CGS`**: Multipliers for peculiar velocity.
-* **`UnitMass_in_Msun`**: Multiplier to convert code mass to Solar Masses.
-* **`UnitDensity_in_cgs`**: Multiplier to convert the raw code density to comoving CGS density ($\text{g/cm}^3$). To calculate the true physical density, you must multiply the code density by this factor, and then divide the result by $a^3$.
-* **`Factor_U_to_T`**: Multiplier to convert the specific internal energy ($U$) of the gas in code units directly into Physical Temperature in Kelvin. This bundles the mean molecular weight ($\mu$), adiabatic index ($\gamma$), and Boltzmann constant into a single convenient factor. *(Note: To get specific internal energy $U$ from the HDF5 file, you must take the `energy` array, subtract the kinetic energy, and divide by the `density` array).*
 
-### Dark Matter Particles (`/particles`)
+**2. `/Config`**
+This group contains a complete dump of the `simulation.ini` configuration used to run the simulation, guaranteeing that every snapshot is fully self-describing. The attribute names here exactly mirror the keys in the INI file (e.g., `mesh_size`, `omega_M`, `use_hydro`).
+
+**3. `/Units`**
+This group contains the physical unit conversion multipliers:
+
+* **`unit_length_in_mpc`**: Multiplier to convert code length to comoving Megaparsecs.
+* **`unit_time_in_gyr`**: Multiplier to convert code time to Gigayears.
+* **`unit_velocity_in_kms`** / **`unit_velocity_in_cgs`**: Multipliers for peculiar velocity.
+* **`unit_mass_in_msun`**: Multiplier to convert code mass to Solar Masses.
+* **`unit_density_in_cgs`**: Multiplier to convert the raw code density to comoving CGS density ($\text{g/cm}^3$). To calculate the true physical density, you must multiply the code density by this factor, and then divide the result by $a^3$.
+* **`factor_u_to_t`**: Multiplier to convert the specific internal energy ($U$) of the gas in code units directly into Physical Temperature in Kelvin. This bundles the mean molecular weight ($\mu$), adiabatic index ($\gamma$), and Boltzmann constant into a single convenient factor. *(Note: To get specific internal energy $U$ from the HDF5 file, you must take the `energy` array, subtract the kinetic energy, and divide by the `density` array).*
+
+### Dark Matter Particles (`/Particles`)
 
 This group contains flat 1D arrays for all N-body dark matter particles.
 
@@ -249,13 +257,13 @@ This group contains flat 1D arrays for all N-body dark matter particles.
 * **`acceleration_[x,y,z]`**: Gravitational acceleration in code units.
 * **`mass`**: Particle mass in code units.
 
-### Baryonic Gas (`/gas`)
+### Baryonic Gas (`/Gas`)
 
 If hydrodynamics is enabled (`use_hydro = true`), this group contains the fluid state of the simulation.
 
 **Group Attributes:**
 
-* **`Cumulative_Radiated_Energy`**: *(Only present if `enable_cooling = true`)*. The total, integrated energy radiated away by the gas up to the current snapshot in code units. To convert this value to true physical energy (Ergs), multiply it by the physical energy unit conversion factor and **multiply by $a^2$**.
+* **`cumulative_radiated_energy`**: *(Only present if `enable_cooling = true`)*. The total, integrated energy radiated away by the gas up to the current snapshot in code units. To convert this value to true physical energy (Ergs), multiply it by the physical energy unit conversion factor and **multiply by $a^2$**.
 
 **3D Eulerian Grids:**
 These datasets are flattened into 1D arrays in row-major order:

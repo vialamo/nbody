@@ -23,6 +23,7 @@ class SimulationEngine {
 
     SimState state;
 
+    double get_timestep() const;
     void step();
 
    public:

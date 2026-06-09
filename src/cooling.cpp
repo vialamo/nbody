@@ -10,8 +10,6 @@ double compute_cooling_rate(double u_code, double rho_code, double a,
                             const Config& config) {
     double T = get_temp_from_internal_energy(u_code, a, config);
 
-    if (T <= 10.0) return 0.0;
-
     // Convert code density to CGS
     double rho_cgs = (rho_code * config.UNIT_DENSITY_CGS) / (a * a * a);
 
@@ -29,10 +27,14 @@ double compute_cooling_rate(double u_code, double rho_code, double a,
 double solve_cooling_implicit(double u_old, double rho_code, double a,
                               double dt, const Config& config,
                               int& iterations_taken) {
-    double dynamic_u_floor =
-        get_internal_energy_from_temp(config.TEMP_FLOOR_KELVIN, a, config);
+    // We use the highest of either the physical radiation floor or the hydro
+    // temp floor
+    double target_floor_k =
+        std::max(RADIATIVE_FLOOR_K, config.TEMP_FLOOR_KELVIN);
+    double u_rad_floor =
+        get_internal_energy_from_temp(target_floor_k, a, config);
 
-    if (u_old <= dynamic_u_floor) {
+    if (u_old <= u_rad_floor) {
         return u_old;  // Already at or below the floor, no cooling
     }
 
@@ -48,7 +50,7 @@ double solve_cooling_implicit(double u_old, double rho_code, double a,
         double f_u = u_guess - u_old + dt * lambda;
 
         // Numerical derivative for the Jacobian: d(Lambda)/du
-        // Using central difference for better accuracy
+        // Using central difference
         double eps = 1e-4 * u_guess;
         double lambda_plus =
             compute_cooling_rate(u_guess + eps, rho_code, a, config);
@@ -63,10 +65,9 @@ double solve_cooling_implicit(double u_old, double rho_code, double a,
         double du = f_u / df_du;
         u_guess -= du;
 
-        // Enforce physical bounds (prevent negative energy or dropping below
-        // the CMB/floor)
-        if (u_guess < dynamic_u_floor) {
-            u_guess = dynamic_u_floor;
+        // Enforce physical bounds
+        if (u_guess < u_rad_floor) {
+            u_guess = u_rad_floor;
             break;  // Hit the floor, we can safely exit
         }
 

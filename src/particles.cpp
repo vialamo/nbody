@@ -103,7 +103,7 @@ void ParticleSystem::interpolate_cic_forces(const Grid3D& ax_grid,
                                             const Grid3D& ay_grid,
                                             const Grid3D& az_grid,
                                             const Config& config) {
-    int N = config.MESH_SIZE;
+    const int N = config.MESH_SIZE;
 
 #pragma omp parallel for schedule(static)
     for (size_t i = 0; i < num_particles; ++i) {
@@ -136,19 +136,18 @@ void ParticleSystem::compute_pp_forces(const Config& config) {
             ? static_cast<int>(ceil(config.CUTOFF_RADIUS / config.CELL_SIZE))
             : config.MESH_SIZE / 2;
 
-    int N = config.MESH_SIZE;
-    int num_cells = N * N * N;
+    const int N = config.MESH_SIZE;
+    const int num_cells = N * N * N;
 
     // Pre-calculate constants
     const double domain_size = config.DOMAIN_SIZE;
     const double G = config.G;
     const double soft_sq = config.SOFTENING_SQUARED;
-    const double pm_soft_sq =
-        (0.5 * config.CELL_SIZE) * (0.5 * config.CELL_SIZE);
-    const double r_switch_start = config.R_SWITCH_START;
-    const double r_switch_sq = config.R_SWITCH_START_SQ;
     const double cutoff_sq = config.CUTOFF_RADIUS_SQUARED;
-    const double trans_width = config.CUTOFF_TRANSITION_WIDTH;
+
+    // Gaussian smoothing scale for Fourier-Split PM
+    const double r_s = config.PM_SMOOTHING_CELLS * config.CELL_SIZE;
+
     const bool use_pm = config.USE_PM;
     const size_t n_parts = num_particles;
 
@@ -222,36 +221,34 @@ void ParticleSystem::compute_pp_forces(const Config& config) {
                             continue;
                         }
 
-                        double S = 1.0;
-                        if (use_pm && dist_sq > r_switch_sq) {
-                            double dist = sqrt(dist_sq);
-                            double x = (dist - r_switch_start) / trans_width;
-                            S = 2.0 * (x * x * x) - 3.0 * (x * x) + 1.0;
-                        }
-
-                        double a_pm_short_x = 0.0, a_pm_short_y = 0.0,
-                               a_pm_short_z = 0.0;
-
-                        if (use_pm) {
-                            double soft_dist_sq = dist_sq + pm_soft_sq;
-                            double soft_dist = sqrt(soft_dist_sq);
-                            double a_pm_short = G * p2_m / soft_dist_sq;
-                            a_pm_short_x = a_pm_short * dx / soft_dist;
-                            a_pm_short_y = a_pm_short * dy / soft_dist;
-                            a_pm_short_z = a_pm_short * dz / soft_dist;
-                        }
-
+                        // Softened Distance
                         double pp_dist_sq = dist_sq + soft_sq;
-                        double pp_dist = sqrt(pp_dist_sq);
-                        double a_pp = G * p2_m / pp_dist_sq;
+                        double pp_dist = std::sqrt(pp_dist_sq);
 
-                        double a_pp_x = a_pp * dx / pp_dist;
-                        double a_pp_y = a_pp * dy / pp_dist;
-                        double a_pp_z = a_pp * dz / pp_dist;
+                        // Base Newtonian Force Magnitude
+                        double a_pp =
+                            G * p2_m /
+                            pp_dist_sq;
 
-                        local_acc_x += S * (a_pp_x - a_pm_short_x);
-                        local_acc_y += S * (a_pp_y - a_pm_short_y);
-                        local_acc_z += S * (a_pp_z - a_pm_short_z);
+                        // Fourier-Split PM Modulation
+                        if (use_pm) {
+                            double r_scaled = pp_dist / (2.0 * r_s);
+
+                            // The derivative of the Gaussian-smoothed
+                            // potential
+                            double erfc_term = std::erfc(r_scaled);
+                            double exp_term =
+                                (pp_dist / (std::sqrt(M_PI) * r_s)) *
+                                std::exp(-r_scaled * r_scaled);
+
+                            // Modulate the Newtonian force
+                            a_pp *= (erfc_term + exp_term);
+                        }
+
+                        // Add to local accelerations
+                        local_acc_x += a_pp * dx / pp_dist;
+                        local_acc_y += a_pp * dy / pp_dist;
+                        local_acc_z += a_pp * dz / pp_dist;
 
                         j = d_next[j];
                     }
@@ -277,7 +274,7 @@ void ParticleSystem::compute_pp_forces(const Config& config) {
         int iy = static_cast<int>(p1_y / config.CELL_SIZE);
         int iz = static_cast<int>(p1_z / config.CELL_SIZE);
 
-        constexpr int MAX_NEIGHBORS = 1500;
+        constexpr int MAX_NEIGHBORS = 1536;
         double n_x[MAX_NEIGHBORS];
         double n_y[MAX_NEIGHBORS];
         double n_z[MAX_NEIGHBORS];
@@ -290,9 +287,9 @@ void ParticleSystem::compute_pp_forces(const Config& config) {
                  ++dy_cell) {
                 for (int dz_cell = -search_radius; dz_cell <= search_radius;
                      ++dz_cell) {
-                    int neighbor_ix = (ix + dx_cell + N) % N;
-                    int neighbor_iy = (iy + dy_cell + N) % N;
-                    int neighbor_iz = (iz + dz_cell + N) % N;
+                    int neighbor_ix = (((ix + dx_cell) % N) + N) % N;
+                    int neighbor_iy = (((iy + dy_cell) % N) + N) % N;
+                    int neighbor_iz = (((iz + dz_cell) % N) + N) % N;
                     int neighbor_cell_index =
                         neighbor_iz * N * N + neighbor_iy * N + neighbor_ix;
 
@@ -327,36 +324,30 @@ void ParticleSystem::compute_pp_forces(const Config& config) {
                 continue;
             }
 
-            double S = 1.0;
-            if (use_pm && dist_sq > r_switch_sq) {
-                double dist = sqrt(dist_sq);
-                double x = (dist - r_switch_start) / trans_width;
-                S = 2.0 * (x * x * x) - 3.0 * (x * x) + 1.0;
-            }
-
-            double a_pm_short_x = 0.0, a_pm_short_y = 0.0, a_pm_short_z = 0.0;
-
-            if (use_pm) {
-                double mask = use_pm ? 1 : 0;
-                double soft_dist_sq = dist_sq + pm_soft_sq;
-                double soft_dist = sqrt(soft_dist_sq);
-                double a_pm_short = G * n_m[k] / soft_dist_sq;
-                a_pm_short_x = a_pm_short * dx / soft_dist;
-                a_pm_short_y = a_pm_short * dy / soft_dist;
-                a_pm_short_z = a_pm_short * dz / soft_dist;
-            }
-
+            // Softened Distance
             double pp_dist_sq = dist_sq + soft_sq;
-            double pp_dist = sqrt(pp_dist_sq);
+            double pp_dist = std::sqrt(pp_dist_sq);
+
+            // Base Newtonian Force Magnitude
             double a_pp = G * n_m[k] / pp_dist_sq;
 
-            double a_pp_x = a_pp * dx / pp_dist;
-            double a_pp_y = a_pp * dy / pp_dist;
-            double a_pp_z = a_pp * dz / pp_dist;
+            // Fourier-Split PM Modulation
+            if (use_pm) {
+                double r_scaled = pp_dist / (2.0 * r_s);
 
-            local_acc_x += S * (a_pp_x - a_pm_short_x);
-            local_acc_y += S * (a_pp_y - a_pm_short_y);
-            local_acc_z += S * (a_pp_z - a_pm_short_z);
+                // The derivative of the Gaussian-smoothed potential
+                double erfc_term = std::erfc(r_scaled);
+                double exp_term = (pp_dist / (std::sqrt(M_PI) * r_s)) *
+                                  std::exp(-r_scaled * r_scaled);
+
+                // Modulate the Newtonian force
+                a_pp *= (erfc_term + exp_term);
+            }
+
+            // Add to local accelerations
+            local_acc_x += a_pp * dx / pp_dist;
+            local_acc_y += a_pp * dy / pp_dist;
+            local_acc_z += a_pp * dz / pp_dist;
         }
 
         acc_x[i] += local_acc_x;

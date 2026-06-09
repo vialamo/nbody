@@ -74,23 +74,23 @@ RiemannSolver::RiemannSolver(int mesh_size)
 
 inline void RiemannSolver::reconstruct_muscl(const Grid3D& q, Grid3D& q_L,
                                              Grid3D& q_R, int axis) {
-    const int rollDir = -1;  // +1 cell shift (i+1)
-    const int rollLeft = 1;  // -1 cell shift (i-1)
+    constexpr int rollRight = -1;  // +1 cell shift (i+1)
+    constexpr int rollLeft = 1;    // -1 cell shift (i-1)
 
     q_minus = q.roll(rollLeft, axis);
-    q_plus = q.roll(rollDir, axis);
+    q_plus = q.roll(rollRight, axis);
 
     dq_L.data = q.array() - q_minus.array();
     dq_R.data = q_plus.array() - q.array();
 
-    // Minmod logic done in-place to avoid returning new Grid3D
+    // Minmod logic done in-place
     slope.data = (dq_L.array() * dq_R.array() > 0.0)
                      .select(dq_L.array().abs().min(dq_R.array().abs()) *
                                  dq_L.array().sign(),
                              0.0);
 
     q_L.data = q.array() + 0.5 * slope.array();
-    q_R.data = q_plus.array() - 0.5 * slope.roll(rollDir, axis).array();
+    q_R.data = q_plus.array() - 0.5 * slope.roll(rollRight, axis).array();
 }
 
 inline void RiemannSolver::apply_hllc_flux(const Grid3D& F_L, const Grid3D& F_R,
@@ -117,7 +117,6 @@ inline void RiemannSolver::apply_hllc_flux(const Grid3D& F_L, const Grid3D& F_R,
 void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
                                    double gamma) {
     const Grid3D& density = grid.get_density();
-    const Grid3D& energy = grid.get_energy();
     const Grid3D& pressure = grid.get_pressure();
     const Grid3D& ie = grid.get_internal_energy();
 
@@ -179,7 +178,7 @@ void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
     cs_L.data = (cs_L.array() == cs_L.array()).select(cs_L.array(), 0.0);
     cs_R.data = (cs_R.array() == cs_R.array()).select(cs_R.array(), 0.0);
 
-    // HLL wave speed estimates (Davis 1988)
+    // HLL wave speed estimates
     S_L.data =
         (vn_L.array() - cs_L.array()).cwiseMin(vn_R.array() - cs_R.array());
     S_R.data =
@@ -204,7 +203,7 @@ void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
     F_ie_L.data = ie_L.array() * vn_L.array();
     F_ie_R.data = ie_R.array() * vn_R.array();
 
-    // --- THE HLLC RIEMANN SOLVER ---
+    // --- HLLC RIEMANN SOLVER ---
 
     // Calculate the middle wave speed (S_star)
     den_star = rho_L.array() * (S_L.array() - vn_L.array()) -
@@ -331,7 +330,7 @@ void GasGrid::update_primitive_variables() {
             double e_tot = en[i];
             double p;
 
-            // --- THE DUAL ENERGY SWITCH ---
+            // --- DUAL ENERGY SWITCH ---
             // If internal energy is > 0.1% of total energy, trust the total
             // energy
             if (e_tot > 0.0 && (e_tot - ke) / e_tot > 0.001) {
@@ -458,7 +457,7 @@ void GasGrid::hydro_step(double dt) {
     // L(U^{(1)})
     compute_and_apply_fluxes(dt);
 
-    // Final Averaging (FUSED LOOP)
+    // Final Averaging
     int total_cells = config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
 
     double* d_rho = density.array().data();
@@ -485,7 +484,7 @@ void GasGrid::hydro_step(double dt) {
         d_ie[i] = 0.5 * (o_ie[i] + d_ie[i]);
     }
 
-    // Update primitive variables once at the end so the gravity step has the
+    // Update primitive variables at the end so the gravity step has the
     // right values
     update_primitive_variables();
 }
@@ -517,7 +516,7 @@ double GasGrid::apply_cooling(double dt, double a) {
 
     int total_cells = config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
 
-    double* d_rho = density.array().data();
+    const double* d_rho = density.array().data();
     double* d_en = energy.array().data();
     double* d_ie = internal_energy.array().data();
 
@@ -570,10 +569,19 @@ double GasGrid::get_cooling_timestep(double a) const {
     const double* d_ie = internal_energy.array().data();
     const double density_floor = 1e-12;
 
+    // Calculate the physical cooling floor once before entering the OpenMP loop
+    double target_floor_k =
+        std::max(cooling::RADIATIVE_FLOOR_K, config.TEMP_FLOOR_KELVIN);
+    double u_rad_floor =
+        cooling::get_internal_energy_from_temp(target_floor_k, a, config);
+
 #pragma omp parallel for reduction(min : min_dt_cool)
     for (int i = 0; i < total_cells; ++i) {
         if (d_rho[i] > density_floor) {
             double u = d_ie[i] / d_rho[i];
+
+            if (u <= u_rad_floor) continue;
+
             double lambda =
                 cooling::compute_cooling_rate(u, d_rho[i], a, config);
 

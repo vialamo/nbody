@@ -188,6 +188,6 @@ void Logger::log(const Diagnostics& diag) {
 
     if (diag.non_converged_cooling_cells > 0) {
         std::cout << "  [WARNING] Cooling solver failed to converge in " 
-                  << diag.non_converged_cooling_cells << " cells!\n";
+                  << diag.non_converged_cooling_cells << " cells\n";
     }
 }

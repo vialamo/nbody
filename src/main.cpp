@@ -12,10 +12,13 @@ SimulationEngine* g_engine = nullptr;
 
 void print_internal_units(const Config& config) {
     std::cout << "Internal Unit System\n";
-    std::cout << "1.0 Code Length   = " << config.UNIT_LENGTH_MPC << " comoving Mpc\n";
+    std::cout << "1.0 Code Length   = " << config.UNIT_LENGTH_MPC
+              << " comoving Mpc\n";
     std::cout << "1.0 Code Time     = " << config.UNIT_TIME_GYR << " Gyr\n";
-    std::cout << "1.0 Code Velocity = " << config.UNIT_VELOCITY_KMS << " km/s\n";
-    std::cout << "1.0 Code Mass     = " << config.UNIT_MASS_MSUN << " Solar Masses\n";
+    std::cout << "1.0 Code Velocity = " << config.UNIT_VELOCITY_KMS
+              << " km/s\n";
+    std::cout << "1.0 Code Mass     = " << config.UNIT_MASS_MSUN
+              << " Solar Masses\n";
     std::cout << "G = " << config.G << "\n" << std::endl;
 }
 
@@ -41,12 +44,6 @@ int main(int argc, char* argv[]) {
     Config config;
     try {
         config.load(config_filename);
-
-        if (config.OMEGA_BARYON > config.OMEGA_M) {
-            throw std::runtime_error(
-                "Error: OMEGA_BARYON cannot be larger than total OMEGA_M.");
-        }
-
     } catch (const std::exception& e) {
         std::cerr << "Error loading " << config_filename << ": " << e.what()
                   << std::endl;

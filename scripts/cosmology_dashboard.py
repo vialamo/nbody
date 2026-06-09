@@ -33,20 +33,19 @@ def compute_cic_variance(p_x, p_y, p_z, p_mass, domain_size, mesh_size):
 
 def get_temperature(f):
     """Extracts or calculates temperature in Kelvin."""
-    if 'gas/temperature' in f:
-        return f['gas/temperature'][:]
+    if 'Gas/temperature' in f:
+        return f['Gas/temperature'][:]
     else:
-        # Fallback for adiabatic runs using the new HDF5 factor!
-        pressure = f['gas/pressure'][:]
-        density = f['gas/density'][:]
-        gamma = f.attrs.get('gamma', 5.0/3.0)
+        # Fallback for adiabatic runs
+        pressure = f['Gas/pressure'][:]
+        density = f['Gas/density'][:]
+        
+        gamma = f['Config'].attrs.get('gamma', 5.0/3.0)
+        factor_u_to_t = f['Units'].attrs['factor_u_to_t']
+        a = f['Header'].attrs['scale_factor']
         
         # Calculate specific internal energy: u = P / (rho * (gamma - 1))
         u_code = pressure / (density * (gamma - 1.0))
-        
-        # Use the single magical factor exported by your C++ engine
-        factor_u_to_t = f.attrs['Factor_U_to_T']
-        a = f.attrs['scale_factor']
         
         return u_code * factor_u_to_t * (a**2)
 
@@ -77,8 +76,8 @@ def generate_dashboard(snapshot_dir):
 
     # Pre-calculate CGS Unit Multipliers
     with h5py.File(files[0], 'r') as f:
-        domain_size = f.attrs.get('domain_size', 1.0)
-        mesh_size = f.attrs.get('mesh_size', 32)
+        domain_size = f['Config'].attrs.get('domain_size', 1.0)
+        mesh_size = f['Config'].attrs.get('mesh_size', 32)
 
 
     # Volume of a single cell in code units (needed for integrating total energy)
@@ -86,28 +85,31 @@ def generate_dashboard(snapshot_dir):
 
     for i, f_path in enumerate(files):
         with h5py.File(f_path, 'r') as f:
-            a = f.attrs['scale_factor']
+            header = f['Header'].attrs
+            config = f['Config'].attrs
+            units  = f['Units'].attrs
+
+            a = header['scale_factor']
             scale_factors.append(a)
-            times_gyr.append(f.attrs.get('simulation_time', 0.0) * f.attrs.get('UnitTime_in_Gyr', 1.0))
-            u_density_cgs = f.attrs['UnitDensity_in_cgs']
+            times_gyr.append(header.get('simulation_time', 0.0) * units.get('unit_time_in_gyr', 1.0))
             
-            # Read energy conversions (you probably already had these)
-            u_energy_cgs = f.attrs['UnitVelocity_in_CGS']**2 * (f.attrs['UnitMass_in_Msun'] * 1.98847e33)
+            u_density_cgs = units['unit_density_in_cgs']
+            u_energy_cgs = units['unit_velocity_in_cgs']**2 * (units['unit_mass_in_msun'] * 1.98847e33)
             
             # DM Variance
-            p_x = f['particles/position_x'][:]
-            p_y = f['particles/position_y'][:]
-            p_z = f['particles/position_z'][:]
-            p_mass = f['particles/mass'][:]
-            dm_variances.append(compute_cic_variance(p_x, p_y, p_z, p_mass, f.attrs['domain_size'], f.attrs['mesh_size']))
+            p_x = f['Particles/position_x'][:]
+            p_y = f['Particles/position_y'][:]
+            p_z = f['Particles/position_z'][:]
+            p_mass = f['Particles/mass'][:]
+            dm_variances.append(compute_cic_variance(p_x, p_y, p_z, p_mass, config['domain_size'], config['mesh_size']))
             
             # Gas Stats
-            if bool(f.attrs.get('use_hydro', 0)):
-                rho = f['gas/density'][:]
-                px = f['gas/momentum_x'][:]
-                py = f['gas/momentum_y'][:]
-                pz = f['gas/momentum_z'][:]
-                e_tot = f['gas/energy'][:]
+            if bool(config.get('use_hydro', 0)):
+                rho = f['Gas/density'][:]
+                px = f['Gas/momentum_x'][:]
+                py = f['Gas/momentum_y'][:]
+                pz = f['Gas/momentum_z'][:]
+                e_tot = f['Gas/energy'][:]
                 temp = get_temperature(f)
                 
                 # Convert Max Density to Hydrogen Number Density (n_H)
@@ -132,7 +134,7 @@ def generate_dashboard(snapshot_dir):
                 kin_energies.append(total_ke_ergs)
                 therm_energies.append(total_te_ergs)
 
-                rad_energy_code = f['gas'].attrs.get('Cumulative_Radiated_Energy', 0.0)
+                rad_energy_code = f['Gas'].attrs.get('cumulative_radiated_energy', 0.0)
                 total_rad_ergs = rad_energy_code * u_energy_cgs
                 rad_energies.append(total_rad_ergs)
                 
@@ -153,20 +155,22 @@ def generate_dashboard(snapshot_dir):
 
     # Info extraction (from the LAST snapshot)
     with h5py.File(files[-1], 'r') as f:
-        box_size = f.attrs.get('box_size_mpc', 'N/A')
-        mesh_size = f.attrs.get('mesh_size', 'N/A')
-        omega_m = f.attrs.get('omega_M', f.attrs.get('Omega_m', 'N/A'))
-        omega_b = f.attrs.get('omega_baryon', f.attrs.get('Omega_b', 'N/A'))
-        omega_l = f.attrs.get('omega_lambda', f.attrs.get('Omega_Lambda', 'N/A'))
-        hubble = f.attrs.get('hubble_param', 'N/A')
-        gamma = f.attrs.get('gamma', 'N/A')
-        mu = f.attrs.get('primordial_mu', 'N/A')
-        prim_index = f.attrs.get('primordial_index', 'N/A')
+        config = f['Config'].attrs
         
-        num_particles = len(f['particles/position_x']) if 'particles/position_x' in f else 'N/A'
+        box_size = config.get('box_size_mpc', 'N/A')
+        mesh_size = config.get('mesh_size', 'N/A')
+        omega_m = config.get('omega_M', 'N/A')
+        omega_b = config.get('omega_baryon', 'N/A')
+        omega_l = config.get('omega_lambda', 'N/A')
+        hubble = config.get('hubble_param', 'N/A')
+        gamma = config.get('gamma', 'N/A')
+        mu = config.get('primordial_mu', 'N/A')
+        prim_index = config.get('spectral_index', 'N/A')
         
-        if bool(f.attrs.get('use_hydro', 0)):
-            final_rho = f['gas/density'][:]
+        num_particles = len(f['Particles/position_x']) if 'Particles/position_x' in f else 'N/A'
+        
+        if bool(config.get('use_hydro', 0)):
+            final_rho = f['Gas/density'][:]
             final_overdensity = final_rho / np.mean(final_rho) 
             final_temp = get_temperature(f)
             x_data = final_overdensity.flatten()
