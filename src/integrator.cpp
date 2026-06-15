@@ -44,8 +44,9 @@ void update_cosmology(SimState& state, const Config& config) {
 
 double get_time_from_scale_factor(double a, const Config& config) {
     if (!config.EXPANDING_UNIVERSE) {
-        // Without expansion, 'a' doesn't change, so outputting by 'a' is meaningless.
-        return std::numeric_limits<double>::infinity(); 
+        // Without expansion, 'a' doesn't change, so outputting by 'a' is
+        // meaningless.
+        return std::numeric_limits<double>::infinity();
     }
 
     if (config.OMEGA_LAMBDA == 0.0) {
@@ -286,7 +287,7 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
             state.dm.interpolate_cic_forces(state.gravity_x, state.gravity_y,
                                             state.gravity_z, config);
         } else {
-            // If PM is off, we must zero out the arrays before PP adds to them
+            // If PM is off, zero out the arrays before PP adds to them
             std::fill(state.dm.acc_x.begin(), state.dm.acc_x.end(), 0.0);
             std::fill(state.dm.acc_y.begin(), state.dm.acc_y.end(), 0.0);
             std::fill(state.dm.acc_z.begin(), state.dm.acc_z.end(), 0.0);
@@ -303,7 +304,7 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
     if (!config.STANDING_PARTICLES) {
         calculate_max_acceleration(state.dm);
     } else {
-        // If particles are frozen for testing, erase all computed accelerations
+        // If particles are frozen for testing, erase accelerations
         std::fill(state.dm.acc_x.begin(), state.dm.acc_x.end(), 0.0);
         std::fill(state.dm.acc_y.begin(), state.dm.acc_y.end(), 0.0);
         std::fill(state.dm.acc_z.begin(), state.dm.acc_z.end(), 0.0);
@@ -311,34 +312,198 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
     }
 }
 
-void KDK_step(SimState& state, double dt, Config& config, Diagnostics& diag) {
-    // KICK 1 (Half step)
-    apply_gas_kick(state.gas, state.gravity_x, state.gravity_y, state.gravity_z,
-                   dt / 2.0, state.scale_factor, state.hubble_param, config);
-    apply_dm_kick(state.dm, dt / 2.0, state.scale_factor, state.hubble_param);
+void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
+              Diagnostics& diag) {
+    if (ts.subcycle_hydro) {
+        // Save old state for interpolation
+        Grid3D old_gx = state.gravity_x;
+        Grid3D old_gy = state.gravity_y;
+        Grid3D old_gz = state.gravity_z;
+        double old_a = state.scale_factor;
+        double old_H = state.hubble_param;
 
-    // DRIFT
-    apply_dm_drift(state.dm, dt, config.DOMAIN_SIZE);
+        // Kick DM with old forces
+        apply_dm_kick(state.dm, ts.dt_macro / 2.0, old_a, old_H);
 
-    // HYDRODYNAMICS
-    if (config.USE_HYDRO) {
-        ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
-        state.gas.hydro_step(dt);
+        // Drift DM to the end of the step
+        apply_dm_drift(state.dm, ts.dt_macro, config.DOMAIN_SIZE);
 
-        if (config.ENABLE_COOLING) {
-            double e_lost = state.gas.apply_cooling(dt, state.scale_factor);
-            diag.add_radiated_energy(e_lost);  // Log lost energy
+        // Update Cosmology and compute new forces
+        state.total_time += ts.dt_macro;
+        update_cosmology(state, config);
+        // Predictor for forces
+        compute_forces(state, config, diag);
+
+        // Run Hydro Subcycling with Interpolation
+        double t_sub = 0.0;
+        while (t_sub < ts.dt_macro) {
+            diag.add_substeps(SubstepCounter::Hydro);
+
+            double dt_h =
+                std::min(state.gas.get_cfl_timestep(), ts.dt_macro - t_sub);
+
+            // Calculate blending factor for the midpoint of this sub-step
+            double t_mid = t_sub + (dt_h / 2.0);
+            double alpha = t_mid / ts.dt_macro;  // Ranges from 0.0 to 1.0
+
+            // Interpolate cosmology
+            double interp_a = old_a + alpha * (state.scale_factor - old_a);
+            double interp_H = old_H + alpha * (state.hubble_param - old_H);
+
+            // Interpolate forces
+            Grid3D interp_gx(config.MESH_SIZE), interp_gy(config.MESH_SIZE),
+                interp_gz(config.MESH_SIZE);
+            interp_gx.data = old_gx.array() +
+                             alpha * (state.gravity_x.array() - old_gx.array());
+            interp_gy.data = old_gy.array() +
+                             alpha * (state.gravity_y.array() - old_gy.array());
+            interp_gz.data = old_gz.array() +
+                             alpha * (state.gravity_z.array() - old_gz.array());
+
+            // Micro-Kick 1
+            apply_gas_kick(state.gas, interp_gx, interp_gy, interp_gz,
+                           dt_h / 2.0, interp_a, interp_H, config);
+
+            // Hydro Drift
+            if (config.USE_HYDRO) {
+                ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
+                state.gas.hydro_step(dt_h);
+                if (config.ENABLE_COOLING) {
+                    diag.add_radiated_energy(
+                        state.gas.apply_cooling(dt_h, state.scale_factor));
+                }
+            }
+
+            // Micro-Kick 2
+            apply_gas_kick(state.gas, interp_gx, interp_gy, interp_gz,
+                           dt_h / 2.0, interp_a, interp_H, config);
+
+            t_sub += dt_h;
         }
+
+        // Corrector for forces
+        compute_forces(state, config, diag);
+
+        // Kick DM with new forces
+        apply_dm_kick(state.dm, ts.dt_macro / 2.0, state.scale_factor,
+                      state.hubble_param);
+    } else if (ts.subcycle_grav) {
+        // Save cosmology state for interpolation
+        double old_a = state.scale_factor;
+        double old_H = state.hubble_param;
+
+        // Fast-forward cosmology to get the target at the end of the
+        // macro-step
+        state.total_time += ts.dt_macro;
+        double target_t = state.total_time;
+        update_cosmology(state, config);
+        double target_a = state.scale_factor;
+        double target_H = state.hubble_param;
+
+        // Rewind time for the loop
+        state.total_time -= ts.dt_macro;
+
+        // Lambda helper for the gravity subcycle to avoid code duplication
+        auto run_gravity_subcycles = [&](double duration) {
+            double t_sub = 0.0;
+            while (t_sub < duration) {
+                diag.add_substeps(SubstepCounter::Gravity);
+
+                // Determine micro-step size for gravity
+                double dt_g = std::min(state.dm.get_gravity_timestep(config),
+                                       duration - t_sub);
+
+                // Interpolate cosmology for the midpoint of this micro-step
+                double t_mid = state.total_time + (dt_g / 2.0);
+
+                // Alpha tracks the total progress relative to the full
+                // macro step (0.0 to 1.0)
+                double alpha = (state.total_time - (target_t - ts.dt_macro) +
+                                (dt_g / 2.0)) /
+                               ts.dt_macro;
+                double interp_a = old_a + alpha * (target_a - old_a);
+                double interp_H = old_H + alpha * (target_H - old_H);
+
+                // Micro-Kick 1 (DM and Gas)
+                apply_gas_kick(state.gas, state.gravity_x, state.gravity_y,
+                               state.gravity_z, dt_g / 2.0, interp_a, interp_H,
+                               config);
+                apply_dm_kick(state.dm, dt_g / 2.0, interp_a, interp_H);
+
+                // Micro-Drift DM
+                apply_dm_drift(state.dm, dt_g, config.DOMAIN_SIZE);
+
+                // Update forces. (DM has moved, Gas density is frozen which
+                // is correct for Strang splitting)
+                compute_forces(state, config, diag);
+
+                // Micro-Kick 2 (DM and Gas)
+                apply_gas_kick(state.gas, state.gravity_x, state.gravity_y,
+                               state.gravity_z, dt_g / 2.0, interp_a, interp_H,
+                               config);
+                apply_dm_kick(state.dm, dt_g / 2.0, interp_a, interp_H);
+
+                t_sub += dt_g;
+                state.total_time +=
+                    dt_g;  // Advance global time within the lambda
+            }
+        };
+
+        // First Grav Half-Step (Advance DM and kick Gas by dt_macro / 2)
+        run_gravity_subcycles(ts.dt_macro / 2.0);
+
+        // Full Macro-Step Drift for Gas
+        if (config.USE_HYDRO) {
+            ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
+            state.gas.hydro_step(ts.dt_macro);
+
+            if (config.ENABLE_COOLING) {
+                double e_lost =
+                    state.gas.apply_cooling(ts.dt_macro, state.scale_factor);
+                diag.add_radiated_energy(e_lost);  // Log lost energy
+            }
+        }
+
+        // Second Grav Half-Step (Advance DM and kick Gas by dt_macro / 2)
+        run_gravity_subcycles(ts.dt_macro / 2.0);
+
+        // Finalize and ensure strict synchronization
+        update_cosmology(state, config);
+    } else {
+        double dt = ts.dt_macro;
+
+        // KICK 1 (Half step)
+        apply_gas_kick(state.gas, state.gravity_x, state.gravity_y,
+                       state.gravity_z, dt / 2.0, state.scale_factor,
+                       state.hubble_param, config);
+        apply_dm_kick(state.dm, dt / 2.0, state.scale_factor,
+                      state.hubble_param);
+
+        // DRIFT
+        apply_dm_drift(state.dm, dt, config.DOMAIN_SIZE);
+
+        // HYDRODYNAMICS
+        if (config.USE_HYDRO) {
+            ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
+            state.gas.hydro_step(dt);
+
+            if (config.ENABLE_COOLING) {
+                double e_lost = state.gas.apply_cooling(dt, state.scale_factor);
+                diag.add_radiated_energy(e_lost);  // Log lost energy
+            }
+        }
+
+        // UPDATE COSMOLOGY to t + dt
+        state.total_time += dt;
+        update_cosmology(state, config);
+
+        compute_forces(state, config, diag);
+
+        // KICK 2 (Half step)
+        apply_gas_kick(state.gas, state.gravity_x, state.gravity_y,
+                       state.gravity_z, dt / 2.0, state.scale_factor,
+                       state.hubble_param, config);
+        apply_dm_kick(state.dm, dt / 2.0, state.scale_factor,
+                      state.hubble_param);
     }
-
-    // UPDATE COSMOLOGY to t + dt
-    state.total_time += dt;
-    update_cosmology(state, config);
-
-    compute_forces(state, config, diag);
-
-    // KICK 2 (Half step)
-    apply_gas_kick(state.gas, state.gravity_x, state.gravity_y, state.gravity_z,
-                   dt / 2.0, state.scale_factor, state.hubble_param, config);
-    apply_dm_kick(state.dm, dt / 2.0, state.scale_factor, state.hubble_param);
 }

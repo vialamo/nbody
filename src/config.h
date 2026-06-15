@@ -40,7 +40,7 @@ struct Config {
     int MAX_CYCLES = 1000000000;
 
     double SAVE_HDF5_EVERY_DELTA_A = 0.005;
-    int DEBUG_INFO_EVERY_CYCLES = 40;
+    int DEBUG_INFO_EVERY_SECONDS = 30;
     bool ENABLE_ENERGY_DIAGNOSTICS = true;
 
     // Derived Parameters

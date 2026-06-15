@@ -192,6 +192,14 @@ $$\mathbf{v}(t + \Delta t) = \mathbf{v}(t + \tfrac{1}{2}\Delta t) + \mathbf{a}(t
 
 While mathematically equivalent to Verlet in simpler cases, this staggered formulation is particularly robust for handling the time-varying and velocity-dependent forces present in a cosmological simulation. The symmetric "kick-force-kick" structure gracefully incorporates these complexities, which is why the KDK leapfrog is the most common integrator in modern cosmological N-body codes.
 
+#### Symmetry and Second-Order Accuracy
+
+In numerical physics, the "order of accuracy" dictates how fast errors shrink when we take smaller timesteps ($\Delta t$). A basic, asymmetric algorithm like the Forward Euler method is only *first-order* accurate ($O(\Delta t)$); if we cut the timestep in half, the error only drops by half.
+
+The KDK scheme achieves higher accuracy through its **symmetry**. By splitting the velocity kick into two equal halves that perfectly bracket the position drift, the algorithm becomes **time-reversible**. For conservative forces like gravity, this mieans that if we paused the simulation, reversed all the velocities, and ran the KDK math backward, the particles would trace their exact steps back to their starting positions.
+
+In numerical calculus, any integration scheme that is symmetric and time-reversible causes the leading, first-order Taylor series error terms to cancel each other out. Because the first-order error is gone, the largest surviving error scales with the square of the timestep ($O(\Delta t^2)$). This means KDK is strictly **second-order accurate**—if we cut the timestep in half, the integration error drops by a factor of four.
+
 *Key Literature & Further Reading*  
 Springel, V. (2005). *The cosmological simulation code GADGET-2. Monthly Notices of the Royal Astronomical Society*, 364(4), 1105-1134. arXiv:astro-ph/0505010. Available at [https://arxiv.org/abs/astro-ph/0505010](https://arxiv.org/abs/astro-ph/0505010)
 
@@ -624,7 +632,7 @@ Because the grid can only "see" mass at its discrete nodes, it is blind to the s
 * Particle $A$ deposits the majority of its mass toward the left grid node.
 * Particle $B$ deposits the majority of its mass toward the right grid node.
 
-Even though the particles are very close, the Eulerian grid registers two distinct mass clouds localized on two different nodes. When the solver calculates the potential and takes the spatial derivative to find the force, the gradient naturally points "downhill" away from the center. Particle $A$ is pulled to the left, and particle $B$ is pulled to the right. The two particles are pulled apart. This is a purely numerical **artificial repulsion**.
+Even though the particles are very close, the grid registers two distinct mass clouds localized on two different nodes. When the solver calculates the potential and takes the spatial derivative to find the force, the gradient naturally points "downhill" away from the center. Particle $A$ is pulled to the left, and particle $B$ is pulled to the right. The two particles are pulled apart. This is a purely numerical **artificial repulsion**.
 
 Because the true PM force is noisy, direction-dependent, and occasionally repulsive, a smooth, isotropic analytical formula ($F_{\text{PM}}^{\text{short}}$) can't match it. When we subtract the smooth formula from the noisy grid, the subtraction fails to cancel out the error. Instead, it leaves behind a jagged, unphysical residual force field. This "mesh artifact" causes particles to artificially cluster along the x, y, and z grid axes and introduces microscopic jolts that slowly destroy the long-term energy conservation of the Kick-Drift-Kick integrator.
 
@@ -646,9 +654,13 @@ Here, $r_s$ is the **Gaussian smoothing scale**, a tuning parameter typically se
 
 In Fourier analysis, high frequencies (large $k$) correspond to small-scale, sharp, jagged details. Because the exponent is negative and proportional to $k^2$, the term $\exp(-k^2 r_s^2)$ plummets rapidly to zero for high-frequency modes.
 
+We should keep the Cloud-in-Cell (CIC) deconvolution we established earlier. While the Gaussian filter intentionally blurs the grid to remove anisotropy, we still need the deconvolution to fix the $\text{sinc}^4$ "gravity pothole" caused by the mass assignment and force interpolation steps. Combining both of these frequency-space corrections gives us the final equation for the gravitational potential:
+
+$$\Phi_k = \rho_k \cdot \left(\frac{-4\pi G}{k^2}\right) \cdot \frac{\exp(-k^2 r_s^2)}{W(\mathbf{k})^2}$$
+
 By applying this filter, we erase the grid's ability to resolve any structure smaller than $r_s$. When we perform the Inverse FFT to bring this potential back into real space, the resulting gravitational field is no longer jagged, it no longer suffers from aliasing along the cell boundaries, and it is strictly non-repulsive. The long-range grid force is now guaranteed to be isotropic and smooth.
 
-By fixing the long-range force in frequency space, we eliminate the need for the subtractive scheme and its problems. However, by blurring the grid, we have also suppressed the strength of gravity at short distances. To recover the true physics, we must now define an exact short-range force to complement the newly smoothed grid.
+However, by blurring the grid, we have also suppressed the strength of gravity at short distances. To recover the true physics, we must now define an exact short-range force to complement the newly smoothed grid.
 
 ### The Exact Analytical Complement
 
@@ -672,26 +684,6 @@ Observe the behavior of this equation:
 * As $r \gg r_s$ (particles are far apart), the $\text{erfc}$ and exponential terms rapidly drop to zero, ensuring the PP force vanishes where the PM grid takes over.
 
 The sum of the Gaussian-filtered grid force and this $\text{erfc}$-damped PP force equals the true $1/r^2$ Newtonian force.
-
-### Architectural Trade-off
-
-Upgrading the gravity engine to Fourier-Split PM solves the stability and accuracy problems for the collisionless dark matter particles. However, in a **hybrid** simulation code—where dark matter is treated as Lagrangian particles and gas is treated on an Eulerian grid—this upgrade introduces an architectural tension.
-
-Dark matter particles have sub-grid resolution; they use the grid for long distances, but the PP step allows them to interact accurately even when they occupy the same grid cell. Gas, however, is strictly limited to the grid. It only feels the gravitational acceleration vector ($\mathbf{g}_{\text{comoving}}$) calculated directly from the grid's potential. It does not participate in the PP loop.
-
-If we apply the Gaussian filter $\exp(-k^2 r_s^2)$ to fix the gravity solver, we are intentionally blurring the gravitational potential at scales smaller than $r_s$.
-
-* The dark matter instantly gets that missing "sharpness" back during its PP step.
-* **The gas never gets it back.** If the gas is forced to use the filtered potential, its short-range gravitational pull is artificially weakened. As gas falls into a dark matter halo, it shock-heats and builds up immense thermal pressure. Normally, the sharp, strong gravity in the core of the halo overcomes this pressure, allowing the gas to compress tightly to form stars. By artificially blurring the grid's gravity, the thermal pressure wins. The gas stalls out, forming puffy clouds rather than dense galactic disks.
-
-Faced with this, computational astrophysicists must choose an architectural compromise. While complex solutions exist (such as computing two entirely different gravitational potentials—one sharp for the gas, one smooth for the dark matter), the historical and practical consensus is to simply **accept the loss of gas resolution**.
-
-This trade-off is justified by two realities of cosmological simulations:
-
-1. **Dark Matter is the Cosmic Skeleton:** Dark matter constitutes roughly 85% of the total matter in a standard $\Lambda$CDM universe. It is the dominant source of gravity. The gas does not dictate the shape of the cosmic web; it merely flows into the gravitational trenches excavated by the dark matter. If we use a mathematically broken force (like the classical subtractive scheme), the dark matter skeleton deforms, and the gas falls into a physically incorrect universe. A slightly puffy gas cloud inside a perfect dark matter halo is preferable to a sharp gas cloud trapped in a numerical grid artifact.
-2. **The Eulerian Resolution Limit:** The "loss" of gas resolution is actually an illusion. Eulerian hydrodynamics inherently suffers from numerical diffusion. MUSCL reconstruction requires a multi-cell stencil, and Riemann solvers average states across cell boundaries. Because of this, a fixed Eulerian grid physically cannot resolve any fluid structure that is smaller than 2 or 3 grid cells across anyway.
-
-If we use Fourier-Split PM and set our Gaussian smoothing scale ($r_s$) to roughly $1.25 \times \Delta x$, we are blurring the gravity at the *exact same scale* that the hydrodynamics is already blurred by the fluid solver. We aren't losing new physics; we are simply making the gravitational resolution match the native hydrodynamic resolution. By accepting this compromise, we secure energy conservation for the dark matter while keeping the gas stable.
 
 *Key Literature & Further Reading*  
 Bagla, J. S. (2002). *TreePM: A code for cosmological N-body simulations.* Journal of Astrophysics and Astronomy, 23(4), 185-196. Available at [https://arxiv.org/pdf/astro-ph/9911025](https://arxiv.org/pdf/astro-ph/9911025)
@@ -1732,6 +1724,26 @@ This acceleration, which is a force per unit mass, is then used to update the ga
 
 By applying these cosmological source terms to the gas grid within the same KDK integrator as the dark matter particles, we ensure that both components feel the same gravity and the same cosmic expansion, allowing them to evolve in a physically consistent manner.
 
+### The Fourier-Split Trade-off
+
+Upgrading the gravity engine to Fourier-Split PM solves the stability and accuracy problems for the collisionless dark matter particles. However, in a **hybrid** simulation code—where dark matter is treated as Lagrangian particles and gas is treated on an Eulerian grid—this upgrade introduces an architectural tension.
+
+Dark matter particles have sub-grid resolution; they use the grid for long distances, but the PP step allows them to interact accurately even when they occupy the same grid cell. Gas, however, is strictly limited to the grid. It only feels the gravitational acceleration vector ($\mathbf{g}_{\text{comoving}}$) calculated directly from the grid's potential. It does not participate in the PP loop.
+
+If we apply the Gaussian filter $\exp(-k^2 r_s^2)$ to fix the gravity solver, we are intentionally blurring the gravitational potential at scales smaller than $r_s$.
+
+* The dark matter instantly gets that missing "sharpness" back during its PP step.
+* **The gas never gets it back.** If the gas is forced to use the filtered potential, its short-range gravitational pull is artificially weakened. As gas falls into a dark matter halo, it shock-heats and builds up immense thermal pressure. Normally, the sharp, strong gravity in the core of the halo overcomes this pressure, allowing the gas to compress tightly to form stars. By artificially blurring the grid's gravity, the thermal pressure wins. The gas stalls out, forming puffy clouds rather than dense galactic disks.
+
+Faced with this, we must choose an architectural compromise. While complex solutions exist (such as computing two entirely different gravitational potentials—one sharp for the gas, one smooth for the dark matter), the historical and practical consensus is to simply **accept the loss of gas resolution**.
+
+This trade-off is justified by two realities of cosmological simulations:
+
+1. **Dark Matter is the Cosmic Skeleton:** Dark matter constitutes roughly 85% of the total matter in a standard $\Lambda$CDM universe. It is the dominant source of gravity. The gas does not dictate the shape of the cosmic web; it merely flows into the gravitational trenches excavated by the dark matter. If we use a mathematically broken force (like the classical subtractive scheme), the dark matter skeleton deforms, and the gas falls into a physically incorrect universe. A slightly puffy gas cloud inside a perfect dark matter halo is preferable to a sharp gas cloud trapped in a numerical grid artifact.
+2. **The Eulerian Resolution Limit:** The "loss" of gas resolution is actually an illusion. Eulerian hydrodynamics inherently suffers from numerical diffusion. MUSCL reconstruction requires a multi-cell stencil, and Riemann solvers average states across cell boundaries. Because of this, a fixed Eulerian grid physically cannot resolve any fluid structure that is smaller than 2 or 3 grid cells across anyway.
+
+If we use Fourier-Split PM and set our Gaussian smoothing scale ($r_s$) to roughly $1.25 \times \Delta x$, we are blurring the gravity at the *exact same scale* that the hydrodynamics is already blurred by the fluid solver. We aren't losing new physics; we are simply making the gravitational resolution match the native hydrodynamic resolution. By accepting this compromise, we secure energy conservation for the dark matter while keeping the gas stable.
+
 ### Initial Conditions for the Gaseous Component
 
 In cosmological simulations, the baryonic gas and the dark matter must be initialized to reflect the physical reality of the universe long after the epoch of recombination. By the time a typical simulation begins, the gas has already spent millions of years falling into the gravitational potential wells excavated by the dark matter. 
@@ -1987,6 +1999,18 @@ $$\frac{d}{dt}(ie_{\text{code}}) = -(3\gamma - 1)H \cdot ie_{\text{code}}$$
 
 The physical thermodynamic cooling ($-3(\gamma - 1)H$) intrinsically combines with the coordinate system's mathematical stretching ($-2H$) to produce a strict $-(3\gamma - 1)H$ decay requirement. To consistently simulate the cosmological $PdV$ work and prevent the expansion of the universe from artificially heating the gas, the integrator must drain the internal and total energy arrays at this mathematically derived rate.
 
+### The Optically Thin Approximation
+
+In our implementation of radiative cooling, when a gas cell cools down, we mathematically subtract that thermal energy from the grid and permanently delete it from the simulation. From a strict conservation standpoint, this means our simulated universe is an open system leaking energy.
+
+In the real universe, a photon emitted by a decelerating electron could indeed travel across space, strike another atom, and transfer its energy back into heat. To simulate this accurately, we would need to upgrade our hydrodynamics engine to **Radiation Hydrodynamics (RHD)** by solving the Radiative Transfer equation.
+
+However, doing so is computationally prohibitive. To avoid this, standard cosmological codes rely on the **Optically Thin Approximation**. We assume that the cosmic gas is "optically thin," meaning it is transparent to its own radiation.
+
+For the hot plasmas found inside collapsed dark matter halos, this is a good physical assumption. Even though the gas is compressed by gravity, cosmological densities are still a hard vacuum. When a high-energy X-ray photon is emitted via Bremsstrahlung cooling, its mean free path is so large that it will almost certainly sail entirely out of the galaxy, out of the dark matter halo, and completely out of the simulation box without ever striking another atom. Therefore, assuming the photon escapes into the void and permanently deleting its energy from the computational domain is a reliable representation of the physics.
+
+There are, of course, specific environments where this approximation breaks down. When gas condenses into star-forming molecular clouds, it becomes "optically thick" and opaque, trapping heat inside. Furthermore, during the Epoch of Reionization, dense neutral hydrogen violently absorbed incoming Ultraviolet light from the first stars. To account for these complex radiation effects without actually running a Radiative Transfer solver, modern simulations employ sub-grid approximations—mathematical rules that reproduce physics occurring on scales smaller than a single grid cell. A common technique is to assume the universe is bathed in a uniform, invisible glow of UV light, which we mimic by enforcing an artificial temperature floor—such as the 10,000 K atomic cooling limit—preventing the diffuse gas from cooling below the thermodynamic baseline set by this universal radiation background.
+
 *Key Literature & Further Reading*  
 **Radiative Physics:**  
 Rybicki, G. B., & Lightman, A. P. (1979). *Radiative Processes in Astrophysics*. Wiley-VCH. (See Chapter 5 for the derivation of the Thermal Bremsstrahlung cooling rates).
@@ -2049,11 +2073,9 @@ Passing this standard suite of tests provides strong confidence that a hydrodyna
 
 Computational cosmology simulations are filled with different components. Dark matter particles interact only through gravity, a long-range force that can be relatively slow. Baryonic gas, however, interacts through hydrodynamic pressure, leading to shock waves that propagate at very high speeds, and it radiates thermal energy, which can cause temperatures to drop very fast.
 
-This creates a challenge: the simulation evolves on many different timescales simultaneously. In the dense center of a collapsing halo, the time it takes for gas to radiate away its energy might be just a few thousand years, and the time it takes for a sound wave to cross a single grid cell might be a microsecond. Meanwhile, in the cold, empty void, the time it takes for a particle to move significantly under gravity might be a million years.
+This creates a challenge: the simulation evolves on many different timescales simultaneously. If we were to use a single, "fixed" timestep ($\Delta t$) for the entire simulation, we would be forced to choose the *smallest* possible timescale. This would make the simulation to waste resources where bigger steps could be safely taken.
 
-If we were to use a single, "fixed" timestep ($\Delta t$) for the entire simulation, we would be forced to choose the *smallest* possible timescale—the microsecond from that one hot cell. This would grind the entire simulation to a halt, spending billions of calculations moving distant particles by imperceptible amounts.
-
-The solution is the **adaptive timestep**. At every cycle, the shortest timescale required to maintain stability for every physical component is computed. The final timestep used to advance the simulation is the minimum of all of these, ensuring both physical accuracy and computational efficiency.
+A solution to this problem is the **adaptive timestep**. At every cycle, the shortest timescale required to maintain stability for every physical component is computed. The final timestep used to advance the simulation is the minimum of all of these, ensuring both physical accuracy and computational efficiency.
 
 ### The Courant-Friedrichs-Lewy (CFL) Condition for hydrodynamics
 
@@ -2113,6 +2135,83 @@ This ensures that the simulation proceeds as fast as possible while respecting t
 
 *Key Literature & Further Reading*  
 Bryan, G. L., Norman, M. L., O'Shea, B. W., et al. (2014). *ENZO: An Adaptive Mesh Refinement Code for Astrophysics*. The Astrophysical Journal Supplement Series, 211(2), 19. arXiv:1307.2265. Available at [https://arxiv.org/abs/1307.2265](https://arxiv.org/abs/1307.2265)
+
+## Subcycled Operator Splitting
+
+In the previous chapters, we proposed the use of an adaptive timestep. To maintain numerical stability, the global simulation clock must tick forward at a rate dictated by the fastest physical process occurring anywhere in the simulation.
+
+However, this creates a computational bottleneck. A simulation consists of multiple physical operators—gravity, hydrodynamics, and thermodynamics. These processes evolve on different timescales. At a given instant, particle-particle (PP) gravitational interactions might require a timestep of just 10,000 years to remain stable. Meanwhile, the hydrodynamics solver might allow a step of 2 million years.
+
+If we force the entire simulation to step together using a single global timestep (the minimum of all constraints), we still waste computational power. We are forcing the hydrodynamics solver to run hundreds of times simply because gravity is acting quickly.
+
+The **Subcycled Operator splitting** is an architectural solution to this timescale mismatch. Instead of locking all physics to the tightest constraint, we decouple the operators. The simulation advances using a large global timestep (the "macro-step") dictated by the *slowest* physics, while the faster, more restrictive physical processes run in a localized loop (the "micro-steps") to catch up.
+
+### Adaptive Multirate Operator Splitting
+
+The standard Kick-Drift-Kick (KDK) integrator separates the physics sequentially: it applies a gravitational "Kick" for half a step, a "Drift" for a full step, and then a second "Kick" for a half step. This symmetric $A/2 \to B \to A/2$ structure is mathematically known as **Strang Splitting**, and it guarantees second-order accuracy. Operator subcycling takes this splitting a step further by nesting loops inside the operators without breaking the outer symmetry. A robust way to handle this in a cosmological context is through an **Adaptive Multirate Operator Splitting scheme**.
+
+This dynamic subcycling engine evaluates both the gravitational timestep limit ($\Delta t_{\text{grav}}$) and the hydrodynamic CFL limit ($\Delta t_{\text{hydro}}$) at the start of every cycle. It then designates the *larger* of the two as the global **macro-step**, and the *smaller* to be subcycled.
+
+$$\Delta t_{\text{macro}} = \max(\Delta t_{\text{hydro}}, \Delta t_{\text{grav}})$$
+
+This macro-step is then capped by the cosmological expansion limiter (e.g., ensuring the universe expands by no more than 1% per step) and any user-defined maximums to ensure the simulation doesn't skip past critical output snapshots.
+
+* **If Gravity is Slow ($\Delta t_{\text{grav}} > \Delta t_{\text{hydro}}$):** The overall cycle advances by the gravity timestep. Because the gas flows faster than the dark matter, it must take multiple sub-steps. However, if the gas were to drift without feeling gravity for the entire macro-step, it would artificially expand out of dark matter halos. To solve this, we employ a predictor-corrector approach: we compute an approximation of the future gravitational field to guide the gas, and linearly interpolate it, allowing the gas to undergo a full sequence of micro-KDK steps against a smoothly evolving background potential.
+    
+    1. **Compute Macro-Forces & Macro-Kick 1:** Calculate (or retrieve) the current gravitational field and save it as our "old" state. Apply the gravity and expansion kicks to the dark matter for $\Delta t_{\text{macro}} / 2$.
+    2. **Macro-Drift (Dark Matter):** Advance the collisionless dark matter positions by $\Delta t_{\text{macro}}$.
+    3. **Predictor Force Solve:** Advance the global scale factor to the end of the macro-step and solve Poisson's equation. Because the dark matter has moved but the gas has not, this yields an accurate *predictor* of the future gravitational field.
+    4. **Interpolated Gas Subcycling:** Enter an iterative subcycling loop. Dynamically re-evaluate $\Delta t_{\text{hydro}}$ based on the shifting gas state, and run the hydrodynamics solver repeatedly until the gas time catches up to $\Delta t_{\text{macro}}$. Inside this loop, the gas undergoes its own KDK sequence:  
+        * **Interpolation:** Calculate a blending factor ($\alpha$) based on the current sub-step time. Linearly interpolate the "old" and "predictor" scale factors, Hubble parameters, and gravitational forces to the midpoint of the sub-step.
+        * **Micro-Kick 1 (Gas):** Apply the interpolated gravity and expansion kicks to the gas for $\Delta t_{\text{hydro}} / 2$.
+        * **Hydro Drift:** Advance the fluid solver (and apply radiative cooling) for $\Delta t_{\text{hydro}}$.
+        * **Micro-Kick 2 (Gas):** Apply the interpolated gravity and expansion kicks to the gas for the remaining $\Delta t_{\text{hydro}} / 2$.
+
+    5. **Corrector Force Solve:** With the gas and dark matter now fully synchronized at the end of the macro-step, solve Poisson's equation a second time to obtain the true, final gravitational field.
+    6. **Macro-Kick 2 (Dark Matter):** Apply the true, synchronized gravity kick to the dark matter for the remaining $\Delta t_{\text{macro}} / 2$.
+
+* **If Gravity is Fast ($\Delta t_{\text{grav}} < \Delta t_{\text{hydro}}$):** The overall cycle advances by the hydrodynamics timestep. To maintain the Strang splitting symmetry, we must split the gravity subcycles into two halves wrapping the single hydro step.
+
+    1. **First Gravity Half-Cycle:** Enter a `while` loop to advance gravity by $\Delta t_{\text{macro}} / 2$. Inside this loop, the particles undergo smaller KDK steps (Kick, Drift, Recompute Forces, Kick). Because the universe is expanding, the scale factor ($a$) and Hubble parameter ($H$) used for these micro-kicks must be linearly interpolated to the sub-step time. During this phase, the gas density is "frozen", providing a static background potential for the dark matter.
+    2. **Macro-Drift (Gas):** The hydrodynamics solver takes a single, large step to advance the gas grid by $\Delta t_{\text{macro}}$.
+    3. **Second Gravity Half-Cycle:** Enter a second `while` loop to advance the gravity by the remaining $\Delta t_{\text{macro}} / 2$, using the newly updated, post-hydro gas density to source the Poisson solver.
+
+### Decoupling the Thermodynamics
+
+Noticeably absent from the macro-step logic is the cooling timestep ($\Delta t_{\text{cool}}$). Because radiative cooling is a stiff equation, we utilize an implicit integration scheme (the Newton-Raphson Backward Euler method). This way, cooling is unconditionally stable over large leaps in time. We handle it through **local cell subcycling**.
+
+During the Hydrodynamics "Drift" stage, whether it is taking a micro-step or a macro-step, the fluid solver iterates over the grid. If a specific gas cell has a cooling timescale shorter than the current hydro step, that individual cell enters its own private `while` loop. 
+
+To determine the size of these micro-steps, we evaluate the instantaneous cooling timescale ($t_{\text{cool}} = \frac{\rho u}{\Lambda}$) for the cell. To ensure the implicit solver remains accurate, the cell restricts its thermodynamic micro-step to a safe fraction—typically 10%—of this timescale:
+
+$$\Delta t_{\text{cell}} = 0.1 \times \frac{\rho u}{\Lambda}$$
+
+Breaking the hydro step down into these thermodynamic micro-steps allows the gas to resolve its energy loss without slowing down the simulation.
+
+### Accuracy and Symplecticity in a Subcycled Architecture
+
+For a cosmological simulation running for millions of steps, second-order accuracy is a requirement. As introduced earlier, our architecture achieves this through the time-centering of the **Strang Splitting**. Because we apply half the gravity, flow the gas for a full step, and then apply the second half of the gravity, the sequence of operations is perfectly symmetric.
+
+Strang splitting does not dictate the internal complexity of the middle operator; it strictly requires temporal symmetry. In our subcycled architecture, this central operator might consist of a single hydrodynamic advance, or it may encompass an iterative subcycling loop that evolves the gas against an interpolated background potential. From a mathematical perspective, the number of internal micro-steps is irrelevant. Provided the outer operator is advanced for half a timestep before the inner sequence begins, and half a timestep after it concludes, the time-reversibility of the algorithm is preserved, guaranteeing that the global simulation remains second-order accurate.
+
+#### The Symplectic Nature of Subcycled KDK
+
+As established in earlier chapters, a symplectic integrator (like KDK leapfrog) is designed to preserve the volume of phase space, preventing the energy drift of non-symplectic methods. We will now consider if a subcycled KDK scheme retains this property.
+
+A powerful property of symplectic integrators is that **the composition of any number of symplectic maps is itself a symplectic map.** If we look at the regime where gravity is subcycling, the dark matter takes dozens of tiny micro-KDK steps while the gas grid is temporarily frozen. A single micro-KDK step is symplectic. Therefore, stacking fifty micro-KDK steps in a row is mathematically symplectic. Evolving the gas, and then doing another fifty micro-KDK steps, is still symplectic. Because the subcycling loops are built out of symplectic building blocks, the dark matter integration retains its strict phase-space preservation.
+
+On the other hand, symplectic integration strictly requires the physics to be governed by a **Hamiltonian system**—a framework where processes are fundamentally reversible and the volume of phase space is perfectly conserved. The moment we introduce hydrodynamics, our simulation breaks these rules. Gas physics is inherently dissipative and irreversible. When gas flows collide, supersonic shocks irreversibly generate entropy. Furthermore, with radiative cooling active, the gas actively deletes its own thermal energy by emitting photons into the void. Because these processes permanently destroy phase-space information and leak energy out of the system, the total combined simulation physically cannot be symplectic.
+
+Ultimately, the non-symplectic nature of the combined system is not a consequence of operator subcycling; it is an unavoidable—and necessary—reality of simulating baryonic matter. By marrying these operators in a Strang-split architecture, we maintain the baseline physics of the simulation: the collisionless dark matter remains symplectic, while the gas models the dissipative, irreversible thermodynamics required to forge galaxies—all without sacrificing the global second-order accuracy of the solver.
+
+*Key Literature & Further Reading*  
+Springel, V. (2005). *The cosmological simulation code GADGET-2. Monthly Notices of the Royal Astronomical Society*, 364(4), 1105-1134. arXiv:astro-ph/0505010. Available at [https://arxiv.org/abs/astro-ph/0505010](https://arxiv.org/abs/astro-ph/0505010)
+
+Almgren, A. S., Bell, J. B., Lijewski, M. J., Lukić, Z., & Van Andel, E. (2013). *Nyx: A massively parallel AMR code for computational cosmology*. The Astrophysical Journal, 765(1), 39. Available at [https://arxiv.org/pdf/1301.4498](https://arxiv.org/pdf/1301.4498)
+
+Strang, G. (1968). *On the construction and comparison of difference schemes.* SIAM Journal on Numerical Analysis, 5(3), 506-517. Available at [https://www.pas.rochester.edu/astrobear/raw-attachment/blog/shuleli08202013/Strang1968.pdf](https://www.pas.rochester.edu/astrobear/raw-attachment/blog/shuleli08202013/Strang1968.pdf)
+
+
 
 ## Architectures of Cosmological Simulations
 
@@ -2247,7 +2346,16 @@ On an energy evolution plot, these physical processes tell a clear, chronologica
 
 ### Maximum Gas Density Evolution
 
-To understand how tightly the baryonic matter is compressing, we can track the single densest gas cell in the simulation over time. This metric exposes the ongoing battle between gravitational collapse and thermal pressure.
+To understand how tightly the baryonic matter is compressing, we can track the densest gas cell in the simulation over time. This metric exposes the ongoing battle between gravitational collapse and thermal pressure.
+
+#### Tracking Hydrogen Number Density
+
+Instead of plotting the raw bulk mass density of the fluid ($\rho$), it is the industry standard to track the **Hydrogen number density** ($n_H$), measured in particles per cubic centimeter ($\text{cm}^{-3}$). There are two main reasons for this:
+
+1. **Composition and Collisions:** The primordial universe is roughly 76% hydrogen by mass. The physical processes that drive galaxy evolution—such as radiative cooling and star formation—depend on how frequently individual particles collide, which is dictated by number density, not just overall mass.
+2. **Observational Parity:** Astronomers cannot easily "weigh" a distant gas cloud, but they can count hydrogen atoms by measuring the light absorbed or emitted by them. Plotting $n_H$ allows direct comparisons between our simulated universe and telescope data.
+
+To calculate this metric from the simulation data, we must convert our internal code variables into physical units. We first divide the comoving mass density by the expansion factor cubed (**a³**) to find the true physical density. We then multiply by the primordial hydrogen mass fraction (**$X_H = 0.76$**) to isolate the hydrogen mass, and finally divide by the mass of a single proton to count the exact number of atoms per unit volume.
 
 #### The Physics of Gas Compression
 
@@ -2255,7 +2363,7 @@ As gas falls into a dark matter halo, gravity forces it into an increasingly sma
 
 #### Expected Simulation Behavior
 
-* **The Expansion-Dominated Phase:** In the very early universe, the maximum physical density curve will actually drop. During this linear regime, the physical expansion of the universe ($1/a^3$) outpaces the slow gravitational assembly of the initial dark matter clumps, causing the gas to dilute.
+* **The Expansion-Dominated Phase:** In the very early universe, the maximum physical density curve will drop. During this linear regime, the physical expansion of the universe outpaces the slow gravitational assembly of the initial dark matter clumps, causing the gas to dilute.
 * **Turnaround and Collapse:** As dark matter halos grow massive enough to overcome the background Hubble expansion—a threshold known as "turnaround"—the gas is aggressively pulled into these deepening potential wells. At this point, the density curve reverses course and begins to rise steeply, mirroring the non-linear structure growth.
 * **Late Epochs and Core Collapse:** In a healthy, fully featured simulation (with active radiative cooling and high spatial resolution), this curve will continue to climb dramatically. As the gas radiates away its shock-heated thermal energy, it loses outward pressure support and collapses deeply into the halo cores, achieving the extreme densities necessary to trigger star formation. *Conversely*, in a purely adiabatic simulation (without cooling) or one limited by coarse grid resolution, this curve will prematurely flatten out and hit an artificial ceiling. In those restricted scenarios, the unabated thermal pressure physically prevents the gas from compressing any further than a few grid cells across.
 

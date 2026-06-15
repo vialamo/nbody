@@ -530,16 +530,44 @@ double GasGrid::apply_cooling(double dt, double a) {
         double local_rho = d_rho[i];
 
         if (local_rho > density_floor) {
-            double u_old = d_ie[i] / local_rho;
-            int iters = 0;
-            double u_new = cooling::solve_cooling_implicit(u_old, local_rho, a,
-                                                           dt, config, iters);
+            double u_current = d_ie[i] / local_rho;
+            double u_initial = u_current;  // Save the starting energy
 
-            if (iters >= cooling::MAX_ITER) {
+            double t_evolved = 0.0;
+            int cell_non_converged = 0;
+
+            // Local Cell Subcycling
+            while (t_evolved < dt) {
+                // Determine a sub-step for this cell (e.g., max 10% energy
+                // change)
+                double lambda = cooling::compute_cooling_rate(
+                    u_current, local_rho, a, config);
+
+                double dt_cell =
+                    (lambda > 0.0) ? 0.1 * (u_current / lambda) : dt;
+
+                // Ensure we don't overshoot the global hydro timestep
+                dt_cell = std::min(dt_cell, dt - t_evolved);
+
+                // Run the implicit solver for this tiny step
+                int iters = 0;
+                u_current = cooling::solve_cooling_implicit(
+                    u_current, local_rho, a, dt_cell, config, iters);
+
+                if (iters >= cooling::MAX_ITER) {
+                    cell_non_converged++;
+                }
+
+                t_evolved += dt_cell;
+            }
+
+            // Log if the cell struggled during any subcycle
+            if (cell_non_converged > 0) {
                 non_converged_count++;
             }
 
-            double delta_u = u_old - u_new;
+            // Calculate the total energy lost over the entire hydro step
+            double delta_u = u_initial - u_current;
 
             if (delta_u > 0.0) {
                 double delta_E_vol = delta_u * local_rho;
@@ -569,7 +597,7 @@ double GasGrid::get_cooling_timestep(double a) const {
     const double* d_ie = internal_energy.array().data();
     const double density_floor = 1e-12;
 
-    // Calculate the physical cooling floor once before entering the OpenMP loop
+    // Calculate the physical cooling floor
     double target_floor_k =
         std::max(cooling::RADIATIVE_FLOOR_K, config.TEMP_FLOOR_KELVIN);
     double u_rad_floor =

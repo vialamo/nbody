@@ -13,7 +13,10 @@ void Diagnostics::add_time(TimerRegion region, double time_sec) {
     accumulated_times[static_cast<size_t>(region)] += time_sec;
 }
 
-void Diagnostics::increment_cycle() { cycle++; accumulated_cycles++; }
+void Diagnostics::increment_cycle() {
+    cycle++;
+    accumulated_cycles++;
+}
 
 double Diagnostics::get_average(TimerRegion region) const {
     if (accumulated_cycles == 0) return 0.0;
@@ -21,7 +24,7 @@ double Diagnostics::get_average(TimerRegion region) const {
 }
 
 double Diagnostics::get_io_time() const {
-    // I/O is usually a single spike, so we just return the raw accumulated time
+    // I/O is usually a single spike, so we just return the accumulated time
     return accumulated_times[static_cast<size_t>(TimerRegion::IO)];
 }
 
@@ -34,6 +37,7 @@ double Diagnostics::get_average_overhead() const {
 
 void Diagnostics::reset_accumulators() {
     accumulated_times.fill(0.0);
+    accumulated_substeps.fill(0);
     accumulated_cycles = 0;
 }
 
@@ -44,17 +48,17 @@ double Diagnostics::total_energy() const {
     return ke_dm + ke_gas + ie_gas + pe_total + total_radiated_energy;
 }
 
-void Diagnostics::update_physics(const SimState& state, double dt,
+void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
                                  const Config& config) {
     // Basic State
     this->sim_time = state.total_time;
     this->scale_factor = state.scale_factor;
 
     // Stability
-    this->dt_cfl = state.gas.get_cfl_timestep();
-    this->dt_gravity = state.dm.get_gravity_timestep(config);
-    this->dt_cool = state.gas.get_cooling_timestep(state.scale_factor);
-    this->dt_final = dt;
+    this->dt_cfl = ts.dt_hydro;
+    this->dt_gravity = ts.dt_grav;
+    this->dt_cool = ts.dt_cool;
+    this->dt_final = ts.dt_macro;
 
     if (config.USE_HYDRO) {
         this->max_gas_density = state.gas.get_density().maxCoeff();
@@ -65,7 +69,8 @@ void Diagnostics::update_physics(const SimState& state, double dt,
                                      .sqrt()
                                      .maxCoeff();
 
-        this->non_converged_cooling_cells = state.gas.get_cooling_failed_cells();
+        this->non_converged_cooling_cells =
+            state.gas.get_cooling_failed_cells();
     }
 
     // Conservation (Particles)

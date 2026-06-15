@@ -1,9 +1,11 @@
 #pragma once
+#include <chrono>
+
 #include "config.h"
-#include "state.h"
-#include "logger.h"
 #include "diagnostics.h"
 #include "hdf5_writter.h"
+#include "logger.h"
+#include "state.h"
 
 enum class ExitStatus { ReachedMaxScaleFactor, ReachedMaxCycles, UserAborted };
 
@@ -13,8 +15,9 @@ class SimulationEngine {
     bool needs_more_cycles = true;
     int cycle_count = 0;
     int snapshot_count = 0;
-    double current_dt = 0.0;
     double next_output_a = 0.0;
+    TimestepInfo current_ts;
+    std::chrono::time_point<std::chrono::high_resolution_clock> last_debug_time;
 
     Config& config;
     Logger& logger;
@@ -23,12 +26,12 @@ class SimulationEngine {
 
     SimState state;
 
-    double get_timestep() const;
+    TimestepInfo get_timestep() const;
     void step();
 
    public:
-
-    SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5, Diagnostics& diag);
+    SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5,
+                     Diagnostics& diag);
 
     ExitStatus run();
     void request_stop() { stop_requested = true; }

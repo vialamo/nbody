@@ -153,8 +153,8 @@ void Config::load(const std::string& filename) {
 
     SAVE_HDF5_EVERY_DELTA_A = config_file.get_double(
         "output", "save_hdf5_every_delta_a", SAVE_HDF5_EVERY_DELTA_A);
-    DEBUG_INFO_EVERY_CYCLES = config_file.get_int(
-        "output", "debug_info_every_cycles", DEBUG_INFO_EVERY_CYCLES);
+    DEBUG_INFO_EVERY_SECONDS = config_file.get_int(
+        "output", "debug_info_every_seconds", DEBUG_INFO_EVERY_SECONDS);
     ENABLE_ENERGY_DIAGNOSTICS = config_file.get_bool(
         "output", "enable_energy_diagnostics", ENABLE_ENERGY_DIAGNOSTICS);
 

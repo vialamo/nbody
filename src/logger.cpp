@@ -80,7 +80,8 @@ void Logger::write_header() {
         << "dt_cfl,dt_gravity,dt_cool,dt_final,"
         << "max_gas_density,max_gas_pressure,max_gas_velocity,"
         << "wall_time_total,wall_time_pm,wall_time_pp,wall_time_hydro,"
-           "wall_time_io,cumulative_wall_time,memory_peak,memory_current\n";
+           "wall_time_io,cumulative_wall_time,memory_peak,memory_current,"
+        << "avg_substeps_hydro,avg_substeps_gravity\n";
     header_written = true;
 }
 
@@ -118,7 +119,9 @@ void Logger::log(const Diagnostics& diag) {
                  << diag.get_average(TimerRegion::PP) << ","
                  << diag.get_average(TimerRegion::Hydro) << ","
                  << diag.get_io_time() << "," << wall_time_s << "," << peak_mem
-                 << "," << curr_mem << "\n";
+                 << "," << curr_mem << "," 
+                 << diag.get_average_substeps(SubstepCounter::Hydro) << ","
+                 << diag.get_average_substeps(SubstepCounter::Gravity) << "\n";
     }
 
     // Write to stdout (console)
@@ -155,11 +158,16 @@ void Logger::log(const Diagnostics& diag) {
               << " (Total: " << format_double(diag.total_energy(), 3, true)
               << ")" << "\n";
 
-    std::cout << "  [Stability]" << "\n";
-    std::cout << "    - Timestep (CFL): " << format_double(diag.dt_cfl, 2, true)
+    std::cout << "  [Stability]\n";
+    std::cout << "    - Timestep (Macro): " << format_double(diag.dt_final, 2, true)
               << " | (Grav): " << format_double(diag.dt_gravity, 2, true)
+              << " | (CFL): " << format_double(diag.dt_cfl, 2, true)
               << " | (Cool): " << format_double(diag.dt_cool, 2, true)
-              << " | (Final): " << format_double(diag.dt_final, 2, true)
+              << "\n";
+    std::cout << "    - Subcycles/step:   Hydro: " 
+              << format_double(diag.get_average_substeps(SubstepCounter::Hydro), 1)
+              << " | Gravity: " 
+              << format_double(diag.get_average_substeps(SubstepCounter::Gravity), 1) 
               << "\n";
     std::cout << "    - Max(rho): "
               << format_double(diag.max_gas_density, 2, true)

@@ -7,6 +7,7 @@
 #include "state.h"
 
 enum class TimerRegion { Step, PM, PP, Hydro, IO, NUM_REGIONS };
+enum class SubstepCounter { Hydro, Gravity, NUM_COUNTERS };
 
 class Diagnostics {
    private:
@@ -29,6 +30,8 @@ class Diagnostics {
     std::array<double, static_cast<size_t>(TimerRegion::NUM_REGIONS)>
         accumulated_times{};
     int accumulated_cycles = 0;
+    std::array<int, static_cast<size_t>(SubstepCounter::NUM_COUNTERS)>
+        accumulated_substeps{};
 
     friend class Logger;
 
@@ -46,9 +49,21 @@ class Diagnostics {
     double total_mass() const;
     double total_energy() const;
 
-    void update_physics(const SimState& state, double dt, const Config& config);
+    void update_physics(const SimState& state, const TimestepInfo& ts,
+                        const Config& config);
 
     void add_radiated_energy(double e) { total_radiated_energy += e; }
+
+    void add_substeps(SubstepCounter counter, int count = 1) {
+        accumulated_substeps[static_cast<size_t>(counter)] += count;
+    }
+
+    double get_average_substeps(SubstepCounter counter) const {
+        if (accumulated_cycles == 0) return 0.0;
+        return static_cast<double>(
+                   accumulated_substeps[static_cast<size_t>(counter)]) /
+               accumulated_cycles;
+    }
 };
 
 class ScopedTimer {

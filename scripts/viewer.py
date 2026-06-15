@@ -12,6 +12,31 @@ from vispy.scene.visuals import Volume, Markers, Text
 from vispy.color import Colormap
 from vispy.io import write_png
 
+def compute_cic_density(p_x, p_y, p_z, p_mass, domain_size, mesh_size):
+    """Cloud-in-Cell mass splatting to estimate density."""
+    N = mesh_size
+    grid = np.zeros((N, N, N), dtype=np.float32)
+    
+    x = (p_x / domain_size) * N
+    y = (p_y / domain_size) * N
+    z = (p_z / domain_size) * N
+    
+    ix, iy, iz = np.floor(x).astype(int) % N, np.floor(y).astype(int) % N, np.floor(z).astype(int) % N
+    fx, fy, fz = x - np.floor(x), y - np.floor(y), z - np.floor(z)
+    ix1, iy1, iz1 = (ix + 1) % N, (iy + 1) % N, (iz + 1) % N
+    
+    np.add.at(grid, (ix, iy, iz), (1-fx)*(1-fy)*(1-fz) * p_mass)
+    np.add.at(grid, (ix1, iy, iz), fx*(1-fy)*(1-fz) * p_mass)
+    np.add.at(grid, (ix, iy1, iz), (1-fx)*fy*(1-fz) * p_mass)
+    np.add.at(grid, (ix1, iy1, iz), fx*fy*(1-fz) * p_mass)
+    
+    np.add.at(grid, (ix, iy, iz1), (1-fx)*(1-fy)*fz * p_mass)
+    np.add.at(grid, (ix1, iy, iz1), fx*(1-fy)*fz * p_mass)
+    np.add.at(grid, (ix, iy1, iz1), (1-fx)*fy*fz * p_mass)
+    np.add.at(grid, (ix1, iy1, iz1), fx*fy*fz * p_mass)
+    
+    return grid
+
 class True3DViewer:
     def __init__(self, run_dir):
         self.run_dir = run_dir
@@ -27,6 +52,7 @@ class True3DViewer:
         
         self.current_frame = 0
         self.is_playing = False
+        self.fixed_colormap = True
         
         self.setup_canvas()
         self.update_frame(0)
@@ -44,6 +70,40 @@ class True3DViewer:
                     config_attr = f['Config'].attrs
                     self.domain_size = config_attr.get('domain_size', 1.0)
                     self.use_hydro = bool(config_attr.get('use_hydro', 0))
+                    mesh_size = config_attr.get('mesh_size', 64)
+                
+                print("Reading the final snapshot to establish stable colormap bounds...")
+                with h5py.File(self.snapshot_files[-1], 'r', libver='latest', swmr=True) as f:
+                    # Pre-calculate Gas Extents
+                    if self.use_hydro and 'Gas' in f:
+                        if 'Gas/temperature' in f:
+                            temp = f['Gas/temperature'][:]
+                        else:
+                            pressure = f['Gas/pressure'][:]
+                            density = f['Gas/density'][:]
+                            KB, M_H = 1.380649e-16, 1.6726219e-24
+                            MU = f['Config'].attrs.get('primordial_mu', 1.22)
+                            v_unit = f['Units'].attrs.get('unit_velocity_in_cgs', 1.0)
+                            temp = (pressure / density) * (v_unit**2) * (MU * M_H / KB)
+                            
+                        self.global_t_max_log = np.max(np.log10(np.clip(temp, 10.0, None)))
+                        self.global_t_min_log = 1.0  # Safe floor of 10 K
+                    else:
+                        self.global_t_min_log, self.global_t_max_log = 1.0, 5.0
+
+                    # Pre-calculate DM Density Extents
+                    if 'Particles/position_x' in f:
+                        pos_x = f['Particles/position_x'][:]
+                        pos_y = f['Particles/position_y'][:]
+                        pos_z = f['Particles/position_z'][:]
+                        mass  = f['Particles/mass'][:]
+                        
+                        dm_grid = compute_cic_density(pos_x, pos_y, pos_z, mass, self.domain_size, mesh_size)
+                        safe_dens = np.clip(dm_grid, 1e-10, None)
+                        self.global_dm_max_log = np.max(np.log10(safe_dens))
+                        self.global_dm_min_log = np.min(np.log10(safe_dens))
+                    else:
+                        self.global_dm_min_log, self.global_dm_max_log = -10.0, 0.0
             
             if not initial:
                 print(f"Refreshed: Now seeing {self.num_frames} frames.")
@@ -54,17 +114,57 @@ class True3DViewer:
             else:
                 print(f"Warning: Refresh failed ({e}). Try again.")
 
-    def setup_canvas(self):
-        self.canvas = scene.SceneCanvas(keys='interactive', size=(1000, 800), show=True, bgcolor='black', title="Cosmological Render")
-        self.view = self.canvas.central_widget.add_view()
+    def update_colorbar_labels(self, t_min_log, t_max_log):
+        """Update the colorbar labels with current temperature range."""
+        if hasattr(self, 'cbar_min'):
+            self.cbar_min.text = f"10e{t_min_log:.1f} K"
+            self.cbar_max.text = f"10e{t_max_log:.1f} K"
+
+    def setup_with_colorbar(self):
+        """Setup canvas with a separate colorbar widget."""
+        from vispy.scene.widgets import Grid, ViewBox
         
+        # Create a grid layout
+        self.grid = self.canvas.central_widget.add_grid()
+        
+        # Main 3D view (takes most space)
+        self.view = self.grid.add_view(row=0, col=1, col_span=10)
         self.view.camera = scene.cameras.TurntableCamera(
-            fov=45, 
-            elevation=20, 
-            azimuth=30, 
-            distance=self.domain_size * 2.5
+            fov=45, elevation=20, azimuth=30, distance=self.domain_size * 2.5
         )
         self.view.camera.center = (self.domain_size/2, self.domain_size/2, self.domain_size/2)
+        
+        # Colorbar view
+        cbar_view = self.grid.add_view(row=0, col=0, col_span=1)
+        cbar_view.camera = scene.cameras.PanZoomCamera(aspect=0.3, rect=(0, 0, 1, 1))
+        
+        # Create the colorbar visual
+        n_colors = 256
+        colors = plt.get_cmap('plasma')(np.linspace(0, 1, n_colors))
+        
+        # Use a series of rectangles
+        rect_height = 1.0 / n_colors
+        
+        for i in range(n_colors):
+            rect = scene.visuals.Rectangle(
+                center=(0.5, i * rect_height + rect_height/2),
+                width=0.2,
+                height=rect_height,
+                color=colors[i],
+                parent=cbar_view.scene
+            )
+        
+        # Add labels
+        self.cbar_min = Text("10³ K", color='white', pos=(0.5, 0.0), anchor_x='center', 
+                             anchor_y='bottom', parent=cbar_view.scene, font_size=8)
+        self.cbar_max = Text("10⁷ K", color='white', pos=(0.5, 1.0), anchor_x='center', 
+                             anchor_y='top', parent=cbar_view.scene, font_size=8)
+
+    def setup_canvas(self):
+        self.canvas = scene.SceneCanvas(keys='interactive', size=(1000, 800), show=True, 
+                                        bgcolor='black', title="Cosmological Simulation Viewer")
+
+        self.setup_with_colorbar()
 
         # Create an Alpha-Gradient Colormap
         colors = plt.get_cmap('plasma')(np.linspace(0, 1, 256))
@@ -76,12 +176,14 @@ class True3DViewer:
         # Setup Gas Volume
         self.volume = None
         if self.use_hydro:
-            self.volume = Volume(np.zeros((2, 2, 2)), cmap=self.custom_cmap, method='translucent', parent=self.view.scene)
+            self.volume = Volume(np.zeros((2, 2, 2)), cmap=self.custom_cmap, 
+                                 method='translucent', parent=self.view.scene)
             # Read mesh size from the first file to scale the volume properly
             with h5py.File(self.snapshot_files[0], 'r') as f:
                 N = f['Config'].attrs.get('mesh_size', 64)
             scale_factor = self.domain_size / N
-            self.volume.transform = scene.transforms.STTransform(scale=(scale_factor, scale_factor, scale_factor))
+            self.volume.transform = scene.transforms.STTransform(
+                scale=(scale_factor, scale_factor, scale_factor))
 
         # Setup Dark Matter Particles
         self.particles = Markers(parent=self.view.scene)
@@ -103,13 +205,14 @@ class True3DViewer:
         
         print("\n--- Controls ---")
         print("[Spacebar] : Play / Pause")
-        print("[Right Arrow] : Next Frame")
-        print("[Left Arrow]  : Previous Frame")
-        print("[F5]          : Refresh Folder to load new frames")
+        print("[Right Arrow] : Next snapshot")
+        print("[Left Arrow]  : Previous snapshot")
+        print("[F5]          : Refresh folder to load new snapshots")
         print("[E]           : Export all frames as clean PNGs")
-        print("[Left Mouse]  : Rotate Camera")
-        print("[Scroll]      : Zoom In/Out")
-        print("[Shift + Left] : Pan Camera")
+        print("[C]           : Toggle fixed / dynamic colormap")
+        print("[Left Mouse]  : Rotate camera")
+        print("[Scroll]      : Zoom in/out")
+        print("[Shift + Left] : Pan camera")
 
     def update_frame(self, frame_idx):
         filepath = self.snapshot_files[frame_idx]
@@ -130,15 +233,57 @@ class True3DViewer:
             # Calculate physical time and sizes
             time_gyr = sim_time * unit_time_gyr
             comoving_box_mpc = self.domain_size * unit_length_mpc
-            physical_box_mpc = comoving_box_mpc * a
-            
+            physical_box_mpc = comoving_box_mpc * a           
+
             # Particles
             pos_x = f['Particles/position_x'][:]
             pos_y = f['Particles/position_y'][:]
             pos_z = f['Particles/position_z'][:]
+            mass  = f['Particles/mass'][:]
             positions = np.c_[pos_x, pos_y, pos_z]
             
-            self.particles.set_data(positions, face_color=(1, 1, 1, 0.5), edge_width=0, size=2.0)
+            # Estimate local density using the CIC grid
+            N = config_attr.get('mesh_size', 64)
+            dm_grid = compute_cic_density(pos_x, pos_y, pos_z, mass, self.domain_size, N)
+            
+            # Find which grid cell each particle is currently in
+            ix = np.floor((pos_x / self.domain_size) * N).astype(int) % N
+            iy = np.floor((pos_y / self.domain_size) * N).astype(int) % N
+            iz = np.floor((pos_z / self.domain_size) * N).astype(int) % N
+            
+            # Sample the local density for each particle (Nearest Grid Point)
+            particle_densities = dm_grid[ix, iy, iz]
+            
+            # Convert to Logarithmic Opacity
+            safe_dens = np.clip(particle_densities, 1e-10, None)
+            log_dens = np.log10(safe_dens)
+            
+            if self.fixed_colormap:
+                min_log = self.global_dm_min_log
+                max_log = self.global_dm_max_log
+            else:
+                min_log = np.min(log_dens)
+                max_log = np.max(log_dens)
+            
+            # Create the RGBA color array
+            colors = np.zeros((len(pos_x), 4), dtype=np.float32)
+            colors[:, 0] = 1  # R
+            colors[:, 1] = 1  # G
+            colors[:, 2] = 1  # B
+            
+            if max_log > min_log:
+                alphas = (log_dens - min_log) / (max_log - min_log)
+                # Apply a gamma curve to hide low-density void particles
+                gamma_curve = 3.0 
+                alphas = alphas ** gamma_curve
+                
+                # Cap max opacity so halo cores still look translucent
+                colors[:, 3] = alphas * 0.65 
+            else:
+                colors[:, 3] = 0.1
+
+            # Update the markers with the custom per-particle color array
+            self.particles.set_data(positions, face_color=colors, edge_width=0, size=1.25)
 
             # Gas
             t_max = 0
@@ -164,8 +309,12 @@ class True3DViewer:
                 # Prevent log(0) warnings by clipping to the 10.0K floor
                 safe_temp = np.clip(temperature, 10.0, None) 
                 log_temp = np.log10(safe_temp)
-                
-                t_min_log, t_max_log = np.min(log_temp), np.max(log_temp)
+                            
+                if self.fixed_colormap:
+                    t_min_log = self.global_t_min_log
+                    t_max_log = self.global_t_max_log
+                else:
+                    t_min_log, t_max_log = np.min(log_temp), np.max(log_temp)
                 
                 if t_max_log > t_min_log:
                     normalized_temp = (log_temp - t_min_log) / (t_max_log - t_min_log)
@@ -173,9 +322,17 @@ class True3DViewer:
                     normalized_temp = normalized_temp ** gamma
                     self.volume.set_data(normalized_temp)
                     self.volume.clim = [0.0, 1.0]
+
+        if (not hasattr(self, 'temp_min_log') 
+            or self.temp_min_log != t_min_log 
+            or self.temp_max_log != t_max_log):
+            self.temp_min_log = t_min_log
+            self.temp_max_log = t_max_log
+            self.update_colorbar_labels(t_min_log, t_max_log)
+
         # HUD
         hud_str = (
-            f"Frame: {frame_idx:04d} / {self.num_frames-1}\n"
+            f"Snapshot: {frame_idx:04d} / {self.num_frames-1}\n"
             f"Epoch: a = {a:.4f}  |  z = {z:.2f}\n"
             f"Time:  {sim_time:.4f} code  ({time_gyr:.2f} Gyr)\n"
             f"Size:  {comoving_box_mpc:.1f} Mpc comoving  ({physical_box_mpc:.1f} Mpc physical)\n"
@@ -261,6 +418,9 @@ class True3DViewer:
 
         elif event.key == 'E':
             self.export_frames()
+        elif event.key == 'C':
+            self.fixed_colormap = not self.fixed_colormap
+            self.update_frame(self.current_frame) # Force refresh
 
     def on_key_release(self, event):
         if event.key == 'Right':

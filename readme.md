@@ -7,24 +7,24 @@ This repository documents my experiments in cosmological N-body/hydrodynamics si
 * **Gravity Solvers:**
     * **Particle-Particle (PP):** Direct summation for high-accuracy short-range forces.
     * **Particle-Mesh (PM):** FFT-based Poisson solver for efficient long-range forces.
-    * **Fourier-Split PM:** A hybrid method combining PP and PM with a Gaussian frequency filter ($\exp(-k^2 r_s^2)$) in Fourier space, yielding an analytical short-range Complementary Error Function ($\text{erfc}$) force that guarantees monotonic force matching.
+    * **Fourier-Split PM:** A hybrid method combining PP and PM with a Gaussian frequency filter in Fourier space, yielding an analytical short-range Complementary Error Function force that guarantees monotonic force matching.
 * **Cosmology:**
-    * **Expanding Universe:** Simulation in comoving coordinates supporting generalized flat **$\Lambda$CDM** cosmologies (including Einstein-de Sitter).
-    * **Cosmological Integrator:** A Kick-Drift-Kick (KDK) Leapfrog scheme that correctly handles Hubble drag.
+    * **Expanding Universe:** Simulation in comoving coordinates supporting generalized flat $\Lambda\text{CDM}$ cosmologies (including Einstein-de Sitter).
+    * **Cosmological Integrator:** A Kick-Drift-Kick (KDK) Leapfrog scheme that handles Hubble drag.
     * **Initial Conditions:** Computation of cosmological initial conditions. Particles are perturbed from a uniform lattice using the Zel'dovich Approximation, deriving physical displacements and velocities from a Gaussian random field generated in Fourier space using the **BBKS (Bardeen-Bond-Kaiser-Szalay) transfer function** to model the Cold Dark Matter power spectrum.
-    * **Adaptive Timestepping:** Dynamic calculation of the global timestep based on the Courant-Friedrichs-Lewy (CFL) hydro condition, maximum gravitational acceleration, and a stiff radiative cooling timescale limiter.
 * **Hydrodynamics:**
     * **Grid-Based (Eulerian) Solver:** Implements a finite-volume solver for the adiabatic Euler equations on a fixed grid, tracking conservative variables (density, momentum, energy).
-    * **HLLC Riemann Solver:** Uses the Harten-Lax-van Leer-Contact (HLLC) approximate Riemann solver to compute fluxes between cells, accurately capturing shocks and contact discontinuities without excessive numerical diffusion.
-    * **Operator Splitting:** Employs a multi-physics fractional step method to safely decouple and integrate the distinct differential equations for hydrodynamics, gravitational kicks, and radiative cooling within a single global timestep.
+    * **HLLC Riemann Solver:** Uses the Harten-Lax-van Leer-Contact (HLLC) approximate Riemann solver to compute fluxes between cells, capturing shocks and contact discontinuities without excessive numerical diffusion.
+    * **Operator Splitting:** Employs a multi-physics fractional step method to decouple and integrate hydrodynamics, gravitational kicks, and radiative cooling within a single global timestep.
     * **Two-Way Coupling:** The gas density contributes to the total gravitational field via the PM solver, and the gas momentum/energy is updated by gravitational source terms during the KDK kicks.
-    * **Radiative Cooling:** Implements an unconditionally stable, implicit Backward Euler solver (using Newton-Raphson root-finding) to calculate energy loss via Bremsstrahlung radiation, while strictly preserving kinetic energy via the Dual Energy Formalism.
+    * **Radiative Cooling:** Implements an unconditionally stable, implicit Backward Euler solver (using Newton-Raphson root-finding) to calculate energy loss via Bremsstrahlung radiation, while preserving kinetic energy via the Dual Energy Formalism.
 * **High-Performance Computing (HPC):**
     * **OpenMP Multithreading:** Heavy loops (such as the Riemann solver, mass assignment, and grid calculations) are parallelized across available CPU cores.
     * **SIMD Vectorization:** Core CPU mathematics leverage Eigen and AVX vectorization for cache-friendly, contiguous memory speedups.
     * **GPU Offloading:** The computationally expensive direct-summation particle forces can be optionally offloaded to NVIDIA GPUs using OpenMP `#pragma omp target` directives and the Clang/LLVM toolchain.
 * **Numerical Methods:**
-    * **Cloud-in-Cell (CIC):** A symmetric mass-assignment and force-interpolation scheme for the PM grid to ensure strict momentum conservation.
+    * **Operator Splitting & Subcycling:** Employs a Strang-split fractional step method to decouple gravity, hydrodynamics, and cooling. Fast/stiff physics are **subcycled**.
+    * **Cloud-in-Cell (CIC):** A symmetric mass-assignment and force-interpolation scheme for the PM grid to ensure momentum conservation.
     * **Periodic Boundary Conditions:** A "wrap-around" universe to model a representative patch of a larger cosmos.
     * **Gravitational Softening:** Plummer softening to ensure numerical stability during close encounters.
 * **Configuration & I/O:**
@@ -38,7 +38,7 @@ This repository documents my experiments in cosmological N-body/hydrodynamics si
 
 * [`/src/`](src/): A high-performance C++ P³M + hydrodynamics cosmological simulation.
 * [`/docs/`](docs/): Contains a "living book" titled **"Notes on Cosmological Simulations"** in Markdown format. It includes a `Makefile` to automatically build the source notes into EPUB and PDF files.
-* [`/scripts/`](scripts/): Contains Python utilities for post-processing, including a 3D visualizer (`viewer.py`) and a physical validation suite (`verify_run.py`), and an  analytical macro-observatory (`cosmology_dashboard.py`) to analyze the HDF5 outputs.
+* [`/scripts/`](scripts/): Contains Python utilities for post-processing, including a 3D visualizer (`viewer.py`), a validation suite (`verify_run.py`) and a diagnostic dashboard (`cosmology_dashboard.py`) to extract and plot global physical evolution from the HDF5 outputs.
 
 ## Getting Started
 
@@ -104,7 +104,7 @@ This section refers to the ASIMOV (Advanced Simulation of Intergalactic Matter a
     ```
 
 ### Physical Validation Tool
-While the C++ `ctest` suite verifies the internal math during compilation, the `verify_run.py` script performs macroscopic physical validation on the generated HDF5 snapshots after a run. It checks for data integrity (NaNs, boundary escapes), strict thermodynamic positivity (preventing negative density/energy), and exact mass conservation across the entire simulation timeframe.
+While the C++ `ctest` suite verifies the code during compilation, the `verify_run.py` script performs validation on the generated HDF5 snapshots after a run. It checks for data integrity (NaNs, boundary escapes), strict thermodynamic positivity (preventing negative density/energy), and mass conservation across the entire simulation timeframe.
 
 1.  **Prerequisites:** Requires `numpy` and `h5py` (which are already included if you installed the Viewer prerequisites).
 2.  **Run:** Navigate to your project root and execute the script, passing the directory containing your `.hdf5` snapshots as an argument:
@@ -162,7 +162,7 @@ Defines the spatial properties and resolution of the simulation box.
 
 ### `[cosmology]`
 
-Defines the cosmological model, specifically the energy budget and expansion rate of the universe.
+Defines the cosmological model of the universe.
 
 * **`omega_baryon`**: The density parameter for normal (baryonic) matter.
 * **`omega_M`**: The total matter density parameter (baryons + dark matter). Dark energy is dynamically assumed to be `1.0 - omega_M` for a flat universe.
@@ -179,7 +179,7 @@ Controls the generation of the primordial density field and particle distributio
 * **`sigma_8`**: The normalization of the power spectrum, defining the amplitude of density fluctuations at an 8 Mpc/h scale.
 * **`initial_gas_temp_k`**: The physical temperature of the baryonic gas at `start_a`, in Kelvin.
 * **`n_per_side`**: The number of N-body particles along one axis (e.g., `32` creates 32,768 total particles). Often matched to `mesh_size` to avoid interpolation artifacts.
-* **`standing_particles`**: Boolean. If `true`, all N-body particles remain completely stationary throughout the entire duration of the simulation. Their positions and velocities are never updated. This is strictly a debugging feature, useful for isolating and testing other components of the code, such as observing how the hydrodynamics solver behaves around a static gravitational potential.
+* **`standing_particles`**: Boolean. If `true`, all N-body particles remain completely stationary throughout the entire duration of the simulation. Their positions and velocities are never updated. This is strictly a debugging feature.
 * **`seed`**: Integer seed for the random number generator, ensuring reproducible initial density fields.
 
 ### `[hydro]`
@@ -190,7 +190,7 @@ Configures the fluid dynamics solver for the baryonic gas.
 * **`gamma`**: The adiabatic index (ratio of specific heats) of the gas. Set to `1.6666666667` (5/3) for a monatomic, non-relativistic ideal gas.
 * **`enable_cooling`**: Boolean. If `true`, the code activates the implicit radiative cooling solver to extract thermal energy from the gas over time.
 * **`primordial_mu`**: The mean molecular weight of the gas (e.g., `1.22` for neutral primordial hydrogen/helium gas). Used to accurately map internal energy to physical temperatures.
-* **`temp_floor_k`**: The absolute minimum temperature (in Kelvin) the gas is allowed to reach via radiative cooling. Physically, this ensures the gas does not cool below the baseline heat of the universe, such as the Cosmic Microwave Background (CMB). Numerically, it acts as a safety limit; simulators often artificially raise this floor (e.g., to 10000.0) to prevent dense gas from collapsing beyond the spatial resolution of the grid, which would otherwise lead to unphysical numerical errors known as artificial Jeans fragmentation.
+* **`temp_floor_k`**: The absolute minimum temperature (in Kelvin) the gas is allowed to reach via radiative cooling. Physically, this ensures the gas does not cool below the baseline heat of the universe, such as the Cosmic Microwave Background (CMB). Note that internally, the radiative cooling module halts at 10,000 K regardless, but this parameter acts as the ultimate mathematical safety net for the hydrodynamics engine.
 
 ### `[p3m]`
 
@@ -199,14 +199,14 @@ Configures the Particle-Particle Particle-Mesh (P³M) gravity solver.
 * **`use_pm`**: Boolean. Enables the long-range Particle-Mesh (PM) force calculation via Fast Fourier Transform.
 * **`use_pp`**: Boolean. Enables the short-range Particle-Particle (PP) direct summation for sub-grid resolution.
 * **`pm_smoothing_cells`**: The fundamental mathematical scale ($r_s$) of the Fourier-space Gaussian filter, defined in units of grid cells. Determines how smoothly the grid force is blunted to avoid anisotropic grid artifacts. Minimum mathematically sound value is 1.0.
-* **`cutoff_radius_factor`**: A multiplier that dictates the absolute physical cutoff radius relative to the smoothing scale ($r_c = \text{factor} \times r_s$). Because the short-range force is an $\text{erfc}$ exponential decay, the cutoff must be placed far enough out to avoid force discontinuity. Professional codes typically require a factor of at least 3.5 (sacrificing speed for symplectic stability).
+* **`cutoff_radius_factor`**: A multiplier that dictates the cutoff radius relative to the smoothing scale ($r_c = \text{factor} \times r_s$). Because the short-range force is an erfc exponential decay, the cutoff must be placed far enough out to avoid force discontinuity. Typically set to at least 3.5.
 
 ### `[time]`
 
 Controls the adaptive timestepping and integration limits.
 
 * **`dt_factor`**: A global multiplier for the gravitational timestep, acting as a fraction of the system's local dynamical time.
-* **`cfl_safety_factor`**: The Courant-Friedrichs-Lewy (CFL) number. Restricts the hydrodynamics timestep to ensure information does not travel further than one grid cell per step (must be < 1.0, typically `0.4`).
+* **`cfl_safety_factor`**: The Courant-Friedrichs-Lewy (CFL) number. Restricts the hydrodynamics timestep to ensure information does not travel further than one grid cell per step (must be < 1.0, typically `0.3`).
 * **`max_scale_factor`**: The scale factor at which the simulation terminates. Set to `1.0` to run up to the present day (z = 0).
 
 ### `[output]`
@@ -214,8 +214,8 @@ Controls the adaptive timestepping and integration limits.
 Manages how and when the simulation writes data to disk.
 
 * **`save_hdf5_every_delta_a`**: The interval for writing full snapshot files (particles, mesh densities, velocities) to disk, measured in scale factor increments.
-* **`debug_info_every_cycles`**: The frequency (in integration steps) at which the code prints its current status, timestep, and performance metrics to the console/log.
-* **`enable_energy_diagnostics`**: Boolean. If `true`, the code continuously calculates and verifies the conservation of energy and momentum, writing the error margins to a diagnostic file.
+* **`debug_info_every_seconds`**: The frequency (in seconds) at which the code prints its current status, timestep, and performance metrics to the console/log.
+* **`enable_energy_diagnostics`**: Boolean. If `true`, the code continuously calculates and verifies the conservation of energy and momentum, writing the error margins to the diagnostic file.
 
 ## HDF5 Snapshot Format & Units
 
@@ -227,16 +227,16 @@ Every snapshot contains the following internal structure:
 
 ### Metadata Subgroups (`/Header`, `/Config`, `/Units`)
 
-To keep the snapshots cleanly organized, all metadata attributes are divided into three distinct subgroups:
+To keep the snapshots organized, all metadata attributes are divided into three subgroups:
 
 **1. `/Header`**
-This group contains the instantaneous dynamic telemetry of the simulation for this exact snapshot:
+This group contains the global state of the simulation for the current snapshot:
 
 * **`scale_factor`**: The current scale factor $a$ of the universe.
 * **`simulation_time`**: The current physical time elapsed (in code units).
 
 **2. `/Config`**
-This group contains a complete dump of the `simulation.ini` configuration used to run the simulation, guaranteeing that every snapshot is fully self-describing. The attribute names here exactly mirror the keys in the INI file (e.g., `mesh_size`, `omega_M`, `use_hydro`).
+This group contains a complete dump of the `simulation.ini` configuration used to run the simulation, guaranteeing that every snapshot is fully self-describing. The attribute names here mirror the keys in the INI file (e.g., `mesh_size`, `omega_M`, `use_hydro`).
 
 **3. `/Units`**
 This group contains the physical unit conversion multipliers:
@@ -268,7 +268,7 @@ If hydrodynamics is enabled (`use_hydro = true`), this group contains the fluid 
 **3D Eulerian Grids:**
 These datasets are flattened into 1D arrays in row-major order:
 
-* **`density`**: The *comoving* mass density. Because the physical volume of the grid cells expands with the universe, to calculate the true physical density, you must extract this array, multiply by the physical mass/volume unit conversions and **divide by $a^3$**.
+* **`density`**: The *comoving* mass density. Because the physical volume of the grid cells expands with the universe, to calculate the true physical density, you must multiply this array by the physical mass/volume unit conversions and **divide by $a^3$**.
 * **`momentum_[x,y,z]`**: Comoving momentum density.
 * **`energy`**: The total comoving energy density (Kinetic + Internal). To convert this grid to true physical energy, you must apply the conversion factors and **multiply by $a^2$**.
 * **`pressure`**: Comoving thermal pressure. Like energy, it must be scaled by $a^2$ to reflect physical pressure.

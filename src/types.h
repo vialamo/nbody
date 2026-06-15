@@ -40,3 +40,12 @@ struct CIC_Data {
     // 8 weights for the 8 corners of a 3D cube
     double w000, w100, w010, w110, w001, w101, w011, w111;
 };
+
+struct TimestepInfo {
+    double dt_macro;
+    double dt_hydro;
+    double dt_grav;
+    double dt_cool;
+    bool subcycle_hydro;
+    bool subcycle_grav;
+};
