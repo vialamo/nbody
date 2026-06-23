@@ -1,6 +1,6 @@
 # Cosmological Simulations
 
-This repository documents my experiments in cosmological N-body/hydrodynamics simulations. It contains a simulation program in C++, along with a book that explains the underlying physics and algorithms.
+This repository documents my work in cosmological N-body/hydrodynamics simulations. It contains a simulation program written in C++, along with documentation that explains the underlying physics and algorithms.
 
 ## Key Features Implemented
 
@@ -116,9 +116,9 @@ While the C++ `ctest` suite verifies the code during compilation, the `verify_ru
 ### Cosmology Dashboard
 The `cosmology_dashboard.py` script generates a visual diagnostic suite. It tracks the macroscopic state of the simulation, including cosmic expansion, structure growth, shock-heating, energy conservation, and thermodynamic phase diagrams.
 
-1.  **Prerequisites:** Requires `matplotlib` in addition to `numpy` and `h5py`.
+1.  **Prerequisites:** Requires `matplotlib` and `camb` in addition to `numpy` and `h5py`.
     ```bash
-    pip install matplotlib
+    pip install matplotlib camb
     ```
 2.  **Run:** Navigate to your project root and execute the script, passing the directory containing your `.hdf5` snapshots as an argument:
     ```bash
@@ -144,9 +144,9 @@ The `/docs` folder contains a guide detailing the physics and algorithms used in
     make epub
     ```
 
-## Learning Log & Guidebook
+## Guidebook
 
-This project is developed as a learning exercise. The companion document, built from the source files in [`/docs/`](docs/), is a "living book" that organizes and explains all the physics and computer science concepts encountered during this process. It is written in the style of a guide that I would have found most helpful when I began.
+The companion document, built from the source files in [`/docs/`](docs/), is a "living book" that organizes and explains all the relevant physics and computer science concepts encountered during the development process. It is written in the style of a guide.
 
 ## Configuration Parameters
 
@@ -190,7 +190,8 @@ Configures the fluid dynamics solver for the baryonic gas.
 * **`gamma`**: The adiabatic index (ratio of specific heats) of the gas. Set to `1.6666666667` (5/3) for a monatomic, non-relativistic ideal gas.
 * **`enable_cooling`**: Boolean. If `true`, the code activates the implicit radiative cooling solver to extract thermal energy from the gas over time.
 * **`primordial_mu`**: The mean molecular weight of the gas (e.g., `1.22` for neutral primordial hydrogen/helium gas). Used to accurately map internal energy to physical temperatures.
-* **`temp_floor_k`**: The absolute minimum temperature (in Kelvin) the gas is allowed to reach via radiative cooling. Physically, this ensures the gas does not cool below the baseline heat of the universe, such as the Cosmic Microwave Background (CMB). Note that internally, the radiative cooling module halts at 10,000 K regardless, but this parameter acts as the ultimate mathematical safety net for the hydrodynamics engine.
+* **`temp_floor_k`**: The absolute minimum temperature (in Kelvin) the gas is allowed to reach. Physically, this ensures the gas does not cool below the baseline heat of the universe, such as the Cosmic Microwave Background (CMB). Note that internally, the radiative cooling module halts at `cooling_floor_k` regardless, but this parameter acts as the ultimate mathematical safety net for the hydrodynamics engine.
+* **`cooling_floor_k`**: The absolute minimum temperature (in Kelvin) the gas is allowed to reach via radiative cooling. The gas does not radiate below this temperature.
 
 ### `[p3m]`
 
@@ -264,6 +265,8 @@ If hydrodynamics is enabled (`use_hydro = true`), this group contains the fluid 
 **Group Attributes:**
 
 * **`cumulative_radiated_energy`**: *(Only present if `enable_cooling = true`)*. The total, integrated energy radiated away by the gas up to the current snapshot in code units. To convert this value to true physical energy (Ergs), multiply it by the physical energy unit conversion factor and **multiply by $a^2$**.
+* **`cumulative_gravitational_work`**: The total, integrated kinetic energy injected into the gas by the gravitational field up to the current snapshot in code units. To convert this value to true physical energy (Ergs), multiply it by the physical energy unit conversion factor and **multiply by $a^2$**.
+* **`cumulative_expansion_work`**: The total, integrated $P dV$ thermodynamic work performed by the gas against the expanding cosmic metric up to the current snapshot in code units. To convert this value to true physical energy (Ergs), multiply it by the physical energy unit conversion factor and **multiply by $a^2$**.
 
 **3D Eulerian Grids:**
 These datasets are flattened into 1D arrays in row-major order:

@@ -65,6 +65,10 @@ static void init_derived_units(Config& config) {
 }
 
 void Config::compute_derived_data() {
+    if (HUBBLE_PARAM > 10.0) {
+        HUBBLE_PARAM /= 100.0;
+    }
+
     CELL_SIZE = DOMAIN_SIZE / MESH_SIZE;
     CELL_VOLUME = CELL_SIZE * CELL_SIZE * CELL_SIZE;
     OMEGA_DM = OMEGA_M - OMEGA_BARYON;
@@ -132,11 +136,13 @@ void Config::load(const std::string& filename) {
         config_file.get_double("hydro", "primordial_mu", PRIMORDIAL_MU);
     TEMP_FLOOR_KELVIN =
         config_file.get_double("hydro", "temp_floor_k", TEMP_FLOOR_KELVIN);
+    RADIATIVE_FLOOR_K =
+        config_file.get_double("hydro", "cooling_floor_k", RADIATIVE_FLOOR_K);
 
     USE_PM = config_file.get_bool("p3m", "use_pm", USE_PM);
     USE_PP = config_file.get_bool("p3m", "use_pp", USE_PP);
     CUTOFF_RADIUS_FACTOR = config_file.get_double("p3m", "cutoff_radius_factor",
-                                                 CUTOFF_RADIUS_FACTOR);
+                                                  CUTOFF_RADIUS_FACTOR);
     PM_SMOOTHING_CELLS =
         config_file.get_double("p3m", "pm_smoothing_cells", PM_SMOOTHING_CELLS);
 

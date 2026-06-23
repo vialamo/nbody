@@ -59,13 +59,13 @@ static double compute_normalization_constant(const Config& config) {
  and takes the negative gradient to produce the displacement vectors.
  Returns a ZeldovichField struct containing:
  * The 3D displacement vectors in internal CODE UNITS (scaled to DOMAIN_SIZE).
- They have already been multiplied by the initial scale factor (a)
+ They have already been scaled to the initial growth factor (D)
  and are ready to be directly added to the unperturbed particle lattice.
  * The logarithmic growth rate (d ln D / d ln a) evaluated at the
  initial epoch, required by the caller to calculate peculiar velocities.
  */
 ZeldovichField compute_zeldovich_field(double scale_factor,
-                                              const Config& config) {
+                                       const Config& config) {
     // The master normalization constant
     double A = compute_normalization_constant(config);
 
@@ -73,9 +73,12 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
     size_t M3_real = static_cast<size_t>(M) * M * M;
     size_t M3_complex = static_cast<size_t>(M) * M * (M / 2 + 1);
 
-    double box_vol = pow(config.BOX_SIZE_MPC, 3.0);
+    // Convert box size to h^-1 Mpc to match the units of true_pk
+    double box_h_mpc = config.BOX_SIZE_MPC * config.HUBBLE_PARAM;
+    double box_vol_h = pow(box_h_mpc, 3.0);
+
     double amplitude_scaling =
-        std::sqrt(static_cast<double>(M3_real) / box_vol);
+        std::sqrt(static_cast<double>(M3_real) / box_vol_h);
 
     // Create Gaussian random field
     std::vector<double> real_space_random_field(M3_real);
@@ -128,6 +131,7 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
                 // The BBKS Transfer Function T(k)
                 // Multiply the unnormalized shape by A
                 double true_pk = A * unnormalized_pk(k_h, config);
+
                 // The power spectrum P(k) represents the variance of the
                 // density field. To scale our Gaussian white noise (which has a
                 // variance of 1.0), we need the amplitude (standard deviation),
@@ -173,12 +177,26 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
     pocketfft::c2r(shape_ic, stride_c_ic, stride_r_ic, {0, 1, 2}, false,
                    disp_z_k.data(), field.dz.data(), 1.0);
 
+    // Calculate the exact linear growth suppression factor g(a) = D(a)/a at z=0
+    // (a=1) Using the Carroll, Press, and Turner (1992) fitting formula
+    double Om = config.OMEGA_M;
+    double Ol = config.OMEGA_LAMBDA;
+    double g_1 = (2.5 * Om) / (pow(Om, 4.0 / 7.0) - Ol +
+                               (1.0 + Om / 2.0) * (1.0 + Ol / 70.0));
+
+    // Rewind the z=0 density field back to the starting epoch.
+    // Because structure growth stalls at late times due to Dark Energy, in a
+    // LambdaCDM D(1) is only ~0.77, not 1.0. We must divide by g_1 to recover
+    // the true early-universe amplitude.
+    double true_growth_factor = scale_factor / g_1;
+
+    // Calculate final normalizer (incorporating the 1/M^3 FFT correction)
+    double norm_ic = true_growth_factor / static_cast<double>(M3_real);
+
     // Finalize the real-space displacement vectors. This loop does two things:
     // * Divides by M^3 to correct the unnormalized output of the inverse FFT.
-    // * Multiplies by the initial scale factor (a) to wind the present-day
-    //   displacements back to the starting epoch, utilizing the early-universe
-    //   linear growth approximation D(a) ~ a.
-    double norm_ic = scale_factor / static_cast<double>(M3_real);
+    // * Multiplies by the initial growth factor (a) to wind the present-day
+    //   displacements back to the starting epoch
     for (size_t i = 0; i < M3_real; ++i) {
         field.dx[i] *= norm_ic;
         field.dy[i] *= norm_ic;

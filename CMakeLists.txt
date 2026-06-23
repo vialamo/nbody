@@ -99,8 +99,18 @@ if(USE_GPU_OFFLOAD)
 
     if(GPU_COMPUTE_CAP)
         string(REGEX MATCH "^([0-9]+)\\.([0-9]+)" _ ${GPU_COMPUTE_CAP})
-        set(GPU_ARCH "sm_${CMAKE_MATCH_1}${CMAKE_MATCH_2}")
-        message(STATUS "Auto-detected NVIDIA GPU Architecture: ${GPU_ARCH}")
+        set(COMPUTE_VERSION "${CMAKE_MATCH_1}${CMAKE_MATCH_2}")
+        
+        # Cap at sm_90 for Clang 18 compatibility. 
+        # The NVIDIA driver will JIT-compile the PTX at runtime
+        if(COMPUTE_VERSION GREATER 90 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "19.0.0")
+            message(STATUS "Auto-detected Blackwell+ GPU (sm_${COMPUTE_VERSION}). Capping to sm_90 for Clang compatibility.")
+            set(GPU_ARCH "sm_90")
+        else()
+            set(GPU_ARCH "sm_${COMPUTE_VERSION}")
+        endif()
+        
+        message(STATUS "Targeting NVIDIA GPU Architecture: ${GPU_ARCH}")
     else()
         set(GPU_ARCH "sm_61") 
         message(WARNING "Could not auto-detect GPU via nvidia-smi. Defaulting to ${GPU_ARCH}.")

@@ -30,7 +30,7 @@ double solve_cooling_implicit(double u_old, double rho_code, double a,
     // We use the highest of either the physical radiation floor or the hydro
     // temp floor
     double target_floor_k =
-        std::max(RADIATIVE_FLOOR_K, config.TEMP_FLOOR_KELVIN);
+        std::max(config.RADIATIVE_FLOOR_K, config.TEMP_FLOOR_KELVIN);
     double u_rad_floor =
         get_internal_energy_from_temp(target_floor_k, a, config);
 

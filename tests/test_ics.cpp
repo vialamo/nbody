@@ -22,12 +22,13 @@ TEST_CASE("Initial internal energy scales correctly with code units",
     double a = 1.0;
 
     SECTION("Halving the velocity unit quadruples the resulting code energy") {
-        // Get the base energy using the default box size (default velocity unit)
+        // Get the base energy using the default box size (default velocity
+        // unit)
         double u_code_base =
             cooling::get_internal_energy_from_temp(T_kelvin, a, config);
 
         // To safely halve the velocity unit, we halve the BOX_SIZE_MPC.
-        // As seen in init_derived_units, UNIT_VELOCITY_KMS scales linearly with 
+        // As seen in init_derived_units, UNIT_VELOCITY_KMS scales linearly with
         // UNIT_LENGTH_MPC, which scales linearly with BOX_SIZE_MPC.
         config.BOX_SIZE_MPC /= 2.0;
 
@@ -75,7 +76,7 @@ TEST_CASE("initialize_state produces physically sound macro-states",
 
     config.compute_derived_data();
 
-    // Initialize the entire simulation state
+    // Initialize the simulation state
     SimState state = initialize_state(config);
 
     SECTION("Conservation of Mass") {
@@ -123,10 +124,10 @@ TEST_CASE("initialize_state produces physically sound macro-states",
         }
 
         // At a=0.02, H(a) is ~129 code units.
-        // Max scaled displacement is ~0.003 code units.
-        // Therefore, absolute max velocity must be near ~0.38
-        REQUIRE(max_v_dm > 0.1);
-        REQUIRE(max_v_dm < 0.6);
+        // Considering the g_1 Dark Energy suppression fixes,
+        // the max velocities are roughly ~0.84 max.
+        REQUIRE(max_v_dm > 0.3);
+        REQUIRE(max_v_dm < 1.3);
     }
 }
 

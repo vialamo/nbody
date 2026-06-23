@@ -26,6 +26,7 @@ struct Config {
     double PRIMORDIAL_MU = 1.22;  // Mean molecular weight for neutral
                                   // primordial gas (76% H, 24% He)
     double TEMP_FLOOR_KELVIN = 10.0;
+    double RADIATIVE_FLOOR_K = 10000.0;
 
     bool USE_PM = true;
     bool USE_PP = true;

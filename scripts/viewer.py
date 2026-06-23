@@ -171,12 +171,13 @@ class True3DViewer:
         
         # Force the Alpha (opacity) channel to fade quadratically
         colors[:, 3] = np.linspace(0, 1, 256) ** 2
+        colors[0] = [0.0, 0.0, 0.0, 0.0]
         self.custom_cmap = Colormap(colors)
 
         # Setup Gas Volume
         self.volume = None
         if self.use_hydro:
-            self.volume = Volume(np.zeros((2, 2, 2)), cmap=self.custom_cmap, 
+            self.volume = Volume(np.zeros((2, 2, 2), dtype=np.float32), cmap=self.custom_cmap, 
                                  method='translucent', parent=self.view.scene)
             # Read mesh size from the first file to scale the volume properly
             with h5py.File(self.snapshot_files[0], 'r') as f:
@@ -320,6 +321,7 @@ class True3DViewer:
                     normalized_temp = (log_temp - t_min_log) / (t_max_log - t_min_log)
                     gamma = 2.5
                     normalized_temp = normalized_temp ** gamma
+                    normalized_temp = normalized_temp.astype(np.float32)
                     self.volume.set_data(normalized_temp)
                     self.volume.clim = [0.0, 1.0]
 

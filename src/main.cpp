@@ -20,6 +20,14 @@ void print_internal_units(const Config& config) {
     std::cout << "1.0 Code Mass     = " << config.UNIT_MASS_MSUN
               << " Solar Masses\n";
     std::cout << "G = " << config.G << "\n" << std::endl;
+
+    constexpr double sigma_safe = 0.3;
+    double a_safe_max =
+        (sigma_safe / config.SIGMA_8) * pow((config.BOX_SIZE_MPC / 8.0), 0.9);
+    if (a_safe_max < config.MAX_SCALE_FACTOR) {
+        std::cout << "Warning: Fundamental mode collapse risk when a > "
+                  << a_safe_max << std::endl;
+    }
 }
 
 void signal_handler(int signal) {

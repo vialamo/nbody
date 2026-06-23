@@ -4,7 +4,6 @@
 namespace cooling {
 
 constexpr int MAX_ITER = 50;
-constexpr double RADIATIVE_FLOOR_K = 10000.0;
 
 // Convert code internal energy to Temperature (Kelvin)
 inline double get_temp_from_internal_energy(double u_code, double a,

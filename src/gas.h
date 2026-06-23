@@ -61,6 +61,8 @@ class GasGrid {
     Grid3D internal_energy;
     size_t cooling_failed_cells;
     double accumulated_radiated_energy;
+    double accumulated_gravitational_work;
+    double accumulated_expansion_work;
 
     RiemannSolver solver;
     const Config& config;
@@ -103,4 +105,15 @@ class GasGrid {
     double get_accumulated_radiated_energy() const {
         return accumulated_radiated_energy;
     }
+
+    double get_accumulated_gravitational_work() const {
+        return accumulated_gravitational_work;
+    }
+    double get_accumulated_expansion_work() const {
+        return accumulated_expansion_work;
+    }
+    void add_gravitational_work(double w) {
+        accumulated_gravitational_work += w;
+    }
+    void add_expansion_work(double w) { accumulated_expansion_work += w; }
 };

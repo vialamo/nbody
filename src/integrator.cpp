@@ -227,6 +227,15 @@ void apply_gas_kick(GasGrid& gas, const Grid3D& grav_x, const Grid3D& grav_y,
 
     gas.energy.array() -= expansion_cooling;
     gas.internal_energy.array() -= expansion_cooling;
+
+    // Accumulate global work for diagnostics
+    // sum() adds up the energy density of all cells. Multiply by volume to get
+    // total code energy.
+    double step_grav_work = power_density.data.sum() * dt * config.CELL_VOLUME;
+    double step_exp_work = expansion_cooling.sum() * config.CELL_VOLUME;
+
+    gas.add_gravitational_work(step_grav_work);
+    gas.add_expansion_work(step_exp_work);
 }
 
 static void apply_dm_kick(ParticleSystem& dm, double dt, double a, double H) {

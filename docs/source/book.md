@@ -1000,61 +1000,6 @@ $$[V] = 150 \cdot h \cdot \sqrt{\Omega_m} \cdot L_{box} \text{ km/s}$$
 
 Once these four fundamental units are established, all other physical quantities in the simulation—such as the internal energy of the gas, pressure, and temperature—can be seamlessly derived using standard dimensional analysis.
 
-## Scale and Cosmic Variance
-
-Before we can populate our simulation with particles, we must make a fundamental decision: how much of the universe are we going to simulate, and in how much detail? 
-
-Because computational resources are finite, choosing the parameters of our simulation requires navigating a strict physical trade-off between the overall size of our simulated box (the macroscopic scale) and the size of our individual grid cells (the microscopic resolution). If we choose poorly, our virtual universe will either fail to form galaxies or fail to represent the actual cosmos.
-
-### Cosmic Variance and the Box Size
-
-Our goal is usually to simulate a "representative" patch of the universe. This means that the statistical properties of our simulation box—the number of galaxy clusters, the sizes of the voids, the web-like structure of the filaments—should look identical to any other randomly selected patch of the real universe of the same size.
-
-However, the universe is only uniform on extremely large scales. If you look at a small patch of space (e.g., 10 Megaparsecs across), you might accidentally center your view on a massive supercluster, or you might look at an entirely empty void. This statistical uncertainty is known as **Cosmic Variance**.
-
-If a simulation box is too small, it suffers from severe cosmic variance. A small box physically cannot contain the longest wavelengths of the density field, meaning it will never form massive superstructures. Furthermore, the periodic boundary conditions will cause the few structures that do form to artificially interact with themselves across the boundaries. In professional cosmology, the accepted threshold for a simulation volume to be considered statistically representative of the large-scale structure is a comoving box length of roughly **100 Mpc** (Megaparsecs) or larger. At this scale, the simulation volume is vast enough to contain a healthy, statistically average mix of all cosmic environments.
-
-However, while cosmic variance dictates the minimum size of our simulation, the laws of General Relativity dictate the maximum. As we established earlier, our Newtonian Poisson solver calculates gravity instantaneously across the entire grid. To ensure this approximation remains physically valid, the comoving length of our box ($L$) must remain strictly sub-horizon ($L \ll c/H$). 
-
-Today, the Hubble radius ($c/H$) is roughly 4,300 Mpc. If we attempt to push our box size too close to this scale, the instantaneous gravity approximation creates a profound physical violation, allowing causally disconnected regions of the universe to pull on each other faster than the speed of light. Therefore, the tolerable maximum for a standard Newtonian N-body code without relativistic corrections is generally kept below 1,000 to 2,000 Mpc (the Gigaparsec scale).
-
-Ultimately, cosmological simulations exist within a computational "Goldilocks zone." To capture a true, statistical representation of the universe without violating the laws of causality, our comoving box must be large enough to defeat cosmic variance ($\ge$ 100 Mpc), but small enough to safely ignore relativistic light-travel delays ($\le$ 1,000 Mpc).
-
-### The Resolution Limit for Halo Formation
-
-While the box must be large enough to capture the cosmic web, the grid cells must be small enough to capture the galaxies within it.
-
-In our Particle-Mesh and P³M algorithms, the grid cell size ($L_{\text{cell}} = \text{Box Size} / \text{Mesh Size}$) determines the fundamental resolution limit of the simulation. Because forces are smoothed at the scale of the grid cells to ensure numerical stability, the simulation physically cannot form "clumps" of matter that are smaller than a few grid cells across. 
-
-In the real universe, the dark matter halos that host standard galaxies (like our Milky Way) have radii on the order of 0.1 to 0.5 Mpc. Therefore, to successfully resolve distinct, tightly collapsed galactic halos, a cosmological simulation requires a spatial resolution of roughly **0.3 to 0.5 Mpc** per cell. 
-
-If the resolution is significantly coarser than this (for example, 3.0 Mpc per cell), gravity will still pull matter together, but the small-scale smoothing will prevent sharp collapse. The resulting universe will look "blurry," with matter smeared out into thick filaments rather than forming distinct, highly non-linear galactic nodes.
-
-### The Computational Trade-off
-
-These two physical constraints—a minimum box size of 100 Mpc and a target resolution of ~0.4 Mpc—dictate the minimum computational requirements for a realistic simulation.
-
-Because $\text{Resolution} = \text{Box Size} / \text{Mesh Size}$, achieving a 0.39 Mpc resolution in a 100 Mpc box requires a 3D grid with a mesh size of 256. Simulating this requires $256^3$ (roughly 16.7 million) dark matter particles and an equal number of Eulerian gas cells. 
-
-This $O(N^3)$ scaling is the harsh reality of 3D hydrodynamics. Doubling the resolution of a simulation requires $2^3 = 8$ times more memory, and vastly more processing time due to the smaller required timesteps.
-
-When testing code or running experiments on smaller machines, it is entirely valid to run smaller "toy models" (for instance, a 24 Mpc box with a $48^3$ grid). This perfectly preserves the critical 0.5 Mpc resolution necessary to watch gravity violently collapse halos and shock-heat the gas. However, one must simply keep in mind that such a "dwarf volume" is essentially a zoom-in on a single cosmic neighborhood, sacrificing the grand scale of the cosmic web in exchange for computational speed.
-
-### A Reference for Cosmic Scales
-
-Because the Megaparsec (Mpc) is an unfathomably vast unit of distance (1 Mpc $\approx 3.26$ million light-years), it can be difficult to build an intuition for the scale of a simulation grid. To help anchor these numbers to reality, here is a quick-reference guide to the approximate diameters of common astronomical structures:
-
-| Structure | Approximate Diameter (Mpc) | Notes |
-| :--- | :--- | :--- |
-| **Earth-Sun Distance (1 AU)** | $\sim 5 \times 10^{-12} \text{ Mpc}$ | The distance light travels in 8 minutes. |
-| **The Solar System** | $\sim 0.00001 \text{ Mpc}$ | Reaching out to the edge of the Oort Cloud. |
-| **Milky Way (Visible Stellar Disk)** | $\sim 0.03 \text{ Mpc}$ | The glowing spiral of stars and gas we can see. |
-| **Milky Way (Dark Matter Halo)** | $\sim 0.3 \text{ Mpc}$ | The invisible gravitational well hosting our galaxy. |
-| **The Local Group** | $\sim 3.0 \text{ Mpc}$ | Our local neighborhood, including Andromeda. |
-| **Typical Galaxy Cluster** | $\sim 2.0 \text{ to } 10.0 \text{ Mpc}$ | Hundreds of galaxies bound in a single hot gas node. |
-| **Typical Cosmic Void** | $\sim 20.0 \text{ to } 50.0 \text{ Mpc}$ | Vast, underdense regions between filaments. |
-| **Representative Simulation Box** | $\mathbf{100.0+ \text{ Mpc}}$ | The minimum scale required to combat Cosmic Variance. |
-
 ## The Cosmic Timeline
 
 ### The Scale Factor ($a$) and Redshift ($z$)
@@ -1096,12 +1041,12 @@ For the purposes of cosmological simulations, the universe's history is defined 
 #### The Radiation-Dominated Era (The Big Bang to ~50,000 Years)
 In the very early universe, space was incredibly small, dense, and unimaginably hot. During this time, the universe's energy budget was completely dominated by the kinetic energy of photons and relativistic particles (neutrinos).
 
-* **The Physics:** In the early universe, the initial rate of spatial expansion triggered by the Big Bang was still astronomically high. Even though the immense density of the radiation was acting as a gravitational "brake" to slow the universe down, the absolute speed of expansion was still blistering. This rapid expansion acted like a cosmic treadmill: space stretched the dark matter particles away from each other much faster than their local gravity could pull them together. Consequently, the local gravitational collapse of dark matter was completely frozen—a phenomenon known as the **Mészáros effect**. It was only after the universe expanded enough for this "treadmill" to significantly slow down that local gravity finally took control and began building cosmic structures. 
+* **The Physics:** In the early universe, the initial rate of spatial expansion triggered by the Big Bang was still very high. Even though the immense density of the radiation was acting as a gravitational "brake" to slow the universe down, the speed of expansion was still blistering. This rapid expansion acted like a cosmic treadmill: space stretched the dark matter particles away from each other much faster than their local gravity could pull them together. Consequently, the local gravitational collapse of dark matter was completely frozen—a phenomenon known as the **Mészáros effect**. It was only after the universe expanded enough for this "treadmill" to significantly slow down that local gravity finally took control and began building cosmic structures. 
 * **Simulation Context:** We rarely simulate this era directly with N-body codes. Instead, its effects are mathematically "baked in" to our initial conditions. The suppression of small-scale structures during this era is exactly what creates the mathematical curve of the **BBKS Transfer Function** (explained in a later section).
-* **The Transition:** As the universe expanded, radiation diluted much faster than physical matter. Around 50,000 years after the Big Bang, the density of radiation dropped below the density of matter, marking a monumental shift in cosmic physics. Shortly after this transition (at about 380,000 years, or a redshift of roughly z = 1100), the universe cooled enough for the first neutral atoms to form, releasing the Cosmic Microwave Background (CMB).
+* **The Transition:** As the universe expanded, radiation diluted much faster than physical matter. Around 50,000 years after the Big Bang, the density of radiation dropped below the density of matter, marking a shift in cosmic physics. Shortly after this transition (at about 380,000 years, or a redshift of roughly z = 1100), the universe cooled enough for the first neutral atoms to form, releasing the Cosmic Microwave Background (CMB).
 
 #### The Matter-Dominated Era (~50,000 Years to ~9.8 Billion Years)
-Once the radiation diluted, the gravity of cold dark matter and baryonic gas took absolute control of the energy budget. Unlike radiation, cold matter acts like a cosmic "dust"—it has mass, but it exerts practically zero large-scale macroscopic pressure. The global expansion rate dropped low enough that local gravity could finally fight back. Dark matter overdensities decoupled from the expanding background and collapsed inward, initiating the bottom-up, hierarchical assembly of the cosmic web.
+Once the radiation diluted, the gravity of cold dark matter and baryonic gas took control of the energy budget. Unlike radiation, cold matter acts like a cosmic "dust"—it has mass, but it exerts practically zero large-scale macroscopic pressure. The global expansion rate dropped low enough that local gravity could finally fight back. Dark matter overdensities decoupled from the expanding background and collapsed inward, initiating the bottom-up, hierarchical assembly of the cosmic web.
 
 * **The Physics:** This is the golden age of structure formation. With radiation pressure gone and the expansion slowing, gravity was finally free to pull matter together. The tiny primordial ripples left over from the Big Bang collapsed into the cosmic web, forming the first stars, galaxies, and galaxy clusters. 
 * **Simulation Context:** This era is the primary sandbox for computational cosmology. Our simulations typically start right near the beginning of this era (e.g., at redshift z = 49). Because dark energy is negligible here, the universe behaves like a simple Einstein-de Sitter model where the linear growth factor scales perfectly with the size of the universe: $D(t) \propto a(t)$. 
@@ -1126,17 +1071,17 @@ Standard General Relativity cannot answer this question. If we run the Friedmann
 
 The outcome of a cosmological simulation depends on its starting point. To accurately model our universe, we must generate a physical snapshot that captures the primordial density fluctuations that seeded all future cosmic structure.
 
-Fortunately, in the early universe, these density fluctuations were incredibly tiny. Because the variations in the gravitational field were so weak and smooth, the initial clustering of matter was entirely **linear**. This is a massive advantage for computational cosmology: it means we do not need to waste computational resources running an N-body solver from the very beginning of time. 
+Fortunately, in the early universe, these density fluctuations were tiny. Because the variations in the gravitational field were so weak and smooth, the initial clustering of matter was entirely **linear**. This is a massive advantage for computational cosmology: it means we do not need to waste computational resources running an N-body solver from the very beginning of time. 
 
-Instead, we can fast-forward through the earliest epochs using an accurate analytical framework called the **Zel'dovich Approximation**. Because the physics were still linear, this mathematical approximation can predict how those tiny primordial ripples displaced matter over millions of years. 
+Instead, we can fast-forward through the earliest epochs using an analytical framework called the **Zel'dovich Approximation**. Because the physics were still linear, this mathematical approximation can predict how those tiny primordial ripples displaced matter over millions of years. 
 
 However, as matter gradually clumps together, local gravity becomes stronger and non-linear. Eventually, dark matter streams cross and gas violently collides. At this point, the linear Zel'dovich approximation breaks down. That breaking point is our simulation's starting line: we use the Zel'dovich approximation to instantly generate the universe's geometry right up to the edge of the linear regime—typically around a scale factor of $a = 0.02$, roughly 50 million years after the Big Bang. Where this analytical approximation starts to fail, our numerical solvers take over to compute the chaotic, non-linear birth of galaxies.
 
 ### The Unperturbed State
 
-To represent the nearly uniform matter distribution of the early universe, we begin by placing particles on a perfect, uniform cubic lattice. For a simulation with $N$ particles in a cubic box of side length $L$, the initial grid position, $\mathbf{x}_{\text{grid}}$, of a particle is determined by its integer indices $(i, j, k)$.
+To represent the nearly uniform matter distribution of the early universe, we begin by placing particles on a uniform cubic lattice. For a simulation with $N$ particles in a cubic box of side length $L$, the initial grid position, $\mathbf{x}_{\text{grid}}$, of a particle is determined by its integer indices $(i, j, k)$.
 
-The position is calculated by determining the number of particles per side, $N_s$, the spacing between them, $d$, and then placing each particle at the center of its virtual cubic cell:
+The position is calculated by determining the number of particles per side, $N_s$, the spacing between them, $d$, and then placing each particle at the center of its virtual cubic cell.
 
 The number of particles per side is:
 $$N_s = N^{1/3}$$
@@ -1151,27 +1096,36 @@ Where the indices $i, j,$ and $k$ each run from $0$ to $N_s - 1$. The addition o
 
 ### The Zel'dovich Approximation
 
-The real universe was not perfectly uniform. To create the seeds of galaxies and clusters, we must apply small, correlated **perturbations** to our particle lattice. The standard method for this is the **Zel'dovich Approximation**, which generates a smooth displacement field to "nudge" each particle from its perfect grid position.
+To create the seeds of galaxies and clusters, we must apply small, correlated **perturbations** to the particle lattice. The **Zel'dovich Approximation** generates a smooth displacement field to "nudge" each particle from its perfect grid position.
 
-It is crucial to understand the role of the Zel'dovich Approximation in this context. Although it is an analytical theory that describes the linear growth of structure in the early universe, we do not use it to evolve the particles during our simulation. Instead, we use its time-dependent nature *only once* to generate a single, self-consistent snapshot of the universe at our chosen start time, $t_{initial}$. This snapshot provides both the initial particle positions and their corresponding initial peculiar velocities. From that moment forward, the N-body simulation takes over, calculating the full, non-linear evolution of these particles on its own.
+It is important to understand the role of the Zel'dovich Approximation in this context. We use it *only once* to generate a single, self-consistent snapshot of the universe at our chosen start time, $t_{initial}$. This snapshot provides both the initial particle positions and their corresponding initial peculiar velocities. From that moment forward, the N-body simulation takes over, calculating the full, non-linear evolution of these particles on its own.
 
 Mathematically, the Zel'dovich Approximation is an application of **first-order Lagrangian perturbation theory (1LPT)**. For higher accuracy more advanced schemes such as **second-order Lagrangian perturbation theory (2LPT)** are often employed, but not covered in this text.
 
 #### The Growth Factor
 
-Although we only use it to generate a single initial snapshot, the Zel'dovich Approximation is fundamentally a dynamic theory in which the displacement field, $\boldsymbol{\Psi}$, is not constant. As the universe evolves, the tiny initial overdensities attract more matter, causing the perturbations to grow stronger. In the linear regime, the spatial pattern of the displacement field remains fixed, while its amplitude grows over time. This growth is described by a single function of time, the **linear growth factor**, $D(t)$.
+Although we only use it to generate a single initial snapshot, the Zel'dovich Approximation is a dynamic theory in which the displacement field, $\boldsymbol{\Psi}$, is not constant. As the universe evolves, the tiny initial overdensities attract more matter, causing the perturbations to grow stronger. In the linear regime, the spatial pattern of the displacement field remains fixed, while its amplitude grows over time. This growth is described by a single function of time, the **linear growth factor**, $D(t)$.
 
 The full, time-dependent displacement field can therefore be written as:
 $$\boldsymbol{\Psi}(\mathbf{x}, t) = D(t) \boldsymbol{\Psi}_0(\mathbf{x})$$
 Here, $\boldsymbol{\Psi}_0(\mathbf{x})$ is the primordial displacement pattern at some reference time (conventionally, today, where $a=1$ and $D=1$), and $D(t)$ scales this entire pattern up or down depending on the cosmic epoch. In a simple Einstein-de Sitter universe model (or a very early $\Lambda$CDM, e.g., $a = 0.02$), the growth factor is conveniently proportional to the scale factor, $D(t) \propto a(t)$.
 
-It is crucial to understand that $\boldsymbol{\Psi}_0(\mathbf{x})$ does not describe the actual highly non-linear universe today. Rather, it is a linearly extrapolated field: a mathematical representation of what the universe would look like today if gravity had remained perfectly linear for 13.8 billion years.
+It is crucial to understand that $\boldsymbol{\Psi}_0(\mathbf{x})$ does not describe the actual highly non-linear universe today. Rather, it is a linearly extrapolated field: a mathematical representation of what the universe would look like today if gravity had remained linear for 13.8 billion years.
 
-The $D(t) \boldsymbol{\Psi}_0(\mathbf{x})$ separability is incredibly powerful. It means we only need to compute this complex spatial pattern, $\boldsymbol{\Psi}_0(\mathbf{x})$, once, anchoring it to present-day observational parameters (like $\sigma_8$). To generate the actual state of the universe at our starting epoch, we simply scale this pattern backward in time by multiplying it by the appropriate value of $D(t)$. In cosmological simulations, we define this starting epoch not with a physical time $t$, but with the initial scale factor, $a_{\text{initial}}$ (e.g., $a = 0.02$). Because the fluctuations at this early time are tiny, the linear Zel'dovich approximation becomes physically highly accurate, providing the perfect initial conditions for our N-body particles before gravity drives them into non-linear collapse.
+The $D(t) \boldsymbol{\Psi}_0(\mathbf{x})$ separability is very powerful. It means we only need to compute $\boldsymbol{\Psi}_0(\mathbf{x})$ once, anchoring it to present-day observational parameters (like $\sigma_8$). To generate the actual state of the universe at our starting epoch, we simply scale this pattern backward in time by multiplying it by the appropriate value of $D(t)$. Because the fluctuations at this early time are tiny, the linear Zel'dovich approximation remains accurate, providing the initial conditions for our particles before gravity drives them into non-linear collapse.
 
 #### Generating the Displacement Pattern
 
-The process of generating the spatial pattern, $\boldsymbol{\Psi}_0(\mathbf{x})$, begins in Fourier space with the **power spectrum**, $P(k)$. The power spectrum is the statistical recipe for our universe's initial conditions, specifying the amplitude of density fluctuations at different spatial scales, or wavenumbers ($k$). 
+The process of generating the spatial pattern, $\boldsymbol{\Psi}_0(\mathbf{x})$, begins in Fourier space with the **power spectrum**, $P(k)$. The power spectrum is the statistical recipe for our universe's initial conditions, specifying the amplitude of density fluctuations (density contrast) at different spatial scales, or wavenumbers ($k$). 
+
+The density contrast field $\delta(\mathbf{x})$ is defined as:
+$$\delta(\mathbf{x}) = \frac{\rho(\mathbf{x}) - \bar{\rho}}{\bar{\rho}} = \frac{\rho(\mathbf{x})}{\bar{\rho}} - 1$$
+Where $\bar{\rho}$ is the mean background density of the universe.
+
+By taking the Fourier transform of the density contrast field, we convert our 3D grid of densities into a 3D grid of waves, denoted as $\tilde{\delta}(\mathbf{k})$.
+
+The **Matter Power Spectrum**, $P(k)$, is the variance of these Fourier amplitudes as a function of their scale. For a given wavenumber $k$ (which corresponds to a physical spatial scale $\lambda = 2\pi/k$), the power spectrum is:
+$$P(k) = \langle |\tilde{\delta}(\mathbf{k})|^2 \rangle$$
 
 The spectral index, $n$, is the most important term for defining the *character* of the initial cosmic structure, controlling the balance of power between large-scale (low frequency, $k$) and small-scale (high frequency, $k$) fluctuations.
 
@@ -1186,19 +1140,19 @@ Observations of the early universe show that our cosmos has a **"red-tilted"** s
 To generate the displacement pattern, $\boldsymbol{\Psi}_0(\mathbf{x})$, we use the following steps:
 
 1.  **Define the Wavevectors and Physical Scale.** In a 3D Fourier grid, every wave is defined by a **wavevector**, $\mathbf{k} = (k_x, k_y, k_z)$, which points in the direction the wave is traveling. The magnitude of this vector is the **wavenumber**, $k = |\mathbf{k}|$, which represents the wave's spatial frequency. 
-To simulate the real universe, we must anchor our discrete grid to a physical scale. By defining the comoving size of our simulation box in Megaparsecs ($L_{\text{box}}$), we can calculate the exact physical wavenumber for every mode:
+To simulate the real universe, we must anchor the discrete grid to a physical scale. By defining the comoving size of the simulation box in Megaparsecs ($L_{\text{box}}$), we can calculate the physical wavenumber for every mode:
 $$k_{\text{phys}} = \sqrt{k_x^2 + k_y^2 + k_z^2} \cdot \left( \frac{2\pi}{L_{\text{box}}} \right)$$
-This physical wavenumber tells the simulation exactly what size structure each wave represents, from massive superclusters to small dwarf galaxies.
+This physical wavenumber tells the simulation what size structure each wave represents, from massive superclusters to small dwarf galaxies.
  
 2.  **Generate and Shape the Random Field.** We start by creating a grid of random complex numbers, $\delta(\mathbf{k})$, that satisfies **conjugate symmetry**, $\delta(\mathbf{k}) = \delta^*(-\mathbf{k})$, to ensure the final field in real space is real-valued. Each Fourier mode is then scaled so its amplitude follows the **$\Lambda$CDM power spectrum**. 
-While the primordial universe started with a nearly scale-invariant spectrum ($k^{n_s}$), the presence of intense radiation in the early cosmos suppressed the gravitational collapse of small-scale structures. To capture this physics, we multiply the primordial spectrum by a **Cosmological Transfer Function**, $T(k)$. A standard analytical approximation for this is the **BBKS Transfer Function** (Bardeen, Bond, Kaiser, Szalay, 1986)—explained later. 
+While the primordial universe started with a nearly scale-invariant spectrum ($k^{n_s}$), the fast rate of cosmic expansion during the radiation-dominated era suppressed the gravitational collapse of small-scale structures. To capture this physics, we multiply the primordial spectrum by a **Cosmological Transfer Function**, $T(k)$. A standard analytical approximation for this is the **BBKS Transfer Function** (Bardeen, Bond, Kaiser, Szalay, 1986)—explained later. 
 The final shaped power spectrum is evaluated using our physical wavenumbers:
 $$P(k_{\text{phys}}) = A \cdot k_{\text{phys}}^{n_s} T(k_{\text{phys}})^2$$
 Here, $A$ is a master normalization constant that scales the overall strength of the fluctuations. Each random mode is scaled by the square root of this power spectrum: $\delta_\rho(\mathbf{k}) = \delta(\mathbf{k}) \sqrt{P(k_{\text{phys}})}$.
 
 3.  **Compute the displacement field.** The random field $\delta_\rho(\mathbf{k})$ we just generated is a scalar map of density (where the mass is). However, our goal is the displacement field $\boldsymbol{\Psi}_0(\mathbf{x})$, which is a vector map telling particles which way to move. To bridge this gap, we must use the physics of gravity. 
 In the Zel'dovich approximation, particles are displaced by falling down the gradient of the gravitational potential created by the density fluctuations. First, we use Poisson’s equation to convert the density field into a gravitational potential $\hat{\Phi}(\mathbf{k})$, which requires an inverse Laplacian operation (dividing by $-k^2$). Second, we take the gradient of this potential to find the displacement vector, which in Fourier space corresponds to multiplying by $i\mathbf{k}$.
-Because this derivative is taking place purely on our discrete grid, we drop the physical Megaparsec scaling and strictly use the dimensionless internal grid-unit wavevectors ($\mathbf{k}_{\text{grid}}$):
+Because this derivative is taking place purely on our discrete grid, we use the dimensionless internal grid-unit wavevectors ($\mathbf{k}_{\text{grid}}$):
 $$\hat{\boldsymbol{\Psi}}_0(\mathbf{k}) \propto i\mathbf{k}_{\text{grid}} \frac{\delta_\rho(\mathbf{k})}{k_{\text{grid}}^2}$$
  
 4.  **Transform back to real space.** Finally, we apply the inverse Fourier transform to recover the displacement pattern in real space:
@@ -1208,29 +1162,29 @@ $$\boldsymbol{\Psi}_0(\mathbf{x}) = \mathcal{F}^{-1}\{\hat{\boldsymbol{\Psi}}_0(
 
 In the previous step, we left the overall amplitude multiplier, $A$, undefined. To anchor our initial conditions to observational reality, this amplitude cannot be arbitrary. In cosmology, it is pinned to a standard measured value known as **$\sigma_8$** (Sigma-8).
  
-$\sigma_8$ represents the root-mean-square (RMS) variance of mass density fluctuations within a sphere of radius 8 Mpc/$h$ in the present-day universe. If you were to drop spheres of this size randomly throughout the cosmos, the mass inside them would vary depending on whether they landed in an empty void or a dense supercluster. $\sigma_8$ quantifies this variance. Current observations (such as those from the Planck satellite) show that for our universe, $\sigma_8 \approx 0.81$.
+$\sigma_8$ represents the root-mean-square (RMS, $\sigma_8 = \sqrt{\langle \delta_R(\mathbf{x})^2 \rangle}$) of mass density fluctuations within a sphere of radius 8 Mpc/$h$ in the present-day universe. If we were to drop spheres of this size randomly throughout the cosmos, the mass inside them would vary depending on whether they landed in an empty void or a dense supercluster. $\sigma_8$ quantifies this variance—but with a caveat. The real universe today at this scale is mildly non-linear. However, the $\sigma_8 \approx 0.81$ value provided by CMB surveys (like Planck) is a linearly extrapolated parameter. It represents what the variance would be today if structures had grown purely linearly since the Big Bang. Because our initial conditions generator (using the Zel'dovich approximation) relies entirely on linear theory, this standard convention is exactly what we need.
  
-To enforce this in our simulation, we must normalize our theoretical power spectrum so that its mathematical variance at $R = 8 \text{ Mpc}/h$ exactly equals $\sigma_8^2$. The variance $\sigma_R^2$ of a field smoothed over a physical scale $R$ is found by integrating the power spectrum multiplied by a "window function," $\tilde{W}(kR)$, in Fourier space:
+To enforce this in our simulation, we must normalize our theoretical power spectrum so that its mathematical variance at $R = 8 \text{ Mpc}/h$ equals $\sigma_8^2$. The variance $\sigma_R^2$ of a field smoothed over a physical scale $R$ is found by integrating the power spectrum multiplied by a "window function," $\tilde{W}(kR)$, in Fourier space:
 $$\sigma_R^2 = \frac{1}{2\pi^2} \int_0^\infty P_{\text{unnorm}}(k) \tilde{W}^2(kR) k^2 dk$$
  
 For a spherical volume, the appropriate filter is the **spherical top-hat window function**, whose Fourier transform is:
 $$\tilde{W}(kR) = \frac{3 \left(\sin(kR) - kR \cos(kR)\right)}{(kR)^3}$$
  
-By numerically integrating our unnormalized BBKS power spectrum (where $A=1$) using this window function at $R=8$, we calculate the unnormalized variance. The master normalization constant, $A$, is then simply the ratio of the target observational variance to this theoretical variance:
+By numerically integrating our unnormalized BBKS power spectrum (where $A=1$) using this window function at $R=8h^{-1} \text{Mpc}$, we calculate the unnormalized variance. The master normalization constant, $A$, is then simply the ratio of the target observational variance to this theoretical variance:
 $$A = \frac{\sigma_8^2}{\sigma_{R=8, \text{unnorm}}^2}$$
  
-Applying this constant $A$ ensures that the resulting displacement field possesses the exact statistical "clumpiness" observed in the real universe.
+Applying this constant $A$ ensures our theoretical power spectrum matches the baseline amplitude expected by linear theory for the present day, calibrating our $z=0$ field before we scale it back to our starting redshift.
 
 ##### The Physics of the Transfer Function: BBKS
 
-If the universe contained only dark matter, the primordial power spectrum ($P(k) \propto k^{n_s}$) would remain nearly a straight line across all scales. However, the early universe was a chaotic, boiling soup dominated by intense radiation. This radiation fundamentally altered how structures of different sizes were allowed to grow, a process we capture mathematically using the **Cosmological Transfer Function**, $T(k)$.
+If the universe contained only dark matter, the primordial power spectrum ($P(k) \propto k^{n_s}$) would remain nearly a straight line across all scales. However, the early universe was a chaotic, boiling soup dominated by intense radiation. The radiation era fundamentally altered how structures of different sizes were allowed to grow, a process we capture mathematically using the **Cosmological Transfer Function**, $T(k)$.
 
 The shape of $T(k)$ is driven by a cosmic race between gravity and the expansion of space, dictated by the **horizon** (the maximum distance light, and therefore any causal physical interaction, could have traveled since the Big Bang). 
 
-1.  **Large Scales (Small $k$):** These density fluctuations were physically larger than the cosmic horizon in the early universe. Because they were larger than the distance light could travel, local gravity could not pull them together. However, they were not completely frozen; instead, their initial density contrast was locked to the global expansion of spacetime itself, allowing their amplitude to grow steadily. By the time the cosmic horizon grew large enough to finally encompass them, the universe had already transitioned into the calm, **matter-dominated era**. Because they completely skipped the chaotic radiation era, local gravity took over seamlessly, and they continued to collapse normally. They never lost any growth time, so we define them as our unsuppressed baseline: $T \approx 1$.
-2.  **Small Scales (Large $k$):** These tiny fluctuations were small enough to enter the horizon very early on, right in the middle of the radiation-dominated era. During this epoch, the absolute speed of the cosmic expansion was still astronomically high. This blistering expansion acted like a cosmic treadmill, stretching space and pulling the dark matter particles apart much faster than their weak local gravity could pull them together. Consequently, the gravitational collapse of these small-scale density ripples was completely frozen—the **Mészáros effect**. They could only begin to collapse later, once the radiation diluted, the universe transitioned into the matter-dominated era, and the expansion slowed down enough for gravity to finally win. Because they spent their early history stalled on this cosmic treadmill, they lost millions of years of potential growth time, meaning their final amplitude in the present day is heavily suppressed. 
+1.  **Large Scales (Small $k$):** These density fluctuations were physically larger than the cosmic horizon in the early universe. Because they were larger than the distance light could travel, local gravity could not pull them together. However, because overdense regions on these massive scales contained more energy than the cosmic average, their local space expanded slightly slower than the background universe. As the background diluted, these denser regions diluted more slowly, differentiating them more from the background. By the time the cosmic horizon grew large enough to encompass them, the universe had already transitioned into the calm, **matter-dominated era**. Because they grew steadily the entire time, they never lost any growth potential. We therefore define them as our unsuppressed baseline: $T \approx 1$.
+2.  **Small Scales (Large $k$):** These tiny fluctuations were small enough to enter the horizon very early on, right in the middle of the radiation-dominated era. During this epoch, the energy density of the universe was overwhelmingly dominated by radiation, which acted as a brake to the expansion. Because the radiation had immense pressure, it could not clump together on these small scales; it remained a smooth, uniform background. During this epoch, the speed of the cosmic expansion was still very high. The dark matter particles were trying to collapse under their own gravity, but because the uniform radiation provided no localized gravitational help, they were entirely on their own. The rapid expansion acted like a cosmic treadmill, pulling the particles apart faster than they could fall together. Consequently, the gravitational collapse of these small-scale density ripples was stalled—a phenomenon known as the **Mészáros effect**. They could only begin to collapse later, once the radiation diluted, the universe transitioned into the matter-dominated era, and the expansion slowed down enough for gravity to finally win. 
 
-To calculate the exact shape of this suppression, cosmologists must solve complex, coupled differential equations tracking dark matter, baryons, photons, and neutrinos. In 1986, Bardeen, Bond, Kaiser, and Szalay (BBKS) published a masterful analytical fitting formula that approximates the result of these complex calculations.
+Calculating the shape of this suppression requires solving complex differential equations tracking dark matter, baryons, photons, and neutrinos. In 1986, Bardeen, Bond, Kaiser, and Szalay (BBKS) published an analytical fitting formula that approximates the result of these calculations.
 
 The BBKS transfer function depends on a scaled wavenumber, $q$, which adjusts the physical wavenumber $k$ (measured in $\text{Mpc}^{-1}$) based on the density of the universe. For a standard model, it is approximated as:
 $$q = \frac{k}{\Omega_m h^2 \exp(-\Omega_b - \sqrt{2h} \Omega_b / \Omega_m)}$$
@@ -1244,28 +1198,33 @@ Mathematically, this equation perfectly captures the physics of the early univer
 * As $q \to 0$ (huge cosmic scales), the function approaches $1$, preserving the primordial $k^{n_s}$ shape.
 * As $q \to \infty$ (tiny cosmic scales), the function falls off proportionally to $q^{-2}$. 
 
-Because the final power spectrum is proportional to $T(k)^2$, this causes the small-scale power to drop off by a massive factor of $k^{-4}$. This creates a distinct "turnover" peak in the total power spectrum—a critical signature of the transition from the radiation era to the matter era, and the defining mathematical curve that dictates the sizes of galaxies in our simulation.
+Because the final power spectrum is proportional to $T(k)^2$, this causes the small-scale power to drop off by a factor of $k^{-4}$. This creates a distinct "turnover" peak in the total power spectrum. The exact location of this peak is a signature of the transition from the radiation era to the matter era (representing the size of the horizon at matter-radiation equality), while the steep drop-off that follows is the signature of the radiation epoch itself. Together, they form the curve that dictates the abundance and sizes of galaxies in our simulation.
 
 #### Applying the Displacements and Velocities
 
-With the spatial pattern $\boldsymbol{\Psi}_0(\mathbf{x})$ calculated and perfectly normalized to the present-day universe ($a=1$), we can now set the initial state of our simulation at its starting time. Because the normalization is baked into the field, applying it to the early universe relies entirely on cosmological scaling.
+With the spatial pattern $\boldsymbol{\Psi}_0(\mathbf{x})$ calculated and normalized to the present-day universe ($a=1$), we can now set the initial state of our simulation at its starting time. Because the normalization is baked into the field, applying it to the early universe relies entirely on cosmological scaling.
 
-The final initial position of each particle is its grid position plus the displacement field, scaled back in time by the initial linear growth factor, $D(t)$. In the very early universe (e.g., $a = 0.02$), matter overwhelmingly dominates over Dark Energy. Because of this, we can safely approximate that the early growth factor scales directly with the expansion of space, $D(a) \approx a$. 
-$$\mathbf{x}_{\text{final}} = \mathbf{x}_{\text{grid}} + a_{\text{initial}} \boldsymbol{\Psi}_0(\mathbf{x}_{\text{grid}})$$
+The final initial position of each particle is its grid position plus the displacement field, scaled back in time to the starting epoch. In the very early universe (e.g., $a = 0.02$), matter overwhelmingly dominates over Dark Energy. Because of this, we can safely approximate that the early growth factor scales directly with the expansion of space, $D(a) \approx a$.
 
-However, calculating the initial "peculiar" velocity (a particle's motion on top of the Hubble flow) requires more care. The velocity is the time derivative of the comoving displacement, meaning it depends on the *rate of change* of the growth factor:
+However, because our field $\boldsymbol{\Psi}_0(\mathbf{x})$ is normalized to the present day ($a=1$), we cannot simply multiply by $a_{\text{initial}}$. In a $\Lambda$CDM universe, late-time Dark Energy stalls structure formation, meaning the present-day growth factor is actually suppressed to a value $g_1 = D(1) < 1$. To correctly unwind this late-time suppression and recover the true early-universe amplitude, we must divide by $g_1$ (typically evaluated using the Carroll, Press, and Turner 1992 fitting formula):
+$$\mathbf{x}_{\text{final}} = \mathbf{x}_{\text{grid}} + \frac{a_{\text{initial}}}{g_1} \boldsymbol{\Psi}_0(\mathbf{x}_{\text{grid}})$$
+
+where $g_1$ is defined as:
+$$g_1 = \frac{2.5 \Omega_m}{\Omega_m^{4/7} - \Omega_\Lambda + \left(1 + \frac{\Omega_m}{2}\right)\left(1 + \frac{\Omega_\Lambda}{70}\right)}$$
+
+Calculating the initial "peculiar" velocity (a particle's motion on top of the Hubble flow) requires more care. The velocity is the time derivative of the comoving displacement, meaning it depends on the rate of change of the growth factor:
 $$\mathbf{v}_{\text{pec}} = \frac{dD(t)}{dt}\bigg|_{t_{\text{initial}}} \boldsymbol{\Psi}_0(\mathbf{x}_{\text{grid}})$$
 
 In a pure Einstein-de Sitter universe, this derivative simplifies neatly to $\frac{dD}{dt} = H(t)D(t)$. But in a full $\Lambda$CDM universe, we must account for the fact that Dark Energy is actively suppressing the rate at which these structures grow. To express this physically, cosmologists define the **Logarithmic Growth Rate**, $f$:
 $$f = \frac{d \ln D}{d \ln a}$$
 
-The foundational approximation for this rate was first derived by P.J.E. Peebles in 1980 as $f \approx \Omega_m^{0.6}$ for a purely matter-dominated universe. However, in a modern flat $\Lambda$CDM universe, Dark Energy alters this suppression slightly. Today, the highly accurate, standard approximation used in cosmological codes is:
+The foundational approximation for this rate was first derived by P.J.E. Peebles in 1980 as $f \approx \Omega_m^{0.6}$ for a purely matter-dominated universe. However, in a modern flat $\Lambda$CDM universe, Dark Energy alters this suppression slightly. Today, the standard approximation used in cosmological codes is:
 $$f \approx \Omega_m(a)^{0.55}$$
 
-By substituting this growth rate into our derivative, we arrive at the generalized, fully cosmological equation for the initial peculiar velocities. It is proportional to the displacement field itself, scaled by the Hubble parameter, the scale factor, and the critical suppression factor $f$:
-$$\mathbf{v}_{\text{pec}} = H_{\text{initial}} \cdot a_{\text{initial}} \cdot f \cdot \boldsymbol{\Psi}_0(\mathbf{x}_{\text{grid}})$$
+By substituting this growth rate into our derivative, we arrive at the generalized cosmological equation for the initial peculiar velocities. It is proportional to the displacement field itself, scaled by the Hubble parameter, the critical suppression factor $f$, and our fully unwound growth factor:
+$$\mathbf{v}_{\text{pec}} = H_{\text{initial}} \cdot f \cdot \frac{a_{\text{initial}}}{g_1} \boldsymbol{\Psi}_0(\mathbf{x}_{\text{grid}})$$
 
-This method produces a self-consistent set of initial conditions for both position and velocity, perfectly tailored to the chosen cosmology. The particle motions are correlated over large distances, forming the beginnings of the filaments and voids that will later evolve into galaxies and clusters.
+This method produces a self-consistent set of initial conditions for both position and velocity, tailored to the chosen cosmology. The particle motions are correlated over large distances, forming the beginnings of the filaments and voids that will later evolve into galaxies and clusters.
 
 *Key Literature & Further Reading*  
 Hahn, O. (2024). Bridging perturbation theory and simulations: initial conditions and fast integrators for cosmological simulations. *SciPost Physics Lecture Notes*. Available at [https://scipost.org/preprints/scipost_202507_00057v2/](https://scipost.org/preprints/scipost_202507_00057v2/)
@@ -1273,6 +1232,8 @@ Hahn, O. (2024). Bridging perturbation theory and simulations: initial condition
 Bardeen, J. M., Bond, J. R., Kaiser, N., & Szalay, A. S. (1986). The statistics of peaks of Gaussian random fields. *The Astrophysical Journal*, 304, 15-61. Available at: [https://articles.adsabs.harvard.edu/pdf/1986ApJ...304...15B](https://articles.adsabs.harvard.edu/pdf/1986ApJ...304...15B) See Appedix G.
 
 Linder, E. V. (2005). Cosmic growth history and expansion history. *Physical Review D*, 72(4), 043529. Available at: [https://arxiv.org/pdf/astro-ph/0507263](https://arxiv.org/pdf/astro-ph/0507263)
+
+Carroll, S. M., Press, W. H., & Turner, E. L. (1992). The cosmological constant. *Annual Review of Astronomy and Astrophysics*, 30, 499-542. Available at: [https://www.physics.rutgers.edu/~saurabh/physics690.spring08/Carroll-Press-Turner-1992.pdf](https://www.physics.rutgers.edu/~saurabh/physics690.spring08/Carroll-Press-Turner-1992.pdf)
 
 ## Gravity Validation and Accuracy
 
@@ -2211,7 +2172,205 @@ Almgren, A. S., Bell, J. B., Lijewski, M. J., Lukić, Z., & Van Andel, E. (2013)
 
 Strang, G. (1968). *On the construction and comparison of difference schemes.* SIAM Journal on Numerical Analysis, 5(3), 506-517. Available at [https://www.pas.rochester.edu/astrobear/raw-attachment/blog/shuleli08202013/Strang1968.pdf](https://www.pas.rochester.edu/astrobear/raw-attachment/blog/shuleli08202013/Strang1968.pdf)
 
+## Analytical Requirements for Resolution and Volume
 
+Because computational resources are finite, choosing the parameters of the simulation requires a trade-off between the overall size of the simulated box (how much of the universe we are going to simulate) and the size of the individual grid cells (at which resolution). If we choose poorly, our virtual universe will fail to represent the actual cosmos.
+
+### Cosmic Variance and the Box Size
+
+To simulate a "representative" patch of the universe, the statistical properties of the simulation box—the number of galaxy clusters, the sizes of the voids, the web-like structure of the filaments—should look identical to any other randomly selected patch of the real universe of the same size.
+
+However, the universe is only uniform on extremely large scales. If we look at a small patch of space (e.g., 10 Megaparsecs across), we might accidentally center our view on a massive supercluster, or we might look at an entirely empty void. This statistical uncertainty is known as **Cosmic Variance**.
+
+If a simulation box is too small, it suffers from severe cosmic variance. A small box cannot contain the longest wavelengths of the density field, meaning it will never form massive superstructures. Furthermore, the periodic boundary conditions will cause the few structures that do form to artificially interact with themselves across the boundaries. In cosmology, the accepted threshold for a simulation volume to be considered statistically representative of the large-scale structure is a comoving box length of roughly **100 Mpc** (Megaparsecs) or larger. At this scale, the simulation volume is vast enough to contain a statistically average mix of all cosmic environments.
+
+However, while cosmic variance dictates the minimum size of a simulation, the laws of General Relativity dictate the maximum. Our Newtonian Poisson solver calculates gravity instantaneously across the entire grid. To ensure this approximation remains valid, the comoving length of the box ($L$) must remain strictly sub-horizon ($L \ll c/H$). 
+
+Today, the Hubble radius ($c/H$) is roughly 4,300 Mpc. If we attempt to push our box size too close to this scale, the instantaneous gravity approximation creates a physical violation, allowing causally disconnected regions of the universe to pull on each other faster than the speed of light. Therefore, the tolerable maximum for a standard Newtonian N-body code without relativistic corrections is generally kept below 1,000 to 2,000 Mpc (the Gigaparsec scale).
+
+Ultimately, cosmological simulations must have a comoving box large enough to defeat cosmic variance ($\ge$ 100 Mpc), but small enough to ignore relativistic light-travel delays ($\le$ 1,000 Mpc).
+
+#### A Reference for Cosmic Scales
+
+Because the Megaparsec (Mpc) is an vast unit of distance (1 Mpc $\approx 3.26$ million light-years), it can be difficult to build an intuition for the scale of a simulation grid. To help anchor these numbers to reality, here is a quick-reference guide to the approximate diameters of common astronomical structures:
+
+| Structure | Approximate Diameter (Mpc) | Notes |
+| :--- | :--- | :--- |
+| **Earth-Sun Distance (1 AU)** | $\sim 5 \times 10^{-12} \text{ Mpc}$ | The distance light travels in 8 minutes. |
+| **The Solar System** | $\sim 0.00001 \text{ Mpc}$ | Reaching out to the edge of the Oort Cloud. |
+| **Milky Way (Visible Stellar Disk)** | $\sim 0.03 \text{ Mpc}$ | The glowing spiral of stars and gas we can see. |
+| **Milky Way (Dark Matter Halo)** | $\sim 0.3 \text{ Mpc}$ | The invisible gravitational well hosting our galaxy. |
+| **The Local Group** | $\sim 3.0 \text{ Mpc}$ | Our local neighborhood, including Andromeda. |
+| **Typical Galaxy Cluster** | $\sim 2.0 \text{ to } 10.0 \text{ Mpc}$ | Hundreds of galaxies bound in a single hot gas node. |
+| **Typical Cosmic Void** | $\sim 20.0 \text{ to } 50.0 \text{ Mpc}$ | Vast, underdense regions between filaments. |
+| **Representative Simulation Box** | $\mathbf{100.0+ \text{ Mpc}}$ | The minimum scale required to combat Cosmic Variance. |
+
+### Full-size Representative Simulations
+
+When designing a cosmological simulation, the box size ($L$) and the grid dimension ($N$) cannot be chosen arbitrarily, and are not only constrained by the cosmic variance. The specific physics modules implemented in the code dictate strict minimum bounds for these parameters.
+
+To run a simulation that accurately captures the correct tendencies—specifically the interplay of structure growth, shock-heating, and radiative cooling—we must balance three analytical constraints: the Cooling Threshold, the Mass Resolution Limit, and the Fundamental Mode.
+
+#### The Cooling Threshold
+
+The first constraint is defined by the thermodynamics of the baryonic gas. In any hydrodynamical setup, gas is allowed to radiate thermal energy away, but this cooling is ultimately halted at a specific temperature floor ($T_{\text{floor}}$). Depending on the simulation's goals, this floor might represent a true physical barrier (such as the limit of primordial atomic cooling) or an artificial numerical safety net designed to prevent grid singularities.
+
+For the fluid solver to demonstrate the complete cycle of hierarchical structure formation (infall, shock-heating, and subsequent core condensation), the gravity solver must be capable of forming dark matter halos massive enough to shock-heat the infalling gas to at least this $T_{\text{floor}}$ threshold.
+
+The analytical relationship between a dark matter halo's mass ($M_{\text{vir}}$) and the temperature of the gas shock-heated within its potential well ($T_{\text{vir}}$) is derived from the Virial Theorem. By equating the thermal kinetic energy of the gas to the gravitational binding energy of the halo, we get the equation for virial temperature:
+
+$$T_{\text{vir}} = \frac{\mu m_p G M_{\text{vir}}}{2 k_B R_{\text{vir}}} \approx 1.98 \times 10^4 \text{ K} \left(\frac{M}{10^8 M_\odot}\right)^{2/3}$$
+
+Where:
+
+* $\mu$ is the mean molecular weight of the gas (roughly **0.6** for fully ionized primordial gas).
+* $m_p$ is the mass of a proton.
+* $G$ is the gravitational constant.
+* $k_B$ is the Boltzmann constant.
+* $R_{\text{vir}}$ is the virial radius of the collapsed dark matter halo.
+
+Because the physical radius of a halo ($R_{\text{vir}}$) is tied to its mass and the background density of the universe at the time of collapse, this equation is frequently parameterized to directly link temperature and mass. By scaling from standard cosmological limits at redshift zero, we can isolate the minimum halo mass ($M_{\text{min}}$) required to reach a specific temperature floor ($T_{\text{floor}}$):
+
+$$M_{\text{min}} \approx 10^8 M_\odot \left( \frac{T_{\text{floor}}}{10^4 \text{ K}} \right)^{3/2}$$
+
+To successfully trigger the chosen cooling curve and validate the fluid solver, the simulation's volume and mass resolution must be capable of forming halos of at least $M_{\text{min}}$.
+
+#### Mass Resolution
+
+Knowing the minimum halo mass ($M_{\text{min}}$) required to trigger our specific thermodynamics, we must now ensure the grid is fine enough to actually resolve it. In a grid-based solver utilizing Cloud-In-Cell (CIC) mass assignment or similar schemes, structures that are only one or two cells wide are heavily distorted by numerical diffusion and grid noise. Standard computational practice dictates that a dark matter halo must span a minimum number of grid cells, $N_{\text{halo}}$ (typically 64), to be considered physically resolved and dynamically stable.
+
+Therefore, the maximum allowable mass resolution ($m_{\text{cell}}$, the mean mass of an unperturbed background cell) is constrained by:
+
+$$m_{\text{cell}} \le \frac{M_{\text{min}}}{N_{\text{halo}}}$$
+
+The mass resolution can be defined also as a function of the total background comoving matter density of the simulated universe ($\rho_m$), the physical box size ($L$), and the 1D grid resolution ($N$):
+
+$$m_{\text{cell}} = \rho_m \left( \frac{L}{N} \right)^3$$
+
+By equating these two principles, we can obtain the maximum allowable physical width of a single grid cell ($\Delta x = L/N$):
+
+$$\Delta x_{\text{max}} \le \left( \frac{M_{\text{min}}}{N_{\text{halo}} \rho_m} \right)^{1/3}$$
+
+#### The Fundamental Mode
+
+To satisfy the $\Delta x_{\text{max}}$ requirement, one might assume the easiest solution is to run a small simulation volume ($L$) at a low resolution ($N$). However, doing so may violate the boundaries of the expansion metric.
+
+The longest gravitational wavelength a simulation can model is equal to the box size itself, known as the Fundamental Mode ($k = 2\pi/L$). If the amplitude of density fluctuations at this scale grows too large, the fundamental mode will undergo non-linear collapse, causing the periodic boundary conditions to fail and crushing the simulated universe.
+
+In linear perturbation theory, non-linear collapse occurs when a region reaches a critical overdensity threshold of $\delta_c \approx 1.68$ (the origin of this value is explained later). To ensure the fundamental mode does not reach this threshold, we measure its global variance, $\sigma(L)$.
+
+In simple terms, the variance represents the "typical" or "average" strength of the density ripples at the scale of the entire box. Because cosmic density fluctuations follow a standard Gaussian bell curve, some regions will inevitably be denser than this average. If we allow the typical ripple strength ($\sigma(L)$) to grow too close to the critical collapse limit of 1.68, there is a high probability that a random density fluctuation within the box will cross the threshold and trigger global collapse.
+
+To ensure stability, we must keep the typical ripple so small that hitting $1.68$ becomes a statistical impossibility. We do this by restricting the fundamental variance to a safety threshold:
+
+$$\sigma_{\text{safe}} \le 0.3$$
+
+At a variance of $0.3$, a density spike of $1.68$ becomes almost six times larger than the average ($5.6\sigma$). This renders the probability of global collapse practically zero.
+
+#### Deriving the Minimum Box Size ($L_{\text{min}}$)
+
+Because variance grows over time and scales inversely with physical size, setting a hard limit of $\sigma_{\text{safe}} = 0.3$ dictates the minimum allowable box size for a simulation.
+
+We can approximate the variance at any given scale $L$ (in Mpc) and any given scale factor $a$ using the amplitude of primordial fluctuations ($\sigma_8$) and the linear growth factor ($D(a) \approx a$):
+
+$$\sigma(L, a) \approx a \cdot \sigma_8 \left( \frac{8}{L} \right)^{0.9}$$
+
+> This formula is a power-law approximation of the $\Lambda\text{CDM}$ matter power spectrum. To predict the variance at an arbitrary physical scale, we anchor the equation to two universally established cosmological standards: the linear growth factor ($D(a) \approx a$) to scale time, and $\sigma_8$ (the known present-day variance at exactly 8 Mpc) to scale space. Theoretical cosmology dictates that variance scales spatially according to the effective spectral index of the universe ($n$, not to be confused with the primordial spectral index; the effective index represents the local slope of the matter power spectrum after it was bent by early-universe radiation, evaluated specifically at the physical scale of the simulation box), following the relation $\sigma(R) \propto R^{-(n+3)/2}$. While the spectral index bends across vast cosmic distances, in the specific "sandbox" regime of small-scale simulations (roughly 1 to 20 Mpc), it is remarkably constant at $n \approx -1.2$. Plugging this local index into the theoretical relation yields exactly $-0.9$, giving us a rule to estimate variance for restricted box sizes.
+
+To find the minimum allowable box size ($L_{\text{min}}$) that survives until the end of the simulation ($a_{\text{stop}}$), we set the variance equal to the safety threshold:
+
+$$\sigma_{\text{safe}} = a_{\text{stop}} \cdot \sigma_8 \left( \frac{8}{L_{\text{min}}} \right)^{0.9}$$
+
+By algebraically inverting this formula, we get the equation for the smallest volume we are safe to simulate:
+
+$$L_{\text{min}} = 8 \left( \frac{a_{\text{stop}} \cdot \sigma_8}{\sigma_{\text{safe}}} \right)^{1/0.9}$$
+
+*For example: If we are running a standard cosmology ($\sigma_8 = 0.81$) and we want the simulation to safely reach $a=0.5$ without exceeding the $\sigma_{\text{safe}} = 0.3$ limit, the formula dictates a minimum box size of roughly $11.1 \text{ Mpc}$.*
+
+#### Final Synthesis
+
+Combining these independent limits tells us that the simulation must be at least as large as the global collapse limit ($L_{\text{min}}$), and its individual cells can be no larger than the required physical resolution limit ($\Delta x_{\text{max}}$).
+
+By dividing the minimum volume by the maximum cell size, we arrive at the equation for the minimum required grid dimension ($N$):
+
+$$N \ge \frac{L_{\text{min}}}{\Delta x_{\text{max}}}$$
+
+Substituting our derived physics back into this equation yields the analytical requirement for any grid-based cosmological simulation:
+
+$$N \ge L_{\text{min}} \left( \frac{N_{\text{halo}} \rho_m}{M_{\text{min}}} \right)^{1/3}$$
+
+If a simulation is run at a lower resolution, the mass of a single cell artificially swells beyond $M_{\text{min}}$. Because a single grid cell becomes more massive than the smallest structures the code is attempting to resolve, the physics engine becomes blind to those environments. This disconnects the grid from the true hierarchical growth of the cosmos, resulting in numerical artifacts such as artificial overcooling.
+
+### Representative Sandbox Simulations
+
+Running a fully resolved, science-grade simulation (e.g., a $100$ Mpc volume at $1024^3$ resolution) requires thousands of CPU hours on a supercomputing cluster. During the development phases of a cosmological code, waiting days to see if a new hydrodynamics module or gravity solver works is impractical.
+
+Developers need a "sandbox"—a small, low-resolution simulation that runs in minutes on a workstation but still exhibits the qualitative tendencies of the universe, such as shock-heating, radiative cooling, and hierarchical structure formation.
+
+However, as established before, ignoring the model constraints will lead to numerical artifacts. To make a simple simulation representative of true cosmological physics, we can engineer the sandbox using two approximations derived from Linear Growth Theory and the Truelove Criterion.
+
+#### Limiting the Timeline
+
+As explained before, if the box size ($L$) is too small relative to the simulated timeline, the longest gravitational wavelength the grid can model will go non-linear and collapse before the simulation reaches the present day ($a = 1.0$), crushing the background metric.
+
+However, the amplitude of these fluctuations scales directly with the linear growth factor $D(a)$. Considering that in the early-to-mid universe, $D(a) \approx a$, we can derive a safe stopping epoch ($a_{\text{stop}}$) by restricting the variance to a strict safety threshold ($\sigma_{\text{safe}}$):
+
+$$\sigma(L, a_{\text{stop}}) \approx a_{\text{stop}} \cdot \sigma(L, a=1.0) \le \sigma_{\text{safe}}$$
+
+By intentionally halting the simulation at $a_{\text{stop}}$, we ensure the fundamental mode remains in the linear regime. Simultaneously, because smaller interior sub-structures ($R \ll L$) possess higher variances, they will have already crossed the $\delta_c \approx 1.68$ threshold and collapsed. This way the sandbox avoids global collapse while still triggering the shock-heating necessary to validate the hydrodynamics engine.
+
+#### The Truelove Criterion
+
+Another hurdle of a coarse sandbox is gravitational fragmentation. When testing a cooling solver, it is tempting to allow the gas to cool to its natural absolute limits (e.g., down to the limits of atomic physics or the cosmic microwave background). However, on a coarse grid, this triggers a numerical failure governed by the Jeans Length ($\lambda_J$).
+
+The Jeans Length defines the physical size of a gas cloud where internal thermal pressure exactly balances gravitational collapse. It is proportional to the sound speed and inversely proportional to density:
+
+$$\lambda_J = \sqrt{\frac{\pi \gamma k_B T}{\mu m_p G \rho}} \propto \sqrt{\frac{T}{\rho}}$$
+
+In 1997, Truelove et al. established a fundamental rule for computational fluid dynamics: if a simulation allows the Jeans Length of a condensing gas cloud to drop below the width of a minimum number of computational grid cells (typically $N_J = 4$), the numerical solver can no longer accurately resolve the pressure gradient. When this happens, gravity artificially dominates, and the gas collapses into an infinitely dense, single-cell numerical singularity.
+
+For a simulation with box size $L$ and 1D resolution $N$, the physical size of a single computational cell at the stopping epoch $a_{\text{stop}}$ is:
+
+$$\Delta x_{\text{phys}} = a_{\text{stop}} \left( \frac{L}{N} \right)$$
+
+To satisfy the Truelove Criterion, the gas must maintain enough thermal pressure so that its Jeans Length never drops below $4 \Delta x_{\text{phys}}$, even at the maximum resolvable density ($\rho_{\text{max}}$). By rearranging the Jeans equation, we can calculate the absolute minimum temperature floor ($T_{\text{floor}}$) required to prevent numerical fragmentation:
+
+$$T_{\text{floor}} \ge \frac{\mu m_p G \rho_{\text{max}}}{\pi \gamma k_B} \left(4 \Delta x_{\text{phys}}\right)^2$$
+
+Because the required temperature scales with the square of the physical cell size, coarse grids demand massive thermal buffers. By setting the cooling floor configuration parameter to $T_{\text{floor}}$, we provide just enough artificial thermal pressure to ensure the densest gas clouds remain larger than the coarse grid cells, effectively bypassing the Truelove limit without crashing the Riemann solver.
+
+### The Spherical Collapse Limit
+
+The value $1.68$ (more precisely, $1.686$) is a universal threshold derived from a classic analytical framework known as the Spherical Collapse Model. This model tracks a spherical region of the universe that is slightly denser than the background. As the universe expands, this denser sphere also expands, but its extra gravitational pull slows its expansion down. Eventually, it reaches a "turnaround" point and collapses back in on itself to form a dark matter halo.
+
+To calculate this, cosmologists treat the surface of the sphere like a ball thrown straight upward against gravity. Its trajectory (radius and time) follows a parametric curve called a cycloid (think of the trajectory of a fixed point of a spinning wheel), driven by a "development angle" ($\theta$):
+
+* **$\theta = 0$:** The Big Bang (expansion begins).
+* **$\theta = \pi$:** The turnaround point (expansion halts, collapse begins).
+* **$\theta = 2\pi$:** The singularity (the sphere completely crushes itself).
+
+According to the cycloid equations, the amount of time that passes is tied to this angle via the relation $t \propto (\theta - \sin\theta)$. Therefore, the moment of physical collapse occurs at a time proportional to $2\pi$.
+
+However, alongside this exact model, cosmologists run a parallel **Linear Perturbation Theory** model. Linear theory is a simplified mathematical approach that assumes gravity never goes non-linear, allowing the density fluctuation ($\delta$) to grow smoothly and continuously without ever curving back in on itself.
+
+To find the theoretical "finish line" for a simulation, we map the true physical collapse onto the simplified linear timeline. We do this by taking a Taylor expansion of the cycloid equations in the extreme early universe ($\theta \ll 1$), where gravity is still linear:
+
+* The Time Equation: The Taylor expansion of $\sin\theta$ is approximately $\theta - \theta^3/6$. When we plug this into the time equation ($t \propto \theta - \sin\theta$), the leading $\theta$ terms cancel out, leaving $t \propto \theta^3/6$. By inverting this, we find that the development angle grows relative to time as $\theta \propto (6t)^{1/3}$.
+* The Density Equation: By similarly expanding the cycloid's radius equation ($R \propto 1 - \cos\theta$) using the Taylor series for cosine, we can isolate the leading-order growth mode. The linear density contrast becomes $\delta_{\text{linear}} = \frac{3}{20} \theta^2$.
+
+By substituting our time equation into our density equation, we get the linear growth formula:
+$$\delta_{\text{linear}} = \frac{3}{20} (6t)^{2/3}$$
+
+To find the critical overdensity threshold, $\delta_c$, we simply fast-forward this linear equation to the time we know the physical sphere crushes to a singularity ($t = 2\pi$):
+
+$$\delta_c = \frac{3}{20} (6 \times 2\pi)^{2/3} = \frac{3}{20}(12\pi)^{2/3} \approx 1.686$$
+
+Therefore, we know that if the linear equations dictate a density wave has reached an amplitude of $1.68$, the wave has collapsed.
+
+*Key Literature & Further Reading*  
+Truelove, J. K., Klein, R. I., McKee, C. F., Holliman II, J. H., Howell, L. H., & Greenough, J. A. (1997). *The Jeans condition: a new constraint on spatial resolution in simulations of isothermal self-gravitational hydrodynamics.* The Astrophysical Journal Letters, 489(2), L179. Available at [https://iopscience.iop.org/article/10.1086/310975](https://iopscience.iop.org/article/10.1086/310975)
+
+Barkana, R., & Loeb, A. (2001). *In the beginning: the first sources of light and the reionization of the universe.* Physics Reports, 349(2), 125-238. Available at [https://arxiv.org/abs/astro-ph/0010468](https://arxiv.org/abs/astro-ph/0010468)
 
 ## Architectures of Cosmological Simulations
 
@@ -2263,21 +2422,21 @@ Beyond spatial architecture, simulations are also categorized by the physical fo
 
 ## Diagnosing Cosmological Simulations
 
-A cosmological simulation generates billions of data points at every time step. Validating the physical accuracy of such an immense system requires aggregating this raw data into global macroscopic metrics. By tracking specific statistical and physical quantities as the universe evolves, we can verify that the fundamental laws of gravity, hydrodynamics, and thermodynamics are operating correctly.
+A cosmological simulation generates billions of data points at every time step. Validating the accuracy of such an immense system requires aggregating this raw data into global macroscopic metrics.
 
-This chapter outlines the standard diagnostic plots used to evaluate the health and accuracy of a cosmological simulation, detailing the underlying physics and the expected theoretical behaviors.
+This chapter outlines the standard diagnostic plots used to evaluate the health of a cosmological simulation, detailing the underlying physics and the expected theoretical behaviors.
 
 ### Cosmic Expansion History
 
-The most fundamental cross-check of a cosmological simulation is verifying its background geometry. Because the simulation box represents a comoving volume of the universe, its physical size must expand according to the Friedmann equations.
+The most basic cross-check of a cosmological simulation is verifying its background geometry. Because the simulation box represents a comoving volume of the universe, its physical size must expand according to the Friedmann equations.
 
 To validate this, the scale factor $a$ is plotted against the physical simulation time (typically in Gigayears). The shape of this curve is dictated entirely by the cosmological parameters chosen for the run, specifically the matter density parameter ($\Omega_m$) and the dark energy density parameter ($\Omega_\Lambda$).
 
-In a matter-dominated universe, the expansion decelerates over time. However, in a standard $\Lambda$CDM cosmology ($\Omega_\Lambda > 0$), dark energy eventually dominates. On the plot, this manifests as a curve that initially decelerates but gradually bends upward at late times (around $a \approx 0.5$ to $1.0$), reflecting the accelerated expansion of the universe. If this curve deviates from the analytical Friedmann solution, the simulation's cosmic clock or background integration is flawed.
+In a matter-dominated universe, the expansion decelerates over time. However, in a standard $\Lambda$CDM cosmology ($\Omega_\Lambda > 0$), dark energy eventually dominates. On the plot, this manifests as a curve that initially decelerates but gradually bends upward at late times (around $a \approx 0.5$ to $1.0$), reflecting the accelerated expansion of the universe.
 
 ### Structure Growth and Linear Theory
 
-Once the background expansion is validated, the next step is verifying the behavior of gravity. We must confirm that dark matter is clumping together at the mathematically correct rate. This is tracked by plotting the **Dark Matter Density Variance** ($\sigma^2$) against the scale factor.
+Once the background expansion is validated, the next step is verifying the behavior of gravity. We must confirm that dark matter is clumping together at the correct rate. This can be tracked by plotting the **Dark Matter Density Variance** ($\sigma^2$) against the scale factor.
 
 #### The Physics of Density Variance
 
@@ -2293,39 +2452,119 @@ This single number ($\sigma^2$) represents the global "clumpiness" of the univer
 
 #### Linear Perturbation Theory
 
-To know if the simulated variance is correct, it is compared against Cosmological Linear Perturbation Theory. In the very early universe, density fluctuations are microscopic ($\delta \ll 1$). Under these conditions, the fluid equations of dark matter can be linearized. Theory dictates that these small perturbations grow uniformly according to a Linear Growth Factor, $D(a)$.
+To know if the simulated variance is correct, it is compared against Cosmological Linear Perturbation Theory. In the very early universe, density fluctuations are microscopic ($\delta \ll 1$). Under these conditions, the equations of dark matter can be linearized. Theory dictates that these small perturbations grow uniformly according to a Linear Growth Factor, $D(a)$:
 
-$$\delta(\mathbf{x}, a) = \delta_0(\mathbf{x}) D(a)$$
+$$\delta(\mathbf{x}, a) = \delta_0(\mathbf{x}) \frac{D(a)}{D(a_0)}$$
 
-In a perfectly matter-dominated regime, the growth factor is directly proportional to the scale factor:
+In a purely matter-dominated universe (an Einstein-de Sitter cosmology), the growth factor is directly proportional to the scale factor ($D(a) \propto a$), meaning the variance simply grows with the square of the scale factor ($\sigma^2 \propto a^2$).
 
+However, in a $\Lambda\text{CDM}$ universe, the accelerated stretching of spacetime fights against the gravitational pull of the dark matter halos, causing the rate of structure growth to slow down.
 
-$$D(a) \propto a$$
+To validate the numerical solver in both cases, the theoretical model for the variance curve is driven by the integral of the expanding Hubble metric $H(a)$:
 
+$$D(a) \propto H(a) \int_0^a \frac{da'}{(a' H(a'))^3}$$
+With:
+$$H(a) = H_0 \sqrt{\Omega_{m,0} a^{-3} + \Omega_{\Lambda,0}}$$
 
-Because the density contrast $\delta$ grows linearly with $a$, the variance (which is $\delta^2$) must grow with the square of the scale factor:
+Usually approximated as:
+$$D(a) \propto \frac{5 \Omega_m(a)}{2} \left[ \Omega_m(a)^{4/7} - \Omega_\Lambda(a) + \left(1 + \frac{\Omega_m(a)}{2}\right) \left(1 + \frac{\Omega_\Lambda(a)}{70}\right) \right]^{-1} \cdot a$$
 
-
-$$\sigma^2 \propto a^2$$
+By plotting this growth curve against the discrete numerical variance calculated from the grid, we can prove that the N-body gravity solver is capturing both the early epoch of rapid hierarchical assembly and the late-stage suppression of structure formation caused by Dark Energy.
 
 #### Expected Simulation Behavior
-On a logarithmic plot of variance versus scale factor, a theoretical line representing linear structure growth ($\sigma^2 \propto a^2$) is drawn. To directly compare the growth rates, this theoretical curve is anchored to the simulation's initial conditions using the formula $\sigma^2(a) = \sigma_0^2 (a/a_0)^2$.
 
-* **The Linear Regime:** At early times, the simulated variance must perfectly track this theoretical line. The initial smooth distribution of matter gently amplifies exactly as linear equations predict.
-* **The Non-Linear Regime:** At later times (typically around $a > 0.4$), the simulated variance will aggressively curve upward, breaking away from linear theory. As dense clumps form ($\delta > 1$), the linear approximation fails. Gravity becomes highly localized and non-linear, pulling matter into dark matter halos much faster than the background linear theory suggests. This breakaway is the exact phenomenon N-body simulations are built to capture.
+* **The Linear Regime:** At early times, the simulated variance must track the theoretical line. The initial smooth distribution of matter gently amplifies exactly as linear equations predict.
+* **The Non-Linear Regime:** At later times (typically around $a > 0.4$), the simulated variance will curve upward, breaking away from linear theory. As dense clumps form ($\delta > 1$), the linear approximation fails. Gravity becomes highly localized and non-linear, pulling matter into dark matter halos much faster than the background linear theory suggests.
 
-### Density Probability Distribution Function (PDF)
+### The 1-Point Density PDF
 
-While the variance provides a single number for structure growth, the Density Probability Distribution Function (PDF) provides a complete statistical picture of the matter distribution. This plot is a histogram showing the volume fraction of the universe occupied by gas at various overdensities ($\rho/\bar{\rho}$).
+While the variance provides a single number for global structure growth, the **1-Point Density Probability Distribution Function (PDF)** provides a complete statistical picture of the matter distribution. Most commonly plotted as a **Volume-Weighted PDF**, this histogram shows the volume fraction of the universe occupied by gas at various overdensities ($\rho/\bar{\rho}$).
 
-By plotting the PDF at different evolutionary stages (e.g., $a=0.1$, $a=0.5$, $a=1.0$) on the same graph, the migration of mass becomes visually apparent.
+By plotting the simulation's PDF at different evolutionary stages (e.g., $a=0.1$, $a=0.5$, $a=1.0$) against analytical models, we can verify the migration of mass.
 
-* **Early Universe:** The PDF resembles a very narrow, tall Gaussian curve centered exactly at $\rho/\bar{\rho} = 1$. The universe is almost perfectly homogeneous.
-* **Late Universe:** As gravity takes over, mass evacuates from cosmic voids and compresses into dense filaments and halos. The peak of the PDF shifts slightly left (as voids, which take up most of the universe's volume, become heavily underdense). Simultaneously, the right side of the curve develops a long, extended "tail" stretching into extremely high densities. This transition from a narrow Gaussian to a broad, log-normal distribution with a high-density tail is the fundamental signature of the cosmic web forming.
+#### The Early Universe: The Gaussian Model
+
+In the linear regime of the early universe, primordial density fluctuations are symmetrical. The probability $P(\delta)$ of finding a region with a specific density contrast $\delta$ follows a classic Gaussian distribution, dictated by the global variance $\sigma^2$:
+
+$$P(\delta) = \frac{1}{\sqrt{2\pi\sigma^2}} \exp\left(-\frac{\delta^2}{2\sigma^2}\right)$$
+
+On a plot, the early-universe PDF will resemble a very narrow, tall bell curve centered exactly at $\rho/\bar{\rho} = 1$. Matching this theoretical curve proves the initial conditions and background metric are stable.
+
+#### The Late Universe: The Lognormal Model
+
+As gravity drives the universe into the non-linear regime, the symmetry of the Gaussian curve breaks. Mass evacuates from cosmic voids (which are strictly bounded, as density cannot drop below zero) and compresses into halos (which have no upper density limit). The peak of the PDF shifts slightly to the left, representing the massive volume of empty voids, while the right side develops a massive "tail" stretching into extreme overdensities.
+
+Cosmological theory dictates that this asymmetric, late-stage density field is well approximated by a Lognormal distribution. If we define a new variable $A = \ln(1+\delta)$, the lognormal PDF is given by:
+
+$$P(A) = \frac{1}{\sqrt{2\pi\sigma_A^2}} \exp\left(-\frac{(A - \langle A \rangle)^2}{2\sigma_A^2}\right)$$
+
+This transition from a narrow Gaussian to a broad, lognormal distribution is the mathematical signature of the cosmic web forming. By comparing these analytical models to the simulation's dynamic histogram, we can  verify that the code's non-linear mass transport adheres to theoretical expectations.
+
+### The Matter Power Spectrum
+
+The global density variance ($\sigma^2$) tells us how "clumpy" the universe is as a single number, but it cannot tell us the *sizes* of those clumps. A universe filled with tiny, dense galaxies could produce the same variance as a universe filled with a few massive superclusters.
+
+To evaluate the structural health of the simulation across all spatial scales, we must decompose the density field into its constituent frequencies using a Fourier Transform. The resulting metric is the **Matter Power Spectrum**, $P(k)$.
+
+#### The Physics of the Power Spectrum
+
+Instead of looking at the density contrast $\delta(\mathbf{x})$ in physical space, we transform it into $k$-space (Fourier space) to get $\delta(\mathbf{k})$. The variable $k$ is the **wavenumber**, which is inversely proportional to the physical size of a structure ($\lambda$):
+
+$$k = \frac{2\pi}{\lambda}$$
+
+Low values of $k$ represent massive, large-scale structures (like voids and superclusters), while high values of $k$ represent small-scale structures (like individual galaxy halos). The Power Spectrum $P(k)$ is defined as the variance of the density amplitudes at a specific wavenumber:
+
+$$P(k) = V \langle |\delta(\mathbf{k})|^2 \rangle$$
+
+where $V$ is the volume of the simulation box. On a conventional plot, the x-axis represents the wavenumber $k$ (typically in units of $h \text{ Mpc}^{-1}$), and the y-axis represents the power $P(k)$ (in units of $(h^{-1}\text{Mpc})^3$). Because both the scales and the amplitudes vary by many orders of magnitude, this is always plotted on a log-log scale.
+
+#### Computing the Power Spectrum from the Simulation
+
+In our simulation the dark matter exists as discrete particles, while the gas is mapped onto a fixed Eulerian grid. To compute the global density variance in Fourier space, we must project the particles onto the gas grid, combining them into a unified density field. The pipeline consists of four steps:
+
+**1. Mass Assignment (Cloud-In-Cell)**
+First, the dark matter mass must be distributed to the stationary grid cells. To do this, we can use the Cloud-In-Cell (CIC) technique, explained in a previous chapter. At the end of this step, we obtain the dark matter density field, $\rho_{dm}(\mathbf{x})$.
+
+**2. The Unified Density Contrast**
+With the dark matter mapped to the grid, the total mass density in any given cell is the sum of the dark matter and gas densities: $\rho(\mathbf{x}) = \rho_{dm}(\mathbf{x}) + \rho_{gas}(\mathbf{x})$.
+
+We then calculate the dimensionless density contrast for the unified grid:
+
+$$\delta(\mathbf{x}) = \frac{\rho(\mathbf{x}) - \bar{\rho}}{\bar{\rho}}$$
+
+where $\bar{\rho}$ is the mean density of the entire simulation box.
+
+**3. Fourier Transform and Deconvolution**
+We pass the grid of $\delta(\mathbf{x})$ through a Fast Fourier Transform to obtain the complex field $\delta(\mathbf{k})$. Then we need to "un-smear" the raw output by applying the CIC deconvolution.
+
+$$\delta_{\text{true}}(\mathbf{k}) = \frac{\delta_{\text{grid}}(\mathbf{k})}{W(\mathbf{k})}$$
+$$W(\mathbf{k}) = \left[ \frac{\sin(\frac{k_x \Delta x}{2})}{\frac{k_x \Delta x}{2}} \right]^2 \left[ \frac{\sin(\frac{k_y \Delta x}{2})}{\frac{k_y \Delta x}{2}} \right]^2 \left[ \frac{\sin(\frac{k_z \Delta x}{2})}{\frac{k_z \Delta x}{2}} \right]^2$$
+
+**4. Spherical Averaging (Binning)**
+To generate the final 1D Power Spectrum plot, we must collapse the Fourier grid down to a single line. First, we calculate the squared magnitude $|\delta_{\text{true}}(\mathbf{k})|^2$ for every cell in the Fourier grid.
+
+Because the simulated universe is isotropic (statistically identical in all directions), we do not care about the orientation of a given density wave, only its physical scale. For each cell, we calculate its scalar magnitude $k = \sqrt{k_x^2 + k_y^2 + k_z^2}$, which represents its distance from the origin in Fourier space.
+
+We then define the x-axis of the final plot by dividing this continuous 3D space into discrete "bins" (effectively carving Fourier space into concentric spherical shells of increasing radius). By collecting all the grid cells that fall within the boundaries of a given shell and averaging their squared amplitudes together, we isolate the variance at that specific physical scale. Multiplying this average by the volume of the simulation box yields the final 1D power spectrum value, $P(k)$.
+
+#### Theoretical Comparison
+
+We can test our simulation by plotting the data directly against established theoretical models. A standard practice is to generate these theoretical curves using accurate Boltzmann solvers, such as CAMB (Code for Anisotropies in the Microwave Background).
+
+CAMB is an industry-standard "Einstein-Boltzmann solver". Instead of moving particles, it solves the exact, continuous differential equations of General Relativity and thermodynamics that govern the universe. When provided with a set of cosmological parameters (such as $\Omega_m$, $\Omega_b$, and the Hubble constant), CAMB calculates how the primordial quantum fluctuations from the Big Bang evolved over billions of years.
+
+It does this by simultaneously solving the Einstein field equations (which dictate how gravity expands and bends space) alongside the Boltzmann transport equations (which track how dark matter, baryonic gas, photons, and neutrinos interact, scatter, and push against each other). By tracking these continuous fluids as the universe cools, CAMB calculates the theoretical power spectra for the large-scale distribution of matter.
+
+When diagnosing the simulation against these theoretical curves, we look at two distinct regimes:
+
+1. **The Linear Regime (Low $k$):** On large spatial scales, gravity is relatively weak, and structures collapse slowly. In this regime, the shape of the power spectrum is preserved, and its amplitude simply scales upwards over time proportional to the square of the linear growth factor, $D^2(a)$. If the simulation overlaps the theoretical curves at low $k$, we know our Initial Conditions (such as the $\sigma_8$ normalization and the unwinding of the dark energy growth suppression) were generated correctly, and our gravity solver is advancing at the correct cosmological rate.
+2. **The Non-Linear Regime (High $k$):** On small spatial scales, density perturbations become so severe that gravity causes them to collapse violently into dense halos. This causes the power spectrum to surge upward, breaking away from linear theory. Because pure Boltzmann solvers are built on linear equations, they cannot naturally calculate this violent collapse. To bridge this gap, CAMB internally applies an algorithm called Halofit—a highly calibrated set of mathematical fitting formulas derived from massive supercomputer simulations.
+
+A standard practice is to plot the power spectrum from multiple simulation snapshots on the same axes. By observing the curve shift upwards as the scale factor $a$ increases, we can track the timeline of the universe and verify that the simulation's large-scale structures are evolving in step with the theoretical linear growth rate.
 
 ### Global Gas Energy Inventory
 
-While N-body equations govern dark matter, the baryonic gas is governed by the laws of hydrodynamics. To ensure the fluid solver is stable and accurately capturing energy transformations, a global energy inventory is plotted over time. This typically displays the total Kinetic Energy, total Thermal Energy, and the cumulative Radiated Energy of all the gas in the simulation volume.
+To ensure the fluid solver is stable and accurately capturing energy transformations, we can plot a global energy inventory over time. This displays the total Kinetic Energy, total Thermal Energy, and the cumulative Radiated Energy of the gas. We can also plot the Fractional Energy Error to prove that the Riemann solver is obeying the First Law of Thermodynamics.
 
 #### The Physics of Energy Conversion
 
@@ -2333,16 +2572,32 @@ As the universe evolves, the gravitational potential wells created by dark matte
 
 However, unlike dark matter particles which are collisionless and can pass right through each other, gas is collisional. When flows of gas from opposite sides of a halo converge in the center, they violently collide. These supersonic collisions create massive shockwaves that convert the ordered kinetic energy of the infalling gas into disordered thermal energy.
 
-Finally, once the gas is shock-heated and densely packed in the center of these halos, it begins to emit photons (primarily via Bremsstrahlung radiation). Because these photons escape the simulation volume, the simulation acts as an open system. To verify that the universe is strictly conserving energy, the hydrodynamics engine must keep a running, cumulative tally of all the thermal energy that has been permanently radiated away.
+Once the gas is shock-heated and densely packed in the center of these halos, it begins to emit photons (primarily via Bremsstrahlung radiation), allowing energy to permanently escape the simulation volume.
+
+#### The Fractional Energy Error
+
+The Fractional Energy Error is a diagnostic metric that reveals whether the numerical Riemann solver is artificially creating or destroying energy. In a simple static physics simulation, proving energy conservation is as easy as checking if the final energy matches the initial energy. However, because our cosmological box is expanding and gravity is constantly doing work, the total energy of the gas is *supposed* to change.
+
+To calculate the true numerical error, the simulation must maintain a running ledger. At every single time step, the engine integrates the amount of energy added by gravitational work ($W_{\text{grav}}$), the energy drained by cosmic expansion work ($W_{\text{exp}}$), and the thermal energy lost to radiation ($E_{\text{rad}}$).
+
+$$W_{\text{grav}} = \int \left( \int \rho \mathbf{v} \cdot \mathbf{g} \, dV \right) dt$$
+$$W_{\text{exp}} = \int \left( \int 3 \frac{\dot{a}}{a} P \, dV \right) dt$$
+
+By evaluating these values using comoving code units (to strip away the diluting effects of the expanding metric), we can isolate the fluid solver's numerical error:
+
+$$\text{Absolute Error} = \Delta E_{\text{tot}} - W_{\text{grav}} + W_{\text{exp}} + E_{\text{rad}}$$
+
+Dividing this absolute error by the initial total energy of the system provides the unitless Fractional Energy Error. If the fluid equations are solved correctly, this ledger balances to zero.
 
 #### Expected Simulation Behavior
 
-On an energy evolution plot, these physical processes tell a clear, chronological story:
+On an energy evolution plot, these processes tell a chronological story:
 
-* **The Adiabatic Expansion Phase:** In the very early universe, before structures form, the Thermal Energy curve will initially drop. This is the cosmological $PdV$ work: the physical expansion of the universe forces the primordial gas to expand and cool down adiabatically (losing thermal energy purely because its volume is increasing, rather than radiating heat away).
-* **The Infall Phase:** As gravity begins to win against the expansion, the Kinetic Energy curve steadily rises as gas falls into emerging potential wells.
+* **The Adiabatic Expansion Phase:** In the early universe, before structures form, the Thermal Energy curve will initially drop. This is the cosmological $PdV$ work: the expansion of the universe forces the primordial gas to expand and cool down adiabatically (losing thermal energy because its volume is increasing, rather than radiating heat away).
+* **The Infall Phase:** As gravity begins to win against the expansion, gas falls into emerging potential wells and the Kinetic Energy curve steadily rises.
 * **The Shock Phase:** As the first structures collapse, the Kinetic Energy curve plateaus or begins to drop. Simultaneously, the Thermal Energy curve shoots upward. This rapid exchange between the two curves shows a healthy hydrodynamics engine correctly conserving energy during supersonic shocks.
 * **The Cooling Phase:** As the gas reaches extreme temperatures and densities, the cumulative Radiated Energy curve begins to rapidly climb. As billions of Ergs are radiated away, the gas loses its thermal pressure support, allowing it to condense into the cold, dense cores necessary for star formation.
+* **The Conservation Baseline:** If the Riemann solver and KDK integrators are mathematically sound, Fractional Energy Error line will remain nearly flat at zero (typically within a tolerance of $10^{-4}$ or $10^{-3}$) across billions of years of evolution.
 
 ### Maximum Gas Density Evolution
 
@@ -2357,15 +2612,13 @@ Instead of plotting the raw bulk mass density of the fluid ($\rho$), it is the i
 
 To calculate this metric from the simulation data, we must convert our internal code variables into physical units. We first divide the comoving mass density by the expansion factor cubed (**a³**) to find the true physical density. We then multiply by the primordial hydrogen mass fraction (**$X_H = 0.76$**) to isolate the hydrogen mass, and finally divide by the mass of a single proton to count the exact number of atoms per unit volume.
 
-#### The Physics of Gas Compression
+#### Expected Simulation Behavior
 
 As gas falls into a dark matter halo, gravity forces it into an increasingly smaller volume. However, as the gas shock-heats, its thermal pressure increases, pushing back against the gravitational collapse.
 
-#### Expected Simulation Behavior
-
-* **The Expansion-Dominated Phase:** In the very early universe, the maximum physical density curve will drop. During this linear regime, the physical expansion of the universe outpaces the slow gravitational assembly of the initial dark matter clumps, causing the gas to dilute.
+* **The Expansion-Dominated Phase:** In the very early universe, the maximum physical density curve will drop. During this linear regime, the expansion of the universe outpaces the slow gravitational assembly of the initial dark matter clumps, causing the gas to dilute.
 * **Turnaround and Collapse:** As dark matter halos grow massive enough to overcome the background Hubble expansion—a threshold known as "turnaround"—the gas is aggressively pulled into these deepening potential wells. At this point, the density curve reverses course and begins to rise steeply, mirroring the non-linear structure growth.
-* **Late Epochs and Core Collapse:** In a healthy, fully featured simulation (with active radiative cooling and high spatial resolution), this curve will continue to climb dramatically. As the gas radiates away its shock-heated thermal energy, it loses outward pressure support and collapses deeply into the halo cores, achieving the extreme densities necessary to trigger star formation. *Conversely*, in a purely adiabatic simulation (without cooling) or one limited by coarse grid resolution, this curve will prematurely flatten out and hit an artificial ceiling. In those restricted scenarios, the unabated thermal pressure physically prevents the gas from compressing any further than a few grid cells across.
+* **Late Epochs and Core Collapse:** In a healthy, fully featured simulation (with active radiative cooling and high spatial resolution), this curve will continue to climb dramatically. As the gas radiates away its shock-heated thermal energy, it loses outward pressure support and collapses deeply into the halo cores, achieving the extreme densities necessary to trigger star formation. *Conversely*, in a purely adiabatic simulation (without cooling) or one limited by coarse grid resolution, this curve will prematurely flatten out and hit an artificial ceiling. In those restricted scenarios, the unabated thermal pressure prevents the gas from compressing any further than a few grid cells across.
 
 ### Maximum Temperature Evolution
 
@@ -2382,21 +2635,19 @@ In the void regions of the universe, gas naturally cools due to adiabatic expans
 
 ### The Temperature-Density Phase Diagram
 
-While maximum density and temperature plots track the extremes of a simulation, the **Temperature-Density Phase Diagram** maps the thermodynamic state of every single gas cell in the universe. It is arguably the most information-dense diagnostic in computational astrophysics.
-
-Plotted as a 2D histogram (often with logarithmic scales), the x-axis represents the gas overdensity ($\rho/\bar{\rho}$), and the y-axis represents the temperature. The position of gas in this phase space reveals exactly which physical processes are dominating its behavior.
+The **Temperature-Density Phase Diagram** maps the thermodynamic state of every single gas cell in the universe. Plotted as a 2D histogram (often with logarithmic scales), the x-axis represents the gas overdensity ($\rho/\bar{\rho}$), and the y-axis represents the temperature. The position of gas in this phase space reveals which physical processes are dominating its behavior.
 
 #### The Physics of the Phase Space
 
 Gas in the universe naturally segregates into distinct thermodynamic regimes based on its environment:
 
-* **The Diffuse Intergalactic Medium (IGM):** In the extremely low-density voids, gas simply expands with the universe. Because it is doing work as it expands, it cools adiabatically. In the phase diagram, this gas forms a tight, diagonal line at low densities and low temperatures, defined by the relationship $T \propto \rho^{\gamma-1}$.
-* **The Warm-Hot Intergalactic Medium (WHIM):** As gas falls into filaments and dark matter halos, it compresses and shocks. This shock-heated gas breaks away from the adiabatic line, scattering upward into a broad cloud of high-temperature, moderate-density material.
+* **The Diffuse Intergalactic Medium (IGM):** In the extremely low-density voids, gas simply expands with the universe. Because it is doing work as it expands, it cools adiabatically. In the phase diagram, this gas forms a tight, diagonal line at low densities and low temperatures, defined by the relationship $T \propto \rho^{\gamma-1}$ (the **Adiabatic Track**).
+* **The Warm-Hot Intergalactic Medium (WHIM):** As gas falls into filaments and dark matter halos, it compresses and shocks. This shock-heated gas breaks away from the adiabatic track, scattering upward into a broad cloud of high-temperature, moderate-density material.
 * **The Condensed Cores:** If the simulation includes micro-physics like Bremsstrahlung (free-free) or line cooling, gas that reaches high densities can radiate its thermal energy away as photons. Because the cooling rate scales with the square of the density ($\Lambda \propto \rho^2$), cooling becomes fiercely efficient in the deepest parts of the dark matter halos.
 
 #### Expected Simulation Behavior
 
-* **In an Adiabatic Simulation:** Without radiative cooling, gas that gets shocked into the high-temperature regime stays hot. As it compresses into halos, it moves to the right on the phase diagram (higher density) but remains in a thick, hot plateau. Its thermal pressure eventually physically halts further compression.
+* **In an Adiabatic Simulation:** Without radiative cooling, gas that gets shocked into the high-temperature regime stays hot. As it compresses into halos, it moves to the right on the phase diagram (higher density) but remains in a thick, hot plateau above the adiabatic track. Its thermal pressure eventually physically halts further compression.
 * **In a Radiative Cooling Simulation:** When cooling physics is enabled (and spatial resolution is high enough to allow dense cores to form), a dramatic structural shift occurs. At high overdensities, the cooling time of the gas drops below the age of the universe. The hot gas loses its pressure support and plummets downward on the graph, forming a vertical "cooling waterfall." This gas pools at the bottom right of the phase diagram, hitting the artificial temperature floor (often set around **10,000 K** for primordial cooling, or lower if molecular cooling is simulated).
 
 ### Cold Dense Gas Fraction (The Star Formation Precursor)

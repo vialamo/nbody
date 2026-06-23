@@ -287,6 +287,8 @@ GasGrid::GasGrid(const Config& conf)
       solver(conf.MESH_SIZE),
       cooling_failed_cells(0),
       accumulated_radiated_energy(0.0),
+      accumulated_gravitational_work(0.0),
+      accumulated_expansion_work(0.0),
       config(conf) {}
 
 void GasGrid::update_primitive_variables() {
@@ -575,7 +577,7 @@ double GasGrid::apply_cooling(double dt, double a) {
                 d_en[i] -= delta_E_vol;
 
                 // Accumulate total physical energy lost in this cell
-                total_radiated += delta_E_vol * config.CELL_VOLUME * (a * a);
+                total_radiated += delta_E_vol * config.CELL_VOLUME;
             }
         }
     }
@@ -599,7 +601,7 @@ double GasGrid::get_cooling_timestep(double a) const {
 
     // Calculate the physical cooling floor
     double target_floor_k =
-        std::max(cooling::RADIATIVE_FLOOR_K, config.TEMP_FLOOR_KELVIN);
+        std::max(config.RADIATIVE_FLOOR_K, config.TEMP_FLOOR_KELVIN);
     double u_rad_floor =
         cooling::get_internal_energy_from_temp(target_floor_k, a, config);
 
