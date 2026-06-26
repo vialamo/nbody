@@ -4,29 +4,22 @@
 #include "config.h"
 #include "types.h"
 
-// Encapsulates a flat-array linked list for particle binning
-struct CellLinkedList {
-    // Size = num_cells. Index of the first particle in a given cell
-    std::vector<int> first_in_cell;
+class Diagnostics;
 
-    // Size = num_particles. Index of the next particle sharing the same cell
-    std::vector<int> next_particle;
-
-    void resize(int num_cells, int num_particles) {
-        first_in_cell.assign(num_cells, -1);
-        next_particle.assign(num_particles, -1);
-    }
-
-    void reset() {
-        std::fill(first_in_cell.begin(), first_in_cell.end(), -1);
-        std::fill(next_particle.begin(), next_particle.end(), -1);
+// Encapsulates a flat-array for particle binning
+struct CellList {
+    std::vector<int> cell_start;          // Size: num_cells
+    std::vector<int> cell_count;          // Size: num_cells
+    
+    void resize(int num_cells, int num_parts) {
+        cell_start.assign(num_cells, 0);
+        cell_count.assign(num_cells, 0);
     }
 };
 
 class ParticleSystem {
    private:
-    CellLinkedList cell_list;
-
+    CellList cell_list;
     std::vector<CIC_Data> cic_data;
 
     friend struct ParticleTestAccess;
@@ -59,7 +52,7 @@ class ParticleSystem {
     void interpolate_cic_forces(const Grid3D& ax_grid, const Grid3D& ay_grid,
                                 const Grid3D& az_grid, const Config& config);
 
-    void compute_pp_forces(const Config& config);
+    void compute_pp_forces(const Config& config, Diagnostics& diag);
 
     double calculate_kinetic_energy(double a) const;
 

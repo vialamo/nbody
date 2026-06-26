@@ -306,7 +306,7 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
     if (config.USE_PP) {
         ScopedTimer pp_timer(diag, TimerRegion::PP);
         // Adds PP acceleration directly onto the existing PM acceleration
-        state.dm.compute_pp_forces(config);
+        state.dm.compute_pp_forces(config, diag);
     }
 
     // Assign final accelerations back to particles

@@ -9,6 +9,10 @@ ScopedTimer::~ScopedTimer() {
     diag.add_time(region, elapsed.count());
 }
 
+void Diagnostics::add_prof_time(ProfRegion region, double time_sec) {
+    accumulated_prof[static_cast<size_t>(region)] += time_sec;
+}
+
 void Diagnostics::add_time(TimerRegion region, double time_sec) {
     accumulated_times[static_cast<size_t>(region)] += time_sec;
 }
@@ -35,9 +39,15 @@ double Diagnostics::get_average_overhead() const {
     return get_average(TimerRegion::Step) - total_physics;
 }
 
+double Diagnostics::get_prof_average(ProfRegion region) const {
+    if (accumulated_cycles == 0) return 0.0;
+    return accumulated_prof[static_cast<size_t>(region)] / accumulated_cycles;
+}
+
 void Diagnostics::reset_accumulators() {
     accumulated_times.fill(0.0);
     accumulated_substeps.fill(0);
+    accumulated_prof.fill(0.0);
     accumulated_cycles = 0;
 }
 

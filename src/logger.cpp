@@ -71,17 +71,16 @@ Logger::~Logger() {
 void Logger::write_header() {
     if (!log_file.is_open() || header_written) return;
 
-    log_file
-        << "cycle,sim_time,scale_factor,"
-        << "total_mass_gas,total_mass_dm,total_momentum_gas_x,total_"
-           "momentum_gas_y,total_momentum_gas_z,total_momentum_dm_x,total_"
-           "momentum_dm_y,total_momentum_dm_z,"
-        << "ke_gas,ke_dm,pe_dm,ie_gas,radiated_energy,"
-        << "dt_cfl,dt_gravity,dt_cool,dt_final,"
-        << "max_gas_density,max_gas_pressure,max_gas_velocity,"
-        << "wall_time_total,wall_time_pm,wall_time_pp,wall_time_hydro,"
-           "wall_time_io,cumulative_wall_time,memory_peak,memory_current,"
-        << "avg_substeps_hydro,avg_substeps_gravity\n";
+    log_file << "cycle,sim_time,scale_factor,"
+             << "total_mass_gas,total_mass_dm,total_momentum_gas_x,total_"
+                "momentum_gas_y,total_momentum_gas_z,total_momentum_dm_x,total_"
+                "momentum_dm_y,total_momentum_dm_z,"
+             << "ke_gas,ke_dm,pe_dm,ie_gas,radiated_energy,"
+             << "dt_cfl,dt_gravity,dt_cool,dt_final,"
+             << "max_gas_density,max_gas_pressure,max_gas_velocity,"
+             << "wall_time_total,wall_time_pm,wall_time_pp,wall_time_hydro,"
+                "wall_time_io,cumulative_wall_time,memory_peak,memory_current,"
+             << "avg_substeps_hydro,avg_substeps_gravity\n";
     header_written = true;
 }
 
@@ -119,7 +118,7 @@ void Logger::log(const Diagnostics& diag) {
                  << diag.get_average(TimerRegion::PP) << ","
                  << diag.get_average(TimerRegion::Hydro) << ","
                  << diag.get_io_time() << "," << wall_time_s << "," << peak_mem
-                 << "," << curr_mem << "," 
+                 << "," << curr_mem << ","
                  << diag.get_average_substeps(SubstepCounter::Hydro) << ","
                  << diag.get_average_substeps(SubstepCounter::Gravity) << "\n";
     }
@@ -159,15 +158,17 @@ void Logger::log(const Diagnostics& diag) {
               << ")" << "\n";
 
     std::cout << "  [Stability]\n";
-    std::cout << "    - Timestep (Macro): " << format_double(diag.dt_final, 2, true)
+    std::cout << "    - Timestep (Macro): "
+              << format_double(diag.dt_final, 2, true)
               << " | (Grav): " << format_double(diag.dt_gravity, 2, true)
               << " | (CFL): " << format_double(diag.dt_cfl, 2, true)
-              << " | (Cool): " << format_double(diag.dt_cool, 2, true)
-              << "\n";
-    std::cout << "    - Subcycles/step:   Hydro: " 
-              << format_double(diag.get_average_substeps(SubstepCounter::Hydro), 1)
-              << " | Gravity: " 
-              << format_double(diag.get_average_substeps(SubstepCounter::Gravity), 1) 
+              << " | (Cool): " << format_double(diag.dt_cool, 2, true) << "\n";
+    std::cout << "    - Subcycles/step:   Hydro: "
+              << format_double(diag.get_average_substeps(SubstepCounter::Hydro),
+                               1)
+              << " | Gravity: "
+              << format_double(
+                     diag.get_average_substeps(SubstepCounter::Gravity), 1)
               << "\n";
     std::cout << "    - Max(rho): "
               << format_double(diag.max_gas_density, 2, true)
@@ -190,12 +191,24 @@ void Logger::log(const Diagnostics& diag) {
               << "\n"
               << "    - I/O Spike: "
               << format_double(diag.get_io_time() * 1000.0, 1) << "\n";
+    if (diag.get_prof_average(ProfRegion::Compute) > 0.0) {
+        std::cout << "    - Transfer Avg: "
+                  << format_double(
+                         diag.get_prof_average(ProfRegion::Transf) / 1000.0, 1)
+                  << " | Return: "
+                  << format_double(
+                         diag.get_prof_average(ProfRegion::Ret) / 1000.0, 1)
+                  << " | Compute: "
+                  << format_double(
+                         diag.get_prof_average(ProfRegion::Compute) / 1000.0, 1)
+                  << "\n";
+    }
     std::cout << "-------------------------------------------------------------"
                  "---------"
               << "\n";
 
     if (diag.non_converged_cooling_cells > 0) {
-        std::cout << "  [WARNING] Cooling solver failed to converge in " 
+        std::cout << "  [WARNING] Cooling solver failed to converge in "
                   << diag.non_converged_cooling_cells << " cells\n";
     }
 }

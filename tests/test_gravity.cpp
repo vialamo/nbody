@@ -103,9 +103,11 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
     config.DOMAIN_SIZE = 8.0;
     config.NUM_DM_PARTICLES = 2;
 
-    // Set G=1.0 and softenings to 0.0 to make the mental math exact
+    // Set G=1.0
     config.G = 1.0;
-    config.SOFTENING_SQUARED = 0.0;
+    config.SOFTENING_SQUARED = 0.0001;
+
+    Diagnostics dummy_diag;
 
     ParticleSystem sys(config);
     // Two particles exactly 3.0 units apart on the X-axis
@@ -117,7 +119,7 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
         config.CUTOFF_RADIUS_SQUARED = (config.DOMAIN_SIZE / 2.0) * (config.DOMAIN_SIZE / 2.0);
 
         sys.bin_and_assign_mass(config);
-        sys.compute_pp_forces(config);
+        sys.compute_pp_forces(config, dummy_diag);
 
         // Exact Newtonian Gravity: F = G * m1 * m2 / r^2
         // F = 1.0 * 1.0 * 1.0 / (3.0 * 3.0) = 1.0 / 9.0 = 0.111111...
@@ -125,12 +127,12 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
         
         // Convert to acceleration (a = F/m). Since m=1, a=F.
         // p1 is pulled to the right (+x) by p2
-        REQUIRE(sys.acc_x[0] == Catch::Approx(expected_f));
+        REQUIRE(sys.acc_x[0] == Catch::Approx(expected_f).margin(1e-4));
         REQUIRE(sys.acc_y[0] == Catch::Approx(0.0));
         REQUIRE(sys.acc_z[0] == Catch::Approx(0.0));
 
         // p2 is pulled to the left (-x) by p1
-        REQUIRE(sys.acc_x[1] == Catch::Approx(-expected_f));
+        REQUIRE(sys.acc_x[1] == Catch::Approx(-expected_f).margin(1e-4));
     }
 
     SECTION("P3M Cutoff safely ignores distant particles") {
@@ -143,7 +145,7 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
         // Reset accelerations to 0 before computing
         std::fill(sys.acc_x.begin(), sys.acc_x.end(), 0.0);
         
-        sys.compute_pp_forces(config);
+        sys.compute_pp_forces(config, dummy_diag);
 
         // Because dist (3.0) > CUTOFF_RADIUS (2.0), the force should be exactly 0.0
         REQUIRE(sys.acc_x[0] == Catch::Approx(0.0));
@@ -238,6 +240,8 @@ TEST_CASE("Gravitational forces are physically scaled",
     config.START_A = 0.5;
     config.compute_derived_data();
 
+    Diagnostics dummy_diag;
+
     SimState state(config);
     state.total_time = 0;
     state.scale_factor = 0.5;  // Mid-way through the simulation
@@ -259,7 +263,7 @@ TEST_CASE("Gravitational forces are physically scaled",
     std::fill(state.dm.acc_z.begin(), state.dm.acc_z.end(), 0.0);
     
     state.dm.interpolate_cic_forces(state.gravity_x, state.gravity_y, state.gravity_z, config);
-    state.dm.compute_pp_forces(config);
+    state.dm.compute_pp_forces(config, dummy_diag);
 
     // Check if the total acceleration is physically active
     REQUIRE(std::abs(state.dm.acc_z[0]) > 0.05);

@@ -52,12 +52,14 @@ target_link_libraries(SimulationCore PUBLIC
 
 target_include_directories(SimulationCore PUBLIC
     ${CMAKE_SOURCE_DIR}/src
+)
+
+target_include_directories(SimulationCore SYSTEM PUBLIC
     ${HDF5_INCLUDE_DIRS}
     ${EIGEN3_INCLUDE_DIR}
 )
-
 # ==============================================================================
-# HARDWARE OPTIMIZATION & GPU OFFLOADING
+# HARDWARE OPTIMIZATION
 # ==============================================================================
 # Base CPU Vectorization
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -72,24 +74,24 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
             -Rpass-missed=loop-vectorize 
             -Rpass-analysis=loop-vectorize
         )
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+        message(STATUS "Enabling GCC SIMD vectorization diagnostics")
+        target_compile_options(SimulationCore PUBLIC 
+            "-fopt-info-vec-missed"
+        )
     endif()
 elseif(MSVC)
     target_compile_options(SimulationCore PUBLIC "/arch:AVX2")
 endif()
 
-# GPU Offloading Pipeline
+# ==============================================================================
+# GPU OFFLOADING PIPELINE
+# ==============================================================================
 if(USE_GPU_OFFLOAD)
     message(STATUS "GPU Offloading ENABLED")
     
-    # ENFORCE CLANG FOR GPUs
-    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        message(FATAL_ERROR "GPU Offloading requires Clang/LLVM. Run: CXX=clang++ cmake -DUSE_GPU_OFFLOAD=ON ..")
-    endif()
-
-    # This PUBLIC definition automatically passes down
     target_compile_definitions(SimulationCore PUBLIC USE_GPU)
 
-    # Auto-detect NVIDIA GPU Architecture
     execute_process(
         COMMAND nvidia-smi --query-gpu=compute_cap --format=csv,noheader
         OUTPUT_VARIABLE GPU_COMPUTE_CAP
@@ -100,38 +102,38 @@ if(USE_GPU_OFFLOAD)
     if(GPU_COMPUTE_CAP)
         string(REGEX MATCH "^([0-9]+)\\.([0-9]+)" _ ${GPU_COMPUTE_CAP})
         set(COMPUTE_VERSION "${CMAKE_MATCH_1}${CMAKE_MATCH_2}")
-        
-        # Cap at sm_90 for Clang 18 compatibility. 
-        # The NVIDIA driver will JIT-compile the PTX at runtime
-        if(COMPUTE_VERSION GREATER 90 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "19.0.0")
-            message(STATUS "Auto-detected Blackwell+ GPU (sm_${COMPUTE_VERSION}). Capping to sm_90 for Clang compatibility.")
-            set(GPU_ARCH "sm_90")
-        else()
-            set(GPU_ARCH "sm_${COMPUTE_VERSION}")
-        endif()
-        
-        message(STATUS "Targeting NVIDIA GPU Architecture: ${GPU_ARCH}")
     else()
-        set(GPU_ARCH "sm_61") 
-        message(WARNING "Could not auto-detect GPU via nvidia-smi. Defaulting to ${GPU_ARCH}.")
+        set(COMPUTE_VERSION "61")
+        message(WARNING "Could not auto-detect GPU via nvidia-smi. Defaulting to architecture 61.")
     endif()
 
-    # Apply Clang-specific Offload Flags globally so executables inherit them
-    message(STATUS "Applying Clang GPU Offload Flags (${GPU_ARCH})")
-    target_compile_options(SimulationCore PUBLIC
-        -fopenmp
-        -fopenmp-targets=nvptx64-nvidia-cuda 
-        --offload-arch=${GPU_ARCH}
-    )
-    add_link_options(
-        -fopenmp
-        -fopenmp-targets=nvptx64-nvidia-cuda
-        -fuse-ld=lld
-    )
-else()
-    message(STATUS "GPU Offloading DISABLED (Using CPU AVX backend)")
-endif()
+    if(CMAKE_CXX_COMPILER_ID MATCHES "NVHPC" OR CMAKE_CXX_COMPILER_ID MATCHES "PGI")
+        set(NVC_ARCH "cc${COMPUTE_VERSION}")
+        message(STATUS "Detected nvc++. Targeting NVIDIA GPU (OpenMP Offload): ${NVC_ARCH}")
+        
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fast -mp=gpu -gpu=${NVC_ARCH} -Minfo=mp")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -mp=gpu -gpu=${NVC_ARCH}")
 
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        set(GPU_ARCH "sm_${COMPUTE_VERSION}")
+
+        message(STATUS "Applying Clang GPU Offload Flags (${GPU_ARCH})")
+        target_compile_options(SimulationCore PUBLIC
+            -fopenmp
+            -fopenmp-targets=nvptx64-nvidia-cuda 
+            --offload-arch=${GPU_ARCH}
+        )
+        add_link_options(
+            -fopenmp
+            -fopenmp-targets=nvptx64-nvidia-cuda
+            -fuse-ld=lld
+        )
+    else()
+        message(FATAL_ERROR "GPU Offloading is currently only supported via nvc++ or Clang.")
+    endif()
+else()
+    message(STATUS "GPU Offloading DISABLED (Using CPU backend)")
+endif()
 # ==============================================================================
 # MAIN EXECUTABLE
 # ==============================================================================

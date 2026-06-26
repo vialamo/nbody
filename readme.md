@@ -21,7 +21,7 @@ This repository documents my work in cosmological N-body/hydrodynamics simulatio
 * **High-Performance Computing (HPC):**
     * **OpenMP Multithreading:** Heavy loops (such as the Riemann solver, mass assignment, and grid calculations) are parallelized across available CPU cores.
     * **SIMD Vectorization:** Core CPU mathematics leverage Eigen and AVX vectorization for cache-friendly, contiguous memory speedups.
-    * **GPU Offloading:** The computationally expensive direct-summation particle forces can be optionally offloaded to NVIDIA GPUs using OpenMP `#pragma omp target` directives and the Clang/LLVM toolchain.
+    * **GPU Offloading:** The computationally expensive direct-summation particle forces can be optionally offloaded to NVIDIA GPUs using OpenMP `#pragma omp target` directives via the NVIDIA HPC SDK (nvc++) or the Clang/LLVM toolchain.
 * **Numerical Methods:**
     * **Operator Splitting & Subcycling:** Employs a Strang-split fractional step method to decouple gravity, hydrodynamics, and cooling. Fast/stiff physics are **subcycled**.
     * **Cloud-in-Cell (CIC):** A symmetric mass-assignment and force-interpolation scheme for the PM grid to ensure momentum conservation.
@@ -45,33 +45,43 @@ This repository documents my work in cosmological N-body/hydrodynamics simulatio
 ### C++ Cosmological Code
 This section refers to the ASIMOV (Advanced Simulation of Intergalactic Matter and Observable Voids) code.
 
-1.  **Prerequisites (Linux/Ubuntu):**
-    You need a C++ compiler, CMake, and the development libraries for HDF5, Eigen, and OpenMP. To utilize GPU offloading, the Clang/LLVM toolchain is also required.
+1. **Prerequisites (Linux/Ubuntu):**
+You need a C++ compiler, CMake, and the development libraries for HDF5, Eigen, and OpenMP. To utilize GPU offloading, the NVIDIA HPC SDK (`nvc++`) or the Clang/LLVM toolchain is also required.
+```bash
+sudo apt update
+sudo apt install build-essential cmake libhdf5-dev libeigen3-dev libomp-dev
 
-    ```bash
-    sudo apt update
-    sudo apt install build-essential cmake libhdf5-dev libeigen3-dev libomp-dev
-    # Optional: Install Clang for GPU Offloading support
-    sudo apt install clang lld
-    ```
+# Optional: For GPU offloading, install Clang or the NVIDIA HPC SDK.
+# See NVIDIA's documentation for installation instructions.
+sudo apt install clang lld
 
-2.  **Compile (with CMake):**
-    This project uses Modern CMake to find dependencies, download testing frameworks, and build the executables. You can build the project for standard CPU execution (using AVX/SIMD) or enable NVIDIA GPU offloading.
+```
 
-    **Option A: Standard CPU Build (Default)**
-    ```bash
-    mkdir build && cd build
-    cmake ..
-    make -j
-    ```
 
-    **Option B: GPU Offload Build (Requires Clang & NVIDIA GPU)**
-    ```bash
-    mkdir build && cd build
-    # Force CMake to use Clang and enable the GPU offload toggle
-    CXX=clang++ CC=clang cmake -DUSE_GPU_OFFLOAD=ON ..
-    make -j
-    ```
+2. **Compile (with CMake):**
+This project uses Modern CMake to find dependencies, download testing frameworks, and build the executables. You can build the project for standard CPU execution (using AVX/SIMD) or enable NVIDIA GPU offloading.
+**Option A: Standard CPU Build (Default)**
+```bash
+mkdir build && cd build
+cmake ..
+make -j
+
+```
+
+
+**Option B: GPU Offload Build (Requires NVIDIA HPC SDK or Clang)**
+```bash
+mkdir build && cd build
+
+# Force CMake to use nvc++ and enable the GPU offload toggle
+CXX=nvc++ CC=nvc cmake -DUSE_GPU_OFFLOAD=ON ..
+
+# Or Force CMake to use Clang
+CXX=clang++ CC=clang cmake -DUSE_GPU_OFFLOAD=ON ..
+
+make -j
+
+```
 
     This will create two executables inside the `build` directory: the main simulation `asimov` and the automated test suite `run_tests`.
 

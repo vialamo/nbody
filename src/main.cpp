@@ -10,7 +10,8 @@
 
 SimulationEngine* g_engine = nullptr;
 
-void print_internal_units(const Config& config) {
+void print_info(const Config& config) {
+    std::cout << "Mesh Size = " << config.MESH_SIZE << "\n\n";
     std::cout << "Internal Unit System\n";
     std::cout << "1.0 Code Length   = " << config.UNIT_LENGTH_MPC
               << " comoving Mpc\n";
@@ -27,6 +28,14 @@ void print_internal_units(const Config& config) {
     if (a_safe_max < config.MAX_SCALE_FACTOR) {
         std::cout << "Warning: Fundamental mode collapse risk when a > "
                   << a_safe_max << std::endl;
+    }
+
+    int num_devices = omp_get_num_devices();
+    if (num_devices == 0) {
+        std::cout << "Warning: OpenMP sees NO GPUs. Falling back to CPU...\n"
+                  << std::endl;
+    } else {
+        std::cout << "OpenMP GPU available\n" << std::endl;
     }
 }
 
@@ -59,7 +68,7 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "Successfully loaded " << config_filename << std::endl;
 
-    print_internal_units(config);
+    print_info(config);
 
     // Create the output directories
     std::string timestamp = utils::get_timestamp();

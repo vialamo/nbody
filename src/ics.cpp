@@ -254,7 +254,6 @@ void initialize_dm(SimState& state, const Config& config,
                 double v_z = config.STANDING_PARTICLES
                                  ? 0.0
                                  : state.hubble_param * dz * zf.f;
-                double mass = config.DM_PARTICLE_MASS;
 
                 state.dm.add_particle(p_x, p_y, p_z, v_x, v_y, v_z,
                                       config.DM_PARTICLE_MASS);

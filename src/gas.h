@@ -99,7 +99,7 @@ class GasGrid {
 
     const Grid3D& get_internal_energy() const { return internal_energy; }
 
-    const size_t get_cooling_failed_cells() const {
+    size_t get_cooling_failed_cells() const {
         return cooling_failed_cells;
     }
     double get_accumulated_radiated_energy() const {

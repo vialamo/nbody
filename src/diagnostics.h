@@ -8,6 +8,7 @@
 
 enum class TimerRegion { Step, PM, PP, Hydro, IO, NUM_REGIONS };
 enum class SubstepCounter { Hydro, Gravity, NUM_COUNTERS };
+enum class ProfRegion { Transf, Ret, Compute, NUM_PROF_REGIONS };
 
 class Diagnostics {
    private:
@@ -27,11 +28,13 @@ class Diagnostics {
     size_t non_converged_cooling_cells = 0;
 
     // Performance State
+    int accumulated_cycles = 0;
     std::array<double, static_cast<size_t>(TimerRegion::NUM_REGIONS)>
         accumulated_times{};
-    int accumulated_cycles = 0;
     std::array<int, static_cast<size_t>(SubstepCounter::NUM_COUNTERS)>
         accumulated_substeps{};
+    std::array<double, static_cast<size_t>(ProfRegion::NUM_PROF_REGIONS)>
+        accumulated_prof{};
 
     friend class Logger;
 
@@ -39,9 +42,11 @@ class Diagnostics {
     Diagnostics() = default;
     ~Diagnostics() = default;
 
+    void add_prof_time(ProfRegion region, double time_sec);
     void add_time(TimerRegion region, double time_sec);
     void increment_cycle();
     double get_average(TimerRegion region) const;
+    double get_prof_average(ProfRegion region) const;
     void reset_accumulators();
     double get_average_overhead() const;
     double get_io_time() const;
