@@ -102,17 +102,19 @@ A particle exiting one face immediately re-enters from the opposite face. This m
 
 ### Gravitational Softening
 
-Newton's law of gravity, $F \propto 1/r^2$, has a mathematical singularity: as the distance $r$ between two particles approaches zero, the force between them approaches infinity. In a simulation that moves in discrete time steps, these immense forces can cause particles to be catapulted away at unrealistic speeds, completely wrecking the simulation's stability and energy conservation.
+Newton's law of gravity, $F \propto 1/r^2$, has a mathematical singularity: as the distance $r$ between two particles approaches zero, the force between them approaches infinity. In a simulation that moves in discrete time steps, these immense forces can cause particles to be catapulted away at unrealistic speeds, compromising the simulation's stability and energy conservation.
 
-To prevent this, we introduce **gravitational softening**. This technique modifies Newton's law of gravity by adding a parameter known as the **softening length**, $\epsilon$ (epsilon), to the denominator:
-$$F = \frac{G m_1 m_2}{r^2 + \epsilon^2}$$
-This simple addition ensures the denominator can never be zero. When particles are far apart, they feel the normal $1/r^2$ force. However, when their separation becomes comparable to or smaller than $\epsilon$, the force is "softened" and stops growing, leveling off at a large but finite value. 
+To prevent this, we introduce gravitational softening. Instead of treating particles as infinitely small points, this technique treats them as extended, spherical clouds of mass. We modify Newton's law of gravity by introducing a softening length, $\epsilon$ (epsilon). The classic representation of this is the Plummer force law:  
 
-A common and effective rule of thumb is to base the softening length on the **mean inter-particle spacing**, $d$. For a box with side $L$ and $N$ particles, it's calculated as:
+$$F = \frac{G m_1 m_2 r}{(r^2 + \epsilon^2)^{3/2}}$$
+
+When particles are far apart, they feel the normal $1/r^2$ force. However, when their separation becomes comparable to or smaller than $\epsilon$, they begin to pass "inside" each other's density clouds. As $r$ approaches zero, the force is softened and gradually drops to zero. This mimics reaching the center of a mass cloud, where the gravitational pull from all sides cancels out.   
+
+A simple rule of thumb is to base the softening length on the **mean inter-particle spacing**, $d$. For a box with side $L$ and $N$ particles, it's calculated as:
 
 $$d = \frac{L}{{N}^{1/3}}$$
 
-A typical choice for the softening length is then a small fraction of this, such as $\epsilon = d/30$. This ensures that the force is physically accurate for the vast majority of interactions, while the softening only activates during rare, close encounters to prevent numerical catastrophe.
+The softening length is then a small fraction of $d$, such as $\epsilon = 0.03 d$. The gravitational softening will be explained in more detail in a later section.
 
 *Key Literature & Further Reading*  
 Bagla, J. S., & Padmanabhan, T. (2004). *Cosmological N-Body Simulations*. arXiv:astro-ph/0411730. Available at [https://arxiv.org/pdf/astro-ph/0411730.pdf](https://arxiv.org/pdf/astro-ph/0411730.pdf)
@@ -1235,6 +1237,60 @@ Linder, E. V. (2005). Cosmic growth history and expansion history. *Physical Rev
 
 Carroll, S. M., Press, W. H., & Turner, E. L. (1992). The cosmological constant. *Annual Review of Astronomy and Astrophysics*, 30, 499-542. Available at: [https://www.physics.rutgers.edu/~saurabh/physics690.spring08/Carroll-Press-Turner-1992.pdf](https://www.physics.rutgers.edu/~saurabh/physics690.spring08/Carroll-Press-Turner-1992.pdf)
 
+
+## Gravitational softening
+
+In a previous chapter, we introduced gravitational softening as a technique to avoid numerical singularities. Newton’s law of gravity, $F \propto 1/r^2$, dictates that as the distance $r$ between two point masses approaches zero, the force approaches infinity. Softening prevents these forces to cause numerical problems:
+
+$$F = \frac{G m_1 m_2 r}{(r^2 + \epsilon^2)^{3/2}}$$
+
+However, gravitational softening also serves a physical purpose: **enforcing the collisionless limit of Dark Matter.**
+
+Real Dark Matter consists of microscopic particles. Because the number of particles is large, they move smoothly through a collective gravitational potential well, behaving as a continuous, collisionless fluid governed by the Vlasov-Poisson equations.
+
+Our simulations, however, use a smaller number of "tracer" particles, where a single particle might represent milions of solar masses. If we treat these massive particles as pure point masses with unmodified $1/r^2$ gravity, they can violently slingshot off one another in close encounters, transferring kinetic energy in a numerical artifact known as **artificial two-body relaxation**. Over time, this artificial scattering evaporates the cores of simulated Dark Matter halos.
+
+The softening length ($\epsilon$) smears the mass of the macro-particles over a finite spherical volume, simulating soft, overlapping clouds of density. This results in a smooth, collisionless fluid behavior.
+
+### Determining the Optimal Softening Length
+
+The softening length must balance two requirements:
+
+* **The Lower Bound (Preventing Relaxation):** If $\epsilon$ is too small, the point-mass nature of the macro-particles dominates. Artificial two-body relaxation will transfer kinetic energy into the halo cores, causing them to artificially heat up, and dissolve over time.
+* **The Upper Bound (Resolving Forces):** If $\epsilon$ is too large, physical forces are artificially smoothed out. The simulation will fail to resolve the gravitational potential wells necessary for matter to collapse.
+
+To find a proper factor, we can use the convergence criteria derived for individual, virialized structures. Power et al. (2003) demonstrated that to resolve the dense core of a Dark Matter halo without triggering artificial two-body relaxation, the optimal softening length must scale with the square root of the particle number inside the halo:
+
+$$\epsilon_{opt} = \frac{4 r_{200}}{\sqrt{N_{200}}}$$
+
+Here, $r_{200}$ is the virial radius of the halo, and $N_{200}$ is the number of particles enclosed within it (the *200* suffix refers to the density contrast of the halo in this study). 
+
+However, this formula can't be applied when the sizes and masses of the halos to be formed are not known beforehand. To statistically predict the maximum halo mass expected to form within a specific simulation volume we could use the Halo Mass Function (e.g., Tinker et al. 2008), which is not covered in this text. Instead, our code exposes a configurable parameter that multiplies the mean inter-particle distance ($d$) to define the softening length, empirically set to $1/30$ by default.
+
+### The Physical Softening Cap
+
+Cosmological simulations are typically computed in comoving coordinates to factor out the expansion of the universe. If the softening length is defined as a fixed comoving distance ($\epsilon_{comoving}$), a physical conflict arises when a Dark Matter halo collapses and reaches **Virial Equilibrium**. In the real universe, a virialized halo decouples from the Hubble flow; its *physical* size remains constant over time.
+
+If the simulation maintains a fixed *comoving* softening length, the physical size of that softening length is forced to grow alongside the scale factor ($a$):
+
+$$\epsilon_{physical} = a \times \epsilon_{comoving}$$
+
+When a simulated halo collapses down to the resolution limit of the code, its core becomes trapped by the softening length. Because $\epsilon_{physical}$ is artificially expanding with the universe, the physical size of the Dark Matter core is dragged outward with it.
+
+Since the mass of the core remains roughly constant, but its physical volume expands proportional to $a^3$, the physical density of the halo decreases over time:
+
+$$\rho_{physical} = \frac{M_{core}}{a^3 \times \epsilon_{comoving}^3} \propto \frac{1}{a^3}$$
+
+The halo is losing density as it's being artificially inflated by the comoving coordinate system. To allow halos to maintain virial equilibrium, we can implement a **Maximum Physical Softening Cap**.
+
+The solution is to dynamically alter the softening length through the simulation. Once the simulation reaches a predefined epoch (for example around $z \approx 2$ or $a \approx 0.33$), the physical softening length is not allowed to grow any further.
+
+To achieve a constant physical softening length while the background universe continues to expand, the comoving softening length must be dynamically shrunk proportional to $1/a$. If $a_{cap}$ is the scale factor at which the cap engages, the active comoving softening becomes:
+
+$$\epsilon_{comoving}(a) = \epsilon_{comoving, base} \times \left( \frac{a_{cap}}{a} \right)$$
+
+By implementing this dynamic cap, the gravitational forces inside dense cores counteract the cosmic expansion. When Dark Matter particles collapse into a halo, they hit a fixed *physical* resolution floor. The core stabilizes, the physical density remains constant, and the halo correctly holds its structural shape against the expanding background universe.
+
 ## Gravity Validation and Accuracy
 
 ### Conservation of Energy and Momentum
@@ -1685,25 +1741,73 @@ This acceleration, which is a force per unit mass, is then used to update the ga
 
 By applying these cosmological source terms to the gas grid within the same KDK integrator as the dark matter particles, we ensure that both components feel the same gravity and the same cosmic expansion, allowing them to evolve in a physically consistent manner.
 
-### The Fourier-Split Trade-off
+### Sub-Grid Coupling: The Intra-Cell Blind Spot
 
-Upgrading the gravity engine to Fourier-Split PM solves the stability and accuracy problems for the collisionless dark matter particles. However, in a **hybrid** simulation code—where dark matter is treated as Lagrangian particles and gas is treated on an Eulerian grid—this upgrade introduces an architectural tension.
+Upgrading the gravity engine to Fourier-Split PM solves the stability and accuracy problems for the collisionless dark matter particles. However, in a **hybrid** simulation code—where dark matter is treated as Lagrangian particles and gas is treated on an Eulerian grid—there is an architectural problem.
 
-Dark matter particles have sub-grid resolution; they use the grid for long distances, but the PP step allows them to interact accurately even when they occupy the same grid cell. Gas, however, is strictly limited to the grid. It only feels the gravitational acceleration vector ($\mathbf{g}_{\text{comoving}}$) calculated directly from the grid's potential. It does not participate in the PP loop.
+Dark matter particles have sub-grid resolution; they use the grid for long distances, but the PP step allows them to interact accurately even when they occupy the same grid cell. Gas, however, is limited to the grid. It only feels the gravitational acceleration vector ($\mathbf{g}_{\text{comoving}}$) calculated from the grid's potential.
 
-If we apply the Gaussian filter $\exp(-k^2 r_s^2)$ to fix the gravity solver, we are intentionally blurring the gravitational potential at scales smaller than $r_s$.
+If we apply the Gaussian filter $\exp(-k^2 r_s^2)$ to fix the gravity solver, we are intentionally blurring the grid's gravitational potential at scales smaller than $r_s$. Furthermore, since we rely on the Particle-Mesh (PM) gravity solver to act as the bridge between the collisionless dark matter particles and the continuous baryonic gas, in the scale of a single grid cell **the gas and the dark matter are blind to each other**. The gravitational acceleration at the center of cell $i$ is calculated using a symmetric central difference stencil, comparing the potential of its neighbors:
 
-* The dark matter instantly gets that missing "sharpness" back during its PP step.
-* **The gas never gets it back.** If the gas is forced to use the filtered potential, its short-range gravitational pull is artificially weakened. As gas falls into a dark matter halo, it shock-heats and builds up immense thermal pressure. Normally, the sharp, strong gravity in the core of the halo overcomes this pressure, allowing the gas to compress tightly to form stars. By artificially blurring the grid's gravity, the thermal pressure wins. The gas stalls out, forming puffy clouds rather than dense galactic disks.
+$$a_i = -\frac{\Phi_{i+1} - \Phi_{i-1}}{2\Delta x}$$
 
-Faced with this, we must choose an architectural compromise. While complex solutions exist (such as computing two entirely different gravitational potentials—one sharp for the gas, one smooth for the dark matter), the historical and practical consensus is to simply **accept the loss of gas resolution**.
+Notice that the potential of cell $i$ itself is absent from this equation. The grid calculates the gradient *across* the cell, effectively ignoring the mass *inside* the cell.
 
-This trade-off is justified by two realities of cosmological simulations:
+Consequently:
 
-1. **Dark Matter is the Cosmic Skeleton:** Dark matter constitutes roughly 85% of the total matter in a standard $\Lambda$CDM universe. It is the dominant source of gravity. The gas does not dictate the shape of the cosmic web; it merely flows into the gravitational trenches excavated by the dark matter. If we use a mathematically broken force (like the classical subtractive scheme), the dark matter skeleton deforms, and the gas falls into a physically incorrect universe. A slightly puffy gas cloud inside a perfect dark matter halo is preferable to a sharp gas cloud trapped in a numerical grid artifact.
-2. **The Eulerian Resolution Limit:** The "loss" of gas resolution is actually an illusion. Eulerian hydrodynamics inherently suffers from numerical diffusion. MUSCL reconstruction requires a multi-cell stencil, and Riemann solvers average states across cell boundaries. Because of this, a fixed Eulerian grid physically cannot resolve any fluid structure that is smaller than 2 or 3 grid cells across anyway.
+1. **Dark matter ignores local gas:** When a dark matter particle interpolates its long-range force from the grid, it feels the pull of distant gas, but it doesn't feel the pull from the gas in the same cell. The short-range Particle-Particle (PP) solver only iterates over other dark matter particles, leaving the gas out of the sub-grid physics.
+2. **Gas ignores local dark matter:** The Eulerian gas updates its momentum by reading this same central-difference grid. It feels no gravitational pull toward the dark matter particles moving around inside its own boundaries.
 
-If we use Fourier-Split PM and set our Gaussian smoothing scale ($r_s$) to roughly $1.25 \times \Delta x$, we are blurring the gravity at the *exact same scale* that the hydrodynamics is already blurred by the fluid solver. We aren't losing new physics; we are simply making the gravitational resolution match the native hydrodynamic resolution. By accepting this compromise, we secure energy conservation for the dark matter while keeping the gas stable.
+This limitation is known as the **intra-cell blind spot**, or lack of sub-grid resolution. At distances smaller than one grid cell ($\Delta x$), there is no gravitational coupling between the two fluids.
+
+#### The Pseudo-Particle Solution
+
+To bridge this sub-grid gap, we can compress the fluid mass of a cell into a **pseudo-particle** located at the center of the cell. Its mass is the local comoving density multiplied by the cell volume ($m_{\text{gas}} = \rho_{\text{cell}} \Delta x^3$).
+
+During the PP step, as a dark matter particle searches its neighboring cells for other dark matter, it also calculates the $1/r^2$ Newtonian pull exerted by these stationary gas pseudo-particles.
+
+For the gas to feel the dark matter, we can use a **momentum-conserving back-reaction**. When the dark matter particle calculates the gravitational force it feels *from* the gas, it applies an equal and opposite force *back* to the gas grid's momentum array. This force-matching guarantees that the sub-grid interactions conserve total momentum.
+
+#### The Shell Theorem
+
+Dark matter in our simulation represents a cold, collisionless fluid. We discretize this fluid into particles, and use small softening lengths ($\epsilon$) so they can orbit each other tightly. Gas, however, cannot collapse into a singularity smaller than a grid cell.
+
+The dark matter particles are flying through smooth, continuous clouds of gas. According to Newton's **Shell Theorem**, as an object moves deeper inside a uniform sphere of mass, the net gravitational pull it experiences smoothly decreases, reaching zero at the center.
+
+To model this fluid physics, we can use a **Cubic Spline Softening Kernel**. We multiply the Newtonian force between a DM particle and a gas pseudo-particle by a weighting function, $W(r/h)$, where the boundary $h$ is set to the cell size ($\Delta x$). This mimics the Shell Theorem for a uniform cloud of gas:
+
+*  **Outside the cell ($r \ge \Delta x$)**: The weight is $W = 1.0$. The dark matter particle feels the unmodified $1/r^2$ Newtonian pull of the gas mass.
+*  **Inside the cell ($r < \Delta x$)**: The weight smoothly drops as a cubic polynomial, reaching $W = 0$ at the center. This ramps down the force, representing the particle passing through a continuous fluid medium without experiencing a singularity.
+
+The polynomial we'll use to calculate this weight is derived from the standard **$M_4$ Cubic Spline Kernel**, used by Monaghan (1992) for Smoothed Particle Hydrodynamics (SPH). In mathematical approximation theory, the $M_n$ family of splines is generated by convolving a uniform boxcar function with itself $n$ times. The $M_4$ cubic spline is the lowest-order spline that guarantees $C^2$ continuity—meaning the force and its derivative are smooth—which is required to prevent energy leaks in a symplectic KDK integrator.
+
+Instead of treating the gas pseudo-particle as a uniform sphere, the cubic spline models it as a cloud whose density is highest at the center and smoothly drops to zero at the cell boundary ($h = \Delta x$). For a normalized distance $q = r/h$, the 3D density profile $\rho(q)$ of this cloud is defined as:
+
+$$\rho(q) = \frac{8}{\pi h^3} M_{\text{gas}} \begin{cases} 1 - 6q^2 + 6q^3 & \text{if } 0 \le q < 0.5 \\ 2(1-q)^3 & \text{if } 0.5 \le q < 1.0 \\ 0 & \text{if } q \ge 1.0 \end{cases}$$
+
+According to Newton's Shell Theorem (a particle moving through this spherically symmetric cloud only feels the gravitational pull of the mass interior to its current radius), the true sub-grid force is scaled by the **fraction of enclosed mass**:
+
+$$F = \frac{G M_{\text{gas}} m_{\text{dm}}}{r^2} \times \left( \frac{M(<r)}{M_{\text{gas}}} \right)$$
+
+To find this enclosed mass fraction, $W(q) = M(<r)/M_{\text{gas}}$, we must integrate the density profile over a spherical volume from the center out to the particle's radius $r$:
+
+$$W(q) = \frac{1}{M_{\text{gas}}} \int_0^r 4\pi r'^2 \rho(r') dr'$$
+
+By substituting the piecewise $M_4$ density profile into this integral and solving it, we get the polynomial weighting functions used to scale the force. For a dark matter particle deep inside the cell core ($0 \le q < 0.5$), the integrated weight is:
+
+$$W(q) = \frac{32}{3}q^3 - \frac{192}{5}q^5 + 32q^6$$
+
+For a dark matter particle in the outer envelope of the cell ($0.5 \le q < 1.0$), the integrated weight is:
+
+$$W(q) = -\frac{1}{15} + \frac{64}{3}q^3 - 48q^4 + \frac{192}{5}q^5 - \frac{32}{3}q^6$$
+
+When $q \ge 1.0$, the integral evaluates to $1.0$, as the particle is outside the gas cloud and feels all of its mass.
+
+#### The Computational Reality
+
+The pseudo-particle technique is rarely implemented in modern cosmological codes. The reason lies in the computational cost and the philosophy of grid-based solvers.
+
+Instead of performing expensive approximations to compute the forces inside a coarse cell, modern Eulerian codes solve the resolution problem by making the cells smaller. Using **Adaptive Mesh Refinement (AMR)**, these codes dynamically subdivide the grid whenever a region becomes dense, so that the grid itself provides the required spatial resolution.
 
 ### Initial Conditions for the Gaseous Component
 
@@ -1972,6 +2076,55 @@ For the hot plasmas found inside collapsed dark matter halos, this is a good phy
 
 There are, of course, specific environments where this approximation breaks down. When gas condenses into star-forming molecular clouds, it becomes "optically thick" and opaque, trapping heat inside. Furthermore, during the Epoch of Reionization, dense neutral hydrogen violently absorbed incoming Ultraviolet light from the first stars. To account for these complex radiation effects without actually running a Radiative Transfer solver, modern simulations employ sub-grid approximations—mathematical rules that reproduce physics occurring on scales smaller than a single grid cell. A common technique is to assume the universe is bathed in a uniform, invisible glow of UV light, which we mimic by enforcing an artificial temperature floor—such as the 10,000 K atomic cooling limit—preventing the diffuse gas from cooling below the thermodynamic baseline set by this universal radiation background.
 
+### The Subgrid Clumping Factor
+
+In an ideal, infinite-resolution simulation, the Eulerian equations of hydrodynamics capture the collapse of gas into Dark Matter halos. However, computational cosmology is limited by grid resolution. When modeling large cosmological volumes, the physical size of a single grid cell may span tens or hundreds of kiloparsecs. This discretization introduces a thermodynamic problem: the artificial suppression of radiative cooling.
+
+#### The Problem of Eulerian Smoothing
+
+In reality, gas is not a uniform fog; supersonic turbulence (chaotic, swirling macroscopic gas motions driven by colliding inflows) shreds it into a multiphase medium consisting of dense, cold knots surrounded by hot, sparse bubbles.
+
+Radiative cooling mechanisms, such as Bremsstrahlung (free-free emission), are two-body collisional processes. Consequently, the cooling rate ($\Lambda$) is proportional to the square of the gas density:
+
+$$\Lambda \propto \rho^2$$
+
+Because an Eulerian solver assigns a single, smoothed average density ($\langle \rho \rangle$) to an entire cell, the grid calculates the cooling rate based on the square of that average. However, due to a mathematical principle known as **Jensen's Inequality**, the square of an average is smaller than the average of the squares:
+
+$$\langle \rho \rangle^2 < \langle \rho^2 \rangle$$
+
+By smoothing out the dense clumps, the grid underestimates the true cooling rate. The thermal energy becomes trapped inside the cell, causing artificial pressure to build up. This numerical artifact results in an "adiabatic bounce," where the gas is blasted out of the gravitational well rather than condensing into a galactic core.
+
+#### The Subgrid Clumping Model
+
+To solve this without requiring computationally expensive grid resolutions, we employ a **Subgrid Clumping Factor** (often denoted as $C$). This model injects the missing, small-scale physics back into the macroscopic grid cells.
+
+The clumping factor is defined as the ratio of the average of the squared densities to the square of the average density:
+
+$$C = \frac{\langle \rho^2 \rangle}{\langle \rho \rangle^2}$$
+
+To implement this dynamically, we tie the subgrid variance to the macroscopic environment. As a cosmological structure collapses, supersonic turbulence increases, leading to more severe clumping. Therefore, the clumping factor can be modeled as a function of the local overdensity ($\Delta$), which is the ratio of the local cell density to the mean density of the universe:
+
+$$\Delta = \frac{\rho_{local}}{\bar{\rho}}$$
+
+In our model, we adopt a generalized power-law scaling for collapsing regions ($\Delta > 1$) to account for unresolved gas structures. The modified cooling factor is computed as:
+
+$$C = 1 + A \Delta^B$$
+
+While the conceptual foundation for scaling subgrid clumping with local overdensity and turbulence is well-established in studies (e.g., Mao et al. 2020; Federrath et al. 2008), this formulation is a custom fit where the parameters $A$ and $B$ are empirically calibrated based on the physics and resolution of the simulation:
+
+* **The Exponent ($B$):** This parameter captures how fast the subgrid gas fragments into dense knots as the halo collapses. As the gas compresses, its rising temperature provides thermal pressure support against further fragmentation. Because this thermal resistance grows stronger as the density increases, the efficiency of subgrid fragmentation gradually diminishes, preventing the clumping from scaling proportionally with the macroscopic overdensity. Thus B is set to be sublinear ($< 1.0$).
+* **The Amplitude ($A$):** This parameter serves as a correction factor specific to the simulation's grid resolution. It represents the degree to which the mesh fails to resolve the small-scale clumping. This amplitude is calibrated empirically so that the simulation matches macroscopic physical observables, such as the cosmic star formation rate or the global cold gas fraction.
+
+The subgrid clumping factor acts as a correction to the squared average density of the grid cell:
+
+$$\Lambda_{true} = (C \times \langle \rho \rangle^2) f(T)$$
+
+where $f(T)$ represents the temperature-dependent physics of the cooling function. By enabling this subgrid model, the simulation acknowledges that overdense cells contain unresolved, dense knots of gas. The thermal energy is radiated away, allowing the pressure to drop and the gas to undergo collapse.
+
+To calibrate the subgrid clumping amplitude ($A$), we require the simulation to reproduce the macroscopic condensed baryon fraction at $z=0$. Because our hydrodynamics model does not include a subgrid recipe for star formation, gas that cools below $T < 10^4$ K and reaches halo overdensities of $\Delta > 100$ remains trapped in the fluid phase. Therefore, our simulated cold dense gas fraction acts as a proxy for the total collapsed baryon budget—comprising both the interstellar medium (ISM) and stellar mass.
+
+Observational baryon censuses in the local universe indicate that stars and stellar remnants account for roughly 5% to 7% of the total cosmic baryon density, while cold neutral gas (H I, He I and H$_2$) accounts for an additional 1.5% to 2% (Shull, Smith, & Danforth 2012). Consequently, we tune the parameter $A$ such that the final simulated cold dense gas mass fraction at $z=0$ settles within the interval 7% to 10%.
+
 *Key Literature & Further Reading*  
 **Radiative Physics:**  
 Rybicki, G. B., & Lightman, A. P. (1979). *Radiative Processes in Astrophysics*. Wiley-VCH. (See Chapter 5 for the derivation of the Thermal Bremsstrahlung cooling rates).
@@ -1980,6 +2133,9 @@ Mo, H., van den Bosch, F. C., & White, S. (2010). *Galaxy Formation and Evolutio
 
 **Numerical Implementation of Stiff Cooling:**  
 Anninos, P., Zhang, Y., Abel, T., & Norman, M. L. (1997). *Cosmological Hydrodynamics with Multi-Species Chemistry and Nonequilibrium Ionization*. New Astronomy, 2(3), 209-224. Available at [https://arxiv.org/abs/astro-ph/9608041](https://arxiv.org/abs/astro-ph/9608041). (Details the standard use of operator-split, implicit backward-Euler integration with Newton-Raphson iterations for cosmological cooling).
+
+**Subgrid clumping factor:**  
+Daisuke Nagai, Erwin Lau. (2011). *Gas Clumping in the Outskirts of Lambda-CDM Clusters*. The Astrophysical Journal. Available at [https://arxiv.org/abs/1103.0280](https://arxiv.org/abs/1103.0280).
 
 ## Validation of the Hydrodynamic Solver
 
@@ -2568,15 +2724,15 @@ To ensure the fluid solver is stable and accurately capturing energy transformat
 
 #### The Physics of Energy Conversion
 
-As the universe evolves, the gravitational potential wells created by dark matter halos begin to pull the surrounding gas inward. As the gas accelerates toward the center of these halos, it gains immense velocity, causing a macroscopic increase in the global Kinetic Energy of the simulation.
+As the universe evolves, the gravitational potential wells created by dark matter halos begin to pull the surrounding gas inward. As the gas accelerates toward the center of these halos, it gains immense velocity, causing an increase in the global Kinetic Energy of the simulation.
 
-However, unlike dark matter particles which are collisionless and can pass right through each other, gas is collisional. When flows of gas from opposite sides of a halo converge in the center, they violently collide. These supersonic collisions create massive shockwaves that convert the ordered kinetic energy of the infalling gas into disordered thermal energy.
+However, unlike dark matter, gas is collisional. When flows of gas from opposite sides of a halo converge in the center, they violently collide. These supersonic collisions create massive shockwaves that convert the ordered kinetic energy of the infalling gas into disordered thermal energy.
 
-Once the gas is shock-heated and densely packed in the center of these halos, it begins to emit photons (primarily via Bremsstrahlung radiation), allowing energy to permanently escape the simulation volume.
+Once the gas is shock-heated and densely packed in the center of these halos, it begins to emit photons (primarily via Bremsstrahlung radiation), allowing energy to escape the simulation volume.
 
 #### The Fractional Energy Error
 
-The Fractional Energy Error is a diagnostic metric that reveals whether the numerical Riemann solver is artificially creating or destroying energy. In a simple static physics simulation, proving energy conservation is as easy as checking if the final energy matches the initial energy. However, because our cosmological box is expanding and gravity is constantly doing work, the total energy of the gas is *supposed* to change.
+The Fractional Energy Error is a diagnostic metric that reveals whether the numerical Riemann solver is artificially creating or destroying energy. In a static physics simulation, proving energy conservation is as easy as checking if the final energy matches the initial energy. However, because our cosmological box is expanding and gravity is constantly doing work, the total energy of the gas is *supposed* to change.
 
 To calculate the true numerical error, the simulation must maintain a running ledger. At every single time step, the engine integrates the amount of energy added by gravitational work ($W_{\text{grav}}$), the energy drained by cosmic expansion work ($W_{\text{exp}}$), and the thermal energy lost to radiation ($E_{\text{rad}}$).
 
@@ -2585,7 +2741,7 @@ $$W_{\text{exp}} = \int \left( \int 3 \frac{\dot{a}}{a} P \, dV \right) dt$$
 
 By evaluating these values using comoving code units (to strip away the diluting effects of the expanding metric), we can isolate the fluid solver's numerical error:
 
-$$\text{Absolute Error} = \Delta E_{\text{tot}} - W_{\text{grav}} + W_{\text{exp}} + E_{\text{rad}}$$
+$$\text{Absolute Error} = \Delta E_{\text{tot}} - (W_{\text{grav}} - W_{\text{exp}} - E_{\text{rad}})$$
 
 Dividing this absolute error by the initial total energy of the system provides the unitless Fractional Energy Error. If the fluid equations are solved correctly, this ledger balances to zero.
 
@@ -2595,9 +2751,9 @@ On an energy evolution plot, these processes tell a chronological story:
 
 * **The Adiabatic Expansion Phase:** In the early universe, before structures form, the Thermal Energy curve will initially drop. This is the cosmological $PdV$ work: the expansion of the universe forces the primordial gas to expand and cool down adiabatically (losing thermal energy because its volume is increasing, rather than radiating heat away).
 * **The Infall Phase:** As gravity begins to win against the expansion, gas falls into emerging potential wells and the Kinetic Energy curve steadily rises.
-* **The Shock Phase:** As the first structures collapse, the Kinetic Energy curve plateaus or begins to drop. Simultaneously, the Thermal Energy curve shoots upward. This rapid exchange between the two curves shows a healthy hydrodynamics engine correctly conserving energy during supersonic shocks.
+* **The Shock Phase:** As the first structures collapse, the Kinetic Energy curve plateaus or begins to drop. Simultaneously, the Thermal Energy curve shoots upward. This exchange between the two curves shows the hydrodynamics engine converting kinetic energy into thermal heat during supersonic shocks.
 * **The Cooling Phase:** As the gas reaches extreme temperatures and densities, the cumulative Radiated Energy curve begins to rapidly climb. As billions of Ergs are radiated away, the gas loses its thermal pressure support, allowing it to condense into the cold, dense cores necessary for star formation.
-* **The Conservation Baseline:** If the Riemann solver and KDK integrators are mathematically sound, Fractional Energy Error line will remain nearly flat at zero (typically within a tolerance of $10^{-4}$ or $10^{-3}$) across billions of years of evolution.
+* **The Conservation Baseline:** If the Riemann solver and KDK integrators are healthy, Fractional Energy Error line will remain nearly flat at zero (typically within a tolerance of $10^{-4}$ or $10^{-3}$) across billions of years of evolution.
 
 ### Maximum Gas Density Evolution
 

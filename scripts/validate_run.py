@@ -64,7 +64,7 @@ def validate_snapshot(file_path, initial_mass=None):
         config_attr = f['Config'].attrs
         
         domain_size = config_attr['domain_size']
-        mesh_size = config_attr['mesh_size']
+        mesh_size = config_attr['mesh_size_1d']
         use_hydro = bool(config_attr['use_hydro'])
         
         sim_time = header_attr['simulation_time']

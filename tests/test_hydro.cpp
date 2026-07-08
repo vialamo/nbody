@@ -31,8 +31,8 @@ struct RiemannSolverTestAccess {
 TEST_CASE("Dual Energy Switch protects pressure in hypersonic flows",
           "[hydro][dual_energy]") {
     Config conf;
-    conf.MESH_SIZE = 2;
-    conf.GAMMA = 5.0 / 3.0;
+    conf.mesh_size = 2;
+    conf.gamma = 5.0 / 3.0;
     GasGrid grid(conf);
 
     auto& rho = GasGridTestAccess::density(grid);
@@ -88,8 +88,8 @@ TEST_CASE("Dual Energy Switch protects pressure in hypersonic flows",
 // ---------------------------------------------------------------------
 TEST_CASE("MUSCL PLM applies Minmod limiter to extrema", "[hydro][muscl]") {
     Config conf;
-    conf.MESH_SIZE = 4;
-    conf.GAMMA = 5.0 / 3.0;
+    conf.mesh_size = 4;
+    conf.gamma = 5.0 / 3.0;
     GasGrid grid(conf);
 
     auto& rho = GasGridTestAccess::density(grid);
@@ -107,8 +107,8 @@ TEST_CASE("MUSCL PLM applies Minmod limiter to extrema", "[hydro][muscl]") {
 
     GasGridTestAccess::update_primitive_variables(grid);
 
-    RiemannSolver solver(conf.MESH_SIZE);
-    solver.compute_fluxes(grid, 0, conf.GAMMA);  // X-Axis sweep
+    RiemannSolver solver(conf.mesh_size);
+    solver.compute_fluxes(grid, 0, conf.gamma);  // X-Axis sweep
 
     auto& rho_L = RiemannSolverTestAccess::rho_L(solver);
 
@@ -129,8 +129,8 @@ TEST_CASE("HLLC correctly resolves upwind supersonic fluxes", "[hydro][hllc]") {
     // preventing information from physically traveling backward.
 
     Config conf;
-    conf.MESH_SIZE = 4;
-    conf.GAMMA = 5.0 / 3.0;
+    conf.mesh_size = 4;
+    conf.gamma = 5.0 / 3.0;
     GasGrid grid(conf);
 
     // Setup uniform supersonic flow to the right
@@ -143,10 +143,10 @@ TEST_CASE("HLLC correctly resolves upwind supersonic fluxes", "[hydro][hllc]") {
 
     GasGridTestAccess::update_primitive_variables(grid);
 
-    RiemannSolver solver(conf.MESH_SIZE);
-    solver.compute_fluxes(grid, 0, conf.GAMMA);
+    RiemannSolver solver(conf.mesh_size);
+    solver.compute_fluxes(grid, 0, conf.gamma);
 
-    // P = (gamma - 1) x ei = (conf.GAMMA(5/3) - 1) x 1 = 2/3
+    // P = (gamma - 1) x ei = (conf.gamma(5/3) - 1) x 1 = 2/3
     // The speed of sound in this gas is:
     // cs = sqrt(gamma * P / rho) = sqrt((5/3)*(2/3)/1) ~ 1.05
     // v = 10.0. Therefore, the leftmost (slowest) wave speed in the

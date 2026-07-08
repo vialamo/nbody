@@ -10,32 +10,36 @@
 
 SimulationEngine* g_engine = nullptr;
 
-void print_info(const Config& config) {
-    std::cout << "Mesh Size = " << config.MESH_SIZE << "\n\n";
-    std::cout << "Internal Unit System\n";
-    std::cout << "1.0 Code Length   = " << config.UNIT_LENGTH_MPC
+static void print_info(const Config& config) {
+    std::cout << "\nInternal Unit System\n";
+    std::cout << "1.0 Code Length   = " << config.unit_length_mpc
               << " comoving Mpc\n";
-    std::cout << "1.0 Code Time     = " << config.UNIT_TIME_GYR << " Gyr\n";
-    std::cout << "1.0 Code Velocity = " << config.UNIT_VELOCITY_KMS
+    std::cout << "1.0 Code Time     = " << config.unit_time_gyr << " Gyr\n";
+    std::cout << "1.0 Code Velocity = " << config.unit_velocity_kms
               << " km/s\n";
-    std::cout << "1.0 Code Mass     = " << config.UNIT_MASS_MSUN
+    std::cout << "1.0 Code Mass     = " << config.unit_mass_msun
               << " Solar Masses\n";
     std::cout << "G = " << config.G << "\n" << std::endl;
 
+    std::cout << "Mesh Size = " << config.mesh_size << "\n";
     constexpr double sigma_safe = 0.3;
     double a_safe_max =
-        (sigma_safe / config.SIGMA_8) * pow((config.BOX_SIZE_MPC / 8.0), 0.9);
-    if (a_safe_max < config.MAX_SCALE_FACTOR) {
+        (sigma_safe / config.sigma_8) * pow((config.box_size_mpc / 8.0), 0.9);
+    if (a_safe_max < config.a_end) {
         std::cout << "Warning: Fundamental mode collapse risk when a > "
-                  << a_safe_max << std::endl;
+                  << a_safe_max << "\n";
     }
 
+    std::cout << "Threads: " << omp_get_max_threads() << " | ";
     int num_devices = omp_get_num_devices();
     if (num_devices == 0) {
-        std::cout << "Warning: OpenMP sees NO GPUs. Falling back to CPU...\n"
-                  << std::endl;
+        std::cout << "GPU: not available\n" << std::endl;
     } else {
-        std::cout << "OpenMP GPU available\n" << std::endl;
+        if (config.enable_GPU) {
+            std::cout << "GPU: enabled\n" << std::endl;
+        } else {
+            std::cout << "GPU: disabled\n" << std::endl;
+        }
     }
 }
 
@@ -68,6 +72,13 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "Successfully loaded " << config_filename << std::endl;
 
+    if (config.num_threads > 0) {
+        omp_set_num_threads(config.num_threads);    
+    }
+    if (omp_get_num_devices() == 0) {
+        config.enable_GPU = false;
+    }
+    
     print_info(config);
 
     // Create the output directories
@@ -96,11 +107,11 @@ int main(int argc, char* argv[]) {
                 break;
             case ExitStatus::ReachedMaxScaleFactor:
                 std::cout << "\nSimulation successfully reached target a = "
-                          << config.MAX_SCALE_FACTOR << "." << std::endl;
+                          << config.a_end << "." << std::endl;
                 break;
             case ExitStatus::ReachedMaxCycles:
                 std::cout << "\nSimulation reached maximum allowed cycles ("
-                          << config.MAX_CYCLES << ")" << std::endl;
+                          << config.max_cycles << ")" << std::endl;
                 break;
         }
     } catch (const std::exception& e) {

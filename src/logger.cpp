@@ -79,7 +79,9 @@ void Logger::write_header() {
              << "dt_cfl,dt_gravity,dt_cool,dt_final,"
              << "max_gas_density,max_gas_pressure,max_gas_velocity,"
              << "wall_time_total,wall_time_pm,wall_time_pp,wall_time_hydro,"
-                "wall_time_io,cumulative_wall_time,memory_peak,memory_current,"
+                "wall_time_io,cumulative_wall_time,"
+                "wall_time_GPU_transf,wall_time_GPU_back,wall_time_GPU_compute,"
+                "memory_peak,memory_current,"
              << "avg_substeps_hydro,avg_substeps_gravity\n";
     header_written = true;
 }
@@ -117,8 +119,11 @@ void Logger::log(const Diagnostics& diag) {
                  << diag.get_average(TimerRegion::PM) << ","
                  << diag.get_average(TimerRegion::PP) << ","
                  << diag.get_average(TimerRegion::Hydro) << ","
-                 << diag.get_io_time() << "," << wall_time_s << "," << peak_mem
-                 << "," << curr_mem << ","
+                 << diag.get_io_time() << "," << wall_time_s << "," 
+                 << diag.get_prof_average(ProfRegion::Transf) / 1000.0 << ","
+                 << diag.get_prof_average(ProfRegion::Ret) / 1000.0 << ","
+                 << diag.get_prof_average(ProfRegion::Compute) / 1000.0 << ","
+                 << peak_mem << "," << curr_mem << ","
                  << diag.get_average_substeps(SubstepCounter::Hydro) << ","
                  << diag.get_average_substeps(SubstepCounter::Gravity) << "\n";
     }

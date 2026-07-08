@@ -274,29 +274,31 @@ void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
 }
 
 GasGrid::GasGrid(const Config& conf)
-    : density(conf.MESH_SIZE),
-      momentum_x(conf.MESH_SIZE),
-      momentum_y(conf.MESH_SIZE),
-      momentum_z(conf.MESH_SIZE),
-      energy(conf.MESH_SIZE),
-      pressure(conf.MESH_SIZE),
-      velocity_x(conf.MESH_SIZE),
-      velocity_y(conf.MESH_SIZE),
-      velocity_z(conf.MESH_SIZE),
-      internal_energy(conf.MESH_SIZE),
-      solver(conf.MESH_SIZE),
+    : density(conf.mesh_size),
+      momentum_x(conf.mesh_size),
+      momentum_y(conf.mesh_size),
+      momentum_z(conf.mesh_size),
+      energy(conf.mesh_size),
+      pressure(conf.mesh_size),
+      velocity_x(conf.mesh_size),
+      velocity_y(conf.mesh_size),
+      velocity_z(conf.mesh_size),
+      internal_energy(conf.mesh_size),
+      solver(conf.mesh_size),
       cooling_failed_cells(0),
       accumulated_radiated_energy(0.0),
       accumulated_gravitational_work(0.0),
       accumulated_expansion_work(0.0),
-      config(conf) {}
+      config(conf) {
+    cooling::initialize(config);
+}
 
 void GasGrid::update_primitive_variables() {
     const int total_cells =
-        config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
+        config.mesh_size * config.mesh_size * config.mesh_size;
 
     // Pre-calculate constants to avoid doing it inside the loop
-    const double gamma_minus_1 = config.GAMMA - 1.0;
+    const double gamma_minus_1 = config.gamma - 1.0;
     const double inv_gamma_minus_1 = 1.0 / gamma_minus_1;
     const double floor = 1e-12;
 
@@ -332,7 +334,7 @@ void GasGrid::update_primitive_variables() {
             double e_tot = en[i];
             double p;
 
-            // --- DUAL ENERGY SWITCH ---
+            // DUAL ENERGY SWITCH
             // If internal energy is > 0.1% of total energy, trust the total
             // energy
             if (e_tot > 0.0 && (e_tot - ke) / e_tot > 0.001) {
@@ -366,11 +368,11 @@ void GasGrid::update_primitive_variables() {
 }
 
 void GasGrid::compute_and_apply_fluxes(double dt) {
-    double factor = dt / config.CELL_SIZE;
+    double factor = dt / config.cell_size;
 
     for (int axis = 0; axis < 3; ++axis) {
         update_primitive_variables();
-        solver.compute_fluxes(*this, axis, config.GAMMA);
+        solver.compute_fluxes(*this, axis, config.gamma);
 
         // Helper references to update original coordinates
         Grid3D* m_n;
@@ -395,11 +397,11 @@ void GasGrid::compute_and_apply_fluxes(double dt) {
         }
 
         // Central difference derivative for divergence: (v[i+1] - v[i-1]) / 2dx
-        Grid3D dv(config.MESH_SIZE);
+        Grid3D dv(config.mesh_size);
         dv.data = v_n->roll(-1, axis).array() - v_n->roll(1, axis).array();
 
         int total_cells =
-            config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
+            config.mesh_size * config.mesh_size * config.mesh_size;
 
         double* d_rho = density.array().data();
         double* d_mn = m_n->array().data();
@@ -460,7 +462,7 @@ void GasGrid::hydro_step(double dt) {
     compute_and_apply_fluxes(dt);
 
     // Final Averaging
-    int total_cells = config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
+    int total_cells = config.mesh_size * config.mesh_size * config.mesh_size;
 
     double* d_rho = density.array().data();
     double* d_mx = momentum_x.array().data();
@@ -492,31 +494,31 @@ void GasGrid::hydro_step(double dt) {
 }
 
 double GasGrid::get_cfl_timestep() const {
-    if (!config.USE_HYDRO) return std::numeric_limits<double>::infinity();
+    if (!config.use_hydro) return std::numeric_limits<double>::infinity();
 
-    Grid3D cs_sq(config.MESH_SIZE);
-    cs_sq.data = (config.GAMMA * pressure.array() / density.array());
+    Grid3D cs_sq(config.mesh_size);
+    cs_sq.data = (config.gamma * pressure.array() / density.array());
     cs_sq.data = (density.array() > 1e-12).select(cs_sq.array(), 0.0);
     cs_sq.data = (cs_sq.array() == cs_sq.array()).select(cs_sq.array(), 0.0);
 
-    Grid3D v_mag(config.MESH_SIZE);
+    Grid3D v_mag(config.mesh_size);
     v_mag.data = (velocity_x.array().square() + velocity_y.array().square() +
                   velocity_z.array().square())
                      .sqrt();
 
-    Grid3D signal_vel(config.MESH_SIZE);
+    Grid3D signal_vel(config.mesh_size);
     signal_vel.data = v_mag.array() + cs_sq.array().sqrt();
 
     double max_signal_vel = signal_vel.maxCoeff();
     if (max_signal_vel < 1e-9) return std::numeric_limits<double>::infinity();
 
-    return (config.CELL_SIZE / max_signal_vel) * config.CFL_SAFETY_FACTOR;
+    return (config.cell_size / max_signal_vel) * config.hydro_courant_factor;
 }
 
 double GasGrid::apply_cooling(double dt, double a) {
-    if (!config.ENABLE_COOLING) return 0.0;
+    if (!config.enable_cooling) return 0.0;
 
-    int total_cells = config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
+    int total_cells = config.mesh_size * config.mesh_size * config.mesh_size;
 
     const double* d_rho = density.array().data();
     double* d_en = energy.array().data();
@@ -548,7 +550,7 @@ double GasGrid::apply_cooling(double dt, double a) {
                 double dt_cell =
                     (lambda > 0.0) ? 0.1 * (u_current / lambda) : dt;
 
-                // Ensure we don't overshoot the global hydro timestep
+                // Don't overshoot the global hydro timestep
                 dt_cell = std::min(dt_cell, dt - t_evolved);
 
                 // Run the implicit solver for this tiny step
@@ -577,7 +579,7 @@ double GasGrid::apply_cooling(double dt, double a) {
                 d_en[i] -= delta_E_vol;
 
                 // Accumulate total physical energy lost in this cell
-                total_radiated += delta_E_vol * config.CELL_VOLUME;
+                total_radiated += delta_E_vol * config.cell_volume;
             }
         }
     }
@@ -590,10 +592,10 @@ double GasGrid::apply_cooling(double dt, double a) {
 }
 
 double GasGrid::get_cooling_timestep(double a) const {
-    if (!config.ENABLE_COOLING) return std::numeric_limits<double>::infinity();
+    if (!config.enable_cooling) return std::numeric_limits<double>::infinity();
 
     double min_dt_cool = std::numeric_limits<double>::infinity();
-    int total_cells = config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
+    int total_cells = config.mesh_size * config.mesh_size * config.mesh_size;
 
     const double* d_rho = density.array().data();
     const double* d_ie = internal_energy.array().data();
@@ -601,7 +603,7 @@ double GasGrid::get_cooling_timestep(double a) const {
 
     // Calculate the physical cooling floor
     double target_floor_k =
-        std::max(config.RADIATIVE_FLOOR_K, config.TEMP_FLOOR_KELVIN);
+        std::max(config.cooling_cutoff_k, config.temp_floor_k);
     double u_rad_floor =
         cooling::get_internal_energy_from_temp(target_floor_k, a, config);
 

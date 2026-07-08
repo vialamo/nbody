@@ -5,16 +5,18 @@ namespace cooling {
 
 constexpr int MAX_ITER = 50;
 
+void initialize(const Config& config);
+
 // Convert code internal energy to Temperature (Kelvin)
 inline double get_temp_from_internal_energy(double u_code, double a,
                                             const Config& config) {
-    return u_code * (a * a) * config.FACTOR_U_TO_T;
+    return u_code * (a * a) * config.factor_u_to_t;
 }
 
 // Convert Temperature (Kelvin) to code internal energy
 inline double get_internal_energy_from_temp(double T_kelvin, double a,
                                             const Config& config) {
-    return (T_kelvin * config.FACTOR_T_TO_U) / (a * a);
+    return (T_kelvin * config.factor_t_to_u) / (a * a);
 }
 
 // Computes the cooling rate Lambda in code units [u_code / t_code]

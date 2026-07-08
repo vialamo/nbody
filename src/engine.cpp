@@ -23,10 +23,10 @@ SimulationEngine::SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5,
 
     logger.log(diag);
 
-    if (config.SAVE_HDF5_EVERY_DELTA_A > 0.0) {
+    if (config.save_HDF5_every_delta_a > 0.0) {
         h5_writer.save_snapshot(snapshot_count, cycle_count, state, config);
         snapshot_count++;
-        next_output_a = config.START_A + config.SAVE_HDF5_EVERY_DELTA_A;
+        next_output_a = config.a_start + config.save_HDF5_every_delta_a;
     }
 }
 
@@ -35,8 +35,8 @@ TimestepInfo SimulationEngine::get_timestep() const {
     ts.subcycle_hydro = false;
     ts.subcycle_grav = false;
 
-    if (!config.USE_ADAPTIVE_DT) {
-        ts.dt_macro = config.FIXED_DT;
+    if (!config.use_adaptive_dt) {
+        ts.dt_macro = config.fixed_dt;
         return ts;
     }
 
@@ -53,16 +53,16 @@ TimestepInfo SimulationEngine::get_timestep() const {
 
     // Cosmological Expansion Limiter
     double dt_expansion = std::numeric_limits<double>::infinity();
-    if (config.EXPANDING_UNIVERSE && state.hubble_param > 0.0) {
+    if (config.expanding_universe && state.hubble_param > 0.0) {
         dt_expansion = 0.01 / state.hubble_param;
     }
 
     // Apply safety caps
-    ts.dt_macro = std::min({base_macro, dt_expansion, config.FIXED_DT});
+    ts.dt_macro = std::min({base_macro, dt_expansion, config.fixed_dt});
 
     // Force the simulation to land on the next output target
-    if (config.SAVE_HDF5_EVERY_DELTA_A > 0.0 && config.EXPANDING_UNIVERSE) {
-        double t_start = get_time_from_scale_factor(config.START_A, config);
+    if (config.save_HDF5_every_delta_a > 0.0 && config.expanding_universe) {
+        double t_start = get_time_from_scale_factor(config.a_start, config);
         double current_t = t_start + state.total_time;
         double target_t = get_time_from_scale_factor(next_output_a, config);
 
@@ -100,20 +100,20 @@ void SimulationEngine::step() {
     // Update Timestep for next cycle
     current_ts = get_timestep();
 
-    needs_more_cycles = state.scale_factor < config.MAX_SCALE_FACTOR &&
-                        cycle_count < config.MAX_CYCLES;
+    needs_more_cycles =
+        state.scale_factor < config.a_end && cycle_count < config.max_cycles;
 
     // I/O and Logging
     const double TOLERANCE = 1e-7;
     bool must_save_snapshot = state.scale_factor >= (next_output_a - TOLERANCE);
-    if (config.SAVE_HDF5_EVERY_DELTA_A > 0.0 &&
+    if (config.save_HDF5_every_delta_a > 0.0 &&
         (!needs_more_cycles || must_save_snapshot)) {
         ScopedTimer io_timer(diagnostics, TimerRegion::IO);
         h5_writer.save_snapshot(snapshot_count, cycle_count, state, config);
 
         snapshot_count++;
         while (next_output_a <= state.scale_factor) {
-            next_output_a += config.SAVE_HDF5_EVERY_DELTA_A;
+            next_output_a += config.save_HDF5_every_delta_a;
         }
     }
 
@@ -121,9 +121,9 @@ void SimulationEngine::step() {
     auto now = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = now - last_debug_time;
 
-    if (config.DEBUG_INFO_EVERY_SECONDS > 0.0 &&
+    if (config.debug_info_every_seconds > 0.0 &&
         (!needs_more_cycles ||
-         elapsed.count() >= config.DEBUG_INFO_EVERY_SECONDS)) {
+         elapsed.count() >= config.debug_info_every_seconds)) {
         diagnostics.update_physics(state, current_ts, config);
         logger.log(diagnostics);
         diagnostics.reset_accumulators();
@@ -141,7 +141,7 @@ ExitStatus SimulationEngine::run() {
     if (stop_requested) {
         return ExitStatus::UserAborted;
     }
-    if (cycle_count >= config.MAX_CYCLES) {
+    if (cycle_count >= config.max_cycles) {
         return ExitStatus::ReachedMaxCycles;
     }
 

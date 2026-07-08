@@ -13,7 +13,7 @@
 static double unnormalized_pk(double k_h, const Config& config) {
     // k_h is the wavenumber in units of h Mpc^-1
     // Cosmological Shape Parameter (Gamma)
-    double Gamma = config.OMEGA_M * config.HUBBLE_PARAM;
+    double Gamma = config.omega_m * config.hubble_h;
 
     // 'q' parameter for BBKS, scaled for Mpc/h units
     double q = k_h / Gamma;
@@ -25,7 +25,7 @@ static double unnormalized_pk(double k_h, const Config& config) {
                      -0.25);
 
     // P(k) = k^n_s * T(k)^2
-    return pow(k_h, config.SPECTRAL_INDEX) * T_k * T_k;
+    return pow(k_h, config.spectral_index) * T_k * T_k;
 }
 
 // Fourier transform of a spherical Top-Hat filter
@@ -49,7 +49,7 @@ static double compute_normalization_constant(const Config& config) {
     unnorm_variance /= (2.0 * M_PI * M_PI);
 
     // The normalization constant A = (sigma_8^2) / (unnormalized variance)
-    return (config.SIGMA_8 * config.SIGMA_8) / unnorm_variance;
+    return (config.sigma_8 * config.sigma_8) / unnorm_variance;
 }
 
 /* Computes the initial Zel'dovich displacement field and velocity growth rate.
@@ -69,12 +69,12 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
     // The master normalization constant
     double A = compute_normalization_constant(config);
 
-    int M = config.MESH_SIZE;
+    int M = config.mesh_size;
     size_t M3_real = static_cast<size_t>(M) * M * M;
     size_t M3_complex = static_cast<size_t>(M) * M * (M / 2 + 1);
 
     // Convert box size to h^-1 Mpc to match the units of true_pk
-    double box_h_mpc = config.BOX_SIZE_MPC * config.HUBBLE_PARAM;
+    double box_h_mpc = config.box_size_mpc * config.hubble_h;
     double box_vol_h = pow(box_h_mpc, 3.0);
 
     double amplitude_scaling =
@@ -82,7 +82,7 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
 
     // Create Gaussian random field
     std::vector<double> real_space_random_field(M3_real);
-    std::default_random_engine generator(config.SEED);
+    std::default_random_engine generator(config.seed);
     std::normal_distribution<double> distribution(0.0, 1.0);
     for (auto& val : real_space_random_field) {
         val = distribution(generator);
@@ -122,11 +122,11 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
                 auto kx_freq = static_cast<double>((i < M / 2) ? i : (i - M));
                 auto ky_freq = static_cast<double>((j < M / 2) ? j : (j - M));
                 auto kz_freq = static_cast<double>(k);
-                double kx = kx_freq * 2.0 * M_PI / config.BOX_SIZE_MPC;
-                double ky = ky_freq * 2.0 * M_PI / config.BOX_SIZE_MPC;
-                double kz = kz_freq * 2.0 * M_PI / config.BOX_SIZE_MPC;
+                double kx = kx_freq * 2.0 * M_PI / config.box_size_mpc;
+                double ky = ky_freq * 2.0 * M_PI / config.box_size_mpc;
+                double kz = kz_freq * 2.0 * M_PI / config.box_size_mpc;
                 double k_mag = sqrt(kx * kx + ky * ky + kz * kz);
-                double k_h = k_mag / config.HUBBLE_PARAM;
+                double k_h = k_mag / config.hubble_h;
 
                 // The BBKS Transfer Function T(k)
                 // Multiply the unnormalized shape by A
@@ -145,9 +145,9 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
 
                 // Convert density contrast to Zel'dovich displacement
                 // potential
-                double code_kx = kx_freq * 2.0 * M_PI / config.DOMAIN_SIZE;
-                double code_ky = ky_freq * 2.0 * M_PI / config.DOMAIN_SIZE;
-                double code_kz = kz_freq * 2.0 * M_PI / config.DOMAIN_SIZE;
+                double code_kx = kx_freq * 2.0 * M_PI / config.domain_size;
+                double code_ky = ky_freq * 2.0 * M_PI / config.domain_size;
+                double code_kz = kz_freq * 2.0 * M_PI / config.domain_size;
                 double code_k2 =
                     code_kx * code_kx + code_ky * code_ky + code_kz * code_kz;
 
@@ -179,8 +179,8 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
 
     // Calculate the exact linear growth suppression factor g(a) = D(a)/a at z=0
     // (a=1) Using the Carroll, Press, and Turner (1992) fitting formula
-    double Om = config.OMEGA_M;
-    double Ol = config.OMEGA_LAMBDA;
+    double Om = config.omega_m;
+    double Ol = config.omega_lambda;
     double g_1 = (2.5 * Om) / (pow(Om, 4.0 / 7.0) - Ol +
                                (1.0 + Om / 2.0) * (1.0 + Ol / 70.0));
 
@@ -206,7 +206,7 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
     // Calculate the growth rate 'f' (d ln D / d ln a)
     double a3 = pow(scale_factor, 3.0);
     // Omega_m(a) = the matter density at the current scale factor
-    double Om_a = config.OMEGA_M / (config.OMEGA_M + config.OMEGA_LAMBDA * a3);
+    double Om_a = config.omega_m / (config.omega_m + config.omega_lambda * a3);
     field.f = pow(Om_a, 0.55);  // The Peebles approximation
 
     return field;
@@ -214,10 +214,10 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
 
 void initialize_dm(SimState& state, const Config& config,
                    const ZeldovichField& zf) {
-    int M = config.MESH_SIZE;
-    double cell_size = config.DOMAIN_SIZE / M;
-    int N_part = config.N_PER_SIDE;
-    double spacing = config.DOMAIN_SIZE / N_part;
+    int M = config.mesh_size;
+    double cell_size = config.domain_size / M;
+    int N_part = config.num_particles_1d;
+    double spacing = config.domain_size / N_part;
 
     for (int i = 0; i < N_part; ++i) {
         for (int j = 0; j < N_part; ++j) {
@@ -239,24 +239,24 @@ void initialize_dm(SimState& state, const Config& config,
                 double dz = zf.dz[idx];
 
                 double p_x =
-                    fmod(qx + dx + config.DOMAIN_SIZE, config.DOMAIN_SIZE);
+                    fmod(qx + dx + config.domain_size, config.domain_size);
                 double p_y =
-                    fmod(qy + dy + config.DOMAIN_SIZE, config.DOMAIN_SIZE);
+                    fmod(qy + dy + config.domain_size, config.domain_size);
                 double p_z =
-                    fmod(qz + dz + config.DOMAIN_SIZE, config.DOMAIN_SIZE);
+                    fmod(qz + dz + config.domain_size, config.domain_size);
 
-                double v_x = config.STANDING_PARTICLES
+                double v_x = config.standing_particles
                                  ? 0.0
                                  : state.hubble_param * dx * zf.f;
-                double v_y = config.STANDING_PARTICLES
+                double v_y = config.standing_particles
                                  ? 0.0
                                  : state.hubble_param * dy * zf.f;
-                double v_z = config.STANDING_PARTICLES
+                double v_z = config.standing_particles
                                  ? 0.0
                                  : state.hubble_param * dz * zf.f;
 
                 state.dm.add_particle(p_x, p_y, p_z, v_x, v_y, v_z,
-                                      config.DM_PARTICLE_MASS);
+                                      config.dm_particle_mass);
             }
         }
     }
@@ -264,23 +264,51 @@ void initialize_dm(SimState& state, const Config& config,
 
 void initialize_gas(SimState& state, const Config& config,
                     const ZeldovichField& zf) {
-    if (!config.USE_HYDRO) return;
+    if (!config.use_hydro) return;
 
-    int M = config.MESH_SIZE;
+    int M = config.mesh_size;
     size_t M3_real = static_cast<size_t>(M) * M * M;
-
-    assert(state.dm.num_particles > 0);
-    double total_dm_mass = state.dm.num_particles * config.DM_PARTICLE_MASS;
-    double mass_ratio = config.GAS_TOTAL_MASS / total_dm_mass;
 
     auto& gas = state.gas;
 
-    gas.density.data = state.dm.get_rho().data * mass_ratio;
-    gas.density.data = (gas.get_density().array() < 1e-12)
-                           .select(1e-12, gas.get_density().data);
+    // Calculate analytical gas density from Zeldovich divergence
+    double mean_gas_rho =
+        config.gas_total_mass / std::pow(config.domain_size, 3.0);
+    double inv_2dx = 1.0 / (2.0 * config.cell_size);
 
+    for (int i = 0; i < M; ++i) {
+        for (int j = 0; j < M; ++j) {
+            for (int k = 0; k < M; ++k) {
+                int ip1 = (i + 1) % M;
+                int im1 = (i - 1 + M) % M;
+                int jp1 = (j + 1) % M;
+                int jm1 = (j - 1 + M) % M;
+                int kp1 = (k + 1) % M;
+                int km1 = (k - 1 + M) % M;
+
+                size_t idx = static_cast<size_t>(i) * M * M + j * M + k;
+
+                // Central difference for divergence: d(dx)/dx + d(dy)/dy +
+                // d(dz)/dz
+                double div = (zf.dx[ip1 * M * M + j * M + k] -
+                              zf.dx[im1 * M * M + j * M + k]) *
+                                 inv_2dx +
+                             (zf.dy[i * M * M + jp1 * M + k] -
+                              zf.dy[i * M * M + jm1 * M + k]) *
+                                 inv_2dx +
+                             (zf.dz[i * M * M + j * M + kp1] -
+                              zf.dz[i * M * M + j * M + km1]) *
+                                 inv_2dx;
+
+                double rho = mean_gas_rho * (1.0 - div);
+                gas.density.data[idx] = std::max(rho, 1e-12);  // Apply floor
+            }
+        }
+    }
+
+    // Initialize Thermodynamics and Velocities
     const double initial_internal_energy =
-        cooling::get_internal_energy_from_temp(config.INITIAL_GAS_TEMPERATURE_K,
+        cooling::get_internal_energy_from_temp(config.initial_gas_temperature_k,
                                                state.scale_factor, config);
 
     for (size_t i = 0; i < M3_real; ++i) {
@@ -289,11 +317,11 @@ void initialize_gas(SimState& state, const Config& config,
         double dz = zf.dz[i];
 
         double vx =
-            config.STANDING_PARTICLES ? 0.0 : state.hubble_param * dx * zf.f;
+            config.standing_particles ? 0.0 : state.hubble_param * dx * zf.f;
         double vy =
-            config.STANDING_PARTICLES ? 0.0 : state.hubble_param * dy * zf.f;
+            config.standing_particles ? 0.0 : state.hubble_param * dy * zf.f;
         double vz =
-            config.STANDING_PARTICLES ? 0.0 : state.hubble_param * dz * zf.f;
+            config.standing_particles ? 0.0 : state.hubble_param * dz * zf.f;
 
         gas.velocity_x.data[i] = vx;
         gas.velocity_y.data[i] = vy;

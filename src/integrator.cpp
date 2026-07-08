@@ -7,28 +7,28 @@
 #include "pocketfft_hdronly.h"
 
 void update_cosmology(SimState& state, const Config& config) {
-    if (!config.EXPANDING_UNIVERSE) {
+    if (!config.expanding_universe) {
         state.scale_factor = 1.0;
         state.hubble_param = 0.0;
         return;
     }
 
-    if (config.OMEGA_LAMBDA == 0.0) {
+    if (config.omega_lambda == 0.0) {
         // Einstein-de Sitter
-        double t_start = std::pow(config.START_A, 1.5);
+        double t_start = std::pow(config.a_start, 1.5);
         double current_t = t_start + state.total_time;
         state.scale_factor = std::pow(current_t, 2.0 / 3.0);
         state.hubble_param = (2.0 / 3.0) / current_t;
     } else {
         // Lambda-CDM
-        const double Om = config.OMEGA_M;
-        const double Ol = config.OMEGA_LAMBDA;
+        const double Om = config.omega_m;
+        const double Ol = config.omega_lambda;
         const double H0 = 2.0 / (3.0 * std::sqrt(Om));
         double factor = std::sqrt(Ol / Om);
 
-        // Reverse-engineer the initial time from START_A
+        // Reverse-engineer the initial time from start_a
         double t_start = (2.0 / (3.0 * H0 * std::sqrt(Ol))) *
-                         std::asinh(factor * std::pow(config.START_A, 1.5));
+                         std::asinh(factor * std::pow(config.a_start, 1.5));
         double current_t = t_start + state.total_time;
 
         // Calculate current scale factor
@@ -43,19 +43,19 @@ void update_cosmology(SimState& state, const Config& config) {
 }
 
 double get_time_from_scale_factor(double a, const Config& config) {
-    if (!config.EXPANDING_UNIVERSE) {
+    if (!config.expanding_universe) {
         // Without expansion, 'a' doesn't change, so outputting by 'a' is
         // meaningless.
         return std::numeric_limits<double>::infinity();
     }
 
-    if (config.OMEGA_LAMBDA == 0.0) {
+    if (config.omega_lambda == 0.0) {
         // Einstein-de Sitter
         return std::pow(a, 1.5);
     } else {
         // Lambda-CDM
-        const double Om = config.OMEGA_M;
-        const double Ol = config.OMEGA_LAMBDA;
+        const double Om = config.omega_m;
+        const double Ol = config.omega_lambda;
         const double H0 = 2.0 / (3.0 * std::sqrt(Om));
         double factor = std::sqrt(Ol / Om);
 
@@ -66,7 +66,7 @@ double get_time_from_scale_factor(double a, const Config& config) {
 }
 
 void compute_gravitational_acceleration(SimState& state, const Config& config) {
-    int N = config.MESH_SIZE;
+    int N = config.mesh_size;
     const GasGrid& gas = state.gas;
     const Grid3D& dm_rho = state.dm.get_rho();
     Grid3D& total_rho = state.total_rho;
@@ -76,7 +76,7 @@ void compute_gravitational_acceleration(SimState& state, const Config& config) {
 
     Grid3D& phi = state.phi;
     total_rho.data =
-        dm_rho.data + (config.USE_HYDRO ? gas.get_density().data
+        dm_rho.data + (config.use_hydro ? gas.get_density().data
                                         : Eigen::VectorXd::Zero(N * N * N));
 
     const pocketfft::shape_t shape = {(size_t)N, (size_t)N, (size_t)N};
@@ -97,7 +97,7 @@ void compute_gravitational_acceleration(SimState& state, const Config& config) {
     std::vector<std::complex<double>> phi_k((size_t)N * N * (N / 2 + 1));
 
     // Gaussian smoothing scale for Fourier-Split PM
-    const double r_s = config.PM_SMOOTHING_CELLS * config.CELL_SIZE;
+    const double r_s = config.PM_smoothing_cells * config.cell_size;
 
 #pragma omp parallel for collapse(3)
     for (int i = 0; i < N; ++i) {
@@ -112,9 +112,9 @@ void compute_gravitational_acceleration(SimState& state, const Config& config) {
                 double ky_freq = static_cast<double>((j < N / 2) ? j : (j - N));
                 double kz_freq = static_cast<double>(k);
 
-                double kx = kx_freq * 2.0 * M_PI / config.DOMAIN_SIZE;
-                double ky = ky_freq * 2.0 * M_PI / config.DOMAIN_SIZE;
-                double kz = kz_freq * 2.0 * M_PI / config.DOMAIN_SIZE;
+                double kx = kx_freq * 2.0 * M_PI / config.domain_size;
+                double ky = ky_freq * 2.0 * M_PI / config.domain_size;
+                double kz = kz_freq * 2.0 * M_PI / config.domain_size;
                 double k2 = kx * kx + ky * ky + kz * kz;
 
                 size_t idx = static_cast<size_t>(i) * N * (N / 2 + 1) +
@@ -150,7 +150,7 @@ void compute_gravitational_acceleration(SimState& state, const Config& config) {
                    const_cast<double*>(phi.raw_data()), 1.0, 0);
 
     double norm = 1.0 / ((double)N * N * N);
-    double factor = -norm / (2.0 * config.CELL_SIZE);
+    double factor = -norm / (2.0 * config.cell_size);
 
     // Only collapse the outer two loops so we can optimize the index math
 #pragma omp parallel for collapse(2)
@@ -178,13 +178,13 @@ void compute_gravitational_acceleration(SimState& state, const Config& config) {
 void apply_gas_kick(GasGrid& gas, const Grid3D& grav_x, const Grid3D& grav_y,
                     const Grid3D& grav_z, double dt, double a, double H,
                     const Config& config) {
-    if (!config.USE_HYDRO) return;
+    if (!config.use_hydro) return;
 
     gas.update_primitive_variables();
     double a3 = a * a * a;
 
-    Grid3D total_ax_gas(config.MESH_SIZE), total_ay_gas(config.MESH_SIZE),
-        total_az_gas(config.MESH_SIZE);
+    Grid3D total_ax_gas(config.mesh_size), total_ay_gas(config.mesh_size),
+        total_az_gas(config.mesh_size);
     total_ax_gas.data =
         (grav_x.array() / a3) - (2 * H * gas.get_velocity_x().array());
     total_ay_gas.data =
@@ -192,13 +192,13 @@ void apply_gas_kick(GasGrid& gas, const Grid3D& grav_x, const Grid3D& grav_y,
     total_az_gas.data =
         (grav_z.array() / a3) - (2 * H * gas.get_velocity_z().array());
 
-    Grid3D g_mom_x_source(config.MESH_SIZE), g_mom_y_source(config.MESH_SIZE),
-        g_mom_z_source(config.MESH_SIZE);
+    Grid3D g_mom_x_source(config.mesh_size), g_mom_y_source(config.mesh_size),
+        g_mom_z_source(config.mesh_size);
     g_mom_x_source.data = gas.get_density().array() * total_ax_gas.array();
     g_mom_y_source.data = gas.get_density().array() * total_ay_gas.array();
     g_mom_z_source.data = gas.get_density().array() * total_az_gas.array();
 
-    Grid3D power_density(config.MESH_SIZE);
+    Grid3D power_density(config.mesh_size);
     power_density.data = gas.get_velocity_x().array() * g_mom_x_source.array() +
                          gas.get_velocity_y().array() * g_mom_y_source.array() +
                          gas.get_velocity_z().array() * g_mom_z_source.array();
@@ -221,7 +221,7 @@ void apply_gas_kick(GasGrid& gas, const Grid3D& grav_x, const Grid3D& grav_y,
     // Applying the chain rule (d/dt) to this a^2 transformation introduces an
     // extra -2H mathematical decay just to keep the arrays synchronized.
     // The total required numerical decay is -(3*gamma - 1)H.
-    double expansion_factor = (3.0 * config.GAMMA - 1.0) * H * dt;
+    double expansion_factor = (3.0 * config.gamma - 1.0) * H * dt;
     Eigen::ArrayXd expansion_cooling =
         expansion_factor * gas.get_internal_energy().array();
 
@@ -231,8 +231,8 @@ void apply_gas_kick(GasGrid& gas, const Grid3D& grav_x, const Grid3D& grav_y,
     // Accumulate global work for diagnostics
     // sum() adds up the energy density of all cells. Multiply by volume to get
     // total code energy.
-    double step_grav_work = power_density.data.sum() * dt * config.CELL_VOLUME;
-    double step_exp_work = expansion_cooling.sum() * config.CELL_VOLUME;
+    double step_grav_work = power_density.data.sum() * dt * config.cell_volume;
+    double step_exp_work = expansion_cooling.sum() * config.cell_volume;
 
     gas.add_gravitational_work(step_grav_work);
     gas.add_expansion_work(step_exp_work);
@@ -285,13 +285,28 @@ static void calculate_max_acceleration(ParticleSystem& dm) {
     dm.max_accel_sq = local_max;
 }
 
+static void update_softening(SimState& state, Config& config) {
+    double a = state.scale_factor;
+    double cap_a = config.physical_softening_cap_a;
+    double current_comoving_softening = config.base_comoving_softening;
+
+    if (a > cap_a) {
+        // Shrink comoving softening so physical softening stays constant
+        current_comoving_softening =
+            config.base_comoving_softening * (cap_a / a);
+    }
+    config.softening_squared =
+        current_comoving_softening * current_comoving_softening;
+}
+
 void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
+    update_softening(state, config);
     {
         ScopedTimer pm_timer(diag, TimerRegion::PM);
         state.dm.bin_and_assign_mass(config);
         compute_gravitational_acceleration(state, config);
 
-        if (config.USE_PM) {
+        if (config.use_PM) {
             // Overwrites state.dm.acc_x/y/z directly
             state.dm.interpolate_cic_forces(state.gravity_x, state.gravity_y,
                                             state.gravity_z, config);
@@ -303,14 +318,24 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
         }
     }
 
-    if (config.USE_PP) {
+    if (config.use_PP) {
         ScopedTimer pp_timer(diag, TimerRegion::PP);
         // Adds PP acceleration directly onto the existing PM acceleration
         state.dm.compute_pp_forces(config, diag);
+
+        if (config.use_hydro && config.enable_subgrid_gas_gravity) {
+            // Compute sub-grid (PP) gravitational coupling between DM and Gas.
+            // DM particles are pulled by gas pseudo-particles, and the
+            // momentum-conserving back-reaction is injected into
+            // state.gravity_x/y/z to be picked up by the Eulerian gas kick.
+            state.dm.compute_gas_dm_pp_forces(state.gas, state.gravity_x,
+                                              state.gravity_y, state.gravity_z,
+                                              config, diag);
+        }
     }
 
     // Assign final accelerations back to particles
-    if (!config.STANDING_PARTICLES) {
+    if (!config.standing_particles) {
         calculate_max_acceleration(state.dm);
     } else {
         // If particles are frozen for testing, erase accelerations
@@ -335,7 +360,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
         apply_dm_kick(state.dm, ts.dt_macro / 2.0, old_a, old_H);
 
         // Drift DM to the end of the step
-        apply_dm_drift(state.dm, ts.dt_macro, config.DOMAIN_SIZE);
+        apply_dm_drift(state.dm, ts.dt_macro, config.domain_size);
 
         // Update Cosmology and compute new forces
         state.total_time += ts.dt_macro;
@@ -360,8 +385,8 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
             double interp_H = old_H + alpha * (state.hubble_param - old_H);
 
             // Interpolate forces
-            Grid3D interp_gx(config.MESH_SIZE), interp_gy(config.MESH_SIZE),
-                interp_gz(config.MESH_SIZE);
+            Grid3D interp_gx(config.mesh_size), interp_gy(config.mesh_size),
+                interp_gz(config.mesh_size);
             interp_gx.data = old_gx.array() +
                              alpha * (state.gravity_x.array() - old_gx.array());
             interp_gy.data = old_gy.array() +
@@ -374,10 +399,10 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
                            dt_h / 2.0, interp_a, interp_H, config);
 
             // Hydro Drift
-            if (config.USE_HYDRO) {
+            if (config.use_hydro) {
                 ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
                 state.gas.hydro_step(dt_h);
-                if (config.ENABLE_COOLING) {
+                if (config.enable_cooling) {
                     diag.add_radiated_energy(
                         state.gas.apply_cooling(dt_h, state.scale_factor));
                 }
@@ -440,7 +465,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
                 apply_dm_kick(state.dm, dt_g / 2.0, interp_a, interp_H);
 
                 // Micro-Drift DM
-                apply_dm_drift(state.dm, dt_g, config.DOMAIN_SIZE);
+                apply_dm_drift(state.dm, dt_g, config.domain_size);
 
                 // Update forces. (DM has moved, Gas density is frozen which
                 // is correct for Strang splitting)
@@ -462,11 +487,11 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
         run_gravity_subcycles(ts.dt_macro / 2.0);
 
         // Full Macro-Step Drift for Gas
-        if (config.USE_HYDRO) {
+        if (config.use_hydro) {
             ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
             state.gas.hydro_step(ts.dt_macro);
 
-            if (config.ENABLE_COOLING) {
+            if (config.enable_cooling) {
                 double e_lost =
                     state.gas.apply_cooling(ts.dt_macro, state.scale_factor);
                 diag.add_radiated_energy(e_lost);  // Log lost energy
@@ -489,14 +514,14 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
                       state.hubble_param);
 
         // DRIFT
-        apply_dm_drift(state.dm, dt, config.DOMAIN_SIZE);
+        apply_dm_drift(state.dm, dt, config.domain_size);
 
         // HYDRODYNAMICS
-        if (config.USE_HYDRO) {
+        if (config.use_hydro) {
             ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
             state.gas.hydro_step(dt);
 
-            if (config.ENABLE_COOLING) {
+            if (config.enable_cooling) {
                 double e_lost = state.gas.apply_cooling(dt, state.scale_factor);
                 diag.add_radiated_energy(e_lost);  // Log lost energy
             }

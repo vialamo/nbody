@@ -70,7 +70,7 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
     this->dt_cool = ts.dt_cool;
     this->dt_final = ts.dt_macro;
 
-    if (config.USE_HYDRO) {
+    if (config.use_hydro) {
         this->max_gas_density = state.gas.get_density().maxCoeff();
         this->max_gas_pressure = state.gas.get_pressure().maxCoeff();
         this->max_gas_velocity = (state.gas.get_velocity_x().array().square() +
@@ -101,37 +101,37 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
     this->ke_dm = 0.0;
     this->pe_total = 0.0;
 
-    if (config.ENABLE_ENERGY_DIAGNOSTICS) {
+    if (config.enable_energy_diagnostics) {
         this->ke_dm = state.dm.calculate_kinetic_energy(state.scale_factor);
 
         double system_pe = 0.0;
         int total_cells =
-            config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
+            config.mesh_size * config.mesh_size * config.mesh_size;
 
 #pragma omp parallel for reduction(+ : system_pe)
         for (int i = 0; i < total_cells; ++i) {
             system_pe += 0.5 * state.total_rho.data[i] * state.phi.data[i] *
-                         config.CELL_VOLUME;
+                         config.cell_volume;
         }
         this->pe_total = system_pe / state.scale_factor;
     }
 
     // Conservation (Gas)
-    if (config.USE_HYDRO) {
+    if (config.use_hydro) {
         this->total_mass_gas =
-            state.gas.get_density().sum() * config.CELL_VOLUME;
+            state.gas.get_density().sum() * config.cell_volume;
         this->total_momentum_gas.x() = state.gas.get_momentum_x().sum();
         this->total_momentum_gas.y() = state.gas.get_momentum_y().sum();
         this->total_momentum_gas.z() = state.gas.get_momentum_z().sum();
 
-        Grid3D ke_gas_density(config.MESH_SIZE);
+        Grid3D ke_gas_density(config.mesh_size);
         ke_gas_density.data =
             0.5 * (state.gas.get_momentum_x().array().square() +
                    state.gas.get_momentum_y().array().square() +
                    state.gas.get_momentum_z().array().square());
 
         int total_cells =
-            config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
+            config.mesh_size * config.mesh_size * config.mesh_size;
         for (int i = 0; i < total_cells; ++i) {
             if (state.gas.get_density().data[i] > 1e-12) {
                 ke_gas_density.data[i] /= state.gas.get_density().data[i];
@@ -139,11 +139,11 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
                 ke_gas_density.data[i] = 0.0;
             }
         }
-        this->ke_gas = ke_gas_density.sum() * config.CELL_VOLUME;
+        this->ke_gas = ke_gas_density.sum() * config.cell_volume;
 
-        Grid3D internal_energy_density(config.MESH_SIZE);
+        Grid3D internal_energy_density(config.mesh_size);
         internal_energy_density.data =
-            state.gas.get_pressure().array() / (config.GAMMA - 1.0);
-        this->ie_gas = internal_energy_density.sum() * config.CELL_VOLUME;
+            state.gas.get_pressure().array() / (config.gamma - 1.0);
+        this->ie_gas = internal_energy_density.sum() * config.cell_volume;
     }
 }

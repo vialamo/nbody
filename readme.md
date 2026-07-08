@@ -167,7 +167,8 @@ The simulation is configured using a standard INI file format. The configuration
 Defines the spatial properties and resolution of the simulation box.
 
 * **`domain_size`**: The internal code-unit length of the box (typically set to `1.0` for natural units).
-* **`mesh_size`**: The number of grid cells along one axis for the Poisson solver and hydrodynamics (e.g., `32` creates a 32x32x32 computational grid).
+* **`mesh_size_1d`**: The number of grid cells along one axis for the Poisson solver and hydrodynamics (e.g., `32` creates a 32x32x32 computational grid).
+* **`num_particles_1d`**: The number of N-body particles along one axis (e.g., `32` creates 32,768 total particles). Often matched to `mesh_size` to avoid interpolation artifacts.
 * **`box_size_mpc`**: The physical comoving size of the simulation box in Megaparsecs (Mpc). Used to map internal code units back to physical reality.
 
 ### `[cosmology]`
@@ -177,18 +178,21 @@ Defines the cosmological model of the universe.
 * **`omega_baryon`**: The density parameter for normal (baryonic) matter.
 * **`omega_M`**: The total matter density parameter (baryons + dark matter). Dark energy is dynamically assumed to be `1.0 - omega_M` for a flat universe.
 * **`omega_lambda`**: The dark energy density parameter (cosmological constant).
-* **`hubble_param`**: The dimensionless physical Hubble parameter (*h*), where H0 = 100 * h km/s/Mpc.
+* **`Hubble_h`**: The dimensionless physical Hubble parameter (*h*), where H0 = 100 * h km/s/Mpc.
+* **`spectral_index`**: The primordial power spectrum index (*n_s*), typically `0.96` based on Planck data.
+* **`sigma_8`**: The normalization of the power spectrum, defining the amplitude of density fluctuations at an 8 Mpc/h scale.
 * **`expanding_universe`**: Boolean (`true` or `false`). If true, the code applies Hubble drag and stretches the comoving grid over time.
+
+### `[gravity]`
+
+* **`comoving_softening_factor`**: The baseline gravitational softening length as a multiplier of the mean inter-particle spacing.
+* **`softening_cap_scale_factor`**: The expansion scale factor at which the physical size of the softening length is capped (so that its physical size won't grow more). This is needed to preserve halo density through the simulation.
 
 ### `[initial_conditions]`
 
 Controls the generation of the primordial density field and particle distributions.
 
-* **`spectral_index`**: The primordial power spectrum index (*n_s*), typically `0.96` based on Planck data.
-* **`start_a`**: The scale factor at which the simulation begins (e.g., `0.02` corresponds to redshift z = 49).
-* **`sigma_8`**: The normalization of the power spectrum, defining the amplitude of density fluctuations at an 8 Mpc/h scale.
 * **`initial_gas_temp_k`**: The physical temperature of the baryonic gas at `start_a`, in Kelvin.
-* **`n_per_side`**: The number of N-body particles along one axis (e.g., `32` creates 32,768 total particles). Often matched to `mesh_size` to avoid interpolation artifacts.
 * **`standing_particles`**: Boolean. If `true`, all N-body particles remain completely stationary throughout the entire duration of the simulation. Their positions and velocities are never updated. This is strictly a debugging feature.
 * **`seed`**: Integer seed for the random number generator, ensuring reproducible initial density fields.
 
@@ -201,7 +205,15 @@ Configures the fluid dynamics solver for the baryonic gas.
 * **`enable_cooling`**: Boolean. If `true`, the code activates the implicit radiative cooling solver to extract thermal energy from the gas over time.
 * **`primordial_mu`**: The mean molecular weight of the gas (e.g., `1.22` for neutral primordial hydrogen/helium gas). Used to accurately map internal energy to physical temperatures.
 * **`temp_floor_k`**: The absolute minimum temperature (in Kelvin) the gas is allowed to reach. Physically, this ensures the gas does not cool below the baseline heat of the universe, such as the Cosmic Microwave Background (CMB). Note that internally, the radiative cooling module halts at `cooling_floor_k` regardless, but this parameter acts as the ultimate mathematical safety net for the hydrodynamics engine.
-* **`cooling_floor_k`**: The absolute minimum temperature (in Kelvin) the gas is allowed to reach via radiative cooling. The gas does not radiate below this temperature.
+* **`cooling_cutoff_k`**: The absolute minimum temperature (in Kelvin) the gas is allowed to reach via radiative cooling. The gas does not radiate below this temperature.
+
+### `[subgrid]`
+
+Configures the subgrid models.
+
+* **`enable_subgrid_gravity`**: If enabled, the code calculates short-range Particle-Particle (PP) gravitational forces between the collisionless dark matter particles and the baryonic gas. Otherwise there are not intra-cell interactions between them.
+* **`enable_subgrid_clumping`**: Enables the cooling subgrid model. If enabled, the code applies a density-dependent clumping factor to scale the radiative cooling rate, compensating for unresolved high-density gas on coarse grids.
+* **`subgrid_clumping_amplitude`**: The amplitude for the subgrid cooling factor. Set to -1 to let the simulation auto-calculate this based on the grid resolution.
 
 ### `[p3m]`
 
@@ -216,9 +228,11 @@ Configures the Particle-Particle Particle-Mesh (P³M) gravity solver.
 
 Controls the adaptive timestepping and integration limits.
 
-* **`dt_factor`**: A global multiplier for the gravitational timestep, acting as a fraction of the system's local dynamical time.
+* **`max_dt_dynamical_factor`**: Acts as a safety ceiling. Multiplied by the dynamical time, it defines the absolute maximum allowed timestep.
+* **`gravity_accuracy_eta`**: The accuracy tolerance for the gravitational timestep. Smaller values yield more accurate particle orbits but require more integration steps.
 * **`cfl_safety_factor`**: The Courant-Friedrichs-Lewy (CFL) number. Restricts the hydrodynamics timestep to ensure information does not travel further than one grid cell per step (must be < 1.0, typically `0.3`).
-* **`max_scale_factor`**: The scale factor at which the simulation terminates. Set to `1.0` to run up to the present day (z = 0).
+* **`a_start`**: The scale factor at which the simulation begins (e.g., `0.02` corresponds to redshift z = 49).
+* **`a_end`**: The scale factor at which the simulation terminates. Set to `1.0` to run up to the present day (z = 0).
 
 ### `[output]`
 
@@ -227,6 +241,13 @@ Manages how and when the simulation writes data to disk.
 * **`save_hdf5_every_delta_a`**: The interval for writing full snapshot files (particles, mesh densities, velocities) to disk, measured in scale factor increments.
 * **`debug_info_every_seconds`**: The frequency (in seconds) at which the code prints its current status, timestep, and performance metrics to the console/log.
 * **`enable_energy_diagnostics`**: Boolean. If `true`, the code continuously calculates and verifies the conservation of energy and momentum, writing the error margins to the diagnostic file.
+
+### `[HPC]`
+
+High-Performance Computing (HPC) and hardware execution settings.
+
+* **`num_threads`**: The maximum number of OpenMP threads to spawn. If set to `0`, the simulation will defer to the terminal's `OMP_NUM_THREADS` environment variable, or default to all available CPU cores. 
+* **`use_gpu`**: Boolean. If set to `true`, the engine offloads compute-heavy kernels to the GPU. *Note: If enabled but no compatible OpenMP offload device is detected at runtime, the code falls back to CPU execution.*
 
 ## HDF5 Snapshot Format & Units
 

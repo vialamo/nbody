@@ -6,6 +6,7 @@ import sys
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import camb
+from scipy.spatial import cKDTree
 
 # Physics & Cosmological Constants
 M_P_CGS = 1.67262192e-24
@@ -80,10 +81,17 @@ def compute_cic_variance(p_x, p_y, p_z, p_mass, domain_size, mesh_size):
     grid = assign_cic_grid(p_x, p_y, p_z, p_mass, domain_size, mesh_size)
     return np.var(grid / np.mean(grid))
 
-def compute_power_spectrum(p_x, p_y, p_z, p_mass, domain_size, mesh_size, gas_rho=None):
+def compute_power_spectrum(p_x, p_y, p_z, p_mass, domain_size, mesh_size, part_mesh_size, gas_rho=None):
     """Calculates the 1D total matter power spectrum from particle and gas data."""
     N = mesh_size
     grid = assign_cic_grid(p_x, p_y, p_z, p_mass, domain_size, mesh_size)
+
+    # If the grid is oversampled, apply a Gaussian blur to the DM particles
+    if mesh_size > part_mesh_size:
+        from scipy.ndimage import gaussian_filter
+        # Smear the discrete particles over the extra grid cells
+        sigma = mesh_size / (2.0 * part_mesh_size)
+        grid = gaussian_filter(grid, sigma=sigma, mode='wrap')
 
     if gas_rho is not None:
         cell_vol = (domain_size / N)**3
@@ -124,6 +132,30 @@ def compute_power_spectrum(p_x, p_y, p_z, p_mass, domain_size, mesh_size, gas_rh
     k_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0
     
     return k_centers[mask], p_k[mask]
+
+def compute_max_kdtree_density(p_x, p_y, p_z, p_mass, box_size, k=32):
+    """Calculates the maximum comoving density of particles using a KD-Tree nearest-neighbor search."""
+    points = np.vstack((p_x, p_y, p_z)).T
+    
+    # Build a periodic KD-Tree
+    tree = cKDTree(points, boxsize=box_size)
+    
+    # Find the distance to the K-th nearest neighbor for every particle
+    k_nn = min(k, len(p_x))
+    dists, _ = tree.query(points, k=k_nn, workers=-1)
+    
+    # dists[:, -1] contains the distance to the K-th neighbor
+    # Enforce a tiny minimum distance to prevent division by zero
+    r_comoving = np.maximum(dists[:, -1], 1e-6)
+    
+    # Volume of the sphere enclosing the neighbors
+    vol_comoving = (4.0 / 3.0) * np.pi * (r_comoving**3)
+    
+    # True local comoving density = Mass / Volume
+    # (Assuming all DM particles have the same mass)
+    rho_comoving = (k_nn * p_mass[0]) / vol_comoving
+    
+    return np.max(rho_comoving)
 
 def get_linear_growth(a, omega_m_0, omega_l_0):
     """Calculates the linear growth factor D(a) using the Carroll, Press & Turner (1992) approximation."""
@@ -172,9 +204,9 @@ def generate_dashboard(snapshot_dir):
         units = f['Units'].attrs
         
         domain_size = config.get('domain_size', 1.0)
-        mesh_size = config.get('mesh_size', 32)
+        mesh_size = config.get('mesh_size_1d', 32)
         has_hydro = bool(config.get('use_hydro', 0))
-        hubble = config.get('hubble_param', 70.0)
+        hubble = config.get('Hubble_h', 70.0)
         h_val = hubble / 100.0 if hubble > 10.0 else hubble
         box_size_mpc = config.get('box_size_mpc', 1.0)
         box_h_mpc = box_size_mpc * h_val
@@ -186,7 +218,7 @@ def generate_dashboard(snapshot_dir):
         mu = config.get('primordial_mu', 0.6)
         prim_index = config.get('spectral_index', 0.96)
         sigma_8 = float(config.get('sigma_8', 0.81))
-        T_floor = float(config.get('cooling_temp_floor', 1000.0))
+        T_floor = float(config.get('cooling_cutoff_k', 1000.0))
         floor_k = config.get('temp_floor_k', 10.0)
         
         u_density_cgs = units.get('unit_density_in_cgs', 1.0)
@@ -197,8 +229,8 @@ def generate_dashboard(snapshot_dir):
         cell_vol_code = (domain_size / mesh_size)**3
 
     # Time series lists
-    scale_factors, times_gyr, dm_variances = [], [], []
-    p999_gas_densities, max_gas_densities = [], []
+    scale_factors, times_gyr, dm_variances, dm_scale_factors = [], [], [], []
+    p999_gas_densities, max_gas_densities, max_dm_densities = [], [], []
     p999_temperatures, max_temperatures = [], []
     kin_energies, therm_energies, rad_energies, cold_gas_fracs, fractional_errors = [], [], [], [], []
 
@@ -223,13 +255,27 @@ def generate_dashboard(snapshot_dir):
             p_z = f['Particles/position_z'][:] * box_h_mpc
             p_mass = f['Particles/mass'][:]
             
-            dm_variances.append(compute_cic_variance(p_x, p_y, p_z, p_mass, box_h_mpc, mesh_size))
+            # Extract the native 1D particle resolution (e.g., 32 from 32768 particles)
+            num_particles = len(p_mass)
+            part_mesh_size = int(np.round(num_particles**(1.0/3.0)))
+            
+            # Evaluate DM variance exclusively at the native particle resolution
+            dm_variances.append(compute_cic_variance(p_x, p_y, p_z, p_mass, box_h_mpc, part_mesh_size))
+
+            # Particle density estimator (expensive, so don't process every snapshot)
+            if i%8 == 0:
+                max_rho_comoving = compute_max_kdtree_density(p_x, p_y, p_z, p_mass, box_h_mpc, k=32)
+
+                # Convert to physical proton densities
+                dm_phys_conv = (u_density_cgs / a**3) / M_P_CGS
+                max_dm_densities.append(max_rho_comoving * dm_phys_conv)
+                dm_scale_factors.append(a)
 
             rho = f['Gas/density'][:] if has_hydro else None
 
             # Snapshot Extraction for PDF & Power Spectrum
             if i in target_indices:
-                k_bins, pk = compute_power_spectrum(p_x, p_y, p_z, p_mass, box_h_mpc, mesh_size, gas_rho=rho)
+                k_bins, pk = compute_power_spectrum(p_x, p_y, p_z, p_mass, box_h_mpc, mesh_size, part_mesh_size, gas_rho=rho)
                 pk_data[a] = (k_bins, pk)
             
             # Gas Stats
@@ -339,28 +385,28 @@ def generate_dashboard(snapshot_dir):
             axs[0, 1].plot(centers[mask_hist], hist[mask_hist], lw=2, color=c, label=f'Sim a={a_val:.2f}')
 
             # Determine the x-axis extent of the valid simulation data
-            if np.any(mask_hist):
-                x_min, x_max = centers[mask_hist][0], centers[mask_hist][-1]
-            else:
-                x_min, x_max = centers[0], centers[-1]      
-            domain_mask = (centers >= x_min) & (centers <= x_max)
+            # if np.any(mask_hist):
+            #     x_min, x_max = centers[mask_hist][0], centers[mask_hist][-1]
+            # else:
+            #     x_min, x_max = centers[0], centers[-1]      
+            # domain_mask = (centers >= x_min) & (centers <= x_max)
 
-            Delta = 10**centers
+            # Delta = 10**centers
             
             # Model A: Gaussian (early universe)
-            if idx == 0:
-                p_delta = (1.0 / np.sqrt(2.0 * np.pi * sigma2)) * np.exp(-0.5 * (Delta - 1.0)**2 / sigma2)
-                y_gauss = p_delta * Delta * np.log(10) * dx
-                mask_gauss = (y_gauss > 1e-5) & domain_mask
-                axs[0, 1].plot(centers[mask_gauss], y_gauss[mask_gauss], color=c, linestyle=':', lw=1, label='Gaussian Model')
+            # if idx == 0:
+            #     p_delta = (1.0 / np.sqrt(2.0 * np.pi * sigma2)) * np.exp(-0.5 * (Delta - 1.0)**2 / sigma2)
+            #     y_gauss = p_delta * Delta * np.log(10) * dx
+            #     mask_gauss = (y_gauss > 1e-5) & domain_mask
+            #     axs[0, 1].plot(centers[mask_gauss], y_gauss[mask_gauss], color=c, linestyle=':', lw=1, label='Gaussian Model')
             
             # Model B: Lognormal (late universe)
-            elif idx == len(pdf_data) - 1:
-                sigma2_A, mu_A = np.log(1.0 + sigma2), -np.log(1.0 + sigma2) / 2.0
-                p_A = (1.0 / np.sqrt(2.0 * np.pi * sigma2_A)) * np.exp(-0.5 * (centers * np.log(10) - mu_A)**2 / sigma2_A)
-                y_lognorm = p_A * np.log(10) * dx
-                mask_lognorm = (y_lognorm > 1e-5) & domain_mask
-                axs[0, 1].plot(centers[mask_lognorm], y_lognorm[mask_lognorm], color=c, linestyle='--', lw=1, label='Lognormal Model')
+            # elif idx == len(pdf_data) - 1:
+            #     sigma2_A, mu_A = np.log(1.0 + sigma2), -np.log(1.0 + sigma2) / 2.0
+            #     p_A = (1.0 / np.sqrt(2.0 * np.pi * sigma2_A)) * np.exp(-0.5 * (centers * np.log(10) - mu_A)**2 / sigma2_A)
+            #     y_lognorm = p_A * np.log(10) * dx
+            #     mask_lognorm = (y_lognorm > 1e-5) & domain_mask
+            #     axs[0, 1].plot(centers[mask_lognorm], y_lognorm[mask_lognorm], color=c, linestyle='--', lw=1, label='Lognormal Model')
 
         axs[0, 1].set(yscale='log', xlabel=r'$\log_{10}$ Gas Overdensity ($\rho/\bar{\rho}$)', ylabel='Volume Fraction', title='1-Point Volume-Weighted Density PDF')
         axs[0, 1].set_ylim(bottom=1e-5, top=1.5)
@@ -394,13 +440,17 @@ def generate_dashboard(snapshot_dir):
 
     # Extreme Gas States (99.9% to Max Envelope)
     if p999_gas_densities:
-        # Plot Density on the primary left axis
-        axs[1, 1].plot(scale_factors, p999_gas_densities, color='blue', lw=2, label='99.9% Density')
+        # Primary Left Axis (Gas & DM Density)
+        axs[1, 1].plot(scale_factors, p999_gas_densities, color='blue', lw=2, label='99.9% Gas Dens')
         axs[1, 1].fill_between(scale_factors, p999_gas_densities, max_gas_densities, color='blue', alpha=0.2)
-        axs[1, 1].set(yscale='log', xlabel='Scale Factor (a)', ylabel=r'Hydrogen Density $n_H$ [cm$^{-3}$]')
-        axs[1, 1].tick_params(axis='y', labelcolor='blue')
         
-        # Plot Temperature on the secondary right axis
+        # Plot Max DM Density on the SAME axis
+        axs[1, 1].plot(dm_scale_factors, max_dm_densities, color='black', lw=1.5, linestyle='--', alpha=0.8, label='Max DM Dens')
+        
+        axs[1, 1].set(yscale='log', xlabel='Scale Factor (a)', ylabel=r'Physical Density [$m_p$ cm$^{-3}$]')
+        axs[1, 1].tick_params(axis='y', labelcolor='black')
+        
+        # Right Axis (Gas Temperature)
         ax_temp = axs[1, 1].twinx()
         ax_temp.plot(scale_factors, p999_temperatures, color='red', lw=2, label='99.9% Temp')
         ax_temp.fill_between(scale_factors, p999_temperatures, max_temperatures, color='red', alpha=0.2)
@@ -411,11 +461,16 @@ def generate_dashboard(snapshot_dir):
         sigma_L = sigma_8 * (8.0 / box_size_mpc)**0.9
         a_limit = 0.3 / sigma_L
         if a_limit < 1.0:
-            axs[1, 1].axvline(a_limit, color='black', linestyle='--', linewidth=1, label='Global Collapse Limit')
+            axs[1, 1].axvline(a_limit, color='gray', linestyle=':', linewidth=1, label='Collapse Limit')
         
+        # Gather legends from both axes so they appear in one box
         lines_left, labels_left = axs[1, 1].get_legend_handles_labels()
-        axs[1, 1].legend(lines_left, labels_left, loc='upper left', fontsize=8)
-        axs[1, 1].set_title('Extreme States (99.9% - Max Envelope)')
+        lines_temp, labels_temp = ax_temp.get_legend_handles_labels()
+        
+        axs[1, 1].legend(lines_left + lines_temp, 
+                         labels_left + labels_temp, 
+                         loc='upper left', fontsize=8)
+        axs[1, 1].set_title('Extreme States (Gas vs DM)')
 
     # Cosmic Expansion History
     axs[1, 2].plot(times_gyr, scale_factors, color='purple', lw=2, label='Simulation')
@@ -426,7 +481,8 @@ def generate_dashboard(snapshot_dir):
     if has_hydro and 'x_data' in locals():
         # Create logarithmically spaced bins
         x_bins, y_bins = np.logspace(-2, np.log10(np.max(x_data)), 100), np.logspace(1, np.log10(np.max(y_data)), 100)
-        h = axs[2, 0].hist2d(x_data, y_data, bins=[x_bins, y_bins], norm=LogNorm(), cmap='plasma')
+        weights = final_rho.flatten()
+        h = axs[2, 0].hist2d(x_data, y_data, bins=[x_bins, y_bins], weights=weights, norm=LogNorm(), cmap='plasma')
         
         # THEORETICAL BASELINE
         mask_mean = (x_data > 0.95) & (x_data < 1.05)
@@ -436,20 +492,20 @@ def generate_dashboard(snapshot_dir):
         
         # Truelove Jeans Fragmentation Limit (Density Trust Barrier)
         # Read parameters
-        H0_cgs = (hubble * 100.0) * 1e5 / 3.086e24
-        rho_crit_cgs = (3.0 * H0_cgs**2) / (8.0 * np.pi * G_CGS)
-        dx_comoving_cm = (box_size_mpc / mesh_size) * 3.086e24
+        #H0_cgs = (hubble * 100.0) * 1e5 / 3.086e24
+        #rho_crit_cgs = (3.0 * H0_cgs**2) / (8.0 * np.pi * G_CGS)
+        #dx_comoving_cm = (box_size_mpc / mesh_size) * 3.086e24
         # Truelove math: lambda_J >= 4 * dx_phys
         # This isolates the maximum overdensity (Delta) before fragmentation occurs
-        K = (np.pi * gamma * K_B_CGS) / (mu * M_P_CGS * G_CGS)
-        max_safe_delta = (K * T_floor * scale_factors[-1]) / (16.0 * (dx_comoving_cm**2) * omega_m * rho_crit_cgs)
+        #K = (np.pi * gamma * K_B_CGS) / (mu * M_P_CGS * G_CGS)
+        #max_safe_delta = (K * T_floor * scale_factors[-1]) / (16.0 * (dx_comoving_cm**2) * omega_m * rho_crit_cgs)
         
-        axs[2, 0].axvline(x=max_safe_delta, color='red', linestyle=':', linewidth=2, label='Truelove Limit')
-        axs[2, 0].axvspan(max_safe_delta, np.max(x_data) * 10, color='red', alpha=0.1)
+        #axs[2, 0].axvline(x=max_safe_delta, color='red', linestyle=':', linewidth=2, label='Truelove Limit')
+        #axs[2, 0].axvspan(max_safe_delta, np.max(x_data) * 10, color='red', alpha=0.1)
         
         axs[2, 0].set(xscale='log', yscale='log', xlabel=r'Gas Overdensity ($\rho / \bar{\rho}$)', ylabel='Temperature [K]', title='Phase Diagram (Final Snapshot)')
         axs[2, 0].legend(loc='upper left', fontsize=8)
-        fig.colorbar(h[3], ax=axs[2, 0], label='Number of Cells')
+        fig.colorbar(h[3], ax=axs[2, 0], label='Total Gas Mass (Code Units)')
     else:
         axs[2, 0].text(0.5, 0.5, 'Hydro Disabled', ha='center', va='center')  
 

@@ -14,7 +14,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
 
-option(USE_GPU_OFFLOAD "Enable OpenMP GPU Offloading" OFF)
+option(USE_GPU_OFFLOAD "Enable OpenMP GPU Offloading" ON)
 option(USE_CLANG_TIDY  "Run clang-tidy during compilation" OFF)
 
 # ==============================================================================
@@ -37,6 +37,7 @@ set(CORE_SOURCES
     src/ics.cpp
     src/integrator.cpp
     src/logger.cpp
+    src/math_utils.cpp
     src/particles.cpp
     src/types.cpp
     src/utils.cpp

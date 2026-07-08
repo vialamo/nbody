@@ -81,49 +81,71 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         H5::Group config_group = root_group.createGroup("Config");
 
         // [domain]
-        set_attr_double(config_group, "domain_size", config.DOMAIN_SIZE);
-        set_attr_double(config_group, "box_size_mpc", config.BOX_SIZE_MPC);
-        set_attr_int(config_group, "mesh_size", config.MESH_SIZE);
+        set_attr_double(config_group, "domain_size", config.domain_size);
+        set_attr_double(config_group, "box_size_mpc", config.box_size_mpc);
+        set_attr_int(config_group, "mesh_size_1d", config.mesh_size);
+        set_attr_int(config_group, "num_particles_1d", config.num_particles_1d);
 
         // [cosmology]
-        set_attr_double(config_group, "omega_baryon", config.OMEGA_BARYON);
-        set_attr_double(config_group, "omega_M", config.OMEGA_M);
-        set_attr_double(config_group, "omega_lambda", config.OMEGA_LAMBDA);
-        set_attr_double(config_group, "hubble_param", config.HUBBLE_PARAM);
+        set_attr_double(config_group, "omega_baryon", config.omega_baryon);
+        set_attr_double(config_group, "omega_M", config.omega_m);
+        set_attr_double(config_group, "omega_lambda", config.omega_lambda);
+        set_attr_double(config_group, "Hubble_h", config.hubble_h);
+        set_attr_double(config_group, "spectral_index", config.spectral_index);
+        set_attr_double(config_group, "sigma_8", config.sigma_8);
         set_attr_bool(config_group, "expanding_universe",
-                      config.EXPANDING_UNIVERSE);
+                      config.expanding_universe);
+
+        // [gravity]
+        set_attr_double(config_group, "comoving_softening_factor",
+                        config.comoving_softening_factor);
+        set_attr_double(config_group, "softening_cap_scale_factor",
+                        config.physical_softening_cap_a);
 
         // [initial_conditions]
-        set_attr_double(config_group, "spectral_index", config.SPECTRAL_INDEX);
-        set_attr_double(config_group, "start_a", config.START_A);
-        set_attr_double(config_group, "sigma_8", config.SIGMA_8);
-        set_attr_int(config_group, "n_per_side", config.N_PER_SIDE);
         set_attr_bool(config_group, "standing_particles",
-                      config.STANDING_PARTICLES);
-        set_attr_int(config_group, "seed", config.SEED);
+                      config.standing_particles);
+        set_attr_int(config_group, "seed", config.seed);
 
         // [hydro]
-        set_attr_bool(config_group, "use_hydro", config.USE_HYDRO);
-        set_attr_double(config_group, "gamma", config.GAMMA);
-        set_attr_bool(config_group, "enable_cooling", config.ENABLE_COOLING);
-        set_attr_double(config_group, "primordial_mu", config.PRIMORDIAL_MU);
-        set_attr_double(config_group, "temp_floor_k", config.TEMP_FLOOR_KELVIN);
-        set_attr_double(config_group, "cooling_floor_k",
-                        config.RADIATIVE_FLOOR_K);
+        set_attr_bool(config_group, "use_hydro", config.use_hydro);
+        set_attr_double(config_group, "gamma", config.gamma);
+        set_attr_bool(config_group, "enable_cooling", config.enable_cooling);
+        set_attr_double(config_group, "primordial_mu", config.primordial_mu);
+        set_attr_double(config_group, "temp_floor_k", config.temp_floor_k);
+        set_attr_double(config_group, "cooling_cutoff_k",
+                        config.cooling_cutoff_k);
+
+        // [subgrid]
+        set_attr_bool(config_group, "enable_subgrid_gravity",
+                      config.enable_subgrid_gas_gravity);
+        set_attr_bool(config_group, "enable_subgrid_clumping",
+                      config.enable_subgrid_clumping);
+        set_attr_double(config_group, "subgrid_clumping_amplitude",
+                        config.subgrid_clumping_amplitude);
 
         // [p3m]
-        set_attr_bool(config_group, "use_pm", config.USE_PM);
-        set_attr_bool(config_group, "use_pp", config.USE_PP);
+        set_attr_bool(config_group, "use_pm", config.use_PM);
+        set_attr_bool(config_group, "use_pp", config.use_PP);
         set_attr_double(config_group, "pm_smoothing_cells",
-                        config.PM_SMOOTHING_CELLS);
+                        config.PM_smoothing_cells);
         set_attr_double(config_group, "cutoff_radius_factor",
-                        config.CUTOFF_RADIUS_FACTOR);
+                        config.cutoff_radius_factor);
 
         // [time]
-        set_attr_double(config_group, "dt_factor", config.DT_FACTOR);
-        set_attr_double(config_group, "cfl_safety_factor",
-                        config.CFL_SAFETY_FACTOR);
-        set_attr_bool(config_group, "use_adaptive_dt", config.USE_ADAPTIVE_DT);
+        set_attr_double(config_group, "max_dt_dynamical_factor",
+                        config.max_dt_dynamical_factor);
+        set_attr_double(config_group, "gravity_accuracy_eta",
+                        config.gravity_accuracy_eta);
+        set_attr_double(config_group, "hydro_courant_factor",
+                        config.hydro_courant_factor);
+        set_attr_bool(config_group, "use_adaptive_dt", config.use_adaptive_dt);
+        set_attr_double(config_group, "a_start", config.a_start);
+        set_attr_double(config_group, "a_end", config.a_end);
+
+        // [HPC]
+        set_attr_int(config_group, "num_threads", config.num_threads);
+        set_attr_bool(config_group, "use_gpu", config.enable_GPU);
 
         // Global system physics
         set_attr_double(config_group, "G", config.G);
@@ -134,17 +156,17 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         // ====================================================================
         H5::Group units_group = root_group.createGroup("Units");
         set_attr_double(units_group, "unit_length_in_mpc",
-                        config.UNIT_LENGTH_MPC);
-        set_attr_double(units_group, "unit_time_in_gyr", config.UNIT_TIME_GYR);
+                        config.unit_length_mpc);
+        set_attr_double(units_group, "unit_time_in_gyr", config.unit_time_gyr);
         set_attr_double(units_group, "unit_velocity_in_kms",
-                        config.UNIT_VELOCITY_KMS);
+                        config.unit_velocity_kms);
         set_attr_double(units_group, "unit_velocity_in_cgs",
-                        config.UNIT_VELOCITY_CGS);
+                        config.unit_velocity_cgs);
         set_attr_double(units_group, "unit_mass_in_msun",
-                        config.UNIT_MASS_MSUN);
+                        config.unit_mass_msun);
         set_attr_double(units_group, "unit_density_in_cgs",
-                        config.UNIT_DENSITY_CGS);
-        set_attr_double(units_group, "factor_u_to_t", config.FACTOR_U_TO_T);
+                        config.unit_density_cgs);
+        set_attr_double(units_group, "factor_u_to_t", config.factor_u_to_t);
         units_group.close();
 
         H5::Group particle_group = root_group.createGroup("Particles");
@@ -164,7 +186,7 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         write_particle_vec(particle_group, "mass", state.dm.mass);
         particle_group.close();
 
-        if (config.USE_HYDRO) {
+        if (config.use_hydro) {
             H5::Group gas_group = root_group.createGroup("Gas");
             set_attr_double(gas_group, "cumulative_radiated_energy",
                             state.gas.get_accumulated_radiated_energy());
@@ -179,13 +201,13 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
             write_grid(gas_group, "energy", state.gas.get_energy());
             write_grid(gas_group, "pressure", state.gas.get_pressure());
 
-            if (config.ENABLE_COOLING) {
-                Grid3D temp_grid(config.MESH_SIZE);
+            if (config.enable_cooling) {
+                Grid3D temp_grid(config.mesh_size);
                 const Grid3D& rho = state.gas.get_density();
                 const Grid3D& ie = state.gas.get_internal_energy();
 
                 int total_cells =
-                    config.MESH_SIZE * config.MESH_SIZE * config.MESH_SIZE;
+                    config.mesh_size * config.mesh_size * config.mesh_size;
                 for (int i = 0; i < total_cells; ++i) {
                     if (rho.data[i] > 1e-12) {
                         double u = ie.data[i] / rho.data[i];

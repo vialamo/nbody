@@ -70,7 +70,7 @@ class True3DViewer:
                     config_attr = f['Config'].attrs
                     self.domain_size = config_attr.get('domain_size', 1.0)
                     self.use_hydro = bool(config_attr.get('use_hydro', 0))
-                    mesh_size = config_attr.get('mesh_size', 64)
+                    mesh_size = config_attr.get('mesh_size_1d', 64)
                 
                 print("Reading the final snapshot to establish stable colormap bounds...")
                 with h5py.File(self.snapshot_files[-1], 'r', libver='latest', swmr=True) as f:
@@ -106,7 +106,7 @@ class True3DViewer:
                         self.global_dm_min_log, self.global_dm_max_log = -10.0, 0.0
             
             if not initial:
-                print(f"Refreshed: Now seeing {self.num_frames} frames.")
+                print(f"Refreshed: Now seeing {self.num_frames} snapshots.")
                 
         except Exception as e:
             if initial:
@@ -181,7 +181,7 @@ class True3DViewer:
                                  method='translucent', parent=self.view.scene)
             # Read mesh size from the first file to scale the volume properly
             with h5py.File(self.snapshot_files[0], 'r') as f:
-                N = f['Config'].attrs.get('mesh_size', 64)
+                N = f['Config'].attrs.get('mesh_size_1d', 64)
             scale_factor = self.domain_size / N
             self.volume.transform = scene.transforms.STTransform(
                 scale=(scale_factor, scale_factor, scale_factor))
@@ -244,7 +244,7 @@ class True3DViewer:
             positions = np.c_[pos_x, pos_y, pos_z]
             
             # Estimate local density using the CIC grid
-            N = config_attr.get('mesh_size', 64)
+            N = config_attr.get('mesh_size_1d', 64)
             dm_grid = compute_cic_density(pos_x, pos_y, pos_z, mass, self.domain_size, N)
             
             # Find which grid cell each particle is currently in

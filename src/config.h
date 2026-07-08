@@ -2,74 +2,96 @@
 #include <string>
 
 struct Config {
-    double DOMAIN_SIZE = 1.0;
-    int MESH_SIZE = 32;
-    double BOX_SIZE_MPC = 16.0;
+    // Domain
+    int mesh_size = 32;
+    int num_particles_1d = 32;
+    double box_size_mpc = 16.0;
 
-    double OMEGA_BARYON = 0.045;
-    double OMEGA_M = 0.3;
-    double OMEGA_LAMBDA = 0.7;
-    double HUBBLE_PARAM = 0.7;
-    bool EXPANDING_UNIVERSE = true;
+    // Cosmology
+    double omega_baryon = 0.045;
+    double omega_m = 0.3;
+    double omega_lambda = 0.7;
+    double hubble_h = 0.7;
+    double sigma_8 = 0.81;
+    double spectral_index = 0.96;
+    bool expanding_universe = true;
 
-    int N_PER_SIDE = 32;
-    bool STANDING_PARTICLES = false;
-    double START_A = 0.02;
-    double SIGMA_8 = 0.81;
-    double SPECTRAL_INDEX = 0.96;
-    double INITIAL_GAS_TEMPERATURE_K = 50.0;
-    int SEED = 42;
+    // Gravity
+    double comoving_softening_factor = 0.0334;
+    double physical_softening_cap_a = 0.3;
 
-    bool USE_HYDRO = true;
-    double GAMMA = 5.0 / 3.0;
-    bool ENABLE_COOLING = true;
-    double PRIMORDIAL_MU = 1.22;  // Mean molecular weight for neutral
+    // Initial conditions
+    bool standing_particles = false;
+    double initial_gas_temperature_k = 50.0;
+    int seed = 42;
+
+    // Hydro
+    bool use_hydro = true;
+    double gamma = 5.0 / 3.0;
+    bool enable_cooling = true;
+    double primordial_mu = 1.22;  // Mean molecular weight for neutral
                                   // primordial gas (76% H, 24% He)
-    double TEMP_FLOOR_KELVIN = 10.0;
-    double RADIATIVE_FLOOR_K = 10000.0;
+    double temp_floor_k = 10.0;
+    double cooling_cutoff_k = 10000.0;
 
-    bool USE_PM = true;
-    bool USE_PP = true;
-    double CUTOFF_RADIUS_FACTOR = 4.5;
-    double PM_SMOOTHING_CELLS = 1.25;
+    // Subgrid
+    bool enable_subgrid_gas_gravity = false;
+    bool enable_subgrid_clumping = true;
+    double subgrid_clumping_amplitude = 10.0;
 
-    double DT_FACTOR = 1e-3;
-    double MAX_SCALE_FACTOR = 1.0;
-    double CFL_SAFETY_FACTOR = 0.4;
-    double GRAVITY_DT_FACTOR = 0.2;
-    bool USE_ADAPTIVE_DT = true;
-    int MAX_CYCLES = 1000000000;
+    // P3M
+    bool use_PM = true;
+    bool use_PP = true;
+    double cutoff_radius_factor = 4.5;
+    double PM_smoothing_cells = 1.25;
 
-    double SAVE_HDF5_EVERY_DELTA_A = 0.005;
-    int DEBUG_INFO_EVERY_SECONDS = 30;
-    bool ENABLE_ENERGY_DIAGNOSTICS = true;
+    // Time
+    bool use_adaptive_dt = true;
+    double max_dt_dynamical_factor = 1e-3;
+    double hydro_courant_factor = 0.4;
+    double gravity_accuracy_eta = 0.2;
+    double a_start = 0.02;
+    double a_end = 1.0;
+    int max_cycles = 1000000000;
+
+    // Output
+    double save_HDF5_every_delta_a = 0.005;
+    int debug_info_every_seconds = 30;
+    bool enable_energy_diagnostics = true;
+
+    // HPC
+    int num_threads = 0;
+    bool enable_GPU = true;
 
     // Derived Parameters
     double G = 0.0;
-    double CELL_SIZE = 0.0, CELL_VOLUME = 0.0, OMEGA_DM = 0.0;
-    double CUTOFF_RADIUS_CELLS = 0;
-    double CUTOFF_RADIUS = 0.0, CUTOFF_RADIUS_SQUARED = 0.0;
-    int NUM_DM_PARTICLES = 0;
-    double DM_PARTICLE_MASS = 0.0, GAS_TOTAL_MASS = 0.0;
-    double SOFTENING_SQUARED = 0.0;
-    double FIXED_DT = 0.0;
+    double cell_size = 0.0, cell_volume = 0.0, omega_dm = 0.0;
+    double cutoff_radius_cells = 0;
+    double cutoff_radius = 0.0, cutoff_radius_squared = 0.0;
+    int num_dm_particles = 0;
+    double dm_particle_mass = 0.0, gas_total_mass = 0.0;
+    double softening_squared = 0.0;
+    double base_comoving_softening = 0.0;
+
+    double fixed_dt = 0.0;
 
     // Derived unit conversions (calculated once)
-    double UNIT_LENGTH_MPC = 0.0;    // 1 code length = X Mpc
-    double UNIT_TIME_GYR = 0.0;      // 1 code time = X Gyr
-    double UNIT_VELOCITY_KMS = 0.0;  // 1 code velocity = X km/s
-    double UNIT_VELOCITY_CGS = 0.0;  // 1 code velocity = X cm/s
-    double UNIT_MASS_MSUN = 0.0;     // 1 code mass = X Solar Masses
+    double unit_length_mpc = 0.0;    // 1 code length = X Mpc
+    double unit_time_gyr = 0.0;      // 1 code time = X Gyr
+    double unit_velocity_kms = 0.0;  // 1 code velocity = X km/s
+    double unit_velocity_cgs = 0.0;  // 1 code velocity = X cm/s
+    double unit_mass_msun = 0.0;     // 1 code mass = X Solar Masses
 
     // Thermodynamics
-    double FACTOR_U_TO_T = 0.0;  // 1 code specific internal energy = X Kelvin
-    double FACTOR_T_TO_U = 0.0;  // 1 Kelvin = X code specific internal energy
-    double UNIT_DENSITY_CGS = 0.0;  // 1 code density = X g/cm^3
-    double COOLING_CONVERSION_FACTOR =
+    double factor_u_to_t = 0.0;  // 1 code specific internal energy = X Kelvin
+    double factor_t_to_u = 0.0;  // 1 Kelvin = X code specific internal energy
+    double unit_density_cgs = 0.0;  // 1 code density = X g/cm^3
+    double cooling_conversion_factor =
         0.0;  // Converts physical cooling rate (erg/g/s) to code units (du/dt)
 
     // Constant Parameters
-    static constexpr double TOTAL_MASS = 1;
+    static constexpr double total_mass = 1;
+    static constexpr double domain_size = 1.0;
 
     Config();
     void load(const std::string& filename);

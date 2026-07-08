@@ -5,12 +5,13 @@
 #include "types.h"
 
 class Diagnostics;
+class GasGrid;
 
 // Encapsulates a flat-array for particle binning
 struct CellList {
-    std::vector<int> cell_start;          // Size: num_cells
-    std::vector<int> cell_count;          // Size: num_cells
-    
+    std::vector<int> cell_start;  // Size: num_cells
+    std::vector<int> cell_count;  // Size: num_cells
+
     void resize(int num_cells, int num_parts) {
         cell_start.assign(num_cells, 0);
         cell_count.assign(num_cells, 0);
@@ -53,6 +54,10 @@ class ParticleSystem {
                                 const Grid3D& az_grid, const Config& config);
 
     void compute_pp_forces(const Config& config, Diagnostics& diag);
+
+    void compute_gas_dm_pp_forces(const GasGrid& gas, Grid3D& grav_x,
+                                  Grid3D& grav_y, Grid3D& grav_z,
+                                  const Config& config, Diagnostics& diag);
 
     double calculate_kinetic_energy(double a) const;
 

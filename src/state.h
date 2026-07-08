@@ -22,9 +22,9 @@ struct SimState {
     SimState(const Config& config)
         : dm(config),
           gas(config),
-          gravity_x(config.MESH_SIZE),
-          gravity_y(config.MESH_SIZE),
-          gravity_z(config.MESH_SIZE),
-          total_rho(config.MESH_SIZE),
-          phi(config.MESH_SIZE) {}
+          gravity_x(config.mesh_size),
+          gravity_y(config.mesh_size),
+          gravity_z(config.mesh_size),
+          total_rho(config.mesh_size),
+          phi(config.mesh_size) {}
 };
