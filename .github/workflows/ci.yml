@@ -25,7 +25,7 @@ jobs:
 
     # 3. Run CMake configuration
     - name: Configure CMake
-      run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      run: cmake -B build -DUSE_GPU_OFFLOAD=OFF -DCMAKE_BUILD_TYPE=Release
 
     # 4. Compile the engine and tests
     - name: Build Project
