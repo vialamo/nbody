@@ -1,6 +1,7 @@
 #pragma once
 
 #include "config.h"
+#include "cooling.h"
 #include "types.h"
 
 class GasGrid;
@@ -19,6 +20,8 @@ class RiemannSolver {
         flux_energy_sh;
     Grid3D ie_L, ie_R, F_ie_L, F_ie_R, flux_ie, flux_ie_sh;
     Grid3D q_minus, q_plus, dq_L, dq_R, slope;
+    Grid3D flux_metal, flux_metal_sh;
+    Grid3D Z, Z_L, Z_R;
 
     Eigen::ArrayXd den_star, S_star, omega_L, omega_R, denom_L, denom_R;
     Eigen::ArrayXd mom_n_star_L, mom_n_star_R, mom_t1_star_L, mom_t1_star_R;
@@ -52,6 +55,8 @@ class RiemannSolver {
     const Grid3D& get_flux_energy_sh() const { return flux_energy_sh; }
     const Grid3D& get_flux_ie() const { return flux_ie; }
     const Grid3D& get_flux_ie_sh() const { return flux_ie_sh; }
+    const Grid3D& get_flux_metal() const { return flux_metal; }
+    const Grid3D& get_flux_metal_sh() const { return flux_metal_sh; }
 };
 
 class GasGrid {
@@ -59,12 +64,17 @@ class GasGrid {
     Grid3D density, momentum_x, momentum_y, momentum_z, energy;
     Grid3D pressure, velocity_x, velocity_y, velocity_z;
     Grid3D internal_energy;
+    Grid3D metal_density;
     size_t cooling_failed_cells;
+    size_t cooling_total_cycles;
     double accumulated_radiated_energy;
+    double accumulated_photoheating_energy;
     double accumulated_gravitational_work;
     double accumulated_expansion_work;
+    double pressure_floor;
 
     RiemannSolver solver;
+    Cooling cooling_module;
     const Config& config;
 
     friend struct GasGridTestAccess;
@@ -82,7 +92,7 @@ class GasGrid {
     GasGrid(const Config& conf);
 
     void hydro_step(double dt);
-    double apply_cooling(double dt, double a);
+    void apply_cooling(double dt, double a);
     double get_cfl_timestep() const;
     double get_cooling_timestep(double a) const;
 
@@ -98,12 +108,16 @@ class GasGrid {
     const Grid3D& get_velocity_z() const { return velocity_z; }
 
     const Grid3D& get_internal_energy() const { return internal_energy; }
+    const Grid3D& get_metal_density() const { return metal_density; }
 
-    size_t get_cooling_failed_cells() const {
-        return cooling_failed_cells;
-    }
+    size_t get_cooling_failed_cells() const { return cooling_failed_cells; }
+    size_t get_cooling_total_cycles() const { return cooling_total_cycles; }
     double get_accumulated_radiated_energy() const {
         return accumulated_radiated_energy;
+    }
+
+    double get_accumulated_photoheating_energy() const {
+        return accumulated_photoheating_energy;
     }
 
     double get_accumulated_gravitational_work() const {
@@ -116,4 +130,6 @@ class GasGrid {
         accumulated_gravitational_work += w;
     }
     void add_expansion_work(double w) { accumulated_expansion_work += w; }
+
+    Grid3D compute_thermal_timescale(double a) const;
 };

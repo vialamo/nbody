@@ -59,8 +59,6 @@ class ParticleSystem {
                                   Grid3D& grav_y, Grid3D& grav_z,
                                   const Config& config, Diagnostics& diag);
 
-    double calculate_kinetic_energy(double a) const;
-
     double get_gravity_timestep(const Config& config) const;
 
     const Grid3D& get_rho() const { return dm_rho; }

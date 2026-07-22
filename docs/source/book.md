@@ -13,39 +13,35 @@ vialamo@gmail.com
 
 ## Introduction
 
-At its core, a cosmological simulation is a computational time machine. Because astrophysicists cannot physically experiment on stars or galaxies in a laboratory, they use computers to build virtual patches of the cosmos. By seeding a simulation volume with the initial mathematical conditions of the Big Bang and stepping it forward in time using the laws of physics, we can watch 13.8 billion years of cosmic evolution unfold in a matter of days or weeks.
+Because astrophysicists cannot physically experiment on stars or galaxies in a laboratory, they use computers to build virtual patches of the cosmos. By seeding a simulation volume with the initial conditions of the Big Bang and stepping it forward in time using the laws of physics, we can watch 13.8 billion years of cosmic evolution unfold in a matter of days or weeks.
 
 **The Origins**
 
-The endeavor to simulate the cosmos began in the 1970s. Early pioneers, such as Jim Peebles, ran the very first N-body simulations using just a few hundred particles to study how galaxies might cluster together under gravity. By the 1980s, researchers were running the first 3-dimensional models of Cold Dark Matter (CDM). These early simulations were severely limited by the computers of their time; they treated entire galaxies as single points of mass and modeled only the force of gravity, completely ignoring the complex fluid dynamics of gas. 
+The endeavor to simulate the cosmos began in the 1970s. Early N-body simulations used just a few hundred particles to study how galaxies might cluster together under gravity. By the 1980s, researchers were running the first 3-dimensional models of Cold Dark Matter (CDM). These early simulations were severely limited by the computers of their time; they treated entire galaxies as single points of mass and modeled only the force of gravity, ignoring the complex fluid dynamics of gas. 
 
-**Modern Applications**
+**Applications**
 
-Today, cosmological simulations are some of the most intensive computational tasks on Earth. Projects like the Millennium Simulation, Illustris, and EAGLE utilize supercomputing clusters to track billions—and sometimes trillions—of particles. 
+Cosmological simulations are some of the most intensive computational tasks nowadays. Projects like the Millennium Simulation, Illustris, and EAGLE utilize supercomputing clusters to track billions—and sometimes trillions—of particles. 
 
-Nowadays, these virtual universes are used as the primary theoretical laboratories for astrophysics, serving three main purposes:
+These virtual universes are used as the primary theoretical laboratories for astrophysics, serving three main purposes:
 
-* **Testing the Standard Model:** We can easily alter the parameters of a simulation—adding more dark energy, changing the mass of dark matter particles, or altering the laws of gravity. By comparing the resulting "mock universe" to the real one we see through telescopes, we can prove or disprove fundamental theories of physics.
+* **Testing the Standard Model:** We can easily alter the parameters of a simulation—adding more dark energy, changing the mass of dark matter particles, or altering the laws of gravity. By comparing the resulting "mock universe" to the real one, we can prove or disprove fundamental theories of physics.
 * **Calibrating Telescope Data:** Massive modern observatories (like the James Webb Space Telescope and the Euclid satellite) gather an overwhelming amount of data. Simulations provide the theoretical maps required to interpret those observations, helping astronomers distinguish between optical illusions (like redshift-space distortions) and true physical structures.
-* **Probing the Unobservable:** While a telescope can only capture a frozen snapshot of a galaxy at one specific moment in its life, a simulation allows us to continuously watch the dynamic, billion-year processes of galaxy mergers, black hole feeding, and cosmic web formation from beginning to end.
+* **Probing the Unobservable:** While a telescope can only capture a frozen snapshot of a galaxy at one specific moment in its life, a simulation allows us to continuously watch the processes of galaxy mergers, black hole feeding, and cosmic web formation from beginning to end.
 
-### The Anatomy of a Cosmological Simulation
+### Anatomy of Cosmological Simulations
 
-Before diving into the specific mathematics and algorithms, it is helpful to outline exactly what we are trying to simulate. A modern cosmological simulation is a carefully coupled system of different physical frameworks designed to mimic the actual composition and behavior of the universe. 
+A cosmological simulation is a carefully coupled system of different physical frameworks designed to mimic the composition and behavior of the universe.
 
-To build a realistic virtual patch of the cosmos, a simulation must continuously balance three distinct computational pillars:
-
-* **Collisionless Dark Matter :** Dark matter accounts for roughly 85% of the matter in the universe and dominates its gravitational landscape. Because it does not interact with light or experience thermodynamic pressure, we model it as "collisionless" particles. Computationally, this is handled by an **N-body solver**, which tracks millions (or billions) of discrete, massive particles moving purely under the influence of gravity to form the filaments and halos of the cosmic web.
-* **Baryonic Gas:** Normal, visible matter (hydrogen and helium) behaves very differently from dark matter. Gas clouds crash into each other, heat up, form shockwaves, and exert pressure. To simulate this, gravity alone is insufficient; we require a **Hydrodynamics solver**. This typically involves dividing the simulation volume into a 3D grid (an Eulerian approach) to strictly track the conservation of mass, momentum, and energy as the fluid flows through space.
-* **The Expanding Background:** Unlike a simulation of a single, static solar system, a cosmological simulation takes place in an expanding universe. The coordinate grid itself stretches over time. Both the N-body particles and the hydrodynamic gas must be subjected to a cosmological background model (driven by the Friedmann equations) to properly account for the dilution of density and the slowing of velocities due to cosmic expansion.
-
-Gravity is the universal language that links the dark matter and the gas together. We will begin by breaking down the foundational engine that drives the formation of all large-scale structure: calculating the gravitational pull of $N$ interacting particles.
+* **Collisionless Dark Matter :** Dark matter accounts for roughly 85% of the matter in the universe and dominates its gravitational landscape. Because it does not interact with light or experience thermodynamic pressure, we model it as "collisionless" particles. Computationally, this is handled by an **N-body solver**, which tracks millions of discrete, massive particles moving purely under the influence of gravity to form the filaments and halos of the cosmic web.
+* **Baryonic Gas:** Normal, visible matter (hydrogen and helium) behaves differently from dark matter. Gas clouds crash into each other, heat up, form shockwaves, and exert pressure. To simulate this, we require a **Hydrodynamics solver**. This typically involves tracking the conservation of mass, momentum, and energy as the fluid flows through space, while gravity links the dark matter and the gas together.
+* **The Expanding Background:** A cosmological simulation takes place in an expanding universe. Both the N-body particles and the hydrodynamic gas must be subjected to a cosmological background model to properly account for the dilution of density and the slowing of velocities due to cosmic expansion.
 
 ### The Major Cosmological Codes
 
-The global astrophysical community relies on a handful of massive, highly optimized, open-source software packages to run these supercomputer simulations. 
+The astrophysical community relies on a handful of open-source software packages to run these supercomputer simulations. 
 
-It is helpful to know that almost all modern codes are split by their approach to fluid dynamics: some treat gas as a collection of individual moving particles (**Lagrangian** methods like SPH), while others treat gas as a fluid flowing through a fixed or adaptive 3D grid (**Eulerian** methods like AMR).
+Modern codes are split by their approach to fluid dynamics: some treat gas as a collection of individual moving particles (**Lagrangian** methods like SPH), while others treat gas as a fluid flowing through a fixed or adaptive 3D grid (**Eulerian** methods like AMR).
 
 Here is a summary of the most prominent cosmological codes used in modern research and the underlying engines that drive them:
 
@@ -56,8 +52,6 @@ Here is a summary of the most prominent cosmological codes used in modern resear
 | **ENZO** | Particle-Mesh | AMR (Adaptive Mesh Refinement) | Renaissance Simulations | [enzo-project.org](https://enzo-project.org/) |
 | **AREPO** | TreePM | Moving Voronoi Mesh (Unstructured grid) | Illustris, IllustrisTNG | [arepo-code.org](https://arepo-code.org/) |
 | **SWIFT** | Fast Multipole Method (Tree) | Modern SPH / Meshless Finite Mass | Flamingo | [swiftsim.com](http://swiftsim.com/) / [GitHub](https://github.com/SWIFTSIM/swiftsim) |
-
-These codes represent decades of collaborative optimization. We will dive into the core mechanics of how gravity and gas interact in the following chapters.
 
 ## The N-Body Problem
 
@@ -87,16 +81,14 @@ Although conceptually simple and physically exact, the direct-summation method i
 
 In computational complexity terms, this corresponds to **$O(N^2)$** scaling — meaning that doubling the number of particles multiplies the total computational cost by roughly four. This quadratic growth rapidly becomes intractable: while $N \sim 10^3$ is easily manageable, $N \sim 10^6$ would require on the order of $10^{12}$ pairwise force evaluations per step.
 
-Because of this steep scaling, the direct method is impractical for cosmological simulations, which often involve millions or billions of particles. To overcome this, we rely on **approximation schemes** — such as the **Particle-Mesh (PM)** and **Particle-Particle Particle-Mesh (P³M)** — that preserve physical accuracy while reducing computational cost from $O(N^2)$ to nearly $O(N \log N)$ or better.
+Because of this steep scaling, the direct method is impractical for cosmological simulations, which often involve millions or billions of particles. To overcome this, we rely on **approximation schemes** — such as the **Particle-Mesh (PM)** and **Particle-Particle Particle-Mesh (P³M)** — that preserve physical accuracy while reducing computational cost from $O(N^2)$ to nearly $O(N \log N)$.
 
 
 ## Boundaries and Singularities
 
-Two fundamental problems arise when trying to model gravity in a computer. The first is how to simulate an infinite universe in a finite box, and the second is how to handle the infinite force that occurs when two particles get too close.
-
 ### Periodic Boundary Conditions
 
-To simulate a small, representative patch of an infinite, uniform universe without having particles react to artificial "walls", simulations employ **periodic boundary conditions**. This method treats the simulation space as a seamless, repeating tile.
+To simulate a small, representative patch of an infinite, uniform universe, simulations employ **periodic boundary conditions**. This method treats the simulation space as a seamless, repeating tile.
 
 A particle exiting one face immediately re-enters from the opposite face. This means that when calculating the force between two particles, the "wrap-around" distance must be considered. We always use the shortest path between the two particles. This is known as the **Minimum Image Convention**, and it ensures that no particle ever feels an artificial "edge of the universe."
 
@@ -132,15 +124,11 @@ The update equations are:
 1.  **Update Position:** $\mathbf{x}_{n+1} = \mathbf{x}_n + \mathbf{v}_n \Delta t$
 2.  **Update Velocity:** $\mathbf{v}_{n+1} = \mathbf{v}_n + \mathbf{a}_n \Delta t$
 
-While simple, the Euler method's core assumption is almost always wrong. In a gravitational system, the force is constantly changing as a particle moves, but the Euler method is blind to any changes that occur during the step.
-
-This error, while tiny on each step, is **systematic**. It always pushes the energy in the same direction. Over thousands of steps, this causes a simulated planet to slowly spiral outwards, gaining energy with every orbit until it eventually flies away. This failure to conserve energy makes the Euler method unsuitable for any simulation where long-term stability is important.
+While simple, the Euler method's is blind to any changes that occur during the step. This error, while tiny on each step, is **systematic**. Over thousands of steps, it accumulates, failing to conserve energy. This makes the Euler method unsuitable for any simulation where long-term stability is important.
 
 ### Velocity Verlet
 
-The failure of the Euler method shows that a more robust integrator is needed—one that accounts for the fact that forces change *during* a time step. An effective solution is an algorithm called **Velocity Verlet**.
-
-The core idea is to use a more accurate, averaged acceleration to update the velocity. Instead of just using the acceleration from the beginning of the step, it uses the average of the accelerations from the beginning and the end of the step.
+**Velocity Verlet** is an integrator that accounts for the fact that forces change *during* a time step. Instead of just using the acceleration from the beginning of the step, it uses the average of the accelerations from the beginning and the end of the step.
 
 The algorithm proceeds in three steps:
 
@@ -153,23 +141,19 @@ The algorithm proceeds in three steps:
 3.  **Calculate the New Velocity:** Finally, update the velocity using the **average** of the old acceleration $\mathbf{a}(t)$ and the new acceleration $\mathbf{a}(t + \Delta t)$.
     $$\mathbf{v}(t + \Delta t) = \mathbf{v}(t) + \frac{\mathbf{a}(t) + \mathbf{a}(t + \Delta t)}{2} \Delta t$$
 
-This final step of averaging the accelerations is the key. It corrects for the systematic drift of the Euler method, and it is what makes Velocity Verlet a **symplectic integrator**. This crucial property is what enables the algorithm to produce a stable and accurate trajectory, conserving energy remarkably well over long periods.
+This final step of averaging the accelerations corrects the systematic drift of the Euler method, and makes Velocity Verlet a **symplectic integrator**. This enables the algorithm to produce stable trajectories, conserving energy remarkably well over long periods.
 
 ### Symplectic Integration
 
-A **symplectic integrator** is an algorithm specifically designed to respect the underlying geometry of physics, a property that allows it to conserve a system's total energy over very long periods. The practical importance of this is best understood by comparing how different integrators handle a simple gravitational problem, like a planet orbiting a star.
+A **symplectic integrator** is designed to respect the underlying geometry of physics, a property that allows it to conserve a system's total energy over very long periods. This is best understood by comparing how different integrators handle a simple gravitational problem, like a planet orbiting a star.
 
 * A **non-symplectic** integrator, like the Euler method, consistently makes an error in the same direction. It always "cuts the corner" of the orbit, pushing the planet slightly outwards. These errors add up, causing the planet's energy to systematically increase and its orbit to spiral away.
 
-* A **symplectic** integrator, like Verlet, makes errors that are correlated. On one step, it might slightly overshoot the true orbit, but on a later step, it will undershoot it to compensate. The errors effectively cancel each other out over time.
+* A **symplectic** integrator, like Verlet, makes errors that are correlated. On one step, it might slightly overshoot the true orbit, but on a later step, it will undershoot it. The errors effectively cancel each other out over time. Instead of a catastrophic spiral, the simulated planet executes a stable "wobble" along the correct orbital path. The shape of the orbit might oscillate, but its average size and energy remain correct in the long term.
 
-Instead of a catastrophic spiral, the simulated planet executes a stable "wobble" along the correct orbital path. The shape of the orbit might oscillate slightly, but its average size and, crucially, its average energy, remain correct for millions of steps.
+The deeper reason for this stability lies in a concept from classical mechanics called **phase space**. Phase space is an abstract map where every point represents the complete state of a particle—both its **position** and its **momentum**. For a system where energy is conserved, a fundamental rule known as **Liouville's Theorem** states that the "area" (or volume) of any group of states in phase space must stay constant as the system evolves.
 
-The deeper reason for this remarkable stability lies in a concept from classical mechanics called **phase space**. Phase space is an abstract map where every point represents the complete state of a particle—both its **position** and its **momentum**. For a system where energy is conserved, a fundamental rule known as **Liouville's Theorem** states that the "area" (or volume) of any group of states in phase space must stay constant as the system evolves.
-
-Symplectic integrators are mathematically constructed to **perfectly preserve this phase space volume**. Because they respect this fundamental geometric rule, they are forbidden from having the systematic energy drift that plagues simpler methods. The bounded energy error (the "wobble") is a direct consequence of this property.
-
-This is why symplectic integrators are chosen over the Euler method for any long-term simulation of a conservative system.
+Symplectic integrators **preserve this phase space volume**. The bounded energy error (the "wobble") is a direct consequence of this property.
 
 ### The Kick-Drift-Kick Integrator
 
@@ -192,22 +176,22 @@ $$\mathbf{x}(t + \Delta t) = \mathbf{x}(t) + \mathbf{v}(t + \tfrac{1}{2}\Delta t
 Finally, the new acceleration, $\mathbf{a}(t + \Delta t)$, is computed from the forces at the new positions, $\mathbf{x}(t + \Delta t)$, and the **mid-step velocity**, $\mathbf{v}(t + \frac{1}{2}\Delta t)$. The acceleration is then used to complete the velocity update for the second half of the time step.
 $$\mathbf{v}(t + \Delta t) = \mathbf{v}(t + \tfrac{1}{2}\Delta t) + \mathbf{a}(t + \Delta t)\frac{\Delta t}{2}$$
 
-While mathematically equivalent to Verlet in simpler cases, this staggered formulation is particularly robust for handling the time-varying and velocity-dependent forces present in a cosmological simulation. The symmetric "kick-force-kick" structure gracefully incorporates these complexities, which is why the KDK leapfrog is the most common integrator in modern cosmological N-body codes.
+While mathematically equivalent to Verlet in simpler cases, this staggered formulation is particularly robust for handling the time-varying and velocity-dependent forces present in a cosmological simulation. The symmetric "kick-force-kick" structure gracefully incorporates these complexities, which is why the KDK leapfrog is a common integrator in modern cosmological N-body codes.
 
 #### Symmetry and Second-Order Accuracy
 
 In numerical physics, the "order of accuracy" dictates how fast errors shrink when we take smaller timesteps ($\Delta t$). A basic, asymmetric algorithm like the Forward Euler method is only *first-order* accurate ($O(\Delta t)$); if we cut the timestep in half, the error only drops by half.
 
-The KDK scheme achieves higher accuracy through its **symmetry**. By splitting the velocity kick into two equal halves that perfectly bracket the position drift, the algorithm becomes **time-reversible**. For conservative forces like gravity, this mieans that if we paused the simulation, reversed all the velocities, and ran the KDK math backward, the particles would trace their exact steps back to their starting positions.
+The KDK scheme achieves higher accuracy through its **symmetry**. By splitting the velocity kick into two equal halves that perfectly bracket the position drift, the algorithm becomes **time-reversible**. For conservative forces like gravity, this means that if we paused the simulation, reversed all the velocities, and ran the KDK math backward, the particles would trace their steps back to their starting positions.
 
-In numerical calculus, any integration scheme that is symmetric and time-reversible causes the leading, first-order Taylor series error terms to cancel each other out. Because the first-order error is gone, the largest surviving error scales with the square of the timestep ($O(\Delta t^2)$). This means KDK is strictly **second-order accurate**—if we cut the timestep in half, the integration error drops by a factor of four.
+In numerical calculus, any integration scheme that is symmetric and time-reversible causes the leading, first-order Taylor series error terms to cancel each other out. Because the first-order error is gone, the largest surviving error scales with the square of the timestep ($O(\Delta t^2)$). This means KDK is **second-order accurate**—if we cut the timestep in half, the integration error drops by a factor of four.
 
 *Key Literature & Further Reading*  
 Springel, V. (2005). *The cosmological simulation code GADGET-2. Monthly Notices of the Royal Astronomical Society*, 364(4), 1105-1134. arXiv:astro-ph/0505010. Available at [https://arxiv.org/abs/astro-ph/0505010](https://arxiv.org/abs/astro-ph/0505010)
 
 ## The Particle-Mesh Method
 
-The Particle-Mesh (PM) method is built on a different perspective. Instead of calculating the gravitational pull between every pair of particles, it simplifies the problem by describing the mass distribution on a regular grid. From this "mass map", the gravitational potential and forces can be solved on the grid itself. These are the steps:
+Instead of calculating the gravitational pull between every pair of particles, the Particle-Mesh (PM) method simplifies the problem by describing the mass distribution on a regular grid. From this "mass map", the gravitational potential and forces can be solved on the grid itself. These are the steps:
 
 1.  **Potential calculation:** First, the gravitational potential ($\Phi$) is calculated for the entire grid. The potential is a scalar "landscape" that describes the depth of the gravitational well at every point.
 2.  **Force calculation:** Second, the force ($\mathbf{F}$) is determined by finding the steepest downhill slope (the gradient) of that potential landscape.
@@ -216,11 +200,11 @@ This `Mass -> Potential -> Force` pipeline is the foundation of the PM method. T
 
 ### Step 1. Finding the Potential
 
-The process of finding the potential begins by describing the mass distribution on the grid, which then serves as the input for the physical law that governs how that mass creates the potential.
+The process of finding the potential begins by describing the mass distribution on the grid.
 
 #### Mass Assignment (NGP)
 
-The first step in this process is **mass assignment**: the procedure for transferring the mass of our continuously positioned particles onto the discrete nodes of the grid.
+**Mass assignment** is the procedure for transferring the mass of the continuously positioned particles onto the discrete nodes of the grid.
 
 The simplest and most intuitive way to do this is the **Nearest Grid Point (NGP)** scheme: for each particle, we find the single grid point (or cell center) that it is closest to, and assign the particle's *entire mass* to that one point.
 
@@ -230,11 +214,11 @@ $$\rho_{i,j,k} = \frac{1}{L^3} \sum_{p \in \text{cell}(i,j,k)} m_p$$
 
 Where $m_p$ is the mass of a particle $p$, and $L$ is the side length of a grid cell.
 
-While NGP is very simple, it can introduce inaccuracies. As we will explore in a later section, more sophisticated schemes like Cloud-in-Cell (CIC) can be used to create a smoother and more accurate density field.
+While NGP is very simple, it introduces inaccuracies. As we will explore in a later section, more sophisticated schemes like Cloud-in-Cell (CIC) can be used to create a smoother and more accurate density field.
 
 #### Poisson's Equation
 
-The potential field $\Phi$ can be determined from the mass density field, $\rho_{i,j,k}$. The fundamental law linking mass to gravitational potential is **Poisson's Equation**.
+The potential field $\Phi$ can be determined from the mass density field, $\rho_{i,j,k}$. We can link mass to gravitational potential through the **Poisson's Equation**.
 
 $$\nabla^2 \Phi = 4\pi G \rho$$
 
@@ -398,49 +382,41 @@ With the force calculated at every point on the grid, the final step is to **int
 
 ### The Flaws of Nearest Grid Point (NGP)
 
-In a previous section, we introduced the Nearest Grid Point (NGP) scheme as the simplest way to assign mass to the grid. While its simplicity is appealing, it comes at a significant cost to the simulation's accuracy. The "blocky," pixelated density field it creates leads to an equally blocky and unphysical force field.
+In a previous section, we introduced the Nearest Grid Point (NGP) scheme as the simplest way to assign mass to the grid. The primary flaw of NGP is that the force a particle feels is **discontinuous**. The jerky, stepwise force from an NGP grid is a poor and unphysical approximation to a real smooth gravitational field. This leads to several significant problems:
 
-The primary flaw of NGP is that the force a particle feels is **discontinuous**. A real gravitational field is smooth and changes continuously with position. The jerky, stepwise force from an NGP grid is a poor and unphysical approximation. This leads to several significant problems:
+1.  **Poor Energy Conservation:** Symplectic integrators can only conserve energy if the force is the smooth gradient of a potential. The sudden "jumps" in force at the cell boundaries introduce small, systematic errors into the integration. These errors accumulate over time, causing the total energy of the simulation to **drift**, rather than just oscillating around the true value.
 
-1.  **Poor Energy Conservation:** This is the most damaging consequence. Symplectic integrators like Velocity Verlet can only conserve energy if the force is the smooth gradient of a potential. The sudden "jumps" in force at the cell boundaries introduce small, systematic errors into the integration. These errors accumulate over time, causing the total energy of the simulation to **drift** upwards or downwards, rather than just oscillating around the true value.
+2.  **Break of translational invariance:** As particles move through the grid, the forces between them violently snap on and off in staircase-like steps depending on when they cross cell boundaries. This injects artificial kinetic energy into the system.
 
-2.  **Violation of Newton's Third Law:** While the total momentum of the system may be globally conserved, the force between any specific pair of particles is not guaranteed to be equal and opposite. The force on particle A depends only on which cell it's in, and the force on particle B depends only on which cell *it's* in. This crude mediation by the grid breaks the pairwise symmetry required for good energy conservation.
+3.  **Grid-Imposed Artifacts:** The force field has an artificial, grid-like pattern. Particles can feel an unphysical pull along the grid axes (x and y) that is stronger than the pull along the diagonals. This can cause particles to artificially cluster along grid lines.
 
-3.  **Grid-Imposed Artifacts:** The force field has an artificial, grid-like pattern. Particles can feel an unphysical pull along the grid axes (x and y) that is stronger than the pull along the diagonals. This can cause particles to artificially cluster along grid lines, a distracting and inaccurate artifact of the method.
-
-Because of these flaws, NGP is rarely used in simulations where accuracy is a priority. To achieve the stable, energy-conserving behavior we need, we must adopt a smoother method for connecting the particles to the grid, which leads us to the Cloud-in-Cell scheme.
+Because of these flaws, NGP is rarely used in simulations.
 
 ### Cloud-in-Cell (CIC)
 
-To achieve a stable simulation that conserves energy, we need a smooth way to connect the particles to the grid. The standard method for this is the **Cloud-in-Cell (CIC)** interpolation scheme.
+To achieve a stable simulation that conserves energy, we need a smooth way to connect the particles to the grid. A widely used method for this is the **Cloud-in-Cell (CIC)** interpolation scheme.
 
 #### Particles as Clouds
 
-Instead of treating each particle as an infinitesimal point, the CIC method imagines each particle as a small, **cubic "cloud"** of mass, the same size as a grid cell. As this particle-cloud moves through the simulation space, it naturally overlaps with the **eight** nearest grid points that form the corners of the cell it currently occupies.
+Instead of treating each particle as an infinitesimal point, the CIC method treats each particle as a small, **cubic "cloud"** of mass, the same size as a grid cell. As this particle-cloud moves through the simulation space, it overlaps with the **eight** nearest grid points that form the corners of its current cell.
 
-The mass of the particle is then distributed, or "splatted," onto these eight grid points. The amount of mass assigned to each point is simply proportional to the **volume of overlap** between the particle's cloud and the region surrounding each grid point. This is a form of **trilinear interpolation**. A particle in the exact center of a cubic cell would distribute 12.5% of its mass to each of the eight corners. A particle mostly in one corner of a cell would give most of its mass to that corner's node.
+The mass of the particle is then distributed, or "splatted," onto these eight grid points. The amount of mass assigned to each point is proportional to the **volume of overlap** between the particle's cloud and the region surrounding each grid point. This is a form of **trilinear interpolation**. A particle in the exact center of a cubic cell would distribute 12.5% of its mass to each of the eight corners. A particle mostly in one corner of a cell would give most of its mass to that corner's node.
 
-This process results in a much smoother and more physically realistic mass density grid. A small movement by a particle leads to a small, continuous change in the mass distribution on the grid, completely eliminating the sudden "jumps" of the NGP method.
+This process results in a smoother and more realistic mass density grid. A small movement by a particle leads to a small, continuous change in the mass distribution on the grid, eliminating the sudden "jumps" of the NGP method.
 
 At its core, CIC is a linear interpolation scheme. Higher-order schemes (like TSC or PCS) exist and provide smoother forces, but are not in the scope of this text.
 
 #### Symmetric Interpolation
 
-A smooth mass distribution is only half the story. The true magic of CIC, and the reason it conserves energy, lies in its perfect symmetry.
+After the forces have been calculated on the grid, we must interpolate them back to the particle's continuous position. The rule for momentum conservation is symmetry: the **force interpolation scheme must be consistent with the mass assignment scheme**.
 
-After the forces have been calculated on the grid, we must interpolate them back to the particle's continuous position. The rule for energy conservation is that the **force interpolation scheme must be consistent with the mass assignment scheme**.
+CIC follows this rule if the force on the particle is calculated by taking a weighted average of the forces from the **same eight grid points**, using the **same volume-based weights** that were used to distribute the mass.
 
-CIC follows this rule perfectly. The force on the particle is calculated by taking a weighted average of the forces from the **same eight grid points**, using the **exact same volume-based weights** that were used to distribute the mass.
-
-This symmetry between "splatting" the mass and "gathering" the force ensures that Newton's third law ($\mathbf{F}_{ij} = -\mathbf{F}_{ji}$) is precisely obeyed for any pair of particles, even though their interaction is being mediated by the grid. Because the forces are perfectly reciprocal, the force field is numerically conservative.
-
-When this conservative force is fed into a symplectic integrator, the system's total energy is conserved remarkably well. The systematic energy *drift* seen with NGP is transformed into the small, bounded *oscillation* expected from a high-quality simulation. While slightly more complex to implement, the improvement in accuracy and stability makes CIC the standard choice for most modern Particle-Mesh codes.
+This symmetry ensures that Newton's third law ($\mathbf{F}_{ij} = -\mathbf{F}_{ji}$) is obeyed for any pair of particles. When these forces are fed into a symplectic integrator, the system's total energy is conserved remarkably well. This makes CIC a common choice for modern codes.
 
 ### Implementation: "Splatting" Mass and "Gathering" Forces
 
-The conceptual idea of treating particles as "clouds" translates into a clean, two-part algorithm. In simulation jargon, these two parts are often called **"splatting"** (distributing the particle mass onto the grid) and **"gathering"** (interpolating the force from the grid back to the particle).
-
-The key to energy conservation is that these two operations must be perfectly symmetric, using the exact same weights for both processes.
+The conceptual idea of treating particles as "clouds" translates into a two-part algorithm. These two parts are often called **"splatting"** (distributing the particle mass onto the grid) and **"gathering"** (interpolating the force from the grid back to the particle).
 
 For simplicity, the following explanation is for a 2D case.
 
@@ -479,7 +455,7 @@ To get the final mass density grid, $\rho$, the total mass accumulated at each n
 
 This step occurs after the forces have been calculated on the grid (creating an acceleration field, $\mathbf{a}_{\text{grid}}$) and is the mirror image of the splatting process.
 
-To find the force on a particle, we use the **exact same** indices and weights we would calculate for it in the splatting step. We then perform a weighted average of the acceleration values from the four surrounding grid points to find the acceleration at the particle's precise location, $\mathbf{a}_p$.
+To find the force on a particle, we use the **same** indices and weights we calculated for it in the splatting step. We then perform a weighted average of the acceleration values from the four surrounding grid points to find the acceleration at the particle's precise location, $\mathbf{a}_p$.
 
 Let the acceleration field on the grid be $\mathbf{a}_{i,j} = (a_{x,i,j}, a_{y,i,j})$ and the four CIC weights for a given particle be $w_{i,j}$, $w_{i+1,j}$, $w_{i,j+1}$, and $w_{i+1,j+1}$.
 
@@ -487,19 +463,15 @@ The x-component of the interpolated acceleration for the particle, $a_{x,p}$, is
 
 $$a_{x,p} = a_{x,i,j} \cdot w_{i,j} + a_{x,i+1,j} \cdot w_{i+1,j} + a_{x,i,j+1} \cdot w_{i,j+1} + a_{x,i+1,j+1} \cdot w_{i+1,j+1}$$
 
-The y-component, $a_{y,p}$, is calculated in the exact same way using the y-components of the grid acceleration field.
+The y-component, $a_{y,p}$, is calculated in the same way using the y-components of the grid acceleration field.
 
 The final force on the particle, $\mathbf{F}_p$, is its mass, $m_p$, times this interpolated acceleration vector:
 
 $$\mathbf{F}_p = m_p \mathbf{a}_p$$
 
-This symmetric "Splat-Gather" procedure ensures that the forces are conservative, which is the fundamental reason why CIC allows a symplectic integrator to conserve energy over long periods.
-
 ### Deconvolving the Mass Assignment
 
-While the symmetric "Splat-Gather" procedure guarantees energy conservation, it introduces a hidden numerical artifact into the gravity solver.
-
-In mathematics, any time we take a set of discrete points and "smear" them across a spatial domain, we are performing a **convolution**. The CIC mass assignment smears a point mass into a shape equivalent to convolving a 1D uniform boxcar (a "top-hat") with itself, creating a triangular density cloud.
+The "Splat-Gather" procedure introduces an artifact into the gravity solver. In mathematics, any time we take a set of discrete points and "smear" them across a spatial domain, we are performing a **convolution**. The CIC mass assignment smears a point mass into a shape equivalent to convolving a 1D uniform boxcar (a "top-hat") with itself, creating a triangular density cloud.
 
 In Fourier analysis, the **Convolution Theorem** dictates that a complex convolution in real space is identical to a simple multiplication in frequency space. The Fourier transform of a 1D top-hat function is the $\text{sinc}$ function, defined as:
 
@@ -509,17 +481,15 @@ Because the CIC shape is the convolution of two top-hats, its Fourier transform 
 
 $$W(\mathbf{k}) = \text{sinc}^2\left(\frac{k_x \Delta x}{2}\right) \cdot \text{sinc}^2\left(\frac{k_y \Delta x}{2}\right) \cdot \text{sinc}^2\left(\frac{k_z \Delta x}{2}\right)$$
 
-This creates a numerical problem often called the **"gravity pothole."** The simulation applies this CIC filter *twice*—once when splatting the mass onto the grid ($\rho_{\text{grid}} = \rho_{\text{true}} * W$), and once when gathering the forces back to the particles ($\mathbf{F}_{\text{particle}} = \mathbf{F}_{\text{grid}} * W$).
+This creates a numerical problem. The simulation applies this CIC filter *twice*—once when splatting the mass onto the grid ($\rho_{\text{grid}} = \rho_{\text{true}} * W$), and once when gathering the forces back to the particles ($\mathbf{F}_{\text{particle}} = \mathbf{F}_{\text{grid}} * W$).
 
 Because the filter is applied twice, the total numerical dampening applied is $W(\mathbf{k})^2$. This means the gravitational potential is accidentally multiplied by a factor of **$\text{sinc}^4$** along every axis. Since the $\text{sinc}$ function decays as frequencies get higher, this accidental $\text{sinc}^4$ multiplication artificially weakens the gravitational pull at intermediate scales (typically distances of 1 to 3 grid cells).
 
 To fix this, we must undo the accidental CIC convolution during the gravity calculation. This process is known as **deconvolution**.
 
-When we solve for the gravitational potential in Fourier space (using the Fast Fourier Transform), we calculate the value of the $\text{sinc}$ function for every specific wavevector $(k_x, k_y, k_z)$. We then divide the potential by the $\text{sinc}^4$ penalty. The equation for the basic Particle-Mesh potential in Fourier space becomes:
+When we solve for the gravitational potential in Fourier space, we calculate the value of the $\text{sinc}$ function for every specific wavevector $(k_x, k_y, k_z)$. We then divide the potential by the $\text{sinc}^4$ penalty. The equation for the basic Particle-Mesh potential in Fourier space becomes:
 
 $$\Phi_k = \rho_k \cdot \left(\frac{-4\pi G}{k^2}\right) \cdot \frac{1}{W(\mathbf{k})^2}$$
-
-By explicitly dividing out the mass assignment window, we "sharpen" the raw grid back, ensuring that the forces behave as Newtonian physics demands.
 
 *Key Literature & Further Reading*  
 Bagla, J. S., & Padmanabhan, T. (2004). *Cosmological N-Body Simulations*. arXiv:astro-ph/0411730. Available at [https://arxiv.org/pdf/astro-ph/0411730.pdf](https://arxiv.org/pdf/astro-ph/0411730.pdf)
@@ -532,12 +502,12 @@ We have seen that the Particle-Mesh (PM) method is efficient for calculating the
 
 On the other hand, the direct Particle-Particle (PP) calculation is the exact opposite. While it is perfectly accurate at all scales, its weakness, is that its $O(N^2)$ complexity makes it too slow for a large number of particles.
 
-This presents a classic trade-off: speed or accuracy. The **Particle-Particle Particle-Mesh (P³M)** algorithm provides an elegant solution by combining both methods, using each one only where it excels.
+This presents a classic trade-off: speed or accuracy. The **Particle-Particle Particle-Mesh (P³M)** algorithm combines both methods, using each one only where it excels.
 
 The P³M method splits the force calculation into two parts based on a **cutoff radius**, $r_c$:
 
-1.  **Long-Range Force (PM):** The smooth, gentle pull from all the **distant** particles (those farther than $r_c$) is calculated efficiently using the Particle-Mesh method.
-2.  **Short-Range Force (PP):** The sharp, strong force from the few **nearby** particles (those closer than $r_c$) is calculated precisely using the direct Particle-Particle method.
+1.  **Long-Range Force (PM):** The smooth pull from all the **distant** particles (those farther than $r_c$) is calculated efficiently using the Particle-Mesh method.
+2.  **Short-Range Force (PP):** The sharp, strong force from the few **nearby** particles (those closer than $r_c$) is calculated using the direct Particle-Particle method.
 
 ### The Subtractive Scheme
 
@@ -548,11 +518,11 @@ $$\mathbf{F}_{\text{total}} = \mathbf{F}_{\text{PM}} + \left( \mathbf{F}_{\text{
 The process is straightforward:
 
 1.  First, we calculate the baseline **$\mathbf{F}_{\text{PM}}$** for all particles. This gives us the correct long-range force everywhere but an incorrect "blurry" force for nearby pairs.
-2.  Then, for any pair of particles closer than the cutoff radius, we calculate the **true, sharp force** between them, **$\mathbf{F}_{\text{PP}}^{\text{short}}$**.
+2.  Then, for any pair of particles closer than the cutoff radius, we calculate the **true force** between them, **$\mathbf{F}_{\text{PP}}^{\text{short}}$**.
 3.  We also calculate an approximation of the **blurry, inaccurate force** that the PM method produced for that same pair, **$\mathbf{F}_{\text{PM}}^{\text{short}}$**.
-4.  Finally, we subtract the inaccurate mesh force and add the correct direct force. This effectively replaces the blurry grid force with the sharp, accurate PP force, but only where it matters—at short distances.
+4.  Finally, we subtract the inaccurate mesh force and add the correct direct force. This replaces the blurry grid force with the sharp, accurate PP force, but only where it matters—at short distances.
 
-By dividing the problem this way, P³M leverages the strengths of both methods. It uses the fast PM algorithm for the vast majority of interactions (the thousands of weak pulls from distant particles) and reserves the slow but accurate PP algorithm only for the few critical interactions between close neighbors. The result is a simulation that is nearly as fast as a pure PM code but nearly as accurate as a pure PP code—the true best of both worlds.
+P³M tries to get the best of both worlds by using the fast PM algorithm for the vast majority of interactions (the weak pulls from distant particles) and reserving the slow but accurate PP algorithm only for the few interactions between close neighbors.
 
 ### Calculating the Mesh-Force Correction
 
@@ -569,31 +539,29 @@ The terms in this formula are:
 * $\mathbf{r}$ is the vector separating the two particles.
 * $r$ is the magnitude of that vector, $r = \|\mathbf{r}\|$.
 * $G, m_1, m_2$ are the gravitational constant and the particle masses.
-* $\epsilon_{\text{PM}}$ is the crucial term: a **softening length** specifically chosen to match the grid's resolution. A standard and effective choice is to set this value to be proportional to the grid cell length, $L$. For example:
+* $\epsilon_{\text{PM}}$ is a **softening length** specifically chosen to match the grid's resolution. An effective choice is to set this value to be proportional to the grid cell length, $L$. For example:
     $$\epsilon_{\text{PM}} \approx 0.5 \cdot L$$
 
-This formula creates a force that is significantly weakened at short distances (when $r \lesssim \epsilon_{\text{PM}}$), which successfully mimics the behavior of the full PM/FFT calculation. By subtracting this specific force in the correction step, we effectively cancel out the grid's primary error at short range.
+This formula creates a force that is significantly weakened at short distances (when $r \lesssim \epsilon_{\text{PM}}$), which successfully mimics the behavior of the full PM/FFT calculation.
 
 ### Choosing the Cutoff Radius ($r_c$)
 
-The choice of the cutoff radius, $r_c$, is a crucial tuning parameter in a P³M simulation. It represents a trade-off between accuracy and computational speed.
+The choice of the cutoff radius, $r_c$, involves a trade-off between accuracy and computational speed.
 
-* A **small** cutoff radius means the fast PM method handles most of the work, but we risk losing accuracy if the cutoff is smaller than the region where the PM force is unreliable.
-* A **large** cutoff radius ensures high accuracy at short ranges, but it forces the slow PP calculation to do much more work, which can bog down the entire simulation.
+* A **small** cutoff radius means the PM method handles most of the work, but we risk losing accuracy if the cutoff is smaller than the region where the PM force is unreliable.
+* A **large** cutoff radius ensures high accuracy at short ranges, but it forces the slow PP calculation to do much more work.
 
-The optimal choice is not arbitrary; it is fundamentally linked to the resolution of the Particle-Mesh grid. The PM method's accuracy degrades significantly at distances smaller than about 2 to 3 grid cell sizes. Therefore, the cutoff radius must be large enough to ensure the accurate PP method is used throughout this entire "inaccurate zone."
+The optimal choice is linked to the resolution of the Particle-Mesh grid. The PM method's accuracy degrades significantly at distances smaller than about 2 to 3 grid cell sizes. Therefore, the cutoff radius must ensure the PP method is used throughout this entire "inaccurate zone."
 
-A standard and robust rule of thumb is to set the cutoff radius to be a few times the grid cell length, $L$:
+A rule of thumb is to set the cutoff radius to be a few times the grid cell length, $L$:
 
 $$r_c \approx 2.5 \cdot L$$
 
-This choice guarantees that the sharp, correct PP force is used wherever the PM force is most likely to fail. The primary parameter that is usually tuned is the grid size itself; once the grid size is chosen, the cutoff radius is set accordingly to maintain this balance.
-
 ### The Switching Function
 
-The subtractive scheme is a powerful way to correct for the short-range errors of the Particle-Mesh method. However, using a hard cutoff radius—where the correction is fully active if $r < r_c$ and instantly zero if $r \ge r_c$—can create a small, abrupt "jolt" in the force. This discontinuity, however small, can introduce numerical errors and impact the long-term energy conservation of the simulation.
+Using a hard cutoff radius—where the correction is fully active if $r < r_c$ and instantly zero if $r \ge r_c$—can create an abrupt "jolt" in the force. This discontinuity, however small, can introduce numerical errors and impact the long-term energy conservation of the simulation.
 
-To achieve the highest accuracy, we must ensure the total force is a perfectly smooth function at all distances. This is accomplished by introducing a **switching function**, $S(r)$, that smoothly "fades out" the short-range correction as the particle separation, $r$, approaches the cutoff radius, $r_c$.
+We must ensure the total force is smooth at all distances. This is accomplished by introducing a **switching function**, $S(r)$, that smoothly "fades out" the short-range correction as the particle separation, $r$, approaches the cutoff radius, $r_c$.
 
 The total force is then calculated as:
 $$\mathbf{F}_{\text{total}} = \mathbf{F}_{\text{PM}} + S(r) \cdot \left( \mathbf{F}_{\text{PP}}^{\text{short}} - \mathbf{F}_{\text{PM}}^{\text{short}} \right)$$
@@ -604,45 +572,36 @@ The switching function $S(r)$ operates over a small **transition zone**, typical
 2.  For $r \ge r_c$, the function is $S(r) = 0$. The correction is fully turned off.
 3.  In the transition zone, $r_{\text{start}} < r < r_c$, the function smoothly decreases from 1 to 0.
 
-To ensure the force changes perfectly smoothly, the *derivative* of the switching function should also be zero at the start and end of the transition. A standard and effective way to achieve this is with a cubic polynomial.
+To ensure the force changes smoothly, the *derivative* of the switching function should also be zero at the start and end of the transition. An effective way to achieve this is with a cubic polynomial.
 
 First, we define a normalized distance, $x$, that goes from 0 to 1 across the transition zone:
 $$x = \frac{r - r_{\text{start}}}{r_c - r_{\text{start}}}$$
 
-Then, a polynomial that satisfies all the smoothness conditions is:
+Then, a polynomial that satisfies the smoothness conditions is:
 $$S(x) = 2x^3 - 3x^2 + 1$$
 
-Using this function to taper the correction term eliminates the unphysical jolt at the cutoff. It creates a continuous and differentiable total force, which allows the symplectic integrator to perform optimally and leads to superior long-term energy conservation.
+Using this function to taper the correction term eliminates the jolt at the cutoff. It creates a continuous and differentiable total force, which leads to superior long-term energy conservation.
 
 *Key Literature & Further Reading*  
 Shirokov, A., & Bertschinger, E. (2005). *GRACOS: Scalable and Load Balanced P3M Cosmological N-body Code*. arXiv:astro-ph/0505087. Available at [https://arxiv.org/abs/astro-ph/0505087](https://arxiv.org/abs/astro-ph/0505087)
 
-## Fourier-Split Gravity
+## Fourier-Split PM
 
-The classical Particle-Particle Particle-Mesh (P³M) algorithm allowed cosmologists to bypass the $O(N^2)$ scaling of direct summation in the 1980s. However, today, this method has been replaced in cosmological codes by a more elegant architecture known as **Fourier-Split PM** (often referred to as TreePM when paired with a tree-based short-range solver). To understand why this shift occurred, we must examine the discrete grid at short distances.
+In our previous P³M approach, we attempted to correct the short-range errors of the Particle-Mesh grid by subtracting an analytical approximation of the grid's force ($F_{\text{PM}}^{\text{short}}$) and replacing it with the exact Newtonian force ($F_{\text{PP}}$). This scheme assumes that the grid's short-range force is smooth, isotropic (equal in all directions), and predictable (modeled as a softened $1/r^2$ curve).
 
-### The Flaws of the Subtractive Scheme
+In reality, the force produced by a finite-difference grid at sub-cell distances ($r < \Delta x$) is **anisotropic** and polluted by grid artifacts, like **artificial repulsion** caused by the Gibbs phenomenon. 
 
-In the classical P³M approach, we attempted to correct the short-range errors of the Particle-Mesh grid by subtracting an analytical approximation of the grid's force ($F_{\text{PM}}^{\text{short}}$) and replacing it with the exact Newtonian force ($F_{\text{PP}}$). This scheme assumes that the grid's short-range force is smooth, isotropic (equal in all directions), and analytically predictable (modeled as a softened $1/r^2$ curve).
+The Gibbs phenomenon arises when a localized, sharp function—such as a dense point-mass is projected onto a grid. A discrete spatial grid can only resolve frequencies up to the Nyquist limit ($k_{\text{Nyq}} = \pi / \Delta x$). If the code solves Poisson's equation in Fourier space by multiplying the discrete density modes by the continuous analytical Green's function ($-4\pi G / k^2$), it effectively applies a cutoff to all frequencies above $k_{\text{Nyq}}$.
 
-In reality, the force produced by a finite-difference grid at sub-cell distances ($r < \Delta x$) is violently **anisotropic** and polluted by grid artifacts. This happens because we are mapping continuous particles onto a discrete grid. Regardless of which specific mass assignment scheme is used (CIC, NGP, TSC...), the grid is incapable of resolving any structure smaller than a cell.
+Multiplying by a sharp frequency cutoff in Fourier space is equivalent to convolving the potential with a $\text{sinc}$ function ($\sin(x)/x$) in real space. Because the $\text{sinc}$ function oscillates between positive and negative values, the resulting gravitational potential does not decay monotonically as $-1/r$. Instead, it "rings," creating concentric ripples of artificial potential hills and troughs.
 
-Imagine two dark matter particles, $A$ and $B$, that are very close to each other, but happen to sit just on opposite sides of a grid cell boundary.
+This is the cause of artificial repulsion. The slope of these ripples can overpower the Newtonian slope, flipping the net gradient, and causing particles to repel each other.
 
-Because the grid can only "see" mass at its discrete nodes, it is blind to the subcell distance between the particles. Instead, it projects their mass into localized clouds anchored to the surrounding nodes:
-
-* Particle $A$ deposits the majority of its mass toward the left grid node.
-* Particle $B$ deposits the majority of its mass toward the right grid node.
-
-Even though the particles are very close, the grid registers two distinct mass clouds localized on two different nodes. When the solver calculates the potential and takes the spatial derivative to find the force, the gradient naturally points "downhill" away from the center. Particle $A$ is pulled to the left, and particle $B$ is pulled to the right. The two particles are pulled apart. This is a purely numerical **artificial repulsion**.
-
-Because the true PM force is noisy, direction-dependent, and occasionally repulsive, a smooth, isotropic analytical formula ($F_{\text{PM}}^{\text{short}}$) can't match it. When we subtract the smooth formula from the noisy grid, the subtraction fails to cancel out the error. Instead, it leaves behind a jagged, unphysical residual force field. This "mesh artifact" causes particles to artificially cluster along the x, y, and z grid axes and introduces microscopic jolts that slowly destroy the long-term energy conservation of the Kick-Drift-Kick integrator.
+Because the PM force is noisy, direction-dependent, and occasionally repulsive, a smooth, isotropic analytical formula ($F_{\text{PM}}^{\text{short}}$) can't match it. When we subtract the smooth formula from the grid, the subtraction fails to cancel out the error. Instead, it leaves a jagged, unphysical residual force field. This "mesh artifact" causes particles to artificially cluster along the x, y, and z grid axes and introduces jolts that slowly destroy the long-term energy conservation.
 
 ### Fixing the Grid in Frequency Space
 
-Given that we can't guess and subtract the grid's error in real space, the modern solution is to eliminate the error before it reaches real space.
-
-Instead of allowing the PM solver to produce a jagged, anisotropic force, the Fourier-Split PM method forces the grid's potential to be smooth by intervening in the middle of the Fast Fourier Transform (FFT) pipeline.
+A good solution is to eliminate the error before it reaches real space. The Fourier-Split PM method forces the grid's potential to be smooth by intervening in the middle of the Fast Fourier Transform (FFT) pipeline.
 
 Recall that in frequency space (k-space), solving Poisson's equation is a simple multiplication:
 
@@ -656,17 +615,17 @@ Here, $r_s$ is the **Gaussian smoothing scale**, a tuning parameter typically se
 
 In Fourier analysis, high frequencies (large $k$) correspond to small-scale, sharp, jagged details. Because the exponent is negative and proportional to $k^2$, the term $\exp(-k^2 r_s^2)$ plummets rapidly to zero for high-frequency modes.
 
-We should keep the Cloud-in-Cell (CIC) deconvolution we established earlier. While the Gaussian filter intentionally blurs the grid to remove anisotropy, we still need the deconvolution to fix the $\text{sinc}^4$ "gravity pothole" caused by the mass assignment and force interpolation steps. Combining both of these frequency-space corrections gives us the final equation for the gravitational potential:
+We should keep the Cloud-in-Cell (CIC) deconvolution we established earlier to fix the $\text{sinc}^4$ introduced by the mass assignment and force interpolation steps. Combining both of these frequency-space corrections gives us the final equation for the gravitational potential:
 
 $$\Phi_k = \rho_k \cdot \left(\frac{-4\pi G}{k^2}\right) \cdot \frac{\exp(-k^2 r_s^2)}{W(\mathbf{k})^2}$$
 
-By applying this filter, we erase the grid's ability to resolve any structure smaller than $r_s$. When we perform the Inverse FFT to bring this potential back into real space, the resulting gravitational field is no longer jagged, it no longer suffers from aliasing along the cell boundaries, and it is strictly non-repulsive. The long-range grid force is now guaranteed to be isotropic and smooth.
+By applying this filter, we erase the grid's ability to resolve any structure smaller than $r_s$. The resulting gravitational field is no longer jagged, it no longer suffers from aliasing along the cell boundaries, and it is non-repulsive. The long-range grid force is now guaranteed to be isotropic and smooth.
 
 However, by blurring the grid, we have also suppressed the strength of gravity at short distances. To recover the true physics, we must now define an exact short-range force to complement the newly smoothed grid.
 
 ### The Exact Analytical Complement
 
-In the classical P³M scheme, the short-range correction was an educated guess designed to subtract the grid's errors. In the Fourier-Split PM method, the short-range correction is a mathematically exact derivation.
+In the classical P³M scheme, the short-range correction was an educated guess designed to subtract the grid's errors. In the Fourier-Split PM method, the short-range correction is an exact derivation.
 
 Because we explicitly defined the shape of the long-range potential using a Gaussian filter in frequency space ($\exp(-k^2 r_s^2)$), we can use the inverse Fourier transform to find the analytical shape of that smoothed potential in real space. For a point mass $M$, the Gaussian-smoothed potential is:
 
@@ -692,13 +651,13 @@ Bagla, J. S. (2002). *TreePM: A code for cosmological N-body simulations.* Journ
 
 ## An Expanding Space
 
-Up to this point, our simulation has taken place in a static box. This is a good approximation for a star cluster or a single galaxy, but it is fundamentally wrong for a cosmological simulation. Our universe is not static; it is expanding. To accurately model the formation of structure, we must incorporate this expansion into our simulation.
+Up to this point, our simulation has taken place in a static box. However, our universe is not static; it is expanding. To accurately model the formation of structure, we must incorporate this expansion into our simulation.
 
 This is achieved by switching from familiar "proper" coordinates to a more abstract but powerful system called **comoving coordinates**. Instead of tracking particles in a fixed box, we track them on a virtual grid that expands along with the universe itself.
 
 ### The Hubble Flow
 
-The dominant motion in the universe is the cosmic expansion, a phenomenon described by the **Hubble-Lemaître Law**. This law states that, on average, every galaxy is moving away from every other galaxy. The farther away a galaxy is, the faster it appears to recede. This is not a motion *through* space, but rather the expansion *of* space itself. This uniform expansion is the **Hubble Flow**. The velocity of this recession, $\mathbf{v}_{\text{Hubble}}$, for an object at a proper distance $\mathbf{r}$ is given by:
+The cosmic expansion is described by the **Hubble-Lemaître Law**. This law states that, on average, every galaxy is moving away from every other galaxy. The farther away a galaxy is, the faster it appears to recede. This is not a motion *through* space, but rather the expansion *of* space itself. This uniform expansion is the **Hubble Flow**. The velocity of this recession, $\mathbf{v}_{\text{Hubble}}$, for an object at a proper distance $\mathbf{r}$ is given by:
 
 $$\mathbf{v}_{\text{Hubble}}(t) = H(t) \mathbf{r}(t)$$
 
@@ -1263,9 +1222,9 @@ To find a proper factor, we can use the convergence criteria derived for individ
 
 $$\epsilon_{opt} = \frac{4 r_{200}}{\sqrt{N_{200}}}$$
 
-Here, $r_{200}$ is the virial radius of the halo, and $N_{200}$ is the number of particles enclosed within it (the *200* suffix refers to the density contrast of the halo in this study). 
+Here, $r_{200}$ is the virial radius of the halo, and $N_{200}$ is the number of particles enclosed within it. The *200* suffix refers to the density contrast ($\delta(\mathbf{x}) = \frac{\rho(\mathbf{x}) - \bar{\rho}}{\bar{\rho}}$) of the halo in this study. 
 
-However, this formula can't be applied when the sizes and masses of the halos to be formed are not known beforehand. To statistically predict the maximum halo mass expected to form within a specific simulation volume we could use the Halo Mass Function (e.g., Tinker et al. 2008), which is not covered in this text. Instead, our code exposes a configurable parameter that multiplies the mean inter-particle distance ($d$) to define the softening length, empirically set to $1/30$ by default.
+However, this formula can't be applied when the sizes and masses of the halos to be formed are not known beforehand. To predict the maximum expected halo mass we could use the Halo Mass Function (e.g., Tinker et al. 2008), which is not covered in this text. For practical reasons, our code exposes a configurable parameter that multiplies the mean inter-particle distance ($d$) to define the softening length.
 
 ### The Physical Softening Cap
 
@@ -1275,21 +1234,19 @@ If the simulation maintains a fixed *comoving* softening length, the physical si
 
 $$\epsilon_{physical} = a \times \epsilon_{comoving}$$
 
-When a simulated halo collapses down to the resolution limit of the code, its core becomes trapped by the softening length. Because $\epsilon_{physical}$ is artificially expanding with the universe, the physical size of the Dark Matter core is dragged outward with it.
+Because $\epsilon_{physical}$ is artificially expanding with the universe, the physical size of the Dark Matter core is dragged outward with it.
 
 Since the mass of the core remains roughly constant, but its physical volume expands proportional to $a^3$, the physical density of the halo decreases over time:
 
 $$\rho_{physical} = \frac{M_{core}}{a^3 \times \epsilon_{comoving}^3} \propto \frac{1}{a^3}$$
 
-The halo is losing density as it's being artificially inflated by the comoving coordinate system. To allow halos to maintain virial equilibrium, we can implement a **Maximum Physical Softening Cap**.
+The halo is losing density as it's being artificially inflated by the comoving coordinate system. To allow halos to maintain virial equilibrium, we can implement a **Maximum Physical Softening Cap**. Once the simulation reaches a predefined epoch (for example around $z \approx 2$ or $a \approx 0.33$), the physical softening length is not allowed to grow any further.
 
-The solution is to dynamically alter the softening length through the simulation. Once the simulation reaches a predefined epoch (for example around $z \approx 2$ or $a \approx 0.33$), the physical softening length is not allowed to grow any further.
-
-To achieve a constant physical softening length while the background universe continues to expand, the comoving softening length must be dynamically shrunk proportional to $1/a$. If $a_{cap}$ is the scale factor at which the cap engages, the active comoving softening becomes:
+To achieve a constant physical softening length, the comoving softening length must be dynamically shrunk proportional to $1/a$. If $a_{cap}$ is the scale factor at which the cap engages, the active comoving softening becomes:
 
 $$\epsilon_{comoving}(a) = \epsilon_{comoving, base} \times \left( \frac{a_{cap}}{a} \right)$$
 
-By implementing this dynamic cap, the gravitational forces inside dense cores counteract the cosmic expansion. When Dark Matter particles collapse into a halo, they hit a fixed *physical* resolution floor. The core stabilizes, the physical density remains constant, and the halo correctly holds its structural shape against the expanding background universe.
+By implementing this dynamic cap, the halo correctly holds its structural shape against the expanding background universe.
 
 ## Gravity Validation and Accuracy
 
@@ -1743,11 +1700,9 @@ By applying these cosmological source terms to the gas grid within the same KDK 
 
 ### Sub-Grid Coupling: The Intra-Cell Blind Spot
 
-Upgrading the gravity engine to Fourier-Split PM solves the stability and accuracy problems for the collisionless dark matter particles. However, in a **hybrid** simulation code—where dark matter is treated as Lagrangian particles and gas is treated on an Eulerian grid—there is an architectural problem.
+In a **hybrid** simulation code—where dark matter is treated as Lagrangian particles and gas is treated on an Eulerian grid—dark matter particles have sub-grid resolution; they use the grid for long distances, but the PP step allows them to interact accurately even when they occupy the same grid cell. Gas, however, is limited to the grid. It only feels the gravitational acceleration vector ($\mathbf{g}_{\text{comoving}}$) calculated from the grid's potential.
 
-Dark matter particles have sub-grid resolution; they use the grid for long distances, but the PP step allows them to interact accurately even when they occupy the same grid cell. Gas, however, is limited to the grid. It only feels the gravitational acceleration vector ($\mathbf{g}_{\text{comoving}}$) calculated from the grid's potential.
-
-If we apply the Gaussian filter $\exp(-k^2 r_s^2)$ to fix the gravity solver, we are intentionally blurring the grid's gravitational potential at scales smaller than $r_s$. Furthermore, since we rely on the Particle-Mesh (PM) gravity solver to act as the bridge between the collisionless dark matter particles and the continuous baryonic gas, in the scale of a single grid cell **the gas and the dark matter are blind to each other**. The gravitational acceleration at the center of cell $i$ is calculated using a symmetric central difference stencil, comparing the potential of its neighbors:
+Since we rely on the Particle-Mesh (PM) gravity solver to act as the bridge between the collisionless dark matter particles and the continuous baryonic gas, in the scale of a single grid cell **the gas and the dark matter are blind to each other**. The gravitational acceleration at the center of cell $i$ is calculated using a symmetric central difference stencil, comparing the potential of its neighbors:
 
 $$a_i = -\frac{\Phi_{i+1} - \Phi_{i-1}}{2\Delta x}$$
 
@@ -1781,7 +1736,7 @@ To model this fluid physics, we can use a **Cubic Spline Softening Kernel**. We 
 
 The polynomial we'll use to calculate this weight is derived from the standard **$M_4$ Cubic Spline Kernel**, used by Monaghan (1992) for Smoothed Particle Hydrodynamics (SPH). In mathematical approximation theory, the $M_n$ family of splines is generated by convolving a uniform boxcar function with itself $n$ times. The $M_4$ cubic spline is the lowest-order spline that guarantees $C^2$ continuity—meaning the force and its derivative are smooth—which is required to prevent energy leaks in a symplectic KDK integrator.
 
-Instead of treating the gas pseudo-particle as a uniform sphere, the cubic spline models it as a cloud whose density is highest at the center and smoothly drops to zero at the cell boundary ($h = \Delta x$). For a normalized distance $q = r/h$, the 3D density profile $\rho(q)$ of this cloud is defined as:
+The cubic spline models the gas pseudo-particle as a cloud whose density profile $\rho(q)$ cloud is defined as:
 
 $$\rho(q) = \frac{8}{\pi h^3} M_{\text{gas}} \begin{cases} 1 - 6q^2 + 6q^3 & \text{if } 0 \le q < 0.5 \\ 2(1-q)^3 & \text{if } 0.5 \le q < 1.0 \\ 0 & \text{if } q \ge 1.0 \end{cases}$$
 
@@ -1807,7 +1762,7 @@ When $q \ge 1.0$, the integral evaluates to $1.0$, as the particle is outside th
 
 The pseudo-particle technique is rarely implemented in modern cosmological codes. The reason lies in the computational cost and the philosophy of grid-based solvers.
 
-Instead of performing expensive approximations to compute the forces inside a coarse cell, modern Eulerian codes solve the resolution problem by making the cells smaller. Using **Adaptive Mesh Refinement (AMR)**, these codes dynamically subdivide the grid whenever a region becomes dense, so that the grid itself provides the required spatial resolution.
+Instead of performing expensive approximations to compute the forces inside a coarse cell, modern Eulerian codes solve the resolution problem by using **Adaptive Mesh Refinement (AMR)**. These codes dynamically subdivide the grid whenever a region becomes dense, so that the grid itself provides the required spatial resolution.
 
 ### Initial Conditions for the Gaseous Component
 
@@ -2078,7 +2033,7 @@ There are, of course, specific environments where this approximation breaks down
 
 ### The Subgrid Clumping Factor
 
-In an ideal, infinite-resolution simulation, the Eulerian equations of hydrodynamics capture the collapse of gas into Dark Matter halos. However, computational cosmology is limited by grid resolution. When modeling large cosmological volumes, the physical size of a single grid cell may span tens or hundreds of kiloparsecs. This discretization introduces a thermodynamic problem: the artificial suppression of radiative cooling.
+In an ideal, infinite-resolution simulation, the Eulerian equations of hydrodynamics capture the collapse of gas into Dark Matter halos. However, when modeling large cosmological volumes, the physical size of a single grid cell may span tens or hundreds of kiloparsecs. This discretization introduces a thermodynamic problem: the artificial suppression of radiative cooling.
 
 #### The Problem of Eulerian Smoothing
 
@@ -2110,7 +2065,7 @@ In our model, we adopt a generalized power-law scaling for collapsing regions ($
 
 $$C = 1 + A \Delta^B$$
 
-While the conceptual foundation for scaling subgrid clumping with local overdensity and turbulence is well-established in studies (e.g., Mao et al. 2020; Federrath et al. 2008), this formulation is a custom fit where the parameters $A$ and $B$ are empirically calibrated based on the physics and resolution of the simulation:
+While the conceptual foundation for scaling subgrid clumping with local overdensity and turbulence is well-established in studies (e.g., Mao et al. 2020; Federrath et al. 2008), our formulation is a custom fit where the parameters $A$ and $B$ are empirically calibrated based on the physics and resolution of the simulation:
 
 * **The Exponent ($B$):** This parameter captures how fast the subgrid gas fragments into dense knots as the halo collapses. As the gas compresses, its rising temperature provides thermal pressure support against further fragmentation. Because this thermal resistance grows stronger as the density increases, the efficiency of subgrid fragmentation gradually diminishes, preventing the clumping from scaling proportionally with the macroscopic overdensity. Thus B is set to be sublinear ($< 1.0$).
 * **The Amplitude ($A$):** This parameter serves as a correction factor specific to the simulation's grid resolution. It represents the degree to which the mesh fails to resolve the small-scale clumping. This amplitude is calibrated empirically so that the simulation matches macroscopic physical observables, such as the cosmic star formation rate or the global cold gas fraction.
@@ -2136,6 +2091,93 @@ Anninos, P., Zhang, Y., Abel, T., & Norman, M. L. (1997). *Cosmological Hydrodyn
 
 **Subgrid clumping factor:**  
 Daisuke Nagai, Erwin Lau. (2011). *Gas Clumping in the Outskirts of Lambda-CDM Clusters*. The Astrophysical Journal. Available at [https://arxiv.org/abs/1103.0280](https://arxiv.org/abs/1103.0280).
+
+
+## Metallicity and the Cosmic Ultraviolet Background
+
+### Metallicity ($Z$)
+
+In astrophysics, the elemental composition of the universe is historically divided into three categories: Hydrogen (mass fraction $X$), Helium (mass fraction $Y$), and everything else. **Metallicity**, denoted by the letter $Z$, is the mass fraction of all elements heavier than helium (Pagel, 2009). The relationship defining the composition of any gas parcel is $X + Y + Z = 1$. The present-day metallicity in the Sun is approximately $Z \approx 0.014$ to $0.02$ (Asplund et al., 2009).
+
+These heavy elements were absent in the early cosmos. After the Big Bang, primordial nucleosynthesis produced almost exclusively Hydrogen and Helium, alongside microscopic traces of Lithium. Every element heavier than Helium had to be forged much later via stellar nucleosynthesis of the very first stars (Population III). When these massive, short-lived stars exhausted their fuel, they exploded as supernovae, seeding the surrounding gas with the first heavy elements and permanently altering the chemical and thermodynamic evolution of the universe.
+
+To form low-mass stars like the Sun, the gas temperature must drop to $\sim 10$ K (Bodenheimer, 2011). In a primordial universe ($Z=0$), gas cools very inefficiently. Below $10^4$ K, atomic hydrogen can no longer radiate efficiently, leaving only trace amounts of molecular hydrogen (H$_2$) as a coolant. H$_2$ is a poor radiator, meaning the gas remains relatively warm, which results in a high Jeans mass (the minimum mass a cloud must have for its gravity to overcome its internal thermal pressure, $M_J \propto \frac{T^{3/2}}{\rho^{1/2}}$) and the formation of massive, short-lived Population III stars (Bromm, Coppi, & Larson, 1999).
+
+Metals ameliorate this thermodynamic bottleneck. Heavy elements like Carbon, Oxygen, and Iron possess complex electron structures with numerous atomic transitions and fine-structure lines that can be excited even at low temperatures. As a result, once a gas cloud is enriched with metals beyond a certain "critical metallicity" (roughly $Z_{crit} \approx 5 \times 10^{-4} Z_\odot$, depending on halo mass and redshift), metal-line cooling overcomes the heat generated by gravitational compression (Bromm, Ferrara, Coppi, & Larson, 2001). The gas can then cool to a few tens of Kelvin, drastically lowering the Jeans mass and allowing the cloud to fragment into the smaller Population II and Population I stars we see today (Schneider et al., 2006).
+
+### Ultraviolet Background (UVB)
+
+The cosmic ultraviolet background (UVB) is a uniform radiation field originating from the cumulated radiation of ionizing sources, almost entirely quasars (extremely luminous active galactic nucleus) and young, massive stars (Haardt & Madau, 2001). This background radiation impacts the gas by modifying its ionization and excitation states. Specifically, the UVB drives the photoionization (the physical process in which an ion is formed from the interaction of a photon with an atom or molecule) and photoheating of the intergalactic medium to temperatures of $T \sim 10^4$ K. This photoheating process raises the cosmological Jeans mass, providing sufficient pressure support to prevent baryonic gas from collapsing into the gravitational potential wells of low-mass halos. Consequently, the UVB acts as a feedback mechanism that reduces gas infall and suppresses star formation in small galaxies (Benítez-Llambay & Frenk, 2020).
+
+### Numerical methods
+
+#### Passive Scalar Advection
+
+To handle metallicity within our second-order Godunov-type scheme (HLLC + MUSCL + SSP-RK2), the grid tracks the conserved comoving metal mass density, $\rho_Z$. This metal density is treated as a "passive scalar" within the Eulerian hydrodynamics solver, meaning that it does not directly influence the pressure or sound speed of the fluid during the resolution of shockwaves or contact discontinuities. Instead, metals flow passively alongside the gas mass.
+
+However, during the spatial reconstruction step of the Riemann solver, we extrapolate the primitive metal mass fraction to the cell interfaces rather than the conserved density:
+
+$$Z = \frac{\rho_Z}{\rho}$$
+
+Reconstructing the dimensionless fraction $Z$ rather than the metal density $\rho_Z$ ensures consistency and prevents unphysical numerical artifacts—such as the spontaneous generation of metals. This artifact occurs because non-linear slope limiters clip the gradients of $\rho$ and $\rho_Z$ to different degrees, allowing their reconstructed ratio at the cell boundary to artificially overshoot the actual metallicity of the surrounding fluid.
+
+To resolve this, the flux of the metal density, $F_{\rho_Z}$, crossing a cell boundary is calculated as the mass flux, $F_\rho$, multiplied by the reconstructed metal fraction at the upwind cell side (the cell from which the fluid flows) (Toro, 2009):
+
+$$F_{\rho_Z} = F_\rho Z_{\text{upwind}}$$
+
+Reconstructing directly $Z$ and linking its flux to the mass flux, guarantees that the advected fluid maintains its chemical proportions.
+
+#### Thermodynamics
+
+$Z$ becomes active in the energy equation. During the thermodynamic step, the solver calculates the net rate of change of specific internal energy, $\frac{du}{dt}$. This evolution is driven by the balance between the volumetric photo-heating rate ($\Gamma$) and the volumetric radiative cooling rate ($\Lambda$), expressed as:
+
+$$\frac{du}{dt} = \frac{\Gamma(T, \rho, z, Z) - \Lambda(T, \rho, z, Z)}{\rho}$$
+
+Because computing the quantum mechanical emission, ionization balance (the equilibrium where the rate of atoms being ionized equals the rate of ions reverting to neutral), and excitation states of every element on the fly is computationally expensive, some modern codes rely on pre-computed tables. These tables include the metal-dependent cooling rates and the heating rates generated by the photo-ionizing effect of the cosmic ultraviolet background (Haardt & Madau, 2001; Wiersma, Schaye, & Smith, 2009).
+
+Our code uses data from Grackle, an open-source chemistry and radiative cooling library designed for astrophysical simulations of the Intergalactic Medium (IGM) (Smith et al., 2017). The specific data file implemented in this model, `HM2012.h5`, contains pre-computed, tabulated cooling and heating rates assuming ionization equilibrium generated using the photoionization code Cloudy. Cloudy numerically solves the quantum mechanical equations governing ionization balance, bound-bound emission lines (emission by excited bound electrons), and radiative recombination (radiation after a free electron is captured) for a vast array of atomic species. For the data table we are using, the Cloudy calculations were driven by the time-dependent ultraviolet background (UVB) model developed by Haardt & Madau (2012).
+
+The resulting file provides the volumetric energy loss and gain rates structured across a three-dimensional grid. The axes of this grid correspond to cosmological redshift, gas density, and temperature. The thermodynamic outputs are separated into primordial (Hydrogen and Helium) and metal-dependent contributions. This separation conveniently allows the solver to scale the metal-line cooling rates by the metallicity fraction within each cell.
+
+The pre-computed tables are explicitly dependent on redshift, as the intensity of the cosmic ultraviolet background and its corresponding photoheating rate evolve over time. The redshift-dependent background radiation is derived relying on input parameters for the chosen cosmology, including the Hubble constant, the matter density ($\Omega_M$), and the cosmological constant ($\Omega_\Lambda$). Consequently, the cooling tables are cosmology-dependent. Modifying a simulation's cosmological framework requires the generation of a new set of tables to ensure consistency.
+
+Moreover, the dependency of the model on redshift decouples the gas thermodynamics from the actual emission of ionizing sources, such as star-forming galaxies and active galactic nuclei, present within the simulation volume. With this abstraction, the photoionization and heating rates of the intergalactic medium are uniformly driven by the average global history of the real universe rather than the radiation dynamically generated by the simulation's own structures. The reason for allowing this violation of causality is that performing on-the-fly radiative transfer to track local photons, or solving the massive network of non-equilibrium chemical reactions would be too expensive computationally.
+
+To extract continuous rates from the pre-computed tables, we employ trilinear interpolation across the three dimensions of the data grid: redshift, gas density, and temperature. Because radiative cooling is a stiff equation, to update the specific internal energy of the gas we use an implicit integration scheme, which requires finding the future internal energy, $u_{new}$:
+
+$$f(u_{new}) = u_{new} - u_{old} - \Delta t \frac{du}{dt}(u_{new}) = 0$$
+
+Solving this implicit equation requires a numerical root-finding algorithm. The Newton-Raphson method relies on the evaluation of smooth, continuous derivatives, $f'(u)$. However, tabulated metal cooling curves are inherently jagged due to the sudden onset of quantum line-emission transitions at specific temperatures.
+
+A more appropriate method for this scenario is the bisection method. The bisection method is an unconditionally stable bracketing algorithm that doesn't depend on derivative calculations. It operates by identifying a lower bound ($u_{low}$) and an upper bound ($u_{high}$) that enclose the true root, ensuring that $f(u_{low})$ and $f(u_{high})$ have opposite signs. The algorithm calculates the midpoint of the bracket and evaluates the function. Depending on the sign of the result, the midpoint replaces either the upper or lower bound, halving the search interval with each step. The bisection method guarantees a physical solution regardless of how jagged the underlying function may be.
+
+Haardt, F., & Madau, P. (2012). *Radiative Transfer in a Clumpy Universe. IV. New Synthesis Models of the Cosmic UV/X-Ray Background*. The Astrophysical Journal, 746(2), 125.
+
+Smith, B. D., Bryan, G. L., Glover, S. C. O., et al. (2017). *GRACKLE: a chemistry and cooling library for astrophysics.* Monthly Notices of the Royal Astronomical Society, 466(2), 2217-2234.
+
+Asplund, M., Grevesse, N., Sauval, A. J., & Scott, P. (2009). *The Chemical Composition of the Sun*. Annual Review of Astronomy and Astrophysics, 47, 481-522. Available at [https://arxiv.org/abs/0909.0948](https://arxiv.org/abs/0909.0948).
+
+Bodenheimer, P. (2011). *Principles of Star Formation*. Springer Berlin Heidelberg.
+
+Bromm, V., Coppi, P. S., & Larson, R. B. (1999). *Forming the First Stars in the Universe: The Fragmentation of Primordial Gas*. The Astrophysical Journal, 527(1), L5-L8. Available at [https://arxiv.org/abs/astro-ph/9910224](https://arxiv.org/abs/astro-ph/9910224).
+
+Bromm, V., Ferrara A., Coppi, P. S., & Larson (2001). *The Fragmentation of Pre-enriched Primordial Objects*. Monthly Notices of the Royal Astronomical Society, 328(3), 969-976. Available at [https://arxiv.org/abs/astro-ph/0104271](https://arxiv.org/abs/astro-ph/0104271).
+
+Jeans, J. H. (1902). *The Stability of a Spherical Nebula*. Philosophical Transactions of the Royal Society of London. Series A, Containing Papers of a Mathematical or Physical Character, 199, 312-320.
+
+Pagel, B. E. J. (2009). *Nucleosynthesis and Chemical Evolution of Galaxies* (2nd ed.). Cambridge University Press.
+
+Schneider, R., Salvaterra, R., Ferrara, A., & Ciardi, B. (2006). *Fragmentation of gas clouds enriched by first stars*. Monthly Notices of the Royal Astronomical Society, 369(2), 825-834. Available at [https://arxiv.org/abs/astro-ph/0603766](https://arxiv.org/abs/astro-ph/0603766).
+
+Sutherland, R. S., & Dopita, M. A. (1993). *Cooling functions for low-density astrophysical plasmas*. The Astrophysical Journal Supplement Series, 88, 253-327.
+
+Toro, E. F. (2009). *Riemann Solvers and Numerical Methods for Fluid Dynamics: A Practical Introduction* (3rd ed.). Springer.
+
+Wiersma, R. P. C., Schaye, J., & Smith, B. D. (2009). *The effect of photoionization on the cooling rates of enriched, astrophysical plasmas*. Monthly Notices of the Royal Astronomical Society, 393(1), 99-107. Available at [https://arxiv.org/abs/0807.3748](https://arxiv.org/abs/0807.3748).
+
+Haardt, F., & Madau, P. (2001). *Modelling the UV/X-ray cosmic background with CUBA*.
+
+Benítez-Llambay, A., & Frenk, C. S. (2020). *The detailed structure and the onset of galaxy formation in low-mass gaseous dark matter haloes*. Monthly Notices of the Royal Astronomical Society, 498(4), 4887–4900.
 
 ## Validation of the Hydrodynamic Solver
 
@@ -2330,46 +2372,144 @@ Strang, G. (1968). *On the construction and comparison of difference schemes.* S
 
 ## Analytical Requirements for Resolution and Volume
 
-Because computational resources are finite, choosing the parameters of the simulation requires a trade-off between the overall size of the simulated box (how much of the universe we are going to simulate) and the size of the individual grid cells (at which resolution). If we choose poorly, our virtual universe will fail to represent the actual cosmos.
+Because computational resources are finite, choosing the parameters of the simulation requires a trade-off between the overall size of the simulated box and the size of the individual grid cells and number of particles (the resolution). If we choose poorly, our virtual universe will fail to represent the actual cosmos.
 
-### Cosmic Variance and the Box Size
+### Terminology
 
-To simulate a "representative" patch of the universe, the statistical properties of the simulation box—the number of galaxy clusters, the sizes of the voids, the web-like structure of the filaments—should look identical to any other randomly selected patch of the real universe of the same size.
+#### Finite Volume Effects
 
-However, the universe is only uniform on extremely large scales. If we look at a small patch of space (e.g., 10 Megaparsecs across), we might accidentally center our view on a massive supercluster, or we might look at an entirely empty void. This statistical uncertainty is known as **Cosmic Variance**.
+This refers to the physical limitations introduced into a simulation because the box has a finite size $L_{box}$. Since finite size simulations also use periodic boundary conditions, any density perturbation (wave) larger than the box is not simulated. This lack of gravitational large-scale perturbations influences the results of the simulations.
 
-If a simulation box is too small, it suffers from severe cosmic variance. A small box cannot contain the longest wavelengths of the density field, meaning it will never form massive superstructures. Furthermore, the periodic boundary conditions will cause the few structures that do form to artificially interact with themselves across the boundaries. In cosmology, the accepted threshold for a simulation volume to be considered statistically representative of the large-scale structure is a comoving box length of roughly **100 Mpc** (Megaparsecs) or larger. At this scale, the simulation volume is vast enough to contain a statistically average mix of all cosmic environments.
+Bagla, J. S., & Prasad, J. (2006). *Effects of the size of cosmological N-Body simulations on physical quantities - I: Mass Function.*, Monthly Notices of the Royal Astronomical Society, 370(2), 993-1002. arXiv:astro-ph/0601320. Available at [https://arxiv.org/abs/astro-ph/0601320](https://arxiv.org/abs/astro-ph/0601320)
 
-However, while cosmic variance dictates the minimum size of a simulation, the laws of General Relativity dictate the maximum. Our Newtonian Poisson solver calculates gravity instantaneously across the entire grid. To ensure this approximation remains valid, the comoving length of the box ($L$) must remain strictly sub-horizon ($L \ll c/H$). 
+#### Cosmic Variance
 
-Today, the Hubble radius ($c/H$) is roughly 4,300 Mpc. If we attempt to push our box size too close to this scale, the instantaneous gravity approximation creates a physical violation, allowing causally disconnected regions of the universe to pull on each other faster than the speed of light. Therefore, the tolerable maximum for a standard Newtonian N-body code without relativistic corrections is generally kept below 1,000 to 2,000 Mpc (the Gigaparsec scale).
+Cosmic variance is the statistical uncertainty that arises because we are only simulating (or observing) a finite patch of that universe. A box might randomly end up in a slightly overdense or underdense region. Any measurement we make in such box will have a statistical scatter around the global cosmic mean.
 
-Ultimately, cosmological simulations must have a comoving box large enough to defeat cosmic variance ($\ge$ 100 Mpc), but small enough to ignore relativistic light-travel delays ($\le$ 1,000 Mpc).
+Sinigaglia, F., & Kitaura, F.-S. (2026). *Cosmic variance or galaxy bias? Disentangling finite-volume and galaxy formation effects in cosmological analysis.* arXiv preprint, arXiv:2606.04830. Available at [https://arxiv.org/abs/2606.04830](https://arxiv.org/abs/2606.04830)
+
+#### Super-Sample Covariance (SSC)
+
+The waves that are larger than the box (super-sample modes) in reality act as a uniform background overdensity ($\delta_b$) or underdensity that shifts the local expansion rate and modulates the growth of small-scale structures. In a simulation, these missing modes introduce a correlated error across all the non-linear power spectrum bins.
+
+Note how these three terms tie together: because we have a Finite Volume, we have a statistical scatter known as Cosmic Variance, and we are missing large modes. When we measure the power spectrum, the absence of these modes manifests itself as Super-Sample Covariance, because they would couple to the small scales, as they do in reality.
+
+Takada, M., & Hu, W. (2013). *Power spectrum super-sample covariance.* Physical Review D, 87(12), 123504. arXiv:1302.6994. Available at [https://arxiv.org/abs/1302.6994](https://arxiv.org/abs/1302.6994)
+
+#### Baryon Acoustic Oscillations (BAO)
+
+Baryon Acoustic Oscillations are periodic fluctuations in the density of the visible baryonic matter of the universe. They originated as acoustic (sound) waves propagating through the hot, dense primordial plasma of the early universe. When the universe expanded and cooled enough for neutral hydrogen to form (the epoch of recombination), the pressure driving these sound waves vanished, "freezing" the waves in place. This left behind spherical shells of slightly higher matter density at a characteristic physical radius of roughly 150 Mpc (which manifests as the peak on a graph showing the BAO distribution). Astronomers use this 150 Mpc preferred clustering scale as a "standard ruler" to measure the expansion history of the universe.
+
+#### Galaxy Formation Bias
+
+Galaxy Formation Bias (often simply called "galaxy bias") is the statistical discrepancy between the spatial distribution of visible galaxies and the underlying distribution of dark matter. Galaxies tend to form and reside within the deepest gravitational potential wells (the most massive dark matter halos). Consequently, galaxies are "biased" tracers of the universe's mass, appearing more clustered than the total matter field actually is. This bias arises from the complex, non-linear processes driving galaxy formation, which depend on the characteristics of the host dark matter halo and the surrounding cosmic web environment.
+
+### Expected Discrepancies in the Physics of Small Boxes
+
+As explained before, a finite box with periodic boundary conditions imposes a fundamental mode $k_{min} = 2\pi / L_{box}$, which effectively truncates the power spectrum and alters the physics.
+
+This produces a series of observable discrepancies:
+
+*  The Halo Mass Function & Gas Temperatures: 
+    *  Because large-scale modes are missing, the hierarchical merging process is delayed.
+    *  The number of high-mass halos is underestimated, and the number of low-mass halos is overestimated (because they fail to merge into larger structures).
+*  The Matter Power Spectrum & Mode Coupling:
+    *  Non-linear growth at small scales is accelerated when embedded in large-scale overdensities. Without these super-sample modes, the late-time power spectrum inside the box will be suppressed compared to CAMB.
+    *  Super-Sample Covariance (SSC): Missing background modes introduce correlated errors in the power spectrum.
+*  Baryon Acoustic Oscillations (BAO) Shifts:
+    *  Cosmic variance in small volumes can induce artificial shifts in the BAO peak position. This shift is degenerate (producing the same observable effect) with physical galaxy formation bias and non-linear gravitational growth (Sinigaglia & Kitaura, 2026).
+
+Although there are ways to deal with these limitations, these are not covered in this text. Here is a brief summary of the most common strategies:
+
+*  Analytical Corrections: Theoretical expectations (like the Press-Schechter or Sheth-Tormen curves) can be mathematically adjusted to match the finite volume of the simulation, for example using the variance correction terms derived by Bagla & Prasad (2006).
+
+*  Separate Universe Simulations: The missing long-wavelength modes can be injected into the simulation by altering the background cosmology (changing $\Omega_m$ and the Hubble expansion). Wagner et al. (2015) explains how this is used to measure the power spectrum response function $R(k)$—a metric that quantifies how much the small-scale clustering shifts in response to a large-scale background overdensity.
+
+*  Variance Suppression Techniques: Sinigaglia & Kitaura (2026) discuss how fixing the initial amplitude of Fourier modes and running pairs of phase-inverted simulations can suppress the uncertainty on clustering statistics (like the BAO scale) by a factor of 4 to 5.
+
+Bagla, J. S., & Ray, S. (2005). *Finite volume effects in cosmological N-body simulations. Monthly Notices of the Royal Astronomical Society*, 358(3), 1076-1082. arXiv:astro-ph/0410373. Available at [https://arxiv.org/abs/astro-ph/0410373](https://arxiv.org/abs/astro-ph/0410373)
+
+Sirko, E. (2005). *Initial conditions to cosmological N-body simulations, or how to run an ensemble of simulations. The Astrophysical Journal*, 634(2), 728-743. arXiv:astro-ph/0503106. Available at [https://arxiv.org/abs/astro-ph/0503106](https://arxiv.org/abs/astro-ph/0503106)
+
+Wagner, C., Schmidt, F., Chiang, C.-T., & Komatsu, E. (2015). *Separate universe simulations. Monthly Notices of the Royal Astronomical Society: Letters*, 448(1), L11-L15. arXiv:1409.6294. Available at [https://arxiv.org/abs/1409.6294](https://arxiv.org/abs/1409.6294)
+
+### The Box Size
+
+To simulate a "representative" patch of the universe, the statistical properties of the simulation box should look identical to any other randomly selected patch of the real universe of the same size.
+
+#### Minimum Size
+
+The minimum box size of a simulation is dictated by finite volume effects and cosmic variance. It must be chosen so that the amplitude of fluctuations at the box scale (and at larger scales) is ignorable. Otherwise the simulation won't correctly represent the model being studied.
+
+To determine if a chosen box size is sufficiently large, we can quantify the amount of "missing" power truncated by the periodic boundary conditions. Bagla and Prasad (2006) established a formal methodology based on the variance of density fluctuations. Let $\sigma_0^2(r)$ be the total expected theoretical variance of the mass fluctuations at a specific physical scale of interest $r$. The variance lost due to the finite box size ($L_{box}$) can be approximated by a first-order correction term, $C_1(L_{box})$.
+
+For the finite volume effects to be considered ignorable, the ratio of this missing variance to the total expected variance must be minimized:
+
+$$\frac{C_1(L_{box})}{\sigma_0^2(r)} \ll 1$$
+
+This ratio can be bound to a specific threshold to ensure a given statistical accuracy. For example, for 10% it would be:
+
+$$\frac{C_1(L_{box})}{\sigma_0^2(r)} \le 0.1$$
+
+Because the denominator $\sigma_0^2(r)$ depends on $r$, the required box size scales with the size of the objects the simulation is attempting to resolve. For example, simulating massive galaxy clusters (where $r \approx$ 2 Mpc) requires a larger $L_{box}$ to satisfy this threshold than simulating the internal structure of individual galaxies.
+
+To compute the expected theoretical variance $\sigma_0^2(r)$ for a specific physical scale $r$, we integrate the linear matter power spectrum over all possible wavelengths (from zero to infinity) using a smoothing filter.
+
+$$\sigma_0^2(r) = \int_0^\infty \frac{dk}{k} \frac{k^3 P(k)}{2\pi^2} W^2(kr)$$
+
+Where:
+
+* **$k$**: The wave number (which is related to the physical wavelength by $k = 2\pi / \lambda$).
+* **$P(k)$**: The theoretical matter power spectrum, which defines the expected amplitude of density fluctuations as a function of scale for the chosen cosmological model (e.g., $\Lambda$CDM). Because calculating this requires solving the complex physics of the early universe, $P(k)$ is typically obtained using standard public Boltzmann codes (such as CAMB or CLASS) or by applying established analytical approximations (such as the Eisenstein & Hu transfer function).
+* **$W(kr)$**: The Fourier transform of the window function used to "smooth" the density field over the scale $r$.
+
+The power that gets left behind, the $C_1(L_{box})$ term, is defined as the same integral but limited to the missing large-scale modes:
+
+$$C_1(L_{box}) = \int_0^{2\pi/L_{box}} \frac{dk}{k} \frac{k^3 P(k)}{2\pi^2} W^2(kr)$$
+
+Bagla and Prasad specifically use a **real-space spherical top-hat window function**. Its Fourier transform is:
+
+$$W(kr) = \frac{3 (\sin kr - kr \cos kr)}{(kr)^3}$$
+
+By integrating from $k=0$ to $k=\infty$, this formula calculates the variance of an infinite universe. A simulated box can only integrate from $k = 2\pi/L_{box}$. The power that gets left behind is the $C_1(L_{box})$ error term we are trying to minimize.
+
+#### Maximum Size
+
+The maximum, on the other hand, is dictated by General Relativity. In a Newtonian Poisson solver, gravity acts instantaneously across the entire domain. For this approximation to be valid, the comoving length of the box ($L$) must remain sub-horizon ($L \ll c/H$). 
+
+Today, the Hubble radius ($c/H$) is roughly 4,300 Mpc. If the box size is close to this scale, the instantaneous gravity approximation violates the relativistic physics, allowing causally disconnected regions to interact. Therefore, the box size should be kept below the Hubble radius.
 
 #### A Reference for Cosmic Scales
 
-Because the Megaparsec (Mpc) is an vast unit of distance (1 Mpc $\approx 3.26$ million light-years), it can be difficult to build an intuition for the scale of a simulation grid. To help anchor these numbers to reality, here is a quick-reference guide to the approximate diameters of common astronomical structures:
+Because the Megaparsec (Mpc) is a vast unit of distance (1 Mpc $\approx 3.26$ million light-years), it can be difficult to build an intuition for the scale of a simulation grid. Here is a quick-reference guide to the approximate diameters and masses of common astronomical structures according to *Galaxy Formation and Evolution* (Mo, van den Bosch & White, 2010):
 
-| Structure | Approximate Diameter (Mpc) | Notes |
-| :--- | :--- | :--- |
-| **Earth-Sun Distance (1 AU)** | $\sim 5 \times 10^{-12} \text{ Mpc}$ | The distance light travels in 8 minutes. |
-| **The Solar System** | $\sim 0.00001 \text{ Mpc}$ | Reaching out to the edge of the Oort Cloud. |
-| **Milky Way (Visible Stellar Disk)** | $\sim 0.03 \text{ Mpc}$ | The glowing spiral of stars and gas we can see. |
-| **Milky Way (Dark Matter Halo)** | $\sim 0.3 \text{ Mpc}$ | The invisible gravitational well hosting our galaxy. |
-| **The Local Group** | $\sim 3.0 \text{ Mpc}$ | Our local neighborhood, including Andromeda. |
-| **Typical Galaxy Cluster** | $\sim 2.0 \text{ to } 10.0 \text{ Mpc}$ | Hundreds of galaxies bound in a single hot gas node. |
-| **Typical Cosmic Void** | $\sim 20.0 \text{ to } 50.0 \text{ Mpc}$ | Vast, underdense regions between filaments. |
-| **Representative Simulation Box** | $\mathbf{100.0+ \text{ Mpc}}$ | The minimum scale required to combat Cosmic Variance. |
+| Cosmic Structure | Typical Size (Mpc) | Typical Mass ($M_\odot$) | Description |
+| --- | --- | --- | --- |
+| **Earth-Sun Distance (1 AU)** | $\sim 5 \times 10^{-12} \text{ Mpc}$ | |  |
+| **The Solar System** | $\sim 0.00001 \text{ Mpc}$ | | Reaching out to the edge of the Oort Cloud. |
+| **Dwarf Galaxy (Visible)** | $\sim 0.00001 - 0.0009 \text{ Mpc}$ | | Derived from the text stating sizes range from "a few tens to several hundreds of parsec". |
+| **Milky Way (Visible Stellar Disk)** | $\sim 0.03 \text{ Mpc}$ | $\sim 5 \times 10^{10} M_\odot$ | Described as a thin stellar disk with an "overall diameter of $\sim 30 \text{ kpc}$". |
+| **Milky Way (Dark Matter Halo)** | $> 0.2 \text{ Mpc}$ | $\sim 10^{12} M_\odot$ | The dark halo is "thought to extend well beyond 100 kpc from the Galactic center" (Radius $> 0.1 \text{ Mpc}$, Diameter $> 0.2 \text{ Mpc}$). |
+| **Typical Galaxy (Visible)** | $\sim 0.02 \text{ Mpc}$ | $\sim 10^{10} - 10^{12} M_\odot$ | The text states a "typical bright galaxy... has a diameter (~20kpc)", with stellar masses rarely exceeding $10^{12} M_\odot$. |
+| **Typical Galaxy (DM Halo)** | $> 0.2 \text{ Mpc}$ | $\sim 10^{11} - 10^{13} M_\odot$ | Galaxy-galaxy lensing shows they have "extended dark matter halos with masses 10-100 times more massive than the galaxies themselves". |
+| **The Local Group** | $\sim 1 \text{ Mpc}$ | | Defined as a "loose association of galaxies which fills an irregular region just over 1 Mpc across". |
+| **Galaxy Group (DM Halo)** | $\sim 0.29 - 2.9 \text{ Mpc}$ | $4.5 \times 10^{12} - 1.4 \times 10^{14} M_\odot$ | Defined as having "radii in the range $(0.1-1) \text{ h}^{-1} \text{ Mpc}$". |
+| **Galaxy Cluster (DM Halo)** | $\sim \text{a few Mpc}$ | $\sim 1.4 \times 10^{15} M_\odot$ | Clusters contain more than 50 relatively bright galaxies "in a volume only a few megaparsecs across". |
+| **Cosmic Filaments** | Up to 100 Mpc (Length) | | The bridges of dark matter and gas connecting clusters. |
+| **Cosmic Voids** | Up to $\sim 100 \text{ Mpc}$ |  | Defined as regions "with diameters up to $\sim 100 \text{ Mpc}$ that contain very few, or no, galaxies". |
+| **BAO Scale** | ~150 Mpc |  | The Baryon Acoustic Oscillation scale. |
+| **Scale of Homogeneity** | ~370 Mpc |  | The scale at which the universe finally appears homogeneous. |
+
+**Scale of Homogeneity reference**:  
+Yadav, J. K., Bagla, J. S., & Khandai, N. (2010). *Fractal dimension as a measure of the scale of homogeneity*. Monthly Notices of the Royal Astronomical Society, 405(3), 2009-2015.
 
 ### Full-size Representative Simulations
 
-When designing a cosmological simulation, the box size ($L$) and the grid dimension ($N$) cannot be chosen arbitrarily, and are not only constrained by the cosmic variance. The specific physics modules implemented in the code dictate strict minimum bounds for these parameters.
-
-To run a simulation that accurately captures the correct tendencies—specifically the interplay of structure growth, shock-heating, and radiative cooling—we must balance three analytical constraints: the Cooling Threshold, the Mass Resolution Limit, and the Fundamental Mode.
+When designing a cosmological simulation, the specific physics implemented dictate the bounds for the box size ($L$) and the grid dimension ($N$). To run a simulation that captures the correct tendencies we must balance several constraints.
 
 #### The Cooling Threshold
 
-The first constraint is defined by the thermodynamics of the baryonic gas. In any hydrodynamical setup, gas is allowed to radiate thermal energy away, but this cooling is ultimately halted at a specific temperature floor ($T_{\text{floor}}$). Depending on the simulation's goals, this floor might represent a true physical barrier (such as the limit of primordial atomic cooling) or an artificial numerical safety net designed to prevent grid singularities.
+In any hydrodynamical setup, gas is allowed to radiate thermal energy away, but this cooling is halted at a specific temperature floor ($T_{\text{floor}}$). Depending on the simulation, this floor might represent a physical barrier, such as the limit of primordial atomic cooling.
 
 For the fluid solver to demonstrate the complete cycle of hierarchical structure formation (infall, shock-heating, and subsequent core condensation), the gravity solver must be capable of forming dark matter halos massive enough to shock-heat the infalling gas to at least this $T_{\text{floor}}$ threshold.
 
@@ -2385,15 +2525,17 @@ Where:
 * $k_B$ is the Boltzmann constant.
 * $R_{\text{vir}}$ is the virial radius of the collapsed dark matter halo.
 
-Because the physical radius of a halo ($R_{\text{vir}}$) is tied to its mass and the background density of the universe at the time of collapse, this equation is frequently parameterized to directly link temperature and mass. By scaling from standard cosmological limits at redshift zero, we can isolate the minimum halo mass ($M_{\text{min}}$) required to reach a specific temperature floor ($T_{\text{floor}}$):
+To use this equation practically, we must eliminate the radius variable ($R_{\text{vir}}$) and express it in terms of mass. According to the Spherical Collapse Model, a halo is defined by a specific virial overdensity (the background density of the universe being known at any given epoch).
+
+Substituting this mass-radius relationship into the virial equation, yields a parameterized formula that links temperature and mass. Rearranging this relation allows us to isolate the minimum halo mass ($M_{\text{min}}$) required to reach a specific temperature floor ($T_{\text{floor}}$):
 
 $$M_{\text{min}} \approx 10^8 M_\odot \left( \frac{T_{\text{floor}}}{10^4 \text{ K}} \right)^{3/2}$$
 
-To successfully trigger the chosen cooling curve and validate the fluid solver, the simulation's volume and mass resolution must be capable of forming halos of at least $M_{\text{min}}$.
+To trigger the chosen cooling curve, the simulation's volume and mass resolution must be capable of forming halos of at least $M_{\text{min}}$.
 
 #### Mass Resolution
 
-Knowing the minimum halo mass ($M_{\text{min}}$) required to trigger our specific thermodynamics, we must now ensure the grid is fine enough to actually resolve it. In a grid-based solver utilizing Cloud-In-Cell (CIC) mass assignment or similar schemes, structures that are only one or two cells wide are heavily distorted by numerical diffusion and grid noise. Standard computational practice dictates that a dark matter halo must span a minimum number of grid cells, $N_{\text{halo}}$ (typically 64), to be considered physically resolved and dynamically stable.
+Knowing the minimum halo mass ($M_{\text{min}}$) required to trigger our specific thermodynamics, we must now ensure the grid is fine enough to actually resolve it. In a grid-based solver utilizing Cloud-In-Cell (CIC) mass assignment or similar schemes, structures that are only one or two cells wide are heavily distorted by numerical diffusion and grid noise. A dark matter halo must span a minimum number of grid cells, $N_{\text{halo}}$, to be considered physically resolved and dynamically stable.
 
 Therefore, the maximum allowable mass resolution ($m_{\text{cell}}$, the mean mass of an unperturbed background cell) is constrained by:
 
@@ -2407,121 +2549,17 @@ By equating these two principles, we can obtain the maximum allowable physical w
 
 $$\Delta x_{\text{max}} \le \left( \frac{M_{\text{min}}}{N_{\text{halo}} \rho_m} \right)^{1/3}$$
 
-#### The Fundamental Mode
-
-To satisfy the $\Delta x_{\text{max}}$ requirement, one might assume the easiest solution is to run a small simulation volume ($L$) at a low resolution ($N$). However, doing so may violate the boundaries of the expansion metric.
-
-The longest gravitational wavelength a simulation can model is equal to the box size itself, known as the Fundamental Mode ($k = 2\pi/L$). If the amplitude of density fluctuations at this scale grows too large, the fundamental mode will undergo non-linear collapse, causing the periodic boundary conditions to fail and crushing the simulated universe.
-
-In linear perturbation theory, non-linear collapse occurs when a region reaches a critical overdensity threshold of $\delta_c \approx 1.68$ (the origin of this value is explained later). To ensure the fundamental mode does not reach this threshold, we measure its global variance, $\sigma(L)$.
-
-In simple terms, the variance represents the "typical" or "average" strength of the density ripples at the scale of the entire box. Because cosmic density fluctuations follow a standard Gaussian bell curve, some regions will inevitably be denser than this average. If we allow the typical ripple strength ($\sigma(L)$) to grow too close to the critical collapse limit of 1.68, there is a high probability that a random density fluctuation within the box will cross the threshold and trigger global collapse.
-
-To ensure stability, we must keep the typical ripple so small that hitting $1.68$ becomes a statistical impossibility. We do this by restricting the fundamental variance to a safety threshold:
-
-$$\sigma_{\text{safe}} \le 0.3$$
-
-At a variance of $0.3$, a density spike of $1.68$ becomes almost six times larger than the average ($5.6\sigma$). This renders the probability of global collapse practically zero.
-
-#### Deriving the Minimum Box Size ($L_{\text{min}}$)
-
-Because variance grows over time and scales inversely with physical size, setting a hard limit of $\sigma_{\text{safe}} = 0.3$ dictates the minimum allowable box size for a simulation.
-
-We can approximate the variance at any given scale $L$ (in Mpc) and any given scale factor $a$ using the amplitude of primordial fluctuations ($\sigma_8$) and the linear growth factor ($D(a) \approx a$):
-
-$$\sigma(L, a) \approx a \cdot \sigma_8 \left( \frac{8}{L} \right)^{0.9}$$
-
-> This formula is a power-law approximation of the $\Lambda\text{CDM}$ matter power spectrum. To predict the variance at an arbitrary physical scale, we anchor the equation to two universally established cosmological standards: the linear growth factor ($D(a) \approx a$) to scale time, and $\sigma_8$ (the known present-day variance at exactly 8 Mpc) to scale space. Theoretical cosmology dictates that variance scales spatially according to the effective spectral index of the universe ($n$, not to be confused with the primordial spectral index; the effective index represents the local slope of the matter power spectrum after it was bent by early-universe radiation, evaluated specifically at the physical scale of the simulation box), following the relation $\sigma(R) \propto R^{-(n+3)/2}$. While the spectral index bends across vast cosmic distances, in the specific "sandbox" regime of small-scale simulations (roughly 1 to 20 Mpc), it is remarkably constant at $n \approx -1.2$. Plugging this local index into the theoretical relation yields exactly $-0.9$, giving us a rule to estimate variance for restricted box sizes.
-
-To find the minimum allowable box size ($L_{\text{min}}$) that survives until the end of the simulation ($a_{\text{stop}}$), we set the variance equal to the safety threshold:
-
-$$\sigma_{\text{safe}} = a_{\text{stop}} \cdot \sigma_8 \left( \frac{8}{L_{\text{min}}} \right)^{0.9}$$
-
-By algebraically inverting this formula, we get the equation for the smallest volume we are safe to simulate:
-
-$$L_{\text{min}} = 8 \left( \frac{a_{\text{stop}} \cdot \sigma_8}{\sigma_{\text{safe}}} \right)^{1/0.9}$$
-
-*For example: If we are running a standard cosmology ($\sigma_8 = 0.81$) and we want the simulation to safely reach $a=0.5$ without exceeding the $\sigma_{\text{safe}} = 0.3$ limit, the formula dictates a minimum box size of roughly $11.1 \text{ Mpc}$.*
-
 #### Final Synthesis
-
-Combining these independent limits tells us that the simulation must be at least as large as the global collapse limit ($L_{\text{min}}$), and its individual cells can be no larger than the required physical resolution limit ($\Delta x_{\text{max}}$).
 
 By dividing the minimum volume by the maximum cell size, we arrive at the equation for the minimum required grid dimension ($N$):
 
 $$N \ge \frac{L_{\text{min}}}{\Delta x_{\text{max}}}$$
 
-Substituting our derived physics back into this equation yields the analytical requirement for any grid-based cosmological simulation:
+Substituting our derived mass resolution into this equation yields the analytical requirement:
 
 $$N \ge L_{\text{min}} \left( \frac{N_{\text{halo}} \rho_m}{M_{\text{min}}} \right)^{1/3}$$
 
-If a simulation is run at a lower resolution, the mass of a single cell artificially swells beyond $M_{\text{min}}$. Because a single grid cell becomes more massive than the smallest structures the code is attempting to resolve, the physics engine becomes blind to those environments. This disconnects the grid from the true hierarchical growth of the cosmos, resulting in numerical artifacts such as artificial overcooling.
-
-### Representative Sandbox Simulations
-
-Running a fully resolved, science-grade simulation (e.g., a $100$ Mpc volume at $1024^3$ resolution) requires thousands of CPU hours on a supercomputing cluster. During the development phases of a cosmological code, waiting days to see if a new hydrodynamics module or gravity solver works is impractical.
-
-Developers need a "sandbox"—a small, low-resolution simulation that runs in minutes on a workstation but still exhibits the qualitative tendencies of the universe, such as shock-heating, radiative cooling, and hierarchical structure formation.
-
-However, as established before, ignoring the model constraints will lead to numerical artifacts. To make a simple simulation representative of true cosmological physics, we can engineer the sandbox using two approximations derived from Linear Growth Theory and the Truelove Criterion.
-
-#### Limiting the Timeline
-
-As explained before, if the box size ($L$) is too small relative to the simulated timeline, the longest gravitational wavelength the grid can model will go non-linear and collapse before the simulation reaches the present day ($a = 1.0$), crushing the background metric.
-
-However, the amplitude of these fluctuations scales directly with the linear growth factor $D(a)$. Considering that in the early-to-mid universe, $D(a) \approx a$, we can derive a safe stopping epoch ($a_{\text{stop}}$) by restricting the variance to a strict safety threshold ($\sigma_{\text{safe}}$):
-
-$$\sigma(L, a_{\text{stop}}) \approx a_{\text{stop}} \cdot \sigma(L, a=1.0) \le \sigma_{\text{safe}}$$
-
-By intentionally halting the simulation at $a_{\text{stop}}$, we ensure the fundamental mode remains in the linear regime. Simultaneously, because smaller interior sub-structures ($R \ll L$) possess higher variances, they will have already crossed the $\delta_c \approx 1.68$ threshold and collapsed. This way the sandbox avoids global collapse while still triggering the shock-heating necessary to validate the hydrodynamics engine.
-
-#### The Truelove Criterion
-
-Another hurdle of a coarse sandbox is gravitational fragmentation. When testing a cooling solver, it is tempting to allow the gas to cool to its natural absolute limits (e.g., down to the limits of atomic physics or the cosmic microwave background). However, on a coarse grid, this triggers a numerical failure governed by the Jeans Length ($\lambda_J$).
-
-The Jeans Length defines the physical size of a gas cloud where internal thermal pressure exactly balances gravitational collapse. It is proportional to the sound speed and inversely proportional to density:
-
-$$\lambda_J = \sqrt{\frac{\pi \gamma k_B T}{\mu m_p G \rho}} \propto \sqrt{\frac{T}{\rho}}$$
-
-In 1997, Truelove et al. established a fundamental rule for computational fluid dynamics: if a simulation allows the Jeans Length of a condensing gas cloud to drop below the width of a minimum number of computational grid cells (typically $N_J = 4$), the numerical solver can no longer accurately resolve the pressure gradient. When this happens, gravity artificially dominates, and the gas collapses into an infinitely dense, single-cell numerical singularity.
-
-For a simulation with box size $L$ and 1D resolution $N$, the physical size of a single computational cell at the stopping epoch $a_{\text{stop}}$ is:
-
-$$\Delta x_{\text{phys}} = a_{\text{stop}} \left( \frac{L}{N} \right)$$
-
-To satisfy the Truelove Criterion, the gas must maintain enough thermal pressure so that its Jeans Length never drops below $4 \Delta x_{\text{phys}}$, even at the maximum resolvable density ($\rho_{\text{max}}$). By rearranging the Jeans equation, we can calculate the absolute minimum temperature floor ($T_{\text{floor}}$) required to prevent numerical fragmentation:
-
-$$T_{\text{floor}} \ge \frac{\mu m_p G \rho_{\text{max}}}{\pi \gamma k_B} \left(4 \Delta x_{\text{phys}}\right)^2$$
-
-Because the required temperature scales with the square of the physical cell size, coarse grids demand massive thermal buffers. By setting the cooling floor configuration parameter to $T_{\text{floor}}$, we provide just enough artificial thermal pressure to ensure the densest gas clouds remain larger than the coarse grid cells, effectively bypassing the Truelove limit without crashing the Riemann solver.
-
-### The Spherical Collapse Limit
-
-The value $1.68$ (more precisely, $1.686$) is a universal threshold derived from a classic analytical framework known as the Spherical Collapse Model. This model tracks a spherical region of the universe that is slightly denser than the background. As the universe expands, this denser sphere also expands, but its extra gravitational pull slows its expansion down. Eventually, it reaches a "turnaround" point and collapses back in on itself to form a dark matter halo.
-
-To calculate this, cosmologists treat the surface of the sphere like a ball thrown straight upward against gravity. Its trajectory (radius and time) follows a parametric curve called a cycloid (think of the trajectory of a fixed point of a spinning wheel), driven by a "development angle" ($\theta$):
-
-* **$\theta = 0$:** The Big Bang (expansion begins).
-* **$\theta = \pi$:** The turnaround point (expansion halts, collapse begins).
-* **$\theta = 2\pi$:** The singularity (the sphere completely crushes itself).
-
-According to the cycloid equations, the amount of time that passes is tied to this angle via the relation $t \propto (\theta - \sin\theta)$. Therefore, the moment of physical collapse occurs at a time proportional to $2\pi$.
-
-However, alongside this exact model, cosmologists run a parallel **Linear Perturbation Theory** model. Linear theory is a simplified mathematical approach that assumes gravity never goes non-linear, allowing the density fluctuation ($\delta$) to grow smoothly and continuously without ever curving back in on itself.
-
-To find the theoretical "finish line" for a simulation, we map the true physical collapse onto the simplified linear timeline. We do this by taking a Taylor expansion of the cycloid equations in the extreme early universe ($\theta \ll 1$), where gravity is still linear:
-
-* The Time Equation: The Taylor expansion of $\sin\theta$ is approximately $\theta - \theta^3/6$. When we plug this into the time equation ($t \propto \theta - \sin\theta$), the leading $\theta$ terms cancel out, leaving $t \propto \theta^3/6$. By inverting this, we find that the development angle grows relative to time as $\theta \propto (6t)^{1/3}$.
-* The Density Equation: By similarly expanding the cycloid's radius equation ($R \propto 1 - \cos\theta$) using the Taylor series for cosine, we can isolate the leading-order growth mode. The linear density contrast becomes $\delta_{\text{linear}} = \frac{3}{20} \theta^2$.
-
-By substituting our time equation into our density equation, we get the linear growth formula:
-$$\delta_{\text{linear}} = \frac{3}{20} (6t)^{2/3}$$
-
-To find the critical overdensity threshold, $\delta_c$, we simply fast-forward this linear equation to the time we know the physical sphere crushes to a singularity ($t = 2\pi$):
-
-$$\delta_c = \frac{3}{20} (6 \times 2\pi)^{2/3} = \frac{3}{20}(12\pi)^{2/3} \approx 1.686$$
-
-Therefore, we know that if the linear equations dictate a density wave has reached an amplitude of $1.68$, the wave has collapsed.
+If a simulation is run at a lower resolution, the mass of a single cell artificially swells beyond $M_{\text{min}}$ and the physics engine becomes blind to the smallest structures it is attempting to resolve.
 
 *Key Literature & Further Reading*  
 Truelove, J. K., Klein, R. I., McKee, C. F., Holliman II, J. H., Howell, L. H., & Greenough, J. A. (1997). *The Jeans condition: a new constraint on spatial resolution in simulations of isothermal self-gravitational hydrodynamics.* The Astrophysical Journal Letters, 489(2), L179. Available at [https://iopscience.iop.org/article/10.1086/310975](https://iopscience.iop.org/article/10.1086/310975)
@@ -2578,25 +2616,23 @@ Beyond spatial architecture, simulations are also categorized by the physical fo
 
 ## Diagnosing Cosmological Simulations
 
-A cosmological simulation generates billions of data points at every time step. Validating the accuracy of such an immense system requires aggregating this raw data into global macroscopic metrics.
-
 This chapter outlines the standard diagnostic plots used to evaluate the health of a cosmological simulation, detailing the underlying physics and the expected theoretical behaviors.
 
 ### Cosmic Expansion History
 
 The most basic cross-check of a cosmological simulation is verifying its background geometry. Because the simulation box represents a comoving volume of the universe, its physical size must expand according to the Friedmann equations.
 
-To validate this, the scale factor $a$ is plotted against the physical simulation time (typically in Gigayears). The shape of this curve is dictated entirely by the cosmological parameters chosen for the run, specifically the matter density parameter ($\Omega_m$) and the dark energy density parameter ($\Omega_\Lambda$).
+To validate this, the scale factor $a$ is plotted against the physical simulation time (typically in Gigayears). The shape of this curve is dictated by the cosmological parameters chosen for the run, specifically the matter density parameter ($\Omega_m$) and the dark energy density parameter ($\Omega_\Lambda$).
 
 In a matter-dominated universe, the expansion decelerates over time. However, in a standard $\Lambda$CDM cosmology ($\Omega_\Lambda > 0$), dark energy eventually dominates. On the plot, this manifests as a curve that initially decelerates but gradually bends upward at late times (around $a \approx 0.5$ to $1.0$), reflecting the accelerated expansion of the universe.
 
 ### Structure Growth and Linear Theory
 
-Once the background expansion is validated, the next step is verifying the behavior of gravity. We must confirm that dark matter is clumping together at the correct rate. This can be tracked by plotting the **Dark Matter Density Variance** ($\sigma^2$) against the scale factor.
+We must confirm that dark matter is clumping together at the correct rate. This can be tracked by plotting the **Dark Matter Density Variance** ($\sigma^2$) against the scale factor.
 
 #### The Physics of Density Variance
 
-In cosmology, we do not usually measure absolute density; instead, we measure the density contrast, $\delta$, which defines how much denser or emptier a specific region is compared to the cosmic mean density $\bar{\rho}$:
+The density contrast, $\delta$, defines how much denser or emptier a specific region is compared to the cosmic mean density $\bar{\rho}$:
 
 $$\delta(\mathbf{x}) = \frac{\rho(\mathbf{x}) - \bar{\rho}}{\bar{\rho}}$$
 
@@ -2608,7 +2644,7 @@ This single number ($\sigma^2$) represents the global "clumpiness" of the univer
 
 #### Linear Perturbation Theory
 
-To know if the simulated variance is correct, it is compared against Cosmological Linear Perturbation Theory. In the very early universe, density fluctuations are microscopic ($\delta \ll 1$). Under these conditions, the equations of dark matter can be linearized. Theory dictates that these small perturbations grow uniformly according to a Linear Growth Factor, $D(a)$:
+To know if the simulated variance is correct, it is compared against Cosmological Linear Perturbation Theory. In the very early universe, density fluctuations are microscopic ($\delta \ll 1$). Under these conditions, the equations of dark matter can be linearized. These small perturbations grow uniformly according to a Linear Growth Factor, $D(a)$:
 
 $$\delta(\mathbf{x}, a) = \delta_0(\mathbf{x}) \frac{D(a)}{D(a_0)}$$
 
@@ -2644,17 +2680,17 @@ In the linear regime of the early universe, primordial density fluctuations are 
 
 $$P(\delta) = \frac{1}{\sqrt{2\pi\sigma^2}} \exp\left(-\frac{\delta^2}{2\sigma^2}\right)$$
 
-On a plot, the early-universe PDF will resemble a very narrow, tall bell curve centered exactly at $\rho/\bar{\rho} = 1$. Matching this theoretical curve proves the initial conditions and background metric are stable.
+On a plot, the early-universe PDF will resemble a very narrow, tall bell curve centered at $\rho/\bar{\rho} = 1$.
 
 #### The Late Universe: The Lognormal Model
 
-As gravity drives the universe into the non-linear regime, the symmetry of the Gaussian curve breaks. Mass evacuates from cosmic voids (which are strictly bounded, as density cannot drop below zero) and compresses into halos (which have no upper density limit). The peak of the PDF shifts slightly to the left, representing the massive volume of empty voids, while the right side develops a massive "tail" stretching into extreme overdensities.
+As gravity drives the universe into the non-linear regime, the symmetry of the Gaussian curve breaks. Mass evacuates from cosmic voids (which are bounded, as density cannot drop below zero) and compresses into halos (which have no upper density limit). The peak of the PDF shifts slightly to the left, representing the massive volume of empty voids, while the right side develops a massive "tail" stretching into extreme overdensities.
 
-Cosmological theory dictates that this asymmetric, late-stage density field is well approximated by a Lognormal distribution. If we define a new variable $A = \ln(1+\delta)$, the lognormal PDF is given by:
+This asymmetric, late-stage density field is well approximated by a Lognormal distribution. If we define a new variable $A = \ln(1+\delta)$, the lognormal PDF is given by:
 
 $$P(A) = \frac{1}{\sqrt{2\pi\sigma_A^2}} \exp\left(-\frac{(A - \langle A \rangle)^2}{2\sigma_A^2}\right)$$
 
-This transition from a narrow Gaussian to a broad, lognormal distribution is the mathematical signature of the cosmic web forming. By comparing these analytical models to the simulation's dynamic histogram, we can  verify that the code's non-linear mass transport adheres to theoretical expectations.
+By comparing these analytical models to the simulation's dynamic histogram, we can verify that the code adheres to theoretical expectations.
 
 ### The Matter Power Spectrum
 
@@ -2705,18 +2741,13 @@ We then define the x-axis of the final plot by dividing this continuous 3D space
 
 #### Theoretical Comparison
 
-We can test our simulation by plotting the data directly against established theoretical models. A standard practice is to generate these theoretical curves using accurate Boltzmann solvers, such as CAMB (Code for Anisotropies in the Microwave Background).
+We must test our simulation against established theoretical models, like accurate Boltzmann solvers.
 
-CAMB is an industry-standard "Einstein-Boltzmann solver". Instead of moving particles, it solves the exact, continuous differential equations of General Relativity and thermodynamics that govern the universe. When provided with a set of cosmological parameters (such as $\Omega_m$, $\Omega_b$, and the Hubble constant), CAMB calculates how the primordial quantum fluctuations from the Big Bang evolved over billions of years.
+CAMB (Code for Anisotropies in the Microwave Background) is an industry-standard "Einstein-Boltzmann solver". When provided with a set of cosmological parameters (such as $\Omega_m$, $\Omega_b$, and the Hubble constant), CAMB calculates how the primordial quantum fluctuations from the Big Bang evolved over billions of years.
 
 It does this by simultaneously solving the Einstein field equations (which dictate how gravity expands and bends space) alongside the Boltzmann transport equations (which track how dark matter, baryonic gas, photons, and neutrinos interact, scatter, and push against each other). By tracking these continuous fluids as the universe cools, CAMB calculates the theoretical power spectra for the large-scale distribution of matter.
 
-When diagnosing the simulation against these theoretical curves, we look at two distinct regimes:
-
-1. **The Linear Regime (Low $k$):** On large spatial scales, gravity is relatively weak, and structures collapse slowly. In this regime, the shape of the power spectrum is preserved, and its amplitude simply scales upwards over time proportional to the square of the linear growth factor, $D^2(a)$. If the simulation overlaps the theoretical curves at low $k$, we know our Initial Conditions (such as the $\sigma_8$ normalization and the unwinding of the dark energy growth suppression) were generated correctly, and our gravity solver is advancing at the correct cosmological rate.
-2. **The Non-Linear Regime (High $k$):** On small spatial scales, density perturbations become so severe that gravity causes them to collapse violently into dense halos. This causes the power spectrum to surge upward, breaking away from linear theory. Because pure Boltzmann solvers are built on linear equations, they cannot naturally calculate this violent collapse. To bridge this gap, CAMB internally applies an algorithm called Halofit—a highly calibrated set of mathematical fitting formulas derived from massive supercomputer simulations.
-
-A standard practice is to plot the power spectrum from multiple simulation snapshots on the same axes. By observing the curve shift upwards as the scale factor $a$ increases, we can track the timeline of the universe and verify that the simulation's large-scale structures are evolving in step with the theoretical linear growth rate.
+It is useful to plot the power spectrum from multiple simulation snapshots to verify that the simulation's large-scale structures are evolving in step with the theoretical linear growth rate.
 
 ### Global Gas Energy Inventory
 
@@ -2734,14 +2765,14 @@ Once the gas is shock-heated and densely packed in the center of these halos, it
 
 The Fractional Energy Error is a diagnostic metric that reveals whether the numerical Riemann solver is artificially creating or destroying energy. In a static physics simulation, proving energy conservation is as easy as checking if the final energy matches the initial energy. However, because our cosmological box is expanding and gravity is constantly doing work, the total energy of the gas is *supposed* to change.
 
-To calculate the true numerical error, the simulation must maintain a running ledger. At every single time step, the engine integrates the amount of energy added by gravitational work ($W_{\text{grav}}$), the energy drained by cosmic expansion work ($W_{\text{exp}}$), and the thermal energy lost to radiation ($E_{\text{rad}}$).
+To calculate the true numerical error, the simulation must maintain a running ledger. At every single time step, the engine integrates the amount of energy added by gravitational work ($W_{\text{grav}}$), the energy drained by cosmic expansion work ($W_{\text{exp}}$), the thermal energy lost to radiation ($E_{\text{rad}}$), and the thermal energy gained by photoheating ($E_{\text{heat}}$).
 
 $$W_{\text{grav}} = \int \left( \int \rho \mathbf{v} \cdot \mathbf{g} \, dV \right) dt$$
 $$W_{\text{exp}} = \int \left( \int 3 \frac{\dot{a}}{a} P \, dV \right) dt$$
 
 By evaluating these values using comoving code units (to strip away the diluting effects of the expanding metric), we can isolate the fluid solver's numerical error:
 
-$$\text{Absolute Error} = \Delta E_{\text{tot}} - (W_{\text{grav}} - W_{\text{exp}} - E_{\text{rad}})$$
+$$\text{Absolute Error} = \Delta E_{\text{tot}} - (W_{\text{grav}} - W_{\text{exp}} - E_{\text{rad}} + E_{\text{heat}})$$
 
 Dividing this absolute error by the initial total energy of the system provides the unitless Fractional Energy Error. If the fluid equations are solved correctly, this ledger balances to zero.
 
@@ -2752,6 +2783,7 @@ On an energy evolution plot, these processes tell a chronological story:
 * **The Adiabatic Expansion Phase:** In the early universe, before structures form, the Thermal Energy curve will initially drop. This is the cosmological $PdV$ work: the expansion of the universe forces the primordial gas to expand and cool down adiabatically (losing thermal energy because its volume is increasing, rather than radiating heat away).
 * **The Infall Phase:** As gravity begins to win against the expansion, gas falls into emerging potential wells and the Kinetic Energy curve steadily rises.
 * **The Shock Phase:** As the first structures collapse, the Kinetic Energy curve plateaus or begins to drop. Simultaneously, the Thermal Energy curve shoots upward. This exchange between the two curves shows the hydrodynamics engine converting kinetic energy into thermal heat during supersonic shocks.
+* **The Photoheating Phase:** At a specific redshift dictated by the selected radiation model, the cosmic ultraviolet background (UVB) activates. The cumulative Photoheating Energy curve, which sits flat at zero in the early universe, will suddenly exhibit a steep, rapid climb. Following this initial jump, the cumulative curve will continue to rise steadily for the remainder of the simulation as the background radiation continuously injects heat to maintain the ionization state of the expanding intergalactic medium.
 * **The Cooling Phase:** As the gas reaches extreme temperatures and densities, the cumulative Radiated Energy curve begins to rapidly climb. As billions of Ergs are radiated away, the gas loses its thermal pressure support, allowing it to condense into the cold, dense cores necessary for star formation.
 * **The Conservation Baseline:** If the Riemann solver and KDK integrators are healthy, Fractional Energy Error line will remain nearly flat at zero (typically within a tolerance of $10^{-4}$ or $10^{-3}$) across billions of years of evolution.
 
@@ -2761,7 +2793,7 @@ To understand how tightly the baryonic matter is compressing, we can track the d
 
 #### Tracking Hydrogen Number Density
 
-Instead of plotting the raw bulk mass density of the fluid ($\rho$), it is the industry standard to track the **Hydrogen number density** ($n_H$), measured in particles per cubic centimeter ($\text{cm}^{-3}$). There are two main reasons for this:
+Instead of plotting the raw bulk mass density of the fluid ($\rho$), it is usual to track the **Hydrogen number density** ($n_H$), measured in particles per cubic centimeter ($\text{cm}^{-3}$). There are two main reasons for this:
 
 1. **Composition and Collisions:** The primordial universe is roughly 76% hydrogen by mass. The physical processes that drive galaxy evolution—such as radiative cooling and star formation—depend on how frequently individual particles collide, which is dictated by number density, not just overall mass.
 2. **Observational Parity:** Astronomers cannot easily "weigh" a distant gas cloud, but they can count hydrogen atoms by measuring the light absorbed or emitted by them. Plotting $n_H$ allows direct comparisons between our simulated universe and telescope data.
@@ -2823,3 +2855,51 @@ Tracking the mass fraction of gas that meets these two exact criteria serves as 
 
 * **Pure Hydrodynamics:** In a simulation without radiative cooling, or one crippled by low resolution, this curve remains entirely flat at zero. The gas never simultaneously achieves high density and low temperature.
 * **Complete Physics:** In a high-resolution simulation with active cooling, this curve will remain at zero during the early epochs. However, shortly after the first halos collapse and the cooling "waterfall" triggers in the phase diagram, this line will rapidly spike upward. This rising curve represents the exact mass of gas that has decoupled from the hot halo and is successfully condensing into proto-galactic disks, acting as the immediate fuel source for the universe's first stars.
+
+### The Invariant Layzer-Irvine Energy
+
+In an expanding Friedmann-Robertson-Walker (FRW) cosmology, the physical energy of a comoving volume is not conserved. As the fabric of space expands, the peculiar velocities of particles naturally decay due to "Hubble drag," cooling the kinetic energy of the system. Simultaneously, the gravitational potential energy evolves as the background density dilutes. The expanding universe effectively does thermodynamic work on the matter within it.
+
+To validate a cosmological N-body code, we must account for the work done by expansion and evaluate a specific cosmological invariant: **The Layzer-Irvine Equation**.
+
+Named after David Layzer and William Irvine, who formalized the cosmic energy equation in the 1960s, this equation governs the thermodynamic evolution of an expanding universe. It bridges the gap between the discrete Newtonian mechanics of our simulated particles and the continuous general relativistic expansion of the background space.
+
+For a purely collisionless dark matter system, the instantaneous physical energy is simply $E(t) = K(t) + W(t)$. According to the Layzer-Irvine equation, the rate at which this energy decays is proportional to the Hubble parameter $H(t)$:
+
+$$\frac{dE}{dt} + H(t) \left[ 2K(t) + W(t) \right] = 0$$
+
+If the simulation includes hydrodynamics (gas), the expansion also performs $PdV$ work on the thermal internal energy $U(t)$, and the equation expands to include the gas adiabatic index $\gamma$:
+
+$$\frac{dE}{dt} + H(t) \left[ 2K(t) + W(t) + 3(\gamma - 1)U(t) \right] = 0$$
+
+By rearranging and integrating this equation from the start of the simulation ($t_0$) to the current time ($t$), we can define a quantity that *must* remain perfectly constant—a **Layzer-Irvine Invariant** ($I$):
+
+$$I = E(t) - E(t_0) + \int_{t_0}^{t} H(t') \left[ 2K(t') + W(t') \right] dt' = 0$$
+
+The integral term represents the cumulative "Expansion Work" ($W_{exp}$) exchanged between the clustering matter and the expanding spacetime. In a mathematically perfect simulation, the instantaneous energy drift $E(t) - E(t_0)$ will be exactly balanced by $W_{exp}$.
+
+#### Numerical Integration: The Trapezoidal Rule
+
+To prove that a simulation conserves this invariant, we must evaluate the expansion work integral. However, simulations do not output continuous data; they write data in discrete snapshots at specific times $t_1, t_2, \dots, t_n$.
+
+Because we only know the exact physical state of the universe at these discrete snapshot intervals, we must solve the integral numerically. We can define the instantaneous "expansion power" at any snapshot $i$ as:
+
+$$P_i = H_i (2K_i + W_i)$$
+
+To integrate this power over time, we use the **Trapezoidal Rule**. The Trapezoidal Rule approximates the area under the curve of $P(t)$ by treating the space between two consecutive snapshots as a trapezoid. The work done between snapshot $i-1$ and snapshot $i$ is calculated using the average power over that interval, multiplied by the time step $\Delta t$:
+
+$$\Delta W_{exp, i} = \frac{1}{2} (P_i + P_{i-1}) \times (t_i - t_{i-1})$$
+
+The total cumulative expansion work up to the current snapshot $n$ is simply the sum of these discrete trapezoids:
+
+$$W_{exp}(t_n) \approx \sum_{i=1}^{n} \frac{1}{2} (P_i + P_{i-1}) (t_i - t_{i-1})$$
+
+#### Interpreting the Fractional Error
+
+With the total energy and the cumulative expansion work calculated, we can formulate a dimensionless fractional error to evaluate the health of the simulation:
+
+$$\text{Fractional Error} = \frac{E(t_n) - E(t_0) + W_{exp}(t_n)}{|E(t_0)|}$$
+
+Plotting this fractional error across the lifespan of a simulation acts as the ultimate diagnostic of numerical integrity. Because N-body codes generally rely on symplectic integrators (like the Leapfrog method), the fractional error should not exhibit long-term secular growth. Instead, it should hover near zero.
+
+If the error curve remains flat and bounded (e.g., within $0.1\%$), it proves that the Hamiltonian of the system is preserved and the equations of motion are accurately resolving the deepest density collapses. Conversely, a rapidly growing fractional error immediately flags numerical artifacts, such as inadequate force softening, timestep violations, or non-physical force discontinuities at periodic boundaries.

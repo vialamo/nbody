@@ -20,4 +20,12 @@ namespace constants {
     constexpr double MSUN_CGS = 1.98847e33;    // Solar mass [g]
     constexpr double MPC_CGS  = 3.08567758e24; // Megaparsec [cm]
     constexpr double GYR_CGS  = 3.15576e16;    // Gigayear [s]
+
+    // ---------------------------------------------------------
+    // Cosmological & Chemical Defaults
+    // ---------------------------------------------------------
+    
+    constexpr double X_MASS_FRAC = 0.76;       // Primordial Hydrogen mass fraction
+    constexpr double Y_MASS_FRAC = 0.24;       // Primordial Helium mass fraction
+    constexpr double Z_SOLAR     = 0.02;       // Standard Solar Metallicity
 }

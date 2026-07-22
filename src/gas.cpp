@@ -2,7 +2,12 @@
 
 #include <omp.h>
 
+#include <iostream>
+
+#include "cmath"
 #include "cooling.h"
+
+constexpr double density_floor = 1e-12;
 
 RiemannSolver::RiemannSolver(int mesh_size)
     : rho_L(mesh_size),
@@ -42,12 +47,17 @@ RiemannSolver::RiemannSolver(int mesh_size)
       flux_mom_t1(mesh_size),
       flux_mom_t2(mesh_size),
       flux_energy(mesh_size),
+      Z(mesh_size),
+      Z_L(mesh_size),
+      Z_R(mesh_size),
       ie_L(mesh_size),
       ie_R(mesh_size),
       F_ie_L(mesh_size),
       F_ie_R(mesh_size),
       flux_ie(mesh_size),
       flux_ie_sh(mesh_size),
+      flux_metal(mesh_size),
+      flux_metal_sh(mesh_size),
       q_minus(mesh_size),
       q_plus(mesh_size),
       dq_L(mesh_size),
@@ -119,6 +129,11 @@ void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
     const Grid3D& density = grid.get_density();
     const Grid3D& pressure = grid.get_pressure();
     const Grid3D& ie = grid.get_internal_energy();
+    const Grid3D& metal_dens = grid.get_metal_density();
+
+    // Important: Advect conserved variables,
+    // but reconstruct primitive variables
+    Z.data = metal_dens.array() / density.array();
 
     // References mapped to the Local Coordinate System based on the sweep axis
     const Grid3D& mom_n = (axis == 0) ? grid.get_momentum_x()
@@ -149,6 +164,7 @@ void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
     reconstruct_muscl(v_t1, vt1_L, vt1_R, axis);
     reconstruct_muscl(v_t2, vt2_L, vt2_R, axis);
     reconstruct_muscl(ie, ie_L, ie_R, axis);
+    reconstruct_muscl(Z, Z_L, Z_R, axis);
 
     // Reconstruct Energy and Momenta from the limited primitive variables
     // Doing this guarantees thermodynamic consistency at the interfaces
@@ -173,8 +189,8 @@ void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
     cs_R.data = (gamma * p_R.array() / rho_R.array()).sqrt();
 
     // Stability: Zero out sound speed where density is effectively zero or NaN
-    cs_L.data = (rho_L.array() > 1e-12).select(cs_L.array(), 0.0);
-    cs_R.data = (rho_R.array() > 1e-12).select(cs_R.array(), 0.0);
+    cs_L.data = (rho_L.array() > density_floor).select(cs_L.array(), 0.0);
+    cs_R.data = (rho_R.array() > density_floor).select(cs_R.array(), 0.0);
     cs_L.data = (cs_L.array() == cs_L.array()).select(cs_L.array(), 0.0);
     cs_R.data = (cs_R.array() == cs_R.array()).select(cs_R.array(), 0.0);
 
@@ -203,12 +219,14 @@ void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
     F_ie_L.data = ie_L.array() * vn_L.array();
     F_ie_R.data = ie_R.array() * vn_R.array();
 
-    // --- HLLC RIEMANN SOLVER ---
+    // HLLC RIEMANN SOLVER
 
     // Calculate the middle wave speed (S_star)
+    constexpr double epsilon = 1e-15;
     den_star = rho_L.array() * (S_L.array() - vn_L.array()) -
                rho_R.array() * (S_R.array() - vn_R.array());
-    den_star = (den_star.abs() < 1e-12).select(-1e-12, den_star);
+
+    den_star = (den_star.abs() < epsilon).select(-epsilon, den_star);
 
     S_star = (p_R.array() - p_L.array() +
               rho_L.array() * vn_L.array() * (S_L.array() - vn_L.array()) -
@@ -217,15 +235,15 @@ void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
 
     // Calculate scaling factors for the "Star" regions
     omega_L = rho_L.array() * (S_L.array() - vn_L.array()) /
-              (S_L.array() - S_star - 1e-12);
+              (S_L.array() - S_star - density_floor);
     omega_R = rho_R.array() * (S_R.array() - vn_R.array()) /
-              (S_R.array() - S_star + 1e-12);
+              (S_R.array() - S_star + density_floor);
 
     // Prevent division by zero in the energy term
     denom_L = rho_L.array() * (S_L.array() - vn_L.array());
-    denom_L = (denom_L.abs() < 1e-12).select(-1e-12, denom_L);
+    denom_L = (denom_L.abs() < epsilon).select(-epsilon, denom_L);
     denom_R = rho_R.array() * (S_R.array() - vn_R.array());
-    denom_R = (denom_R.abs() < 1e-12).select(1e-12, denom_R);
+    denom_R = (denom_R.abs() < epsilon).select(epsilon, denom_R);
 
     // Compute the Star States (U_star)
     const Eigen::ArrayXd& rho_star_L = omega_L;
@@ -263,6 +281,9 @@ void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
                     flux_energy);
     apply_hllc_flux(F_ie_L, F_ie_R, ie_L, ie_R, ie_star_L, ie_star_R, S_star,
                     flux_ie);
+    flux_metal.data = (S_star >= 0.0)
+                          .select(flux_density.array() * Z_L.array(),
+                                  flux_density.array() * Z_R.array());
 
     // Pre-calculate shifted fluxes for the grid update
     flux_density_sh = flux_density.roll(1, axis);
@@ -271,6 +292,7 @@ void RiemannSolver::compute_fluxes(const GasGrid& grid, int axis,
     flux_mom_t2_sh = flux_mom_t2.roll(1, axis);
     flux_energy_sh = flux_energy.roll(1, axis);
     flux_ie_sh = flux_ie.roll(1, axis);
+    flux_metal_sh = flux_metal.roll(1, axis);
 }
 
 GasGrid::GasGrid(const Config& conf)
@@ -283,14 +305,20 @@ GasGrid::GasGrid(const Config& conf)
       velocity_x(conf.mesh_size),
       velocity_y(conf.mesh_size),
       velocity_z(conf.mesh_size),
+      metal_density(conf.mesh_size),
       internal_energy(conf.mesh_size),
       solver(conf.mesh_size),
+      cooling_module(conf),
       cooling_failed_cells(0),
+      cooling_total_cycles(0),
       accumulated_radiated_energy(0.0),
+      accumulated_photoheating_energy(0.0),
       accumulated_gravitational_work(0.0),
       accumulated_expansion_work(0.0),
+      pressure_floor(0.0),
       config(conf) {
-    cooling::initialize(config);
+    double u_code_1K = Cooling::get_internal_energy_from_temp(1.0, 1.0, config);
+    pressure_floor = (config.gamma - 1.0) * density_floor * u_code_1K;
 }
 
 void GasGrid::update_primitive_variables() {
@@ -300,7 +328,6 @@ void GasGrid::update_primitive_variables() {
     // Pre-calculate constants to avoid doing it inside the loop
     const double gamma_minus_1 = config.gamma - 1.0;
     const double inv_gamma_minus_1 = 1.0 / gamma_minus_1;
-    const double floor = 1e-12;
 
     // Extract raw pointers so the compiler can use vectorization
     double* rho = density.array().data();
@@ -313,12 +340,13 @@ void GasGrid::update_primitive_variables() {
     double* vz = velocity_z.array().data();
     double* pr = pressure.array().data();
     double* ie_tracked = internal_energy.array().data();
+    double* metal = metal_density.array().data();
 
 #pragma omp parallel for schedule(static)
     for (int i = 0; i < total_cells; ++i) {
         double local_rho = rho[i];
 
-        if (local_rho > floor) {
+        if (local_rho > density_floor) {
             double inv_rho = 1.0 / local_rho;
             double local_vx = mx[i] * inv_rho;
             double local_vy = my[i] * inv_rho;
@@ -335,34 +363,37 @@ void GasGrid::update_primitive_variables() {
             double p;
 
             // DUAL ENERGY SWITCH
-            // If internal energy is > 0.1% of total energy, trust the total
-            // energy
-            if (e_tot > 0.0 && (e_tot - ke) / e_tot > 0.001) {
-                p = gamma_minus_1 * (e_tot - ke);
+            // If internal energy is > x% of total energy, trust total energy.
+            // A double has 53 bits of mantissa precision.
+            // Guarantee at least half the bits survive the subtraction.
+            constexpr double BIT_THRESHOLD = 0x1p-26;
+            if (e_tot > 0.0 && (e_tot - ke) / e_tot > BIT_THRESHOLD) {
                 ie_tracked[i] =
-                    p * inv_gamma_minus_1;  // Sync tracked IE to prevent drift
+                    (e_tot - ke);  // Sync tracked IE to prevent drift
+                p = gamma_minus_1 * ie_tracked[i];
             } else {
-                // Hypersonic regime: Total energy is polluted. Trust tracked
-                // IE.
+                // Hypersonic regime: Trust tracked IE.
                 p = gamma_minus_1 * ie_tracked[i];
                 en[i] = p * inv_gamma_minus_1 + ke;  // Sync Total Energy
             }
 
-            if (p < floor) {
-                p = floor;
-                ie_tracked[i] = floor * inv_gamma_minus_1;
+            if (p < pressure_floor) {
+                p = pressure_floor;
+                ie_tracked[i] = pressure_floor * inv_gamma_minus_1;
                 en[i] = ie_tracked[i] + ke;
             }
 
             pr[i] = p;
+            metal[i] = std::max(0.0, std::min(metal[i], local_rho));
         } else {
             // Vacuum cell handling
             vx[i] = 0.0;
             vy[i] = 0.0;
             vz[i] = 0.0;
-            pr[i] = floor;
-            ie_tracked[i] = floor * inv_gamma_minus_1;
+            pr[i] = pressure_floor;
+            ie_tracked[i] = pressure_floor * inv_gamma_minus_1;
             en[i] = ie_tracked[i];
+            metal[i] = 0.0;
         }
     }
 }
@@ -409,6 +440,7 @@ void GasGrid::compute_and_apply_fluxes(double dt) {
         double* d_mt2 = m_t2->array().data();
         double* d_en = energy.array().data();
         double* d_ie = internal_energy.array().data();
+        double* d_metal = metal_density.array().data();
 
         double* p_arr = pressure.array().data();
         double* dv_arr = dv.array().data();
@@ -419,6 +451,7 @@ void GasGrid::compute_and_apply_fluxes(double dt) {
         const double* f_mt2 = solver.get_flux_mom_t2().array().data();
         const double* f_en = solver.get_flux_energy().array().data();
         const double* f_ie = solver.get_flux_ie().array().data();
+        const double* f_metal = solver.get_flux_metal().array().data();
 
         const double* f_rho_sh = solver.get_flux_density_sh().array().data();
         const double* f_mn_sh = solver.get_flux_mom_n_sh().array().data();
@@ -426,11 +459,12 @@ void GasGrid::compute_and_apply_fluxes(double dt) {
         const double* f_mt2_sh = solver.get_flux_mom_t2_sh().array().data();
         const double* f_en_sh = solver.get_flux_energy_sh().array().data();
         const double* f_ie_sh = solver.get_flux_ie_sh().array().data();
+        const double* f_metal_sh = solver.get_flux_metal_sh().array().data();
 
 #pragma omp parallel for simd schedule(static)
         for (int i = 0; i < total_cells; ++i) {
             d_rho[i] -= factor * (f_rho[i] - f_rho_sh[i]);
-            if (d_rho[i] < 1e-12) d_rho[i] = 1e-12;  // Density floor
+            if (d_rho[i] < density_floor) d_rho[i] = density_floor;
 
             d_mn[i] -= factor * (f_mn[i] - f_mn_sh[i]);
             d_mt1[i] -= factor * (f_mt1[i] - f_mt1_sh[i]);
@@ -439,6 +473,8 @@ void GasGrid::compute_and_apply_fluxes(double dt) {
 
             d_ie[i] -= factor * (f_ie[i] - f_ie_sh[i]);
             d_ie[i] -= 0.5 * factor * p_arr[i] * dv_arr[i];  // PdV work
+
+            d_metal[i] -= factor * (f_metal[i] - f_metal_sh[i]);
         }
     }
 }
@@ -451,6 +487,7 @@ void GasGrid::hydro_step(double dt) {
     Grid3D old_mz = momentum_z;
     Grid3D old_en = energy;
     Grid3D old_ie = internal_energy;
+    Grid3D old_metal = metal_density;
 
     // RK2 Stage 1
     // Advance using the initial state: U^{(1)} = U^n + dt * L(U^n)
@@ -470,6 +507,7 @@ void GasGrid::hydro_step(double dt) {
     double* d_mz = momentum_z.array().data();
     double* d_en = energy.array().data();
     double* d_ie = internal_energy.array().data();
+    double* d_metal = metal_density.array().data();
 
     double* o_rho = old_rho.array().data();
     double* o_mx = old_mx.array().data();
@@ -477,6 +515,7 @@ void GasGrid::hydro_step(double dt) {
     double* o_mz = old_mz.array().data();
     double* o_en = old_en.array().data();
     double* o_ie = old_ie.array().data();
+    double* o_metal = old_metal.array().data();
 
 #pragma omp parallel for simd schedule(static)
     for (int i = 0; i < total_cells; ++i) {
@@ -486,6 +525,7 @@ void GasGrid::hydro_step(double dt) {
         d_mz[i] = 0.5 * (o_mz[i] + d_mz[i]);
         d_en[i] = 0.5 * (o_en[i] + d_en[i]);
         d_ie[i] = 0.5 * (o_ie[i] + d_ie[i]);
+        d_metal[i] = 0.5 * (o_metal[i] + d_metal[i]);
     }
 
     // Update primitive variables at the end so the gravity step has the
@@ -498,7 +538,7 @@ double GasGrid::get_cfl_timestep() const {
 
     Grid3D cs_sq(config.mesh_size);
     cs_sq.data = (config.gamma * pressure.array() / density.array());
-    cs_sq.data = (density.array() > 1e-12).select(cs_sq.array(), 0.0);
+    cs_sq.data = (density.array() > density_floor).select(cs_sq.array(), 0.0);
     cs_sq.data = (cs_sq.array() == cs_sq.array()).select(cs_sq.array(), 0.0);
 
     Grid3D v_mag(config.mesh_size);
@@ -515,27 +555,32 @@ double GasGrid::get_cfl_timestep() const {
     return (config.cell_size / max_signal_vel) * config.hydro_courant_factor;
 }
 
-double GasGrid::apply_cooling(double dt, double a) {
-    if (!config.enable_cooling) return 0.0;
+void GasGrid::apply_cooling(double dt, double a) {
+    if (!config.enable_cooling) return;
 
+    double u_rad_floor = cooling_module.get_u_rad_floor(a, config);
     int total_cells = config.mesh_size * config.mesh_size * config.mesh_size;
 
     const double* d_rho = density.array().data();
     double* d_en = energy.array().data();
     double* d_ie = internal_energy.array().data();
+    double* d_metal = metal_density.array().data();
 
-    const double density_floor = 1e-12;
     double total_radiated = 0.0;
+    double total_photoheated = 0.0;
     size_t non_converged_count = 0;
+    size_t total_cycles = 0;
 
-#pragma omp parallel for schedule(static) \
-    reduction(+ : total_radiated, non_converged_count)
+#pragma omp parallel for schedule(static)                                 \
+    reduction(+ : total_radiated, total_photoheated, non_converged_count, \
+                  total_cycles)
     for (int i = 0; i < total_cells; ++i) {
         double local_rho = d_rho[i];
 
         if (local_rho > density_floor) {
+            double local_Z_frac = d_metal[i] / local_rho;
             double u_current = d_ie[i] / local_rho;
-            double u_initial = u_current;  // Save the starting energy
+            double u_initial = u_current;
 
             double t_evolved = 0.0;
             int cell_non_converged = 0;
@@ -544,25 +589,28 @@ double GasGrid::apply_cooling(double dt, double a) {
             while (t_evolved < dt) {
                 // Determine a sub-step for this cell (e.g., max 10% energy
                 // change)
-                double lambda = cooling::compute_cooling_rate(
-                    u_current, local_rho, a, config);
+                double du_dt = cooling_module.compute_du_dt(
+                    u_current, local_rho, local_Z_frac, a, config);
 
-                double dt_cell =
-                    (lambda > 0.0) ? 0.1 * (u_current / lambda) : dt;
+                double dt_cell = (std::abs(du_dt) > 0.0)
+                                     ? 0.1 * (u_current / std::abs(du_dt))
+                                     : dt;
 
                 // Don't overshoot the global hydro timestep
                 dt_cell = std::min(dt_cell, dt - t_evolved);
 
                 // Run the implicit solver for this tiny step
                 int iters = 0;
-                u_current = cooling::solve_cooling_implicit(
-                    u_current, local_rho, a, dt_cell, config, iters);
+                u_current = cooling_module.solve_cooling_implicit(
+                    u_current, local_rho, local_Z_frac, a, dt_cell, u_rad_floor,
+                    config, iters);
 
-                if (iters >= cooling::MAX_ITER) {
+                if (iters >= Cooling::MAX_ITER) {
                     cell_non_converged++;
                 }
 
                 t_evolved += dt_cell;
+                total_cycles++;
             }
 
             // Log if the cell struggled during any subcycle
@@ -570,25 +618,33 @@ double GasGrid::apply_cooling(double dt, double a) {
                 non_converged_count++;
             }
 
-            // Calculate the total energy lost over the entire hydro step
-            double delta_u = u_initial - u_current;
+            // Calculate the total energy change over the step
+            double delta_u = u_current - u_initial;
 
-            if (delta_u > 0.0) {
+            if (std::abs(delta_u) > 0.0) {
                 double delta_E_vol = delta_u * local_rho;
-                d_ie[i] -= delta_E_vol;
-                d_en[i] -= delta_E_vol;
+                // Add the delta directly
+                d_ie[i] += delta_E_vol;
+                d_en[i] += delta_E_vol;
 
-                // Accumulate total physical energy lost in this cell
-                total_radiated += delta_E_vol * config.cell_volume;
+                // Accumulate energy for logging
+                if (delta_u < 0.0) {
+                    // Net Cooling (Radiated away)
+                    total_radiated -= delta_E_vol * config.cell_volume;
+                } else {
+                    // Net Heating (Injected by UVB)
+                    total_photoheated += delta_E_vol * config.cell_volume;
+                }
             }
         }
     }
 
+    this->cooling_total_cycles = total_cycles / total_cells;
     this->cooling_failed_cells = non_converged_count;
     this->accumulated_radiated_energy += total_radiated;
+    this->accumulated_photoheating_energy += total_photoheated;
 
     update_primitive_variables();
-    return total_radiated;
 }
 
 double GasGrid::get_cooling_timestep(double a) const {
@@ -599,13 +655,10 @@ double GasGrid::get_cooling_timestep(double a) const {
 
     const double* d_rho = density.array().data();
     const double* d_ie = internal_energy.array().data();
-    const double density_floor = 1e-12;
+    const double* d_metal = metal_density.array().data();
 
     // Calculate the physical cooling floor
-    double target_floor_k =
-        std::max(config.cooling_cutoff_k, config.temp_floor_k);
-    double u_rad_floor =
-        cooling::get_internal_energy_from_temp(target_floor_k, a, config);
+    double u_rad_floor = cooling_module.get_u_rad_floor(a, config);
 
 #pragma omp parallel for reduction(min : min_dt_cool)
     for (int i = 0; i < total_cells; ++i) {
@@ -614,13 +667,12 @@ double GasGrid::get_cooling_timestep(double a) const {
 
             if (u <= u_rad_floor) continue;
 
-            double lambda =
-                cooling::compute_cooling_rate(u, d_rho[i], a, config);
-
-            if (lambda > 0.0) {
-                // Restrict timestep so internal energy changes by at most 10%
-                // per step
-                double dt_cool = 0.1 * (u / lambda);
+            double Z_frac = d_metal[i] / d_rho[i];
+            double du_dt =
+                cooling_module.compute_du_dt(u, d_rho[i], Z_frac, a, config);
+            if (std::abs(du_dt) > 0.0) {
+                // Restrict timestep so internal energy changes at most 10%
+                double dt_cool = 0.1 * (u / std::abs(du_dt));
                 if (dt_cool < min_dt_cool) {
                     min_dt_cool = dt_cool;
                 }
@@ -629,4 +681,40 @@ double GasGrid::get_cooling_timestep(double a) const {
     }
 
     return min_dt_cool;
+}
+
+Grid3D GasGrid::compute_thermal_timescale(double a) const {
+    Grid3D t_therm_grid(config.mesh_size);
+
+    double* t_therm = t_therm_grid.array().data();
+    const double* d_rho = density.array().data();
+    const double* d_ie = internal_energy.array().data();
+    const double* d_metal = metal_density.array().data();
+
+    const int total_cells =
+        config.mesh_size * config.mesh_size * config.mesh_size;
+
+#pragma omp parallel for schedule(static)
+    for (int i = 0; i < total_cells; ++i) {
+        if (d_rho[i] > density_floor) {
+            double u = d_ie[i] / d_rho[i];
+            double Z_frac = d_metal[i] / d_rho[i];
+
+            // Calculate the instantaneous change in internal energy
+            double du_dt =
+                cooling_module.compute_du_dt(u, d_rho[i], Z_frac, a, config);
+
+            // Prevent division by zero if the cell is in equilibrium
+            if (std::abs(du_dt) > 1e-30) {
+                t_therm[i] = u / du_dt;
+            } else {
+                t_therm[i] = std::numeric_limits<double>::infinity();
+            }
+        } else {
+            // Vacuum cells have effectively infinite thermal timescales
+            t_therm[i] = std::numeric_limits<double>::infinity();
+        }
+    }
+
+    return t_therm_grid;
 }

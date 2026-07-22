@@ -3,6 +3,7 @@ import numpy as np
 import glob
 import os
 import sys
+import argparse
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import camb
@@ -190,7 +191,7 @@ def get_temperature(f):
     u_code = pressure / (density * (gamma - 1.0))
     return u_code * factor_u_to_t * (a**2)
 
-def generate_dashboard(snapshot_dir):
+def generate_dashboard(snapshot_dir, pair_dir=None):
     files = sorted(glob.glob(os.path.join(snapshot_dir, "snapshot_*.hdf5")))
     if not files:
         print(f"Error: No HDF5 snapshots found in {snapshot_dir}")
@@ -198,8 +199,8 @@ def generate_dashboard(snapshot_dir):
 
     print(f"Processing {len(files)} snapshots for diagnostics...")
 
-    # Pre-calculate Global Simulation Config & Units (from the first snapshot)
-    with h5py.File(files[0], 'r') as f:
+    # Pre-calculate Global Simulation Config & Units (from the last snapshot)
+    with h5py.File(files[-1], 'r') as f:
         config = f['Config'].attrs
         units = f['Units'].attrs
         
@@ -228,11 +229,31 @@ def generate_dashboard(snapshot_dir):
         # Volume of a single cell in code units
         cell_vol_code = (domain_size / mesh_size)**3
 
+        rho = f['Gas/density'][:] if has_hydro else None
+        flat_index = np.argmax(rho)
+        target_coords = np.unravel_index(flat_index, rho.shape)
+        Z, Y, X = np.indices(rho.shape)
+
+    # Tracking the densest cell at z=0
+    radius_cells = 0
+    dz = np.abs(Z - target_coords[0])
+    dy = np.abs(Y - target_coords[1])
+    dx = np.abs(X - target_coords[2])
+
+    dz = np.minimum(dz, mesh_size - dz)
+    dy = np.minimum(dy, mesh_size - dy)
+    dx = np.minimum(dx, mesh_size - dx)
+
+    dist_sq = dx**2 + dy**2 + dz**2
+
     # Time series lists
     scale_factors, times_gyr, dm_variances, dm_scale_factors = [], [], [], []
     p999_gas_densities, max_gas_densities, max_dm_densities = [], [], []
     p999_temperatures, max_temperatures = [], []
-    kin_energies, therm_energies, rad_energies, cold_gas_fracs, fractional_errors = [], [], [], [], []
+    rho_densest_cell, gas_temp_densest_cell, thermal_timescale_densest = [], [], []
+    dt_hydro = []
+    kin_energies, therm_energies, rad_energies, heat_energies, cold_gas_fracs, fractional_errors = [], [], [], [], [], []
+    max_metallicity = []
 
     pdf_data, pk_data = {}, {}
     target_indices = [0, len(files)//2, len(files)-1]
@@ -244,10 +265,10 @@ def generate_dashboard(snapshot_dir):
 
         with h5py.File(f_path, 'r') as f:
             header = f['Header'].attrs
-            a = header['scale_factor']
-            
+            a = header['scale_factor']          
             scale_factors.append(a)
             times_gyr.append(header.get('simulation_time', 0.0) * u_time_gyr)
+            dt_hydro.append(header['dt_hydro'])
 
             # Particles
             p_x = f['Particles/position_x'][:] * box_h_mpc
@@ -272,6 +293,7 @@ def generate_dashboard(snapshot_dir):
                 dm_scale_factors.append(a)
 
             rho = f['Gas/density'][:] if has_hydro else None
+            metal_density = f['Gas/metal_density'][:] if has_hydro else None
 
             # Snapshot Extraction for PDF & Power Spectrum
             if i in target_indices:
@@ -286,7 +308,10 @@ def generate_dashboard(snapshot_dir):
                 
                 # Convert Max Density to Hydrogen Number Density (n_H)
                 # max_rho_cgs is the comoving density. Divide by a^3 to get physical density
-                p999_rho, max_rho = np.percentile(rho, 99.9), np.max(rho)
+                max_rho_flat_index = np.argmax(rho)
+                max_rho_index = np.unravel_index(max_rho_flat_index, rho.shape)
+                max_rho = rho[max_rho_index]
+                p999_rho = np.percentile(rho, 99.9)
                 n_H_conv = (u_density_cgs / a**3 * X_H) / M_P_CGS
                 p999_gas_densities.append(p999_rho * n_H_conv)
                 max_gas_densities.append(max_rho * n_H_conv)
@@ -305,6 +330,8 @@ def generate_dashboard(snapshot_dir):
 
                 rad_energy_code = f['Gas'].attrs.get('cumulative_radiated_energy', 0.0)
                 rad_energies.append(rad_energy_code * u_energy_cgs * (a**2))
+                heat_energy_code = f['Gas'].attrs.get('cumulative_photoheating_energy', 0.0)
+                heat_energies.append(heat_energy_code * u_energy_cgs * (a**2))
 
                 current_e_code = np.sum(e_tot) * cell_vol_code
                 if initial_e_code is None:
@@ -313,9 +340,18 @@ def generate_dashboard(snapshot_dir):
                 w_grav_code = f['Gas'].attrs.get('cumulative_gravitational_work', 0.0)
                 w_exp_code = f['Gas'].attrs.get('cumulative_expansion_work', 0.0)
 
+                                # Temp of the max density cell
+                local_rho = np.where(dist_sq <= radius_cells**2, rho, -1.0)
+                local_max_flat = np.argmax(local_rho)
+                local_max_coords = np.unravel_index(local_max_flat, rho.shape)
+                rho_densest_cell.append(rho[local_max_coords]*n_H_conv)
+                gas_temp_densest_cell.append(temp[local_max_coords])
+                thermal_timescale = f['Gas/thermal_timescale'][:]
+                thermal_timescale_densest.append(thermal_timescale[local_max_coords])
+
                 # The First Law of Thermodynamics (in Comoving Code Units)
                 delta_e_code = current_e_code - initial_e_code
-                absolute_error_code = delta_e_code - w_grav_code + w_exp_code + rad_energy_code
+                absolute_error_code = delta_e_code - w_grav_code + w_exp_code + rad_energy_code - heat_energy_code
                 fractional_errors.append(absolute_error_code / abs(initial_e_code) if initial_e_code != 0 else 0.0)
                 
                 # Cold Dense Gas Fraction
@@ -323,12 +359,46 @@ def generate_dashboard(snapshot_dir):
                 overdensity = rho / mean_rho
                 cold_dense_mask = (temp < 10000.0) & (overdensity > 100.0)
                 cold_gas_fracs.append(np.sum(rho[cold_dense_mask]) / np.sum(rho))
+
+                # Metallicity
+                metallicity = metal_density / rho
+                max_metallicity.append(np.max(metallicity))
                 
                 # Snapshot PDF Extraction
                 if i in target_indices:
                     safe_od = np.maximum(overdensity, 1e-10)
                     hist, edges = np.histogram(np.log10(np.maximum(overdensity, 1e-5)), bins=100, range=(-2, 5))
                     pdf_data[a] = (hist / np.sum(hist), edges, np.var(safe_od))
+                    
+    # Process Paired Simulation P(k) if provided
+    if pair_dir:
+        print(f"\nExtracting paired P(k) from {pair_dir} for variance suppression...")
+        pair_files = sorted(glob.glob(os.path.join(pair_dir, "snapshot_*.hdf5")))
+        if pair_files:
+            pair_target_indices = [0, len(pair_files)//2, len(pair_files)-1]
+            pk_data_pair = {}
+            for i in pair_target_indices:
+                with h5py.File(pair_files[i], 'r') as f:
+                    a_pair = f['Header'].attrs['scale_factor']
+                    p_x = f['Particles/position_x'][:] * box_h_mpc
+                    p_y = f['Particles/position_y'][:] * box_h_mpc
+                    p_z = f['Particles/position_z'][:] * box_h_mpc
+                    p_mass = f['Particles/mass'][:]
+                    rho = f['Gas/density'][:] if has_hydro else None
+                    
+                    k_bins_p, pk_p = compute_power_spectrum(p_x, p_y, p_z, p_mass, box_h_mpc, mesh_size, part_mesh_size, gas_rho=rho)
+                    pk_data_pair[a_pair] = (k_bins_p, pk_p)
+            
+            # Average the power spectra
+            for a_val in list(pk_data.keys()):
+                # Find corresponding scale factor in pair
+                closest_a = min(pk_data_pair.keys(), key=lambda x: abs(x - a_val))
+                if abs(closest_a - a_val) < 0.05:  # Tolerance check
+                    k_bins_primary, pk_primary = pk_data[a_val]
+                    _, pk_paired = pk_data_pair[closest_a]
+                    
+                    # Apply Angulo & Pontzen paired averaging
+                    pk_data[a_val] = (k_bins_primary, (pk_primary + pk_paired) / 2.0)
 
     print("\nData extraction complete. Generating plots...")
 
@@ -359,12 +429,14 @@ def generate_dashboard(snapshot_dir):
         colors = ['blue', 'green', 'red']
         for idx, (a_val, (k_bins, pk)) in enumerate(pk_data.items()):
             c = colors[idx % len(colors)]
-            axs[0, 0].plot(k_bins, pk, lw=2, color=c, label=f'Sim a={a_val:.2f}')
+            label_prefix = "Paired Avg" if pair_dir else "Sim"
+            axs[0, 0].plot(k_bins, pk, lw=2, color=c, label=f'{label_prefix} a={a_val:.2f}')
             if camb_theory and a_val in camb_theory:
                 theory_k, theory_pk = camb_theory[a_val]
                 axs[0, 0].plot(theory_k, theory_pk, lw=1, linestyle='--', color=c, alpha=0.7, label=f'Theory a={a_val:.2f}')
 
-        axs[0, 0].set(xscale='log', yscale='log', xlabel=r'k [$h$ Mpc$^{-1}$]', ylabel=r'$P(k)$ [($h^{-1}$ Mpc)$^3$]', title='Matter Power Spectrum')
+        title_suffix = " (Variance Suppressed)" if pair_dir else ""
+        axs[0, 0].set(xscale='log', yscale='log', xlabel=r'k [$h$ Mpc$^{-1}$]', ylabel=r'$P(k)$ [($h^{-1}$ Mpc)$^3$]', title=f'Matter Power Spectrum{title_suffix}')
         axs[0, 0].legend(fontsize=8)
 
     # 1-Point Volume-Weighted Density PDF
@@ -384,46 +456,33 @@ def generate_dashboard(snapshot_dir):
             mask_hist[1:] |= base_mask[:-1]
             axs[0, 1].plot(centers[mask_hist], hist[mask_hist], lw=2, color=c, label=f'Sim a={a_val:.2f}')
 
-            # Determine the x-axis extent of the valid simulation data
-            # if np.any(mask_hist):
-            #     x_min, x_max = centers[mask_hist][0], centers[mask_hist][-1]
-            # else:
-            #     x_min, x_max = centers[0], centers[-1]      
-            # domain_mask = (centers >= x_min) & (centers <= x_max)
-
-            # Delta = 10**centers
-            
-            # Model A: Gaussian (early universe)
-            # if idx == 0:
-            #     p_delta = (1.0 / np.sqrt(2.0 * np.pi * sigma2)) * np.exp(-0.5 * (Delta - 1.0)**2 / sigma2)
-            #     y_gauss = p_delta * Delta * np.log(10) * dx
-            #     mask_gauss = (y_gauss > 1e-5) & domain_mask
-            #     axs[0, 1].plot(centers[mask_gauss], y_gauss[mask_gauss], color=c, linestyle=':', lw=1, label='Gaussian Model')
-            
-            # Model B: Lognormal (late universe)
-            # elif idx == len(pdf_data) - 1:
-            #     sigma2_A, mu_A = np.log(1.0 + sigma2), -np.log(1.0 + sigma2) / 2.0
-            #     p_A = (1.0 / np.sqrt(2.0 * np.pi * sigma2_A)) * np.exp(-0.5 * (centers * np.log(10) - mu_A)**2 / sigma2_A)
-            #     y_lognorm = p_A * np.log(10) * dx
-            #     mask_lognorm = (y_lognorm > 1e-5) & domain_mask
-            #     axs[0, 1].plot(centers[mask_lognorm], y_lognorm[mask_lognorm], color=c, linestyle='--', lw=1, label='Lognormal Model')
-
         axs[0, 1].set(yscale='log', xlabel=r'$\log_{10}$ Gas Overdensity ($\rho/\bar{\rho}$)', ylabel='Volume Fraction', title='1-Point Volume-Weighted Density PDF')
         axs[0, 1].set_ylim(bottom=1e-5, top=1.5)
         axs[0, 1].legend(fontsize=8)
 
     # DM Variance Evolution (Structure Growth)
-    axs[0, 2].plot(scale_factors, dm_variances, color='black', label='Simulated Variance')
-    D_a = np.array([get_linear_growth(a, float(omega_m), float(omega_l)) for a in scale_factors])
-    axs[0, 2].plot(scale_factors, dm_variances[0] * (D_a / D_a[0])**2, linestyle='--', color='red', label=r'$\Lambda$CDM Linear Theory')
-    axs[0, 2].set(yscale='log', xlabel='Scale Factor (a)', ylabel=r'DM Variance ($\sigma^2$)', title='Structure Growth')
-    axs[0, 2].legend()
+    #axs[0, 2].plot(scale_factors, dm_variances, color='black', label='Simulated Variance')
+    #D_a = np.array([get_linear_growth(a, float(omega_m), float(omega_l)) for a in scale_factors])
+    #axs[0, 2].plot(scale_factors, dm_variances[0] * (D_a / D_a[0])**2, linestyle='--', color='red', label=r'$\Lambda$CDM Linear Theory')
+    #axs[0, 2].set(yscale='log', xlabel='Scale Factor (a)', ylabel=r'DM Variance ($\sigma^2$)', title='Structure Growth')
+    #axs[0, 2].legend()
+
+    # Cosmic Expansion History and Metallicity
+    line_a = axs[0, 2].plot(times_gyr, scale_factors, color='purple', lw=2, label='Scale factor')
+    axs[0, 2].set(xlabel='Simulation Time [Gyr]', ylabel='Scale Factor (a)', title='Cosmic Expansion History', ylim=(0.0, None))
+    ax_metallicity = axs[0, 2].twinx()
+    line_z = ax_metallicity.plot(times_gyr, max_metallicity, color='red', lw=2, label='Max Metallicity')
+    ax_metallicity.set(ylabel='Max Metallicity', ylim=(0.0, 1.0))
+    lines = line_a + line_z
+    labels = [line.get_label() for line in lines]
+    axs[0, 2].legend(lines, labels, loc='best')
 
     # Global Energy Inventory & Conservation Error
     if kin_energies:
         axs[1, 0].plot(scale_factors, kin_energies, color='green', lw=2, label='Kinetic')
         axs[1, 0].plot(scale_factors, therm_energies, color='orange', lw=2, label='Thermal')
         axs[1, 0].plot(scale_factors, rad_energies, color='red', lw=2, linestyle=':', label='Radiated')
+        axs[1, 0].plot(scale_factors, heat_energies, color='blue', lw=2, linestyle=':', label='Heated')
         axs[1, 0].set(yscale='log', xlabel='Scale Factor (a)', ylabel='Energy Components [Ergs]', title='Energy Inventory & Conservation')
         
         ax_err = axs[1, 0].twinx()
@@ -436,12 +495,12 @@ def generate_dashboard(snapshot_dir):
 
         lines_1, labels_1 = axs[1, 0].get_legend_handles_labels()
         lines_2, labels_2 = ax_err.get_legend_handles_labels()
-        axs[1, 0].legend(lines_1 + lines_2, labels_1 + labels_2, loc='center left', fontsize=8)
+        axs[1, 0].legend(lines_1 + lines_2, labels_1 + labels_2, loc='center right', fontsize=8)
 
     # Extreme Gas States (99.9% to Max Envelope)
     if p999_gas_densities:
         # Primary Left Axis (Gas & DM Density)
-        axs[1, 1].plot(scale_factors, p999_gas_densities, color='blue', lw=2, label='99.9% Gas Dens')
+        axs[1, 1].plot(scale_factors, max_gas_densities, color='blue', lw=2, label='Max Gas Dens')
         axs[1, 1].fill_between(scale_factors, p999_gas_densities, max_gas_densities, color='blue', alpha=0.2)
         
         # Plot Max DM Density on the SAME axis
@@ -452,17 +511,11 @@ def generate_dashboard(snapshot_dir):
         
         # Right Axis (Gas Temperature)
         ax_temp = axs[1, 1].twinx()
-        ax_temp.plot(scale_factors, p999_temperatures, color='red', lw=2, label='99.9% Temp')
+        ax_temp.plot(scale_factors, max_temperatures, color='red', lw=2, label='Max Temp')
         ax_temp.fill_between(scale_factors, p999_temperatures, max_temperatures, color='red', alpha=0.2)
         ax_temp.set(yscale='log', ylabel='Temperature [K]')
         ax_temp.tick_params(axis='y', labelcolor='red')
-
-        # Calculate the variance of the fundamental mode: sigma(L) = sigma_8 * (8/L)^0.9
-        sigma_L = sigma_8 * (8.0 / box_size_mpc)**0.9
-        a_limit = 0.3 / sigma_L
-        if a_limit < 1.0:
-            axs[1, 1].axvline(a_limit, color='gray', linestyle=':', linewidth=1, label='Collapse Limit')
-        
+      
         # Gather legends from both axes so they appear in one box
         lines_left, labels_left = axs[1, 1].get_legend_handles_labels()
         lines_temp, labels_temp = ax_temp.get_legend_handles_labels()
@@ -472,39 +525,61 @@ def generate_dashboard(snapshot_dir):
                          loc='upper left', fontsize=8)
         axs[1, 1].set_title('Extreme States (Gas vs DM)')
 
-    # Cosmic Expansion History
-    axs[1, 2].plot(times_gyr, scale_factors, color='purple', lw=2, label='Simulation')
-    axs[1, 2].set(xlabel='Simulation Time [Gyr]', ylabel='Scale Factor (a)', title='Cosmic Expansion History', ylim=(0.0, None))
-    axs[1, 2].legend()
+    # Densest cell tracking
+    # Primary Left Axis (Density)
+    axs[1, 2].plot(scale_factors, rho_densest_cell, color='blue', lw=2, label='Density')
+    
+    # Plot Max DM Density on the SAME axis
+    #axs[1, 2].plot(dm_scale_factors, max_dm_densities, color='black', lw=1.5, linestyle='--', alpha=0.8, label='Max DM Dens')
+    
+    axs[1, 2].set(yscale='log', xlabel='Scale Factor (a)', ylabel=r'Physical Density [$m_p$ cm$^{-3}$]')
+    axs[1, 2].tick_params(axis='y', labelcolor='black')
+    
+    # Right Axis 1 (Gas Temperature)
+    ax_temp = axs[1, 2].twinx()
+    ax_temp.plot(scale_factors, gas_temp_densest_cell, color='red', lw=2, label='Temp')
+    ax_temp.set(yscale='log', ylabel='Temperature [K]')
+    ax_temp.tick_params(axis='y', labelcolor='red')
+
+    # Right Axis 2 (Thermal Timescale)
+    ax_time = axs[1, 2].twinx()
+    ax_time.spines['right'].set_position(('outward', 50))
+    
+    t_therm = np.array(thermal_timescale_densest)
+    dt_hydro_arr = np.array(dt_hydro) # Ensure this is a numpy array
+    
+    t_heating = np.where(t_therm > 0, t_therm, np.nan)
+    t_cooling = np.where(t_therm < 0, np.abs(t_therm), np.nan)
+    
+    # Plot the timescales
+    ax_time.plot(scale_factors, t_heating, color='green', lw=2, linestyle='-', label='+t_therm (Heating)')
+    ax_time.plot(scale_factors, t_cooling, color='green', lw=2, linestyle='--', label='-t_therm (Cooling)')
+    
+    # Plot dt_hydro as the baseline threshold
+    #ax_time.plot(scale_factors, dt_hydro_arr, color='orange', lw=2, linestyle=':', label='dt_hydro (Courant Limit)')
+    
+    ax_time.set(yscale='log', ylabel='Time [Code Units]')
+    ax_time.tick_params(axis='y', labelcolor='green')
+
+    # Gather legends from all axes so they appear in one box
+    lines_left, labels_left = axs[1, 2].get_legend_handles_labels()
+    lines_temp, labels_temp = ax_temp.get_legend_handles_labels()
+    lines_time, labels_time = ax_time.get_legend_handles_labels()
+    
+    axs[1, 2].legend(lines_left + lines_temp + lines_time, 
+                     labels_left + labels_temp + labels_time, 
+                     loc='upper left', fontsize=8)
+                     
+    axs[1, 2].set_title('Densest cell (z=0) evolution')
 
     # Phase Diagram
     if has_hydro and 'x_data' in locals():
         # Create logarithmically spaced bins
         x_bins, y_bins = np.logspace(-2, np.log10(np.max(x_data)), 100), np.logspace(1, np.log10(np.max(y_data)), 100)
-        weights = final_rho.flatten()
+        weights = final_rho.flatten() * cell_vol_code
         h = axs[2, 0].hist2d(x_data, y_data, bins=[x_bins, y_bins], weights=weights, norm=LogNorm(), cmap='plasma')
         
-        # THEORETICAL BASELINE
-        mask_mean = (x_data > 0.95) & (x_data < 1.05)
-        if np.any(mask_mean):
-            T_line = np.maximum(np.min(y_data[mask_mean]) * (x_bins ** (gamma - 1.0)), floor_k)
-            axs[2, 0].plot(x_bins, T_line, color='cyan', linestyle='--', linewidth=2, label=r'Adiabatic Track')
-        
-        # Truelove Jeans Fragmentation Limit (Density Trust Barrier)
-        # Read parameters
-        #H0_cgs = (hubble * 100.0) * 1e5 / 3.086e24
-        #rho_crit_cgs = (3.0 * H0_cgs**2) / (8.0 * np.pi * G_CGS)
-        #dx_comoving_cm = (box_size_mpc / mesh_size) * 3.086e24
-        # Truelove math: lambda_J >= 4 * dx_phys
-        # This isolates the maximum overdensity (Delta) before fragmentation occurs
-        #K = (np.pi * gamma * K_B_CGS) / (mu * M_P_CGS * G_CGS)
-        #max_safe_delta = (K * T_floor * scale_factors[-1]) / (16.0 * (dx_comoving_cm**2) * omega_m * rho_crit_cgs)
-        
-        #axs[2, 0].axvline(x=max_safe_delta, color='red', linestyle=':', linewidth=2, label='Truelove Limit')
-        #axs[2, 0].axvspan(max_safe_delta, np.max(x_data) * 10, color='red', alpha=0.1)
-        
         axs[2, 0].set(xscale='log', yscale='log', xlabel=r'Gas Overdensity ($\rho / \bar{\rho}$)', ylabel='Temperature [K]', title='Phase Diagram (Final Snapshot)')
-        axs[2, 0].legend(loc='upper left', fontsize=8)
         fig.colorbar(h[3], ax=axs[2, 0], label='Total Gas Mass (Code Units)')
     else:
         axs[2, 0].text(0.5, 0.5, 'Hydro Disabled', ha='center', va='center')  
@@ -520,7 +595,7 @@ def generate_dashboard(snapshot_dir):
         f"SIMULATION: {os.path.basename(os.path.normpath(snapshot_dir))}\n\n"
         f"{'Box Size':<9}: {str(box_size_mpc) + ' Mpc'}\n"
         f"{'Grid':<9}: {str(mesh_size) + '³'}\n"
-        f"{'Particles':<9}: {num_particles if has_hydro else 'N/A'}\n\n"
+        f"{'Particles':<9}: {str(int(np.cbrt(num_particles))) + '³'} ({num_particles})\n\n"
         f"Cosmology & Physics:\n"
         f"  {'Ω_m':<3}: {omega_m:<8} | {'Hubble (h)':<12}: {h_val:.2f}\n"
         f"  {'Ω_b':<3}: {omega_b:<8} | {'Gamma (γ)':<12}: {gamma:.3f}\n"
@@ -535,4 +610,49 @@ def generate_dashboard(snapshot_dir):
     plt.show()
 
 if __name__ == "__main__":
-    generate_dashboard(sys.argv[1] if len(sys.argv) > 1 else "./output/")
+    parser = argparse.ArgumentParser(
+        description="Generate a cosmological simulation dashboard from HDF5 snapshots."
+    )
+    
+    parser.add_argument(
+        "path", 
+        type=str, 
+        help="Path to the simulation directory (or base directory if using --latest)"
+    )
+    
+    parser.add_argument(
+        "-p", "--pair", 
+        type=str,
+        default=None,
+        help="Path to a paired simulation directory (invert_phases=true) to average the Power Spectrum."
+    )
+    
+    parser.add_argument(
+        "-l", "--latest", 
+        action="store_true", 
+        help="Automatically find and load the most recent 'run_*' directory inside the provided path"
+    )
+
+    # Show help if no arguments are provided
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(1)
+
+    # Parse the arguments
+    args = parser.parse_args()
+    target_dir = args.path
+
+    # Handle the --latest flag
+    if args.latest:
+        search_pattern = os.path.join(target_dir, "run_*")
+        runs = sorted(glob.glob(search_pattern))
+        
+        if runs:
+            target_dir = runs[-1]
+            print(f"Auto-selected latest run: {target_dir}")
+        else:
+            print(f"Error: No run directories found in '{args.path}'")
+            sys.exit(1)
+
+    # Run the dashboard
+    generate_dashboard(target_dir, pair_dir=args.pair)

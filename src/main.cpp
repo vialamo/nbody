@@ -22,13 +22,6 @@ static void print_info(const Config& config) {
     std::cout << "G = " << config.G << "\n" << std::endl;
 
     std::cout << "Mesh Size = " << config.mesh_size << "\n";
-    constexpr double sigma_safe = 0.3;
-    double a_safe_max =
-        (sigma_safe / config.sigma_8) * pow((config.box_size_mpc / 8.0), 0.9);
-    if (a_safe_max < config.a_end) {
-        std::cout << "Warning: Fundamental mode collapse risk when a > "
-                  << a_safe_max << "\n";
-    }
 
     std::cout << "Threads: " << omp_get_max_threads() << " | ";
     int num_devices = omp_get_num_devices();

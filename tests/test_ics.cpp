@@ -25,7 +25,7 @@ TEST_CASE("Initial internal energy scales correctly with code units",
         // Get the base energy using the default box size (default velocity
         // unit)
         double u_code_base =
-            cooling::get_internal_energy_from_temp(T_kelvin, a, config);
+            Cooling::get_internal_energy_from_temp(T_kelvin, a, config);
 
         // To safely halve the velocity unit, we halve the box_size_mpc.
         // As seen in init_derived_units, unit_velocity_kms scales linearly with
@@ -37,7 +37,7 @@ TEST_CASE("Initial internal energy scales correctly with code units",
 
         // Calculate the new energy
         double u_code_half_v =
-            cooling::get_internal_energy_from_temp(T_kelvin, a, config);
+            Cooling::get_internal_energy_from_temp(T_kelvin, a, config);
 
         // Because V is squared in the denominator of the conversion,
         // halving V (via the box size) must exactly quadruple the code energy.
@@ -46,7 +46,7 @@ TEST_CASE("Initial internal energy scales correctly with code units",
 
     SECTION("Expected mathematical output is physically accurate") {
         double u_code =
-            cooling::get_internal_energy_from_temp(T_kelvin, a, config);
+            Cooling::get_internal_energy_from_temp(T_kelvin, a, config);
 
         // Calculate the exact physical specific internal energy (in erg/g)
         double u_phys_cgs =

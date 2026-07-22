@@ -13,11 +13,14 @@
 
 #include "config.h"
 #include "state.h"
+#include "types.h"
 
 class HDF5Writer {
    private:
     std::string output_directory;
 
+    void set_attr_string(H5::H5Object& obj, const char* attr_name,
+                         const std::string& str);
     void set_attr_double(H5::H5Object& obj, const char* attr_name,
                          double value);
     void set_attr_int(H5::H5Object& obj, const char* attr_name, int value);
@@ -32,5 +35,6 @@ class HDF5Writer {
     ~HDF5Writer();
 
     void save_snapshot(int snapshot_index, int cycle_count,
-                       const SimState& state, const Config& config);
+                       const SimState& state, const Config& config,
+                       const TimestepInfo& ts);
 };

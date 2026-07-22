@@ -1,8 +1,8 @@
 #include "math_utils.h"
 
-void QuadraticInterpolator::Set(const Eigen::Vector2d& p1,
-                                const Eigen::Vector2d& p2,
-                                const Eigen::Vector2d& p3) {
+QuadraticInterpolator::QuadraticInterpolator(const Eigen::Vector2d& p1,
+                                             const Eigen::Vector2d& p2,
+                                             const Eigen::Vector2d& p3) {
     Eigen::Matrix3d A;
     A << p1.x() * p1.x(), p1.x(), 1.0, p2.x() * p2.x(), p2.x(), 1.0,
         p3.x() * p3.x(), p3.x(), 1.0;

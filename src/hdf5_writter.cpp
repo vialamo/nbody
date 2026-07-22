@@ -28,6 +28,15 @@ void HDF5Writer::set_attr_bool(H5::H5Object& obj, const char* attr_name,
     set_attr_int(obj, attr_name, int_val);
 }
 
+void HDF5Writer::set_attr_string(H5::H5Object& obj, const char* attr_name,
+                                 const std::string& str) {
+    H5::DataSpace scalar_space(H5S_SCALAR);
+    H5::StrType str_type(H5::PredType::C_S1, str.length() + 1);
+    H5::Attribute attr = obj.createAttribute(attr_name, str_type, scalar_space);
+    attr.write(str_type, str.c_str());
+    attr.close();
+}
+
 void HDF5Writer::write_grid(H5::Group& group, const char* dataset_name,
                             const Grid3D& grid) {
     hsize_t N = grid.n;
@@ -57,7 +66,8 @@ HDF5Writer::HDF5Writer(const std::string& run_dir, const Config& config)
 HDF5Writer::~HDF5Writer() {}
 
 void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
-                               const SimState& state, const Config& config) {
+                               const SimState& state, const Config& config,
+                               const TimestepInfo& ts) {
     char filename[256];
     snprintf(filename, sizeof(filename), "%s/snapshot_%04d.hdf5",
              output_directory.c_str(), snapshot_index);
@@ -73,6 +83,10 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         H5::Group header_group = root_group.createGroup("Header");
         set_attr_double(header_group, "scale_factor", state.scale_factor);
         set_attr_double(header_group, "simulation_time", state.total_time);
+        set_attr_double(header_group, "dt_macro", ts.dt_macro);
+        set_attr_double(header_group, "dt_grav", ts.dt_grav);
+        set_attr_double(header_group, "dt_hydro", ts.dt_hydro);
+        set_attr_double(header_group, "dt_cool", ts.dt_cool);
         header_group.close();
 
         // ====================================================================
@@ -103,8 +117,14 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                         config.physical_softening_cap_a);
 
         // [initial_conditions]
+        set_attr_bool(config_group, "fixed_ics", config.fixed_ics);
+        set_attr_bool(config_group, "invert_phases", config.invert_phases);
         set_attr_bool(config_group, "standing_particles",
                       config.standing_particles);
+        set_attr_double(config_group, "initial_gas_temp_k",
+                        config.initial_gas_temperature_k);
+        set_attr_double(config_group, "seed_metallicity_solar",
+                        config.seed_metallicity_solar);
         set_attr_int(config_group, "seed", config.seed);
 
         // [hydro]
@@ -115,6 +135,8 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         set_attr_double(config_group, "temp_floor_k", config.temp_floor_k);
         set_attr_double(config_group, "cooling_cutoff_k",
                         config.cooling_cutoff_k);
+        set_attr_string(config_group, "cooling_table_path",
+                        config.cooling_table_path);
 
         // [subgrid]
         set_attr_bool(config_group, "enable_subgrid_gravity",
@@ -190,6 +212,8 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
             H5::Group gas_group = root_group.createGroup("Gas");
             set_attr_double(gas_group, "cumulative_radiated_energy",
                             state.gas.get_accumulated_radiated_energy());
+            set_attr_double(gas_group, "cumulative_photoheating_energy",
+                            state.gas.get_accumulated_photoheating_energy());
             set_attr_double(gas_group, "cumulative_gravitational_work",
                             state.gas.get_accumulated_gravitational_work());
             set_attr_double(gas_group, "cumulative_expansion_work",
@@ -200,6 +224,10 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
             write_grid(gas_group, "momentum_z", state.gas.get_momentum_z());
             write_grid(gas_group, "energy", state.gas.get_energy());
             write_grid(gas_group, "pressure", state.gas.get_pressure());
+            write_grid(gas_group, "metal_density",
+                       state.gas.get_metal_density());
+            write_grid(gas_group, "thermal_timescale",
+                       state.gas.compute_thermal_timescale(state.scale_factor));
 
             if (config.enable_cooling) {
                 Grid3D temp_grid(config.mesh_size);
@@ -212,7 +240,7 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                     if (rho.data[i] > 1e-12) {
                         double u = ie.data[i] / rho.data[i];
                         temp_grid.data[i] =
-                            cooling::get_temp_from_internal_energy(
+                            Cooling::get_temp_from_internal_energy(
                                 u, state.scale_factor, config);
                     } else {
                         temp_grid.data[i] = 10.0;  // Floor

@@ -21,8 +21,11 @@ struct Config {
     double physical_softening_cap_a = 0.3;
 
     // Initial conditions
+    bool fixed_ics = false;
+    bool invert_phases = false;
     bool standing_particles = false;
     double initial_gas_temperature_k = 50.0;
+    double seed_metallicity_solar = 0.0;
     int seed = 42;
 
     // Hydro
@@ -33,6 +36,7 @@ struct Config {
                                   // primordial gas (76% H, 24% He)
     double temp_floor_k = 10.0;
     double cooling_cutoff_k = 10000.0;
+    std::string cooling_table_path = "";
 
     // Subgrid
     bool enable_subgrid_gas_gravity = false;

@@ -21,10 +21,11 @@ SimulationEngine::SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5,
     diagnostics.update_physics(state, current_ts, config);
     last_debug_time = std::chrono::high_resolution_clock::now();
 
-    logger.log(diag);
+    logger.log(diag, conf);
 
     if (config.save_HDF5_every_delta_a > 0.0) {
-        h5_writer.save_snapshot(snapshot_count, cycle_count, state, config);
+        h5_writer.save_snapshot(snapshot_count, cycle_count, state, config,
+                                current_ts);
         snapshot_count++;
         next_output_a = config.a_start + config.save_HDF5_every_delta_a;
     }
@@ -43,10 +44,6 @@ TimestepInfo SimulationEngine::get_timestep() const {
     // Get raw physics constraints
     ts.dt_hydro = state.gas.get_cfl_timestep();
     ts.dt_grav = state.dm.get_gravity_timestep(config);
-
-    // We calculate cooling just for logging/diagnostics.
-    // It does NOT influence the macro-step
-    ts.dt_cool = state.gas.get_cooling_timestep(state.scale_factor);
 
     // The Macro Step is bounded by the SLOWER of the two primary physics
     double base_macro = std::max(ts.dt_hydro, ts.dt_grav);
@@ -109,7 +106,8 @@ void SimulationEngine::step() {
     if (config.save_HDF5_every_delta_a > 0.0 &&
         (!needs_more_cycles || must_save_snapshot)) {
         ScopedTimer io_timer(diagnostics, TimerRegion::IO);
-        h5_writer.save_snapshot(snapshot_count, cycle_count, state, config);
+        h5_writer.save_snapshot(snapshot_count, cycle_count, state, config,
+                                current_ts);
 
         snapshot_count++;
         while (next_output_a <= state.scale_factor) {
@@ -117,15 +115,16 @@ void SimulationEngine::step() {
         }
     }
 
-    // Replace the old DEBUG_INFO_EVERY_CYCLES check with this:
     auto now = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = now - last_debug_time;
 
     if (config.debug_info_every_seconds > 0.0 &&
         (!needs_more_cycles ||
          elapsed.count() >= config.debug_info_every_seconds)) {
+        // Update dt_cool for diagnostics
+        current_ts.dt_cool = state.gas.get_cooling_timestep(state.scale_factor);
         diagnostics.update_physics(state, current_ts, config);
-        logger.log(diagnostics);
+        logger.log(diagnostics, config);
         diagnostics.reset_accumulators();
 
         // Reset the timer for the next interval

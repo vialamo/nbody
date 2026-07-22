@@ -3,6 +3,8 @@
 #include <fstream>
 #include <string>
 
+struct Config;
+
 // Forward declaration
 class Diagnostics;
 
@@ -20,5 +22,5 @@ class Logger {
     ~Logger();
 
     void write_header();
-    void log(const Diagnostics& diag);
+    void log(const Diagnostics& diag, const Config& conf);
 };

@@ -187,13 +187,22 @@ void ParticleSystem::compute_pp_forces(const Config& config,
             ? static_cast<int>(ceil(config.cutoff_radius / config.cell_size))
             : config.mesh_size / 2;
     const int N = config.mesh_size;
+    const double cell_size = config.cell_size;
     const double domain_size = config.domain_size;
     const double G = config.G;
     const double soft_sq = config.softening_squared;
     const double cutoff_sq = config.cutoff_radius_squared;
-    const double r_s = config.PM_smoothing_cells * config.cell_size;
+    const double r_s = config.PM_smoothing_cells * cell_size;
     const bool use_pm = config.use_PM;
     const size_t n_parts = num_particles;
+
+    int dx_start =
+        use_pm
+            ? -static_cast<int>(ceil(config.cutoff_radius / cell_size))
+            : 0;
+    int dx_end =
+        use_pm ? static_cast<int>(ceil(config.cutoff_radius / cell_size))
+               : N - 1;
 
 #ifdef USE_GPU
     if (config.enable_GPU) {
@@ -223,21 +232,21 @@ void ParticleSystem::compute_pp_forces(const Config& config,
 #pragma omp target teams distribute parallel for
         for (size_t i = 0; i < n_parts; ++i) {
             double p1_x = d_px[i], p1_y = d_py[i], p1_z = d_pz[i];
-            int ix = static_cast<int>(p1_x / config.cell_size);
-            int iy = static_cast<int>(p1_y / config.cell_size);
-            int iz = static_cast<int>(p1_z / config.cell_size);
+            int ix = static_cast<int>(p1_x / cell_size);
+            int iy = static_cast<int>(p1_y / cell_size);
+            int iz = static_cast<int>(p1_z / cell_size);
 
             double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
 
-            for (int dx_cell = -search_radius; dx_cell <= search_radius;
-                 ++dx_cell) {
-                for (int dy_cell = -search_radius; dy_cell <= search_radius;
-                     ++dy_cell) {
-                    for (int dz_cell = -search_radius; dz_cell <= search_radius;
-                         ++dz_cell) {
-                        int neighbor_ix = (ix + dx_cell + N) % N;
-                        int neighbor_iy = (iy + dy_cell + N) % N;
-                        int neighbor_iz = (iz + dz_cell + N) % N;
+            for (int dx_cell = dx_start; dx_cell <= dx_end; ++dx_cell) {
+                for (int dy_cell = dx_start; dy_cell <= dx_end; ++dy_cell) {
+                    for (int dz_cell = dx_start; dz_cell <= dx_end; ++dz_cell) {
+                        int neighbor_ix =
+                            use_pm ? (((ix + dx_cell) % N) + N) % N : dx_cell;
+                        int neighbor_iy =
+                            use_pm ? (((iy + dy_cell) % N) + N) % N : dy_cell;
+                        int neighbor_iz =
+                            use_pm ? (((iz + dz_cell) % N) + N) % N : dz_cell;
                         int cell_idx =
                             neighbor_iz * N * N + neighbor_iy * N + neighbor_ix;
 
@@ -327,15 +336,15 @@ void ParticleSystem::compute_pp_forces(const Config& config,
             int num_neighbors = 0;
 
             // Gather: Linearly pull from sorted memory
-            for (int dx_cell = -search_radius; dx_cell <= search_radius;
-                 ++dx_cell) {
-                for (int dy_cell = -search_radius; dy_cell <= search_radius;
-                     ++dy_cell) {
-                    for (int dz_cell = -search_radius; dz_cell <= search_radius;
-                         ++dz_cell) {
-                        int neighbor_ix = (((ix + dx_cell) % N) + N) % N;
-                        int neighbor_iy = (((iy + dy_cell) % N) + N) % N;
-                        int neighbor_iz = (((iz + dz_cell) % N) + N) % N;
+            for (int dx_cell = dx_start; dx_cell <= dx_end; ++dx_cell) {
+                for (int dy_cell = dx_start; dy_cell <= dx_end; ++dy_cell) {
+                    for (int dz_cell = dx_start; dz_cell <= dx_end; ++dz_cell) {
+                        int neighbor_ix =
+                            use_pm ? (((ix + dx_cell) % N) + N) % N : dx_cell;
+                        int neighbor_iy =
+                            use_pm ? (((iy + dy_cell) % N) + N) % N : dy_cell;
+                        int neighbor_iz =
+                            use_pm ? (((iz + dz_cell) % N) + N) % N : dz_cell;
                         int cell_idx =
                             neighbor_iz * N * N + neighbor_iy * N + neighbor_ix;
 
@@ -660,23 +669,6 @@ void ParticleSystem::compute_gas_dm_pp_forces(const GasGrid& gas,
             acc_z[i] += local_acc_z;
         }
     }
-}
-
-double ParticleSystem::calculate_kinetic_energy(double a) const {
-    double kinetic_energy = 0.0;
-
-#pragma omp parallel for reduction(+ : kinetic_energy)
-    for (size_t i = 0; i < num_particles; ++i) {
-        double vx = vel_x[i];
-        double vy = vel_y[i];
-        double vz = vel_z[i];
-
-        double proper_vel_sq =
-            (a * vx) * (a * vx) + (a * vy) * (a * vy) + (a * vz) * (a * vz);
-
-        kinetic_energy += 0.5 * mass[i] * proper_vel_sq;
-    }
-    return kinetic_energy;
 }
 
 double ParticleSystem::get_gravity_timestep(const Config& config) const {

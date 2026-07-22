@@ -1,34 +1,69 @@
 #pragma once
+#include <string>
+#include <vector>
+
 #include "config.h"
 
-namespace cooling {
+class Cooling {
+   private:
+    struct CoolingData {
+        std::vector<double> redshift;
+        std::vector<double> density;
+        std::vector<double> temperature;
+        std::vector<double> cooling_metal;
+        std::vector<double> heating_metal;
+        std::vector<double> cooling_primordial;
+        std::vector<double> heating_primordial;
+        size_t Nz, Nd, Nt;
+    };
 
-constexpr int MAX_ITER = 50;
+    // Encapsulated state
+    CoolingData cooling_data;
+    bool use_table = false;
+    double mean_rho_code = 0.0;
+    double subgrid_clumping_A = 0.0;
 
-void initialize(const Config& config);
+    // Private helper methods
+    double compute_clumping_factor(double rho_code, double a,
+                                   const Config& config) const;
 
-// Convert code internal energy to Temperature (Kelvin)
-inline double get_temp_from_internal_energy(double u_code, double a,
-                                            const Config& config) {
-    return u_code * (a * a) * config.factor_u_to_t;
-}
+    void load_cooling_tables(const Config& config);
 
-// Convert Temperature (Kelvin) to code internal energy
-inline double get_internal_energy_from_temp(double T_kelvin, double a,
-                                            const Config& config) {
-    return (T_kelvin * config.factor_t_to_u) / (a * a);
-}
+    int get_index(double value, const std::vector<double>& axis) const;
 
-// Computes the cooling rate Lambda in code units [u_code / t_code]
-// u_code is the specific internal energy.
-// rho_code is the code density.
-double compute_cooling_rate(double u_code, double rho_code, double a,
-                            const Config& config);
+    double trilinear_interpolate(const std::vector<double>& data, double z,
+                                 double log_nH, double log_T) const;
 
-// Implicitly solves for the new internal energy after cooling over timestep dt
-// Uses Newton-Raphson to ensure stability for stiff cooling rates.
-double solve_cooling_implicit(double u_old, double rho_code, double a,
-                              double dt, const Config& config,
-                              int& iterations_taken);
+    double compute_tabulated_cooling(double u_code, double rho_code, double Z,
+                                     double a, double clumping_factor,
+                                     const Config& config) const;
 
-}  // namespace cooling
+   public:
+    static constexpr int MAX_ITER = 50;
+
+    // Constructor replaces the old initialize() function
+    Cooling(const Config& config);
+
+    // Inline conversion helpers
+    static inline double get_temp_from_internal_energy(double u_code, double a,
+                                                       const Config& config) {
+        return u_code * (a * a) * config.factor_u_to_t;
+    }
+
+    static inline double get_internal_energy_from_temp(double T_kelvin,
+                                                       double a,
+                                                       const Config& config) {
+        return (T_kelvin * config.factor_t_to_u) / (a * a);
+    }
+
+    // Main public interfaces
+    double compute_du_dt(double u_code, double rho_code, double Z, double a,
+                         const Config& config) const;
+
+    double solve_cooling_implicit(double u_old, double rho_code, double Z,
+                                  double a, double dt, double u_rad_floor,
+                                  const Config& config,
+                                  int& iterations_taken) const;
+
+    double get_u_rad_floor(double a, const Config& config) const;
+};

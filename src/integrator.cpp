@@ -400,11 +400,15 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
 
             // Hydro Drift
             if (config.use_hydro) {
-                ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
-                state.gas.hydro_step(dt_h);
+                {
+                    ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
+                    state.gas.hydro_step(dt_h);
+                }
                 if (config.enable_cooling) {
-                    diag.add_radiated_energy(
-                        state.gas.apply_cooling(dt_h, state.scale_factor));
+                    ScopedTimer cooling_timer(diag, TimerRegion::Cool);
+                    state.gas.apply_cooling(dt_h, state.scale_factor);
+                    diag.add_substeps(SubstepCounter::Cool,
+                                      state.gas.get_cooling_total_cycles());
                 }
             }
 
@@ -488,13 +492,16 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
 
         // Full Macro-Step Drift for Gas
         if (config.use_hydro) {
-            ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
-            state.gas.hydro_step(ts.dt_macro);
+            {
+                ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
+                state.gas.hydro_step(ts.dt_macro);
+            }
 
             if (config.enable_cooling) {
-                double e_lost =
-                    state.gas.apply_cooling(ts.dt_macro, state.scale_factor);
-                diag.add_radiated_energy(e_lost);  // Log lost energy
+                ScopedTimer cooling_timer(diag, TimerRegion::Cool);
+                state.gas.apply_cooling(ts.dt_macro, state.scale_factor);
+                diag.add_substeps(SubstepCounter::Cool,
+                                  state.gas.get_cooling_total_cycles());
             }
         }
 
@@ -518,12 +525,16 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
 
         // HYDRODYNAMICS
         if (config.use_hydro) {
-            ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
-            state.gas.hydro_step(dt);
+            {
+                ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
+                state.gas.hydro_step(dt);
+            }
 
             if (config.enable_cooling) {
-                double e_lost = state.gas.apply_cooling(dt, state.scale_factor);
-                diag.add_radiated_energy(e_lost);  // Log lost energy
+                ScopedTimer cooling_timer(diag, TimerRegion::Cool);
+                state.gas.apply_cooling(dt, state.scale_factor);
+                diag.add_substeps(SubstepCounter::Cool,
+                                  state.gas.get_cooling_total_cycles());
             }
         }
 

@@ -7,6 +7,7 @@
 #include <iostream>
 #include <sstream>
 
+#include "config.h"
 #include "diagnostics.h"
 
 // Returns the Peak Resident Set Size (RSS) in Megabytes
@@ -71,22 +72,23 @@ Logger::~Logger() {
 void Logger::write_header() {
     if (!log_file.is_open() || header_written) return;
 
-    log_file << "cycle,sim_time,scale_factor,"
-             << "total_mass_gas,total_mass_dm,total_momentum_gas_x,total_"
-                "momentum_gas_y,total_momentum_gas_z,total_momentum_dm_x,total_"
-                "momentum_dm_y,total_momentum_dm_z,"
-             << "ke_gas,ke_dm,pe_dm,ie_gas,radiated_energy,"
-             << "dt_cfl,dt_gravity,dt_cool,dt_final,"
-             << "max_gas_density,max_gas_pressure,max_gas_velocity,"
-             << "wall_time_total,wall_time_pm,wall_time_pp,wall_time_hydro,"
-                "wall_time_io,cumulative_wall_time,"
-                "wall_time_GPU_transf,wall_time_GPU_back,wall_time_GPU_compute,"
-                "memory_peak,memory_current,"
-             << "avg_substeps_hydro,avg_substeps_gravity\n";
+    log_file
+        << "cycle,sim_time,scale_factor,"
+        << "total_mass_gas,total_mass_dm,total_momentum_gas_x,total_"
+           "momentum_gas_y,total_momentum_gas_z,total_momentum_dm_x,total_"
+           "momentum_dm_y,total_momentum_dm_z,"
+        << "ke_gas,ke_dm,pe_dm,ie_gas,radiated_energy,heated_energy,"
+        << "dt_cfl,dt_gravity,dt_cool,dt_final,"
+        << "max_gas_density,max_gas_pressure,max_gas_velocity,"
+        << "wall_time_total,wall_time_pm,wall_time_pp,wall_time_hydro,"
+           "wall_time_cooling,wall_time_io,cumulative_wall_time,"
+           "wall_time_GPU_transf,wall_time_GPU_back,wall_time_GPU_compute,"
+           "memory_peak,memory_current,"
+        << "avg_substeps_hydro,avg_substeps_gravity,avg_substeps_cooling\n";
     header_written = true;
 }
 
-void Logger::log(const Diagnostics& diag) {
+void Logger::log(const Diagnostics& diag, const Config& conf) {
     if (!header_written) {
         write_header();
     }
@@ -111,26 +113,27 @@ void Logger::log(const Diagnostics& diag) {
                  << diag.total_momentum_dm.y() << ","
                  << diag.total_momentum_dm.z() << "," << diag.ke_gas << ","
                  << diag.ke_dm << "," << diag.pe_total << "," << diag.ie_gas
-                 << "," << diag.total_radiated_energy << "," << diag.dt_cfl
-                 << "," << diag.dt_gravity << "," << diag.dt_cool << ","
+                 << "," << diag.total_radiated_energy << ","
+                 << diag.total_heated_energy << "," << diag.dt_cfl << ","
+                 << diag.dt_gravity << "," << diag.dt_cool << ","
                  << diag.dt_final << "," << diag.max_gas_density << ","
                  << diag.max_gas_pressure << "," << diag.max_gas_velocity << ","
                  << diag.get_average(TimerRegion::Step) << ","
                  << diag.get_average(TimerRegion::PM) << ","
                  << diag.get_average(TimerRegion::PP) << ","
                  << diag.get_average(TimerRegion::Hydro) << ","
-                 << diag.get_io_time() << "," << wall_time_s << "," 
+                 << diag.get_average(TimerRegion::Cool) << ","
+                 << diag.get_io_time() << "," << wall_time_s << ","
                  << diag.get_prof_average(ProfRegion::Transf) / 1000.0 << ","
                  << diag.get_prof_average(ProfRegion::Ret) / 1000.0 << ","
                  << diag.get_prof_average(ProfRegion::Compute) / 1000.0 << ","
                  << peak_mem << "," << curr_mem << ","
                  << diag.get_average_substeps(SubstepCounter::Hydro) << ","
-                 << diag.get_average_substeps(SubstepCounter::Gravity) << "\n";
+                 << diag.get_average_substeps(SubstepCounter::Gravity) << ","
+                 << diag.get_average_substeps(SubstepCounter::Cool) << "\n";
     }
 
     // Write to stdout (console)
-    double mass_err = diag.total_mass() - 1.0;
-
     std::cout << "[Cycle " << diag.cycle << "] "
               << "Mem (peak/curr MB): " << peak_mem << ", " << curr_mem << " | "
               << "Wall: " << format_double(wall_time_s, 1) << "s | "
@@ -138,66 +141,44 @@ void Logger::log(const Diagnostics& diag) {
               << "a: " << format_double(diag.scale_factor, 3) << "\n";
 
     std::cout << "  [Physics]" << "\n";
-    std::cout << "    - Mass (P/G/T):   "
-              << format_double(diag.total_mass_dm, 4) << " | "
-              << format_double(diag.total_mass_gas, 4) << " | "
-              << format_double(diag.total_mass(), 4)
-              << " (Err: " << std::scientific << std::setprecision(1)
-              << mass_err << std::fixed << ")" << "\n";
-
-    std::cout << "    - Momentum (P/G): ("
-              << format_double(diag.total_momentum_dm.x(), 1, true) << ", "
-              << format_double(diag.total_momentum_dm.y(), 1, true) << ", "
-              << format_double(diag.total_momentum_dm.z(), 1, true) << ") | ("
-              << format_double(diag.total_momentum_gas.x(), 1, true) << ", "
-              << format_double(diag.total_momentum_gas.y(), 1, true) << ", "
-              << format_double(diag.total_momentum_gas.z(), 1, true) << ")"
-              << "\n";
-
-    std::cout << "    - Energy (KE/PE/IE/Rad): "
-              << format_double(diag.ke_dm + diag.ke_gas, 3, true) << " | "
-              << format_double(diag.pe_total, 3, true) << " | "
-              << format_double(diag.ie_gas, 3, true) << " | "
-              << format_double(diag.total_radiated_energy, 3, true)
-              << " (Total: " << format_double(diag.total_energy(), 3, true)
-              << ")" << "\n";
+    std::cout << "    - Mass Err: " << format_double(diag.mass_err, 1, true)
+              << " | Momentum: " << format_double(diag.total_momentum, 1, true)
+              << " | Gas Thermo Err: "
+              << format_double(diag.energy_err, 1, true) << "\n";
 
     std::cout << "  [Stability]\n";
     std::cout << "    - Timestep (Macro): "
-              << format_double(diag.dt_final, 2, true)
-              << " | (Grav): " << format_double(diag.dt_gravity, 2, true)
-              << " | (CFL): " << format_double(diag.dt_cfl, 2, true)
-              << " | (Cool): " << format_double(diag.dt_cool, 2, true) << "\n";
-    std::cout << "    - Subcycles/step:   Hydro: "
-              << format_double(diag.get_average_substeps(SubstepCounter::Hydro),
-                               1)
-              << " | Gravity: "
-              << format_double(
-                     diag.get_average_substeps(SubstepCounter::Gravity), 1)
-              << "\n";
-    std::cout << "    - Max(rho): "
-              << format_double(diag.max_gas_density, 2, true)
-              << " | Max(press): "
-              << format_double(diag.max_gas_pressure, 2, true)
-              << " | Max(vel): "
-              << format_double(diag.max_gas_velocity, 2, true) << "\n";
+              << format_double(diag.dt_final, 1, true)
+              << " | Grav: " << format_double(diag.dt_gravity, 1, true)
+              << " | CFL: " << format_double(diag.dt_cfl, 1, true)
+              << " | Cool: " << format_double(diag.dt_cool, 1, true) << "\n";
+    std::cout
+        << "    - Subcycles/step:   Hydro: "
+        << format_double(diag.get_average_substeps(SubstepCounter::Hydro), 1)
+        << " | Gravity: "
+        << format_double(diag.get_average_substeps(SubstepCounter::Gravity), 1)
+        << " | Cooling: "
+        << format_double(diag.get_average_substeps(SubstepCounter::Cool), 1)
+        << "\n";
 
     std::cout << "  [Performance (ms / cycle)]" << "\n";
-    std::cout << "    - Step Avg: "
-              << format_double(diag.get_average(TimerRegion::Step) * 1000.0, 1)
+    std::cout << "    - Step: "
+              << format_double(diag.get_average(TimerRegion::Step) * 1000.0, 0)
               << " | Overhead: "
-              << format_double(diag.get_average_overhead() * 1000.0, 1)
+              << format_double(diag.get_average_overhead() * 1000.0, 0)
               << " | PM: "
-              << format_double(diag.get_average(TimerRegion::PM) * 1000.0, 1)
+              << format_double(diag.get_average(TimerRegion::PM) * 1000.0, 0)
               << " | PP: "
-              << format_double(diag.get_average(TimerRegion::PP) * 1000.0, 1)
+              << format_double(diag.get_average(TimerRegion::PP) * 1000.0, 0)
               << " | Hydro: "
-              << format_double(diag.get_average(TimerRegion::Hydro) * 1000.0, 1)
+              << format_double(diag.get_average(TimerRegion::Hydro) * 1000.0, 0)
+              << " | Cooling: "
+              << format_double(diag.get_average(TimerRegion::Cool) * 1000.0, 0)
               << "\n"
               << "    - I/O Spike: "
-              << format_double(diag.get_io_time() * 1000.0, 1) << "\n";
+              << format_double(diag.get_io_time() * 1000.0, 0) << "\n";
     if (diag.get_prof_average(ProfRegion::Compute) > 0.0) {
-        std::cout << "    - Transfer Avg: "
+        std::cout << "    - GPU Transfer: "
                   << format_double(
                          diag.get_prof_average(ProfRegion::Transf) / 1000.0, 1)
                   << " | Return: "

@@ -6,8 +6,8 @@
 #include "config.h"
 #include "state.h"
 
-enum class TimerRegion { Step, PM, PP, Hydro, IO, NUM_REGIONS };
-enum class SubstepCounter { Hydro, Gravity, NUM_COUNTERS };
+enum class TimerRegion { Step, PM, PP, Hydro, Cool, IO, NUM_REGIONS };
+enum class SubstepCounter { Hydro, Gravity, Cool, NUM_COUNTERS };
 enum class ProfRegion { Transf, Ret, Compute, NUM_PROF_REGIONS };
 
 class Diagnostics {
@@ -18,14 +18,21 @@ class Diagnostics {
     double scale_factor = 1.0;
     double total_mass_gas = 0.0;
     double total_mass_dm = 0.0;
+    double mass_err = 0.0;
     Eigen::Vector3d total_momentum_gas = {0.0, 0.0, 0.0};
     Eigen::Vector3d total_momentum_dm = {0.0, 0.0, 0.0};
+    double total_momentum = 0.0;
     double ke_gas = 0.0, ke_dm = 0.0, pe_total = 0.0, ie_gas = 0.0;
     double dt_cfl = 0.0, dt_gravity = 0.0, dt_cool = 0.0, dt_final = 0.0;
     double max_gas_density = 0.0, max_gas_pressure = 0.0,
            max_gas_velocity = 0.0;
     double total_radiated_energy = 0.0;
+    double total_heated_energy = 0.0;
+    double initial_energy = 0.0;
     size_t non_converged_cooling_cells = 0;
+    double energy_err = 0.0;
+    double initial_gas_energy = 0.0;
+    bool energy_initialized = false;
 
     // Performance State
     int accumulated_cycles = 0;
@@ -51,13 +58,8 @@ class Diagnostics {
     double get_average_overhead() const;
     double get_io_time() const;
 
-    double total_mass() const;
-    double total_energy() const;
-
     void update_physics(const SimState& state, const TimestepInfo& ts,
                         const Config& config);
-
-    void add_radiated_energy(double e) { total_radiated_energy += e; }
 
     void add_substeps(SubstepCounter counter, int count = 1) {
         accumulated_substeps[static_cast<size_t>(counter)] += count;

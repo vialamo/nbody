@@ -147,10 +147,16 @@ void Config::load(const std::string& filename) {
     physical_softening_cap_a = config_file.get_double(
         "gravity", "softening_cap_scale_factor", physical_softening_cap_a);
 
+    fixed_ics =
+        config_file.get_bool("initial_conditions", "fixed_ics", fixed_ics);
+    invert_phases = config_file.get_bool("initial_conditions", "invert_phases",
+                                         invert_phases);
     standing_particles = config_file.get_bool(
         "initial_conditions", "standing_particles", standing_particles);
     initial_gas_temperature_k = config_file.get_double(
         "initial_conditions", "initial_gas_temp_k", initial_gas_temperature_k);
+    seed_metallicity_solar = config_file.get_double(
+        "initial_conditions", "seed_metallicity_solar", seed_metallicity_solar);
     seed = config_file.get_int("initial_conditions", "seed", seed);
 
     use_hydro = config_file.get_bool("hydro", "use_hydro", use_hydro);
@@ -163,6 +169,8 @@ void Config::load(const std::string& filename) {
         config_file.get_double("hydro", "temp_floor_k", temp_floor_k);
     cooling_cutoff_k =
         config_file.get_double("hydro", "cooling_cutoff_k", cooling_cutoff_k);
+    cooling_table_path =
+        config_file.get("hydro", "cooling_table_path", cooling_table_path);
 
     enable_subgrid_gas_gravity = config_file.get_bool(
         "subgrid", "enable_subgrid_gravity", enable_subgrid_gas_gravity);

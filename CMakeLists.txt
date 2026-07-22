@@ -148,12 +148,19 @@ endif()
 # Copy resource files post-build
 if(EXISTS ${CMAKE_SOURCE_DIR}/simulation.ini)
     add_custom_command(
-        TARGET ${PROJECT_NAME} POST_BUILD
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/simulation.ini
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_SOURCE_DIR}/simulation.ini
-            $<TARGET_FILE_DIR:${PROJECT_NAME}>/
-        COMMENT "Copying simulation.ini to executable directory"
+            ${CMAKE_CURRENT_BINARY_DIR}/simulation.ini
+        DEPENDS ${CMAKE_SOURCE_DIR}/simulation.ini
+        COMMENT "Copying simulation.ini to build directory (Source was updated)"
     )
+
+    add_custom_target(CopyIni ALL 
+        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/simulation.ini
+    )
+
+    add_dependencies(${PROJECT_NAME} CopyIni)
 endif()
 
 # ==============================================================================

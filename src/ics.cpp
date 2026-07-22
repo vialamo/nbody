@@ -3,6 +3,7 @@
 #include <cassert>
 #include <random>
 
+#include "constants.h"
 #include "cooling.h"
 #include "integrator.h"
 #include "math_utils.h"
@@ -139,9 +140,37 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
                 // volume scaling to bridge the discrete/continuous gap.
                 double power_spectrum_sqrt = sqrt(true_pk) * amplitude_scaling;
 
+                std::complex<double> current_k = random_k[idx];
+
+                // Invert the phase by multiplying the complex number by -1.
+                // This turns peaks into voids and voids into peaks.
+                if (config.invert_phases) {
+                    current_k = -current_k;
+                }
+
                 // Apply the scaling to the Fourier amplitudes
-                std::complex<double> delta_k =
-                    random_k[idx] * power_spectrum_sqrt;
+                std::complex<double> delta_k;
+                if (config.fixed_ics) {
+                    // Extract the random phase, discard the random magnitude.
+                    // std::abs() on a complex number returns its magnitude.
+                    double mag = std::abs(current_k);
+
+                    // Protect against division by zero
+                    std::complex<double> phase_only =
+                        (mag > 1e-15) ? (current_k / mag)
+                                      : std::complex<double>(0, 0);
+
+                    // Restore the expected baseline FFT magnitude (sqrt of
+                    // total grid cells)
+                    double expected_mag =
+                        std::sqrt(static_cast<double>(M3_real));
+
+                    // Multiply the phase (magnitude = 1) by the theoretical
+                    // amplitude
+                    delta_k = phase_only * expected_mag * power_spectrum_sqrt;
+                } else {
+                    delta_k = current_k * power_spectrum_sqrt;
+                }
 
                 // Convert density contrast to Zel'dovich displacement
                 // potential
@@ -276,6 +305,9 @@ void initialize_gas(SimState& state, const Config& config,
         config.gas_total_mass / std::pow(config.domain_size, 3.0);
     double inv_2dx = 1.0 / (2.0 * config.cell_size);
 
+    double seed_metallicity =
+        config.seed_metallicity_solar * constants::Z_SOLAR;
+
     for (int i = 0; i < M; ++i) {
         for (int j = 0; j < M; ++j) {
             for (int k = 0; k < M; ++k) {
@@ -301,14 +333,16 @@ void initialize_gas(SimState& state, const Config& config,
                                  inv_2dx;
 
                 double rho = mean_gas_rho * (1.0 - div);
-                gas.density.data[idx] = std::max(rho, 1e-12);  // Apply floor
+                double safe_rho = std::max(rho, 1e-12);  // Apply floor
+                gas.density.data[idx] = safe_rho;
+                gas.metal_density.data[idx] = safe_rho * seed_metallicity;
             }
         }
     }
 
     // Initialize Thermodynamics and Velocities
     const double initial_internal_energy =
-        cooling::get_internal_energy_from_temp(config.initial_gas_temperature_k,
+        Cooling::get_internal_energy_from_temp(config.initial_gas_temperature_k,
                                                state.scale_factor, config);
 
     for (size_t i = 0; i < M3_real; ++i) {

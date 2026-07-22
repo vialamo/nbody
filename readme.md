@@ -17,7 +17,7 @@ This repository documents my work in cosmological N-body/hydrodynamics simulatio
     * **HLLC Riemann Solver:** Uses the Harten-Lax-van Leer-Contact (HLLC) approximate Riemann solver to compute fluxes between cells, capturing shocks and contact discontinuities without excessive numerical diffusion.
     * **Operator Splitting:** Employs a multi-physics fractional step method to decouple and integrate hydrodynamics, gravitational kicks, and radiative cooling within a single global timestep.
     * **Two-Way Coupling:** The gas density contributes to the total gravitational field via the PM solver, and the gas momentum/energy is updated by gravitational source terms during the KDK kicks.
-    * **Radiative Cooling:** Implements an unconditionally stable, implicit Backward Euler solver (using Newton-Raphson root-finding) to calculate energy loss via Bremsstrahlung radiation, while preserving kinetic energy via the Dual Energy Formalism.
+    * **Radiative Thermodynamics:** Employs an unconditionally stable, implicit Backward Euler solver (using a bisection root-finding method) to evolve gas energy while preserving kinetic energy via the Dual Energy Formalism. It features two operational modes: a baseline analytical model for primordial Bremsstrahlung cooling, and an advanced table-based model that incorporates metallicity-dependent cooling and cosmic ultraviolet background (UVB) heating.
 * **High-Performance Computing (HPC):**
     * **OpenMP Multithreading:** Heavy loops (such as the Riemann solver, mass assignment, and grid calculations) are parallelized across available CPU cores.
     * **SIMD Vectorization:** Core CPU mathematics leverage Eigen and AVX vectorization for cache-friendly, contiguous memory speedups.
@@ -59,17 +59,9 @@ sudo apt install clang lld
 
 
 2. **Compile (with CMake):**
-This project uses Modern CMake to find dependencies, download testing frameworks, and build the executables. You can build the project for standard CPU execution (using AVX/SIMD) or enable NVIDIA GPU offloading.
-**Option A: Standard CPU Build (Default)**
-```bash
-mkdir build && cd build
-cmake ..
-make -j
+This project uses Modern CMake to find dependencies, download testing frameworks, and build the executables. You can build the project for GPU offloading or standard CPU execution (using AVX/SIMD).
 
-```
-
-
-**Option B: GPU Offload Build (Requires NVIDIA HPC SDK or Clang)**
+**Option A: GPU Offload Build (Requires NVIDIA HPC SDK or Clang)**
 ```bash
 mkdir build && cd build
 
@@ -83,24 +75,32 @@ make -j
 
 ```
 
-    This will create two executables inside the `build` directory: the main simulation `asimov` and the automated test suite `run_tests`.
+**Option B: Only CPU Build**
+```bash
+mkdir build && cd build
+cmake -DUSE_GPU_OFFLOAD=OFF ..
+make -j
+
+```
+
+This will create two executables inside the `build` directory: the main simulation `asimov` and the automated test suite `run_tests`.
 
 3.  **Run:**
-    The build process automatically copies the `simulation.ini` file into the `build` directory. You can run the simulation from there:
+The build process automatically copies the `simulation.ini` file into the `build` directory. You can run the simulation from there:
 
-    ```bash
-    # From inside the 'build' directory:
-    ./asimov
-    ```
+```bash
+# From inside the 'build' directory:
+./asimov
+```
 
-    The program will start and automatically load its configuration from `simulation.ini` and create a uniquely timestamped folder inside an `outputs/` directory to safely store all snapshots and diagnostics.
+The program will start and automatically load its configuration from `simulation.ini` and create a uniquely timestamped folder inside an `outputs/` directory to safely store all snapshots and diagnostics.
 
 4.  **Run the automated tests:**
-    To ensure the physics engine and mathematical utilities are functioning correctly on your machine, you can run the built-in test suite:
-    ```bash
-    # From inside the 'build' directory:
-    ctest --output-on-failure
-    ```
+To ensure the physics engine and mathematical utilities are functioning correctly on your machine, you can run the built-in test suite:
+```bash
+# From inside the 'build' directory:
+ctest --output-on-failure
+```
 
 ### Viewer
 1.  **Prerequisites:** Ensure you have Python 3 and the following libraries installed:
@@ -156,7 +156,7 @@ The `/docs` folder contains a guide detailing the physics and algorithms used in
 
 ## Guidebook
 
-The companion document, built from the source files in [`/docs/`](docs/), is a "living book" that organizes and explains all the relevant physics and computer science concepts encountered during the development process. It is written in the style of a guide.
+The companion document, built from the source files in [`/docs/`](docs/), is a "living book" that organizes and explains all the relevant physics and computer science concepts encountered during the development process.
 
 ## Configuration Parameters
 
@@ -193,6 +193,9 @@ Defines the cosmological model of the universe.
 Controls the generation of the primordial density field and particle distributions.
 
 * **`initial_gas_temp_k`**: The physical temperature of the baryonic gas at `start_a`, in Kelvin.
+* **`seed_metallicity_solar`**: The initial uniform metallicity mass fraction (Z) of the gas, expressed as a ratio to the present-day solar metallicity ($Z\odot$). Typically set to 0.0.
+* **`fixed_ics`**: Boolean. If `true`, the Zeldovich field is generated with the exact theoretical power amplitude (while keeping random phases). If false, it defaults to traditional Gaussian random amplitudes and phases.
+* **`invert_phases`**: Boolean. If `true`, the random phases are inverted when generating the Zeldovich field. Running paired simulations with `fixed_ics = true` and inverted phases eliminates in-box cosmic variance.
 * **`standing_particles`**: Boolean. If `true`, all N-body particles remain completely stationary throughout the entire duration of the simulation. Their positions and velocities are never updated. This is strictly a debugging feature.
 * **`seed`**: Integer seed for the random number generator, ensuring reproducible initial density fields.
 
@@ -204,8 +207,9 @@ Configures the fluid dynamics solver for the baryonic gas.
 * **`gamma`**: The adiabatic index (ratio of specific heats) of the gas. Set to `1.6666666667` (5/3) for a monatomic, non-relativistic ideal gas.
 * **`enable_cooling`**: Boolean. If `true`, the code activates the implicit radiative cooling solver to extract thermal energy from the gas over time.
 * **`primordial_mu`**: The mean molecular weight of the gas (e.g., `1.22` for neutral primordial hydrogen/helium gas). Used to accurately map internal energy to physical temperatures.
-* **`temp_floor_k`**: The absolute minimum temperature (in Kelvin) the gas is allowed to reach. Physically, this ensures the gas does not cool below the baseline heat of the universe, such as the Cosmic Microwave Background (CMB). Note that internally, the radiative cooling module halts at `cooling_floor_k` regardless, but this parameter acts as the ultimate mathematical safety net for the hydrodynamics engine.
-* **`cooling_cutoff_k`**: The absolute minimum temperature (in Kelvin) the gas is allowed to reach via radiative cooling. The gas does not radiate below this temperature.
+* **`temp_floor_k`**: The minimum temperature (in Kelvin) the gas is allowed to reach. Physically, this ensures the gas does not cool below the baseline heat of the universe, such as the Cosmic Microwave Background (CMB). Note that internally, the radiative cooling module halts at `cooling_cutoff_k` regardless, but this parameter acts as the ultimate mathematical safety net for the hydrodynamics engine.
+* **`cooling_cutoff_k`**: The minimum temperature (in Kelvin) the gas is allowed to reach via the analytical radiative cooling. The gas does not radiate below this temperature. (Note: This parameter is ignored if a cooling table is provided).
+* **`cooling_table_path`**: The file path to a pre-computed HDF5 cooling table (such as the HM2012 tables provided by Grackle) to compute metallicity-dependent cooling and UVB heating. When a table is provided, the analytical `cooling_cutoff_k` is overridden, and the code instead dynamically halts cooling at either the CMB temperature or `temp_floor_k` (whichever is higher). The code has been tested with the Grackle data files (`CloudyData_UVB=HM2012.h5` is recommended), which can be found [here](https://github.com/grackle-project/grackle_data_files/tree/928696482fbe15d9bac4382de6134d95568f099c/input).
 
 ### `[subgrid]`
 
@@ -296,6 +300,7 @@ If hydrodynamics is enabled (`use_hydro = true`), this group contains the fluid 
 **Group Attributes:**
 
 * **`cumulative_radiated_energy`**: *(Only present if `enable_cooling = true`)*. The total, integrated energy radiated away by the gas up to the current snapshot in code units. To convert this value to true physical energy (Ergs), multiply it by the physical energy unit conversion factor and **multiply by $a^2$**.
+* **`cumulative_photoheating_energy`**: *(Only present if `enable_cooling = true`)*. The total, integrated thermal energy injected into the gas by the cosmic ultraviolet background up to the current snapshot in code units. To convert to true physical energy (Ergs), multiply by the physical energy unit conversion factor and **multiply by $a^2$**.
 * **`cumulative_gravitational_work`**: The total, integrated kinetic energy injected into the gas by the gravitational field up to the current snapshot in code units. To convert this value to true physical energy (Ergs), multiply it by the physical energy unit conversion factor and **multiply by $a^2$**.
 * **`cumulative_expansion_work`**: The total, integrated $P dV$ thermodynamic work performed by the gas against the expanding cosmic metric up to the current snapshot in code units. To convert this value to true physical energy (Ergs), multiply it by the physical energy unit conversion factor and **multiply by $a^2$**.
 
@@ -307,3 +312,5 @@ These datasets are flattened into 1D arrays in row-major order:
 * **`energy`**: The total comoving energy density (Kinetic + Internal). To convert this grid to true physical energy, you must apply the conversion factors and **multiply by $a^2$**.
 * **`pressure`**: Comoving thermal pressure. Like energy, it must be scaled by $a^2$ to reflect physical pressure.
 * **`temperature`**: *(Only present if `enable_cooling = true`)*. Unlike the other grids, the simulation engine explicitly converts the internal energy of the gas into **Physical Kelvin** before writing this array to disk. No scale factor corrections are needed for this dataset.
+* **`metal_density`**: The *comoving* mass density of heavy elements (metals). Like the main gas density, converting this to a true physical density requires applying the mass/volume unit conversions and **dividing by $a^3$**. *(Note: To calculate the dimensionless metallicity fraction, $Z$, for data analysis, you can simply divide this array directly by the `density` array, as the comoving scale factors cancel out).*
+* **`thermal_timescale`**: The time, in code units, required for a cell to radiate all its heat at the current rate (if negative), or to double its current internal energy (if positive).

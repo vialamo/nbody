@@ -1,3 +1,4 @@
+#pragma once
 #include <Eigen/Dense>
 #include <cmath>
 
@@ -24,9 +25,8 @@ class QuadraticInterpolator {
     double a, b, c;
 
    public:
-    QuadraticInterpolator() {}
-    void Set(const Eigen::Vector2d& p1, const Eigen::Vector2d& p2,
-             const Eigen::Vector2d& p3);
+    QuadraticInterpolator(const Eigen::Vector2d& p1, const Eigen::Vector2d& p2,
+                          const Eigen::Vector2d& p3);
 
     inline double evaluate(double x) const { return a * x * x + b * x + c; }
 };

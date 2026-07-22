@@ -3,6 +3,7 @@ import numpy as np
 import glob
 import os
 import sys
+import argparse
 import camb
 from scipy.spatial import cKDTree
 
@@ -223,7 +224,7 @@ def generate_dashboard(snapshot_dir):
     scale_factors, times_gyr, dm_variances, dm_scale_factors = [], [], [], []
     p999_gas_densities, max_gas_densities, max_dm_densities = [], [], []
     p999_temperatures, max_temperatures = [], []
-    kin_energies, therm_energies, rad_energies, cold_gas_fracs, fractional_errors = [], [], [], [], []
+    kin_energies, therm_energies, rad_energies, heat_energies, cold_gas_fracs, fractional_errors = [], [], [], [], [], []
 
     pdf_data, pk_data = {}, {}
     target_indices = [0, len(files)//2, len(files)-1]
@@ -284,6 +285,8 @@ def generate_dashboard(snapshot_dir):
 
                 rad_energy_code = f['Gas'].attrs.get('cumulative_radiated_energy', 0.0)
                 rad_energies.append(rad_energy_code * u_energy_cgs * (a**2))
+                heat_energy_code = f['Gas'].attrs.get('cumulative_photoheating_energy', 0.0)
+                heat_energies.append(heat_energy_code * u_energy_cgs * (a**2))
 
                 current_e_code = np.sum(e_tot) * cell_vol_code
                 if initial_e_code is None:
@@ -293,7 +296,7 @@ def generate_dashboard(snapshot_dir):
                 w_exp_code = f['Gas'].attrs.get('cumulative_expansion_work', 0.0)
 
                 delta_e_code = current_e_code - initial_e_code
-                absolute_error_code = delta_e_code - w_grav_code + w_exp_code + rad_energy_code
+                absolute_error_code = delta_e_code - w_grav_code + w_exp_code + rad_energy_code - heat_energy_code
                 fractional_errors.append(absolute_error_code / abs(initial_e_code) if initial_e_code != 0 else 0.0)
                 
                 mean_rho = np.mean(rho)
@@ -409,6 +412,7 @@ def generate_dashboard(snapshot_dir):
         fig.add_trace(go.Scatter(x=scale_factors, y=kin_energies, name='Kinetic', line=dict(width=2), legend="legend4"), row=2, col=1, secondary_y=False)
         fig.add_trace(go.Scatter(x=scale_factors, y=therm_energies, name='Thermal', line=dict(width=2), legend="legend4"), row=2, col=1, secondary_y=False)
         fig.add_trace(go.Scatter(x=scale_factors, y=rad_energies, name='Radiated', line=dict(dash='dot', width=2), legend="legend4"), row=2, col=1, secondary_y=False)
+        fig.add_trace(go.Scatter(x=scale_factors, y=heat_energies, name='Heated', line=dict(dash='dot', width=2), legend="legend4"), row=2, col=1, secondary_y=False)
         
         fig.add_trace(go.Scatter(x=scale_factors, y=fractional_errors, name='Fractional Error', line=dict(dash='dash', width=1.5), legend="legend4"), row=2, col=1, secondary_y=True)
         
@@ -439,11 +443,6 @@ def generate_dashboard(snapshot_dir):
         fig.update_yaxes(type='log', title_text="Temperature [K]", row=2, col=2, secondary_y=True)
         fig.update_xaxes(title_text="Scale Factor (a)", row=2, col=2)
 
-        sigma_L = sigma_8 * (8.0 / box_size_mpc)**0.9
-        a_limit = 0.3 / sigma_L
-        if a_limit < 1.0:
-            fig.add_vline(x=a_limit, line_width=1, line_dash="dot", line_color="gray", row=2, col=2)
-
     # Cosmic Expansion
     fig.add_trace(go.Scatter(x=times_gyr, y=scale_factors, line=dict(width=2), name='Simulation', showlegend=False), row=2, col=3)
     fig.update_yaxes(range=[0, max(scale_factors)*1.1], title_text="Scale Factor (a)", row=2, col=3)
@@ -467,20 +466,6 @@ def generate_dashboard(snapshot_dir):
             showscale=True,
             showlegend=False
         ), row=3, col=1)
-
-        #mask_mean = (x_data > 0.95) & (x_data < 1.05)
-        #if np.any(mask_mean):
-            #T_line = np.maximum(np.min(y_data[mask_mean]) * (x_bins ** (gamma - 1.0)), floor_k)
-            #fig.add_trace(go.Scatter(x=x_bins, y=T_line, line=dict(color='cyan', dash='dash', width=2), name='Adiabatic Track'), row=3, col=1)
-        
-        #H0_cgs = (hubble * 100.0) * 1e5 / 3.086e24
-        #rho_crit_cgs = (3.0 * H0_cgs**2) / (8.0 * np.pi * G_CGS)
-        #dx_comoving_cm = (box_size_mpc / mesh_size) * 3.086e24
-        #K = (np.pi * gamma * K_B_CGS) / (mu * M_P_CGS * G_CGS)
-        #max_safe_delta = (K * T_floor * scale_factors[-1]) / (16.0 * (dx_comoving_cm**2) * omega_m * rho_crit_cgs)
-        
-        #fig.add_vline(x=max_safe_delta, line_width=2, line_dash="dot", line_color="red", row=3, col=1)
-        #fig.add_vrect(x0=max_safe_delta, x1=np.max(x_data)*10, fillcolor="red", opacity=0.1, line_width=0, row=3, col=1)
         
         fig.update_xaxes(type='log', title_text="Gas Overdensity (rho / bar_rho)", row=3, col=1)
         fig.update_yaxes(type='log', title_text="Temperature [K]", row=3, col=1)
@@ -498,7 +483,7 @@ def generate_dashboard(snapshot_dir):
         f"<b>SIMULATION:</b> {os.path.basename(os.path.normpath(snapshot_dir))}<br><br>"
         f"<b>Box Size:</b> {box_size_mpc} Mpc<br>"
         f"<b>Grid:</b> {mesh_size}³<br>"
-        f"<b>Particles:</b> {num_particles if has_hydro else 'N/A'}<br><br>"
+        f"<b>Particles:</b> {f'{int(np.cbrt(num_particles))}³ ({num_particles})' if num_particles != 'N/A' else 'N/A'}<br><br>"
         f"<b>Cosmology & Physics:</b><br>"
         f"Ω_m: {omega_m:<6} | Hubble (h): {h_val:.2f}<br>"
         f"Ω_b: {omega_b:<6} | Gamma (γ): {gamma:.3f}<br>"
@@ -561,4 +546,42 @@ def generate_dashboard(snapshot_dir):
     webview.start(maximize, window)
 
 if __name__ == "__main__":
-    generate_dashboard(sys.argv[1] if len(sys.argv) > 1 else "./")
+    parser = argparse.ArgumentParser(
+        description="Generate a cosmological simulation dashboard from HDF5 snapshots."
+    )
+    
+    parser.add_argument(
+        "path", 
+        type=str, 
+        help="Path to the simulation directory (or base directory if using --latest)"
+    )
+    
+    parser.add_argument(
+        "-l", "--latest", 
+        action="store_true", 
+        help="Automatically find and load the most recent 'run_*' directory inside the provided path"
+    )
+
+    # Show help if no arguments are provided at all
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(1)
+
+    # Parse the arguments
+    args = parser.parse_args()
+    target_dir = args.path
+
+    # Handle the --latest flag
+    if args.latest:
+        search_pattern = os.path.join(target_dir, "run_*")
+        runs = sorted(glob.glob(search_pattern))
+        
+        if runs:
+            target_dir = runs[-1]
+            print(f"Auto-selected latest run: {target_dir}")
+        else:
+            print(f"Error: No run directories found in '{args.path}'")
+            sys.exit(1)
+
+    # Run the dashboard
+    generate_dashboard(target_dir)
