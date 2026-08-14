@@ -143,8 +143,9 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
     std::cout << "  [Physics]" << "\n";
     std::cout << "    - Mass Err: " << format_double(diag.mass_err, 1, true)
               << " | Momentum: " << format_double(diag.total_momentum, 1, true)
-              << " | Gas Thermo Err: "
-              << format_double(diag.energy_err, 1, true) << "\n";
+              << " | DM Err: " << format_double(diag.dm_energy_err, 1, true)
+              << " | Gas Err: " << format_double(diag.energy_err, 1, true)
+              << "\n";
 
     std::cout << "  [Stability]\n";
     std::cout << "    - Timestep (Macro): "

@@ -22,6 +22,10 @@ static void print_info(const Config& config) {
     std::cout << "G = " << config.G << "\n" << std::endl;
 
     std::cout << "Mesh Size = " << config.mesh_size << "\n";
+    std::cout << "Hydro Mode = " << HydroConfig::to_string(config.hydro_method)
+              << "\n";
+    std::cout << "Initial Setup = "
+              << InitialConfig::to_string(config.initial_setup) << "\n";
 
     std::cout << "Threads: " << omp_get_max_threads() << " | ";
     int num_devices = omp_get_num_devices();
@@ -66,12 +70,12 @@ int main(int argc, char* argv[]) {
     std::cout << "Successfully loaded " << config_filename << std::endl;
 
     if (config.num_threads > 0) {
-        omp_set_num_threads(config.num_threads);    
+        omp_set_num_threads(config.num_threads);
     }
     if (omp_get_num_devices() == 0) {
         config.enable_GPU = false;
     }
-    
+
     print_info(config);
 
     // Create the output directories

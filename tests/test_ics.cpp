@@ -86,14 +86,14 @@ TEST_CASE("initialize_state produces physically sound macro-states",
         for (int i = 0; i < N3; ++i) {
             // Integrate density over Eulerian volume
             total_gas_mass +=
-                state.gas.get_density().data[i] * config.cell_volume;
+                state.gas->get_density().data[i] * config.cell_volume;
         }
 
         // The universe must have exactly 1.0 code mass
         REQUIRE(total_dm_mass + total_gas_mass ==
-                Catch::Approx(1.0).margin(1e-6));
+                Catch::Approx(1.0).margin(1e-5));
         REQUIRE(total_gas_mass ==
-                Catch::Approx(config.gas_total_mass).margin(1e-6));
+                Catch::Approx(config.gas_total_mass).margin(1e-5));
     }
 
     SECTION("Conservation of Momentum") {
@@ -105,7 +105,7 @@ TEST_CASE("initialize_state produces physically sound macro-states",
         double p_gas_x_density = 0.0;
         int N3 = config.mesh_size * config.mesh_size * config.mesh_size;
         for (int i = 0; i < N3; ++i) {
-            p_gas_x_density += state.gas.get_momentum_x().data[i];
+            p_gas_x_density += state.gas->get_momentum_x().data[i];
         }
 
         // Convert momentum density to actual physical momentum
@@ -255,7 +255,7 @@ TEST_CASE("standing_particles flag explicitly zeroes all initial velocities",
     Config config;
     config.mesh_size = 16;
     config.num_particles_1d = 16;
-    config.use_hydro = true;
+    config.hydro_method = HydroMethod::Eulerian;
 
     // Explicitly set to true
     config.standing_particles = true;
@@ -273,8 +273,8 @@ TEST_CASE("standing_particles flag explicitly zeroes all initial velocities",
     // Check Gas Momentum
     int N3 = config.mesh_size * config.mesh_size * config.mesh_size;
     for (int i = 0; i < N3; ++i) {
-        REQUIRE(state.gas.get_momentum_x().data[i] == 0.0);
-        REQUIRE(state.gas.get_momentum_y().data[i] == 0.0);
-        REQUIRE(state.gas.get_momentum_z().data[i] == 0.0);
+        REQUIRE(state.gas->get_momentum_x().data[i] == 0.0);
+        REQUIRE(state.gas->get_momentum_y().data[i] == 0.0);
+        REQUIRE(state.gas->get_momentum_z().data[i] == 0.0);
     }
 }

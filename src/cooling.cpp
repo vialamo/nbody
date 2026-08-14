@@ -352,11 +352,10 @@ double Cooling::solve_cooling_implicit(double u_old, double rho_code, double Z,
         double f_low =
             u_low - u_old - dt * compute_du_dt(u_low, rho_code, Z, a, config);
 
-        // If f_low is positive, the root is below the physical floor.
-        // The bisection will fail, so clamp and exit immediately.
+        // If f_low is positive, the root lies below u_rad_floor.
+        // This happens when rapid cooling + a large dt push the target
+        // below the radiation floor. Just clamp to the floor.
         if (f_low >= 0.0) {
-            std::cout << "warning: bisection failed. Root is under floor"
-                      << std::endl;
             iterations_taken = 0;
             return u_rad_floor;
         }

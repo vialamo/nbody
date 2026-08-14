@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 
-# 1. Load the HDF5 Data
+# Load the HDF5 Data
 file_path = "../build/data/CloudyData_UVB_HM2012.h5"
 
 with h5py.File(file_path, 'r') as f:
@@ -18,9 +18,9 @@ with h5py.File(file_path, 'r') as f:
     cool_metal = f['/CoolingRates/Metals/Cooling'][:]
     heat_metal = f['/CoolingRates/Metals/Heating'][:]
 
-# 2. Setup the Plot
+# Setup the Plot
 fig, ax = plt.subplots(figsize=(10, 7))
-plt.subplots_adjust(bottom=0.3)  # Make room for the sliders below
+plt.subplots_adjust(bottom=0.3)  # Make room for the sliders
 
 # Set initial slider indices (middle of the arrays)
 init_d = len(rho) // 2
@@ -39,7 +39,7 @@ ax.set_ylabel('Rate (erg / s / cm^3)')
 ax.grid(True, which="both", ls="--", alpha=0.5)
 ax.legend()
 
-# 3. Setup the Sliders
+# Setup the Sliders
 ax_d = plt.axes([0.15, 0.15, 0.65, 0.03])
 ax_t = plt.axes([0.15, 0.10, 0.65, 0.03])
 
@@ -47,7 +47,7 @@ ax_t = plt.axes([0.15, 0.10, 0.65, 0.03])
 slider_d = Slider(ax_d, 'Density Index', 0, len(rho)-1, valinit=init_d, valstep=1)
 slider_t = Slider(ax_t, 'Temp Index', 0, len(T)-1, valinit=init_t, valstep=1)
 
-# 4. The Update Function (called every time a slider moves)
+# The Update Function (called every time a slider moves)
 def update(val):
     d_idx = int(slider_d.val)
     t_idx = int(slider_t.val)

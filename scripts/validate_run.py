@@ -65,7 +65,7 @@ def validate_snapshot(file_path, initial_mass=None):
         
         domain_size = config_attr['domain_size']
         mesh_size = config_attr['mesh_size_1d']
-        use_hydro = bool(config_attr['use_hydro'])
+        use_eulerian_hydro = bool(config_attr['hydro_method'] == "eulerian")
         
         sim_time = header_attr['simulation_time']
         scale_factor = header_attr['scale_factor']
@@ -91,14 +91,14 @@ def validate_snapshot(file_path, initial_mass=None):
         out_of_bounds_z = (p_z < 0.0) | (p_z >= domain_size)
         
         total_escaped = np.sum(out_of_bounds_x | out_of_bounds_y | out_of_bounds_z)
-        run_check(total_escaped == 0, "All particles strictly within periodic bounds", f"{total_escaped} particles escaped!")
+        run_check(total_escaped == 0, "All particles within periodic bounds", f"{total_escaped} particles escaped!")
 
         # Compute Dark Matter Clumpiness (Density Variance)
         dm_variance = compute_cic_variance(p_x, p_y, p_z, p_mass, domain_size, mesh_size)
         print(f"    {BLUE}[INFO]{RESET} DM Density Variance (\u03c3\u00b2): {dm_variance:.5e}")
 
         # Conditionally Load and Check Gas Data
-        if use_hydro:
+        if use_eulerian_hydro:
             g_rho = f['Gas/density'][:]
             g_eng = f['Gas/energy'][:]
             g_px = f['Gas/momentum_x'][:]
@@ -115,16 +115,16 @@ def validate_snapshot(file_path, initial_mass=None):
                       "Gas momentum finite (No NaNs/Infs)", "NaNs/Infs detected in gas momentum!")
             run_check(np.isfinite(g_press).all(), "Gas pressure finite (No NaNs/Infs)", "NaNs/Infs detected in gas pressure!")
             
-            # Check Physical Bounds (Strictly Positive)
-            run_check(np.all(g_rho > 0), "Gas density strictly positive", "Negative or zero gas density detected (Floor failed)!")
-            run_check(np.all(g_eng > 0), "Gas energy strictly positive", "Negative or zero gas energy detected (Floor failed)!")
-            run_check(np.all(g_press > 0), "Gas pressure strictly positive", "Negative or zero gas pressure detected (Floor failed)!")
+            # Check Physical Bounds (Positive)
+            run_check(np.all(g_rho > 0), "Gas density positive", "Negative or zero gas density detected (Floor failed)!")
+            run_check(np.all(g_eng > 0), "Gas energy positive", "Negative or zero gas energy detected (Floor failed)!")
+            run_check(np.all(g_press > 0), "Gas pressure positive", "Negative or zero gas pressure detected (Floor failed)!")
             
             # Check Temperature (Only if exported/cooling enabled)
             if 'Gas/temperature' in f:
                 g_temp = f['Gas/temperature'][:]
                 run_check(np.isfinite(g_temp).all(), "Gas temperature finite (No NaNs/Infs)", "NaNs/Infs detected in gas temperature!")
-                run_check(np.all(g_temp > 0), "Gas temperature strictly positive", "Negative or zero gas temperature detected!")
+                run_check(np.all(g_temp > 0), "Gas temperature positive", "Negative or zero gas temperature detected!")
             
             gas_mass = np.sum(g_rho) * cell_volume
             total_mass += gas_mass

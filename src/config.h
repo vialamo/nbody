@@ -1,10 +1,70 @@
 #pragma once
+#include <algorithm>
 #include <string>
+
+enum class HydroMethod { None, Eulerian, MFM, Count };
+
+namespace HydroConfig {
+constexpr const char* method_names[] = {"none", "eulerian", "mfm"};
+
+// Convert Enum -> String
+inline std::string to_string(HydroMethod method) {
+    size_t idx = static_cast<size_t>(method);
+    if (idx < static_cast<size_t>(HydroMethod::Count)) {
+        return method_names[idx];
+    }
+    return "none";
+}
+
+// Convert String -> Enum
+inline HydroMethod from_string(std::string str) {
+    std::transform(str.begin(), str.end(), str.begin(), ::tolower);
+    for (size_t i = 0; i < static_cast<size_t>(HydroMethod::Count); ++i) {
+        if (str == method_names[i]) {
+            return static_cast<HydroMethod>(i);
+        }
+    }
+    return HydroMethod::None;  // Default fallback
+}
+}  // namespace HydroConfig
+
+enum class InitialSetup {
+    Cosmological,
+    SodShockTube,
+    AdiabaticExpansion,
+    Count
+};
+
+namespace InitialConfig {
+constexpr const char* names[] = {"cosmological", "sod_shock_tube",
+                                 "adiabatic_expansion"};
+
+// Convert Enum -> String
+inline std::string to_string(InitialSetup setup) {
+    size_t idx = static_cast<size_t>(setup);
+    if (idx < static_cast<size_t>(InitialSetup::Count)) {
+        return names[idx];
+    }
+    return names[0];
+}
+
+// Convert String -> Enum
+inline InitialSetup from_string(std::string str) {
+    std::transform(str.begin(), str.end(), str.begin(), ::tolower);
+    for (size_t i = 0; i < static_cast<size_t>(InitialSetup::Count); ++i) {
+        if (str == names[i]) {
+            return static_cast<InitialSetup>(i);
+        }
+    }
+    return InitialSetup::Cosmological;  // Default fallback
+}
+}  // namespace InitialConfig
 
 struct Config {
     // Domain
     int mesh_size = 32;
     int num_particles_1d = 32;
+    int num_gas_particles_1d = 32;
     double box_size_mpc = 16.0;
 
     // Cosmology
@@ -21,6 +81,7 @@ struct Config {
     double physical_softening_cap_a = 0.3;
 
     // Initial conditions
+    InitialSetup initial_setup = InitialSetup::Cosmological;
     bool fixed_ics = false;
     bool invert_phases = false;
     bool standing_particles = false;
@@ -29,7 +90,7 @@ struct Config {
     int seed = 42;
 
     // Hydro
-    bool use_hydro = true;
+    HydroMethod hydro_method = HydroMethod::Eulerian;
     double gamma = 5.0 / 3.0;
     bool enable_cooling = true;
     double primordial_mu = 1.22;  // Mean molecular weight for neutral
@@ -37,6 +98,12 @@ struct Config {
     double temp_floor_k = 10.0;
     double cooling_cutoff_k = 10000.0;
     std::string cooling_table_path = "";
+
+    // MFM
+    double mfm_target_neighbors = 64.0;
+    double mfm_neighbor_tolerance = 0.1;
+    int mfm_max_iterations = 50;
+    bool disable_hydro_forces = false;
 
     // Subgrid
     bool enable_subgrid_gas_gravity = false;
@@ -50,6 +117,7 @@ struct Config {
     double PM_smoothing_cells = 1.25;
 
     // Time
+    bool enable_subcycling = true;
     bool use_adaptive_dt = true;
     double max_dt_dynamical_factor = 1e-3;
     double hydro_courant_factor = 0.4;
@@ -60,7 +128,7 @@ struct Config {
 
     // Output
     double save_HDF5_every_delta_a = 0.005;
-    int debug_info_every_seconds = 30;
+    double debug_info_every_seconds = 30;
     bool enable_energy_diagnostics = true;
 
     // HPC
@@ -73,6 +141,7 @@ struct Config {
     double cutoff_radius_cells = 0;
     double cutoff_radius = 0.0, cutoff_radius_squared = 0.0;
     int num_dm_particles = 0;
+    int num_gas_particles = 0;
     double dm_particle_mass = 0.0, gas_total_mass = 0.0;
     double softening_squared = 0.0;
     double base_comoving_softening = 0.0;
@@ -94,10 +163,13 @@ struct Config {
         0.0;  // Converts physical cooling rate (erg/g/s) to code units (du/dt)
 
     // Constant Parameters
-    static constexpr double total_mass = 1;
+    double total_mass = 1;
     static constexpr double domain_size = 1.0;
 
     Config();
     void load(const std::string& filename);
     void compute_derived_data();
+
+   private:
+    void init_derived_units();
 };

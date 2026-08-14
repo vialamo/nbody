@@ -62,43 +62,78 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
 
     double k_gas_code = 0.0, u_gas_code = 0.0;
 
-    if (config.use_hydro) {
-        this->max_gas_density = state.gas.get_density().maxCoeff();
-        this->max_gas_pressure = state.gas.get_pressure().maxCoeff();
-        this->max_gas_velocity = (state.gas.get_velocity_x().array().square() +
-                                  state.gas.get_velocity_y().array().square() +
-                                  state.gas.get_velocity_z().array().square())
+    if (config.hydro_method == HydroMethod::Eulerian) {
+        GasGrid& gas = *state.gas;
+        this->max_gas_density = gas.get_density().maxCoeff();
+        this->max_gas_pressure = gas.get_pressure().maxCoeff();
+        this->max_gas_velocity = (gas.get_velocity_x().array().square() +
+                                  gas.get_velocity_y().array().square() +
+                                  gas.get_velocity_z().array().square())
                                      .sqrt()
                                      .maxCoeff();
-        this->non_converged_cooling_cells =
-            state.gas.get_cooling_failed_cells();
+        this->non_converged_cooling_cells = gas.get_cooling_failed_cells();
 
-        this->total_mass_gas =
-            state.gas.get_density().sum() * config.cell_volume;
+        this->total_mass_gas = gas.get_density().sum() * config.cell_volume;
         this->total_momentum_gas.x() =
-            state.gas.get_momentum_x().sum() * config.cell_volume;
+            gas.get_momentum_x().sum() * config.cell_volume;
         this->total_momentum_gas.y() =
-            state.gas.get_momentum_y().sum() * config.cell_volume;
+            gas.get_momentum_y().sum() * config.cell_volume;
         this->total_momentum_gas.z() =
-            state.gas.get_momentum_z().sum() * config.cell_volume;
+            gas.get_momentum_z().sum() * config.cell_volume;
 
         int total_cells =
             config.mesh_size * config.mesh_size * config.mesh_size;
         Grid3D ke_gas_density(config.mesh_size);
-        ke_gas_density.data =
-            0.5 * (state.gas.get_momentum_x().array().square() +
-                   state.gas.get_momentum_y().array().square() +
-                   state.gas.get_momentum_z().array().square());
+        ke_gas_density.data = 0.5 * (gas.get_momentum_x().array().square() +
+                                     gas.get_momentum_y().array().square() +
+                                     gas.get_momentum_z().array().square());
 
 #pragma omp parallel for simd schedule(static)
         for (int i = 0; i < total_cells; ++i) {
             ke_gas_density.data[i] /=
-                std::max(1e-12, state.gas.get_density().data[i]);
+                std::max(1e-12, gas.get_density().data[i]);
         }
         k_gas_code = ke_gas_density.sum() * config.cell_volume;
-        u_gas_code =
-            (state.gas.get_pressure().array() / (config.gamma - 1.0)).sum() *
-            config.cell_volume;
+        u_gas_code = (gas.get_pressure().array() / (config.gamma - 1.0)).sum() *
+                     config.cell_volume;
+    }
+    if (config.hydro_method == HydroMethod::MFM) {
+        GasParticleSystem& gas = *state.mfm_gas;
+        double max_rho = 0.0, max_p = 0.0, max_v = 0.0;
+        double sum_mass = 0.0;
+        double sum_px = 0.0, sum_py = 0.0, sum_pz = 0.0;
+        double sum_ke = 0.0, sum_ie = 0.0;
+
+#pragma omp parallel for reduction(max : max_rho, max_p, max_v) \
+    reduction(+ : sum_mass, sum_px, sum_py, sum_pz, sum_ke, sum_ie)
+        for (size_t i = 0; i < gas.num_particles; ++i) {
+            max_rho = std::max(max_rho, gas.rho[i]);
+            max_p = std::max(max_p, gas.pressure[i]);
+
+            double v_sq = gas.vel_x[i] * gas.vel_x[i] +
+                          gas.vel_y[i] * gas.vel_y[i] +
+                          gas.vel_z[i] * gas.vel_z[i];
+            max_v = std::max(max_v, std::sqrt(v_sq));
+
+            double m = gas.mass[i];
+            sum_mass += m;
+            sum_px += m * gas.vel_x[i];
+            sum_py += m * gas.vel_y[i];
+            sum_pz += m * gas.vel_z[i];
+
+            sum_ke += 0.5 * m * v_sq;
+            sum_ie += m * gas.u[i];
+        }
+
+        this->max_gas_density = max_rho;
+        this->max_gas_pressure = max_p;
+        this->max_gas_velocity = max_v;
+        this->non_converged_cooling_cells = gas.cooling_failed_cells;
+        this->total_mass_gas = sum_mass;
+        this->total_momentum_gas = {sum_px, sum_py, sum_pz};
+
+        k_gas_code = sum_ke;
+        u_gas_code = sum_ie;
     }
 
     const auto& dm = state.dm;
@@ -143,7 +178,8 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
     this->pe_total = w_code;
 
     // Evaluate Gas Error
-    if (config.use_hydro) {
+    if (config.hydro_method == HydroMethod::Eulerian) {
+        GasGrid& gas = *state.gas;
         double current_gas_energy = k_gas_code + u_gas_code;
 
         if (!energy_initialized) {
@@ -152,10 +188,10 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
         }
 
         double delta_e = current_gas_energy - initial_gas_energy;
-        double w_grav = state.gas.get_accumulated_gravitational_work();
-        double w_exp = state.gas.get_accumulated_expansion_work();
-        double e_rad = state.gas.get_accumulated_radiated_energy();
-        double e_heat = state.gas.get_accumulated_photoheating_energy();
+        double w_grav = gas.get_accumulated_gravitational_work();
+        double w_exp = gas.get_accumulated_expansion_work();
+        double e_rad = gas.get_accumulated_radiated_energy();
+        double e_heat = gas.get_accumulated_photoheating_energy();
 
         double absolute_error = delta_e - w_grav + w_exp + e_rad - e_heat;
         double denominator = std::abs(initial_gas_energy);
@@ -164,7 +200,68 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
 
         total_radiated_energy = e_rad;
         total_heated_energy = e_heat;
+    } else if (config.hydro_method == HydroMethod::MFM) {
+        GasParticleSystem& gas = *state.mfm_gas;
+        double k_gas_code = 0.0;
+        double u_gas_code = 0.0;
+
+// Calculate Total MFM Kinetic and Internal Energy
+#pragma omp parallel for reduction(+ : k_gas_code, u_gas_code)
+        for (size_t i = 0; i < gas.num_particles; ++i) {
+            double vx = gas.vel_x[i];
+            double vy = gas.vel_y[i];
+            double vz = gas.vel_z[i];
+            double m = gas.mass[i];
+
+            // K = 1/2 m v^2
+            k_gas_code += 0.5 * m * (vx * vx + vy * vy + vz * vz);
+            // U = m u
+            u_gas_code += m * gas.u[i];
+        }
+
+        double current_gas_energy = k_gas_code + u_gas_code;
+
+        if (!energy_initialized) {
+            initial_gas_energy = current_gas_energy;
+            energy_initialized = true;
+        }
+
+        double delta_e = current_gas_energy - initial_gas_energy;
+
+        // Fetch Accumulated Work
+        double w_grav = gas.accumulated_gravitational_work;
+        double w_exp = gas.accumulated_expansion_work;
+        double e_rad = gas.accumulated_radiated_energy;
+        double e_heat = gas.accumulated_photoheating_energy;
+
+        // Work-Energy Theorem Balance
+        double absolute_error = delta_e - w_grav + w_exp + e_rad - e_heat;
+        double denominator = std::abs(initial_gas_energy);
+        // Prevent division by zero if starting from a perfectly cold, static
+        // universe
+        this->energy_err = (denominator > 1e-12) ? absolute_error / denominator
+                                                 : absolute_error;
+
+        total_radiated_energy = e_rad;
+        total_heated_energy = e_heat;
     } else {
         this->energy_err = 0.0;
     }
+
+    // Dark Matter Energy Error Diagnostics
+    if (!dm_energy_initialized) {
+        initial_dm_energy = ke_dm;
+        dm_energy_initialized = true;
+    }
+
+    double delta_ke_dm = ke_dm - initial_dm_energy;
+    double w_grav_dm = state.dm.accumulated_gravitational_work;
+    double w_exp_dm = state.dm.accumulated_expansion_work;
+
+    double dm_absolute_error = delta_ke_dm - w_grav_dm + w_exp_dm;
+    double denominator =
+        (initial_dm_energy > 1e-12) ? initial_dm_energy : ke_dm;
+    dm_energy_err = (std::abs(denominator) > 1e-12)
+                        ? std::abs(dm_absolute_error / denominator)
+                        : 0.0;
 }

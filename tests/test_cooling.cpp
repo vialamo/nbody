@@ -70,16 +70,16 @@ TEST_CASE("Cooling rate behaves physically", "[cooling][physics]") {
     SECTION(
         "Implicit solver clamps aggressively cooling gas to the physical "
         "floor") {
-        double hot_temp = 10500.0;  // Just above the floor
+        double expected_floor_k = std::max(config.cooling_cutoff_k, config.temp_floor_k);
+        double hot_temp = expected_floor_k + 10.0;  // Just above the floor
         double u_hot =
             Cooling::get_internal_energy_from_temp(hot_temp, a, config);
 
         // Target physical floor defined in the solver
-        double expected_floor_k = std::max(10000.0, config.temp_floor_k);
         double target_u_floor =
             Cooling::get_internal_energy_from_temp(expected_floor_k, a, config);
 
-        // With a massive dt, it will attempt to cool well below 10,000 K
+        // With a massive dt, it will attempt to cool well below floor
         double massive_dt = 1e15;
         double u_new = cooling.solve_cooling_implicit(
             u_hot, rho, Z, a, massive_dt, target_u_floor, config, iterations);
@@ -119,7 +119,7 @@ TEST_CASE("Implicit backward Euler solver is unconditionally stable",
     SECTION("A massive timestep drops to the floor but never goes negative") {
         double dt_massive = 1e20;  // Practically infinite time
 
-        double expected_floor_k = std::max(10000.0, config.temp_floor_k);
+        double expected_floor_k = std::max(config.cooling_cutoff_k, config.temp_floor_k);
         double u_floor =
             Cooling::get_internal_energy_from_temp(expected_floor_k, a, config);
         double u_final = cooling.solve_cooling_implicit(
@@ -151,6 +151,7 @@ TEST_CASE("GasGrid correctly extracts radiated energy from BOTH arrays",
     double a = 1.0;
 
     GasGrid grid(config);
+    Cooling cooling(config);
 
     auto& rho = GasGridTestAccess::density(grid);
     auto& mx = GasGridTestAccess::momentum_x(grid);
@@ -171,7 +172,7 @@ TEST_CASE("GasGrid correctly extracts radiated energy from BOTH arrays",
 
     // Apply cooling
     double dt = 0.05;
-    grid.apply_cooling(dt, a);
+    grid.apply_cooling(dt, a, cooling);
     double e_lost = grid.get_accumulated_radiated_energy();
 
     // Verify energy was lost

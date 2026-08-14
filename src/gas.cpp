@@ -308,7 +308,6 @@ GasGrid::GasGrid(const Config& conf)
       metal_density(conf.mesh_size),
       internal_energy(conf.mesh_size),
       solver(conf.mesh_size),
-      cooling_module(conf),
       cooling_failed_cells(0),
       cooling_total_cycles(0),
       accumulated_radiated_energy(0.0),
@@ -534,7 +533,8 @@ void GasGrid::hydro_step(double dt) {
 }
 
 double GasGrid::get_cfl_timestep() const {
-    if (!config.use_hydro) return std::numeric_limits<double>::infinity();
+    if (config.hydro_method != HydroMethod::Eulerian)
+        return std::numeric_limits<double>::infinity();
 
     Grid3D cs_sq(config.mesh_size);
     cs_sq.data = (config.gamma * pressure.array() / density.array());
@@ -555,10 +555,10 @@ double GasGrid::get_cfl_timestep() const {
     return (config.cell_size / max_signal_vel) * config.hydro_courant_factor;
 }
 
-void GasGrid::apply_cooling(double dt, double a) {
+void GasGrid::apply_cooling(double dt, double a, Cooling& cooling) {
     if (!config.enable_cooling) return;
 
-    double u_rad_floor = cooling_module.get_u_rad_floor(a, config);
+    double u_rad_floor = cooling.get_u_rad_floor(a, config);
     int total_cells = config.mesh_size * config.mesh_size * config.mesh_size;
 
     const double* d_rho = density.array().data();
@@ -589,8 +589,8 @@ void GasGrid::apply_cooling(double dt, double a) {
             while (t_evolved < dt) {
                 // Determine a sub-step for this cell (e.g., max 10% energy
                 // change)
-                double du_dt = cooling_module.compute_du_dt(
-                    u_current, local_rho, local_Z_frac, a, config);
+                double du_dt = cooling.compute_du_dt(u_current, local_rho,
+                                                     local_Z_frac, a, config);
 
                 double dt_cell = (std::abs(du_dt) > 0.0)
                                      ? 0.1 * (u_current / std::abs(du_dt))
@@ -601,7 +601,7 @@ void GasGrid::apply_cooling(double dt, double a) {
 
                 // Run the implicit solver for this tiny step
                 int iters = 0;
-                u_current = cooling_module.solve_cooling_implicit(
+                u_current = cooling.solve_cooling_implicit(
                     u_current, local_rho, local_Z_frac, a, dt_cell, u_rad_floor,
                     config, iters);
 
@@ -647,7 +647,7 @@ void GasGrid::apply_cooling(double dt, double a) {
     update_primitive_variables();
 }
 
-double GasGrid::get_cooling_timestep(double a) const {
+double GasGrid::get_cooling_timestep(double a, Cooling& cooling) const {
     if (!config.enable_cooling) return std::numeric_limits<double>::infinity();
 
     double min_dt_cool = std::numeric_limits<double>::infinity();
@@ -658,7 +658,7 @@ double GasGrid::get_cooling_timestep(double a) const {
     const double* d_metal = metal_density.array().data();
 
     // Calculate the physical cooling floor
-    double u_rad_floor = cooling_module.get_u_rad_floor(a, config);
+    double u_rad_floor = cooling.get_u_rad_floor(a, config);
 
 #pragma omp parallel for reduction(min : min_dt_cool)
     for (int i = 0; i < total_cells; ++i) {
@@ -669,7 +669,7 @@ double GasGrid::get_cooling_timestep(double a) const {
 
             double Z_frac = d_metal[i] / d_rho[i];
             double du_dt =
-                cooling_module.compute_du_dt(u, d_rho[i], Z_frac, a, config);
+                cooling.compute_du_dt(u, d_rho[i], Z_frac, a, config);
             if (std::abs(du_dt) > 0.0) {
                 // Restrict timestep so internal energy changes at most 10%
                 double dt_cool = 0.1 * (u / std::abs(du_dt));
@@ -683,7 +683,8 @@ double GasGrid::get_cooling_timestep(double a) const {
     return min_dt_cool;
 }
 
-Grid3D GasGrid::compute_thermal_timescale(double a) const {
+Grid3D GasGrid::compute_thermal_timescale(double a,
+                                          const Cooling& cooling) const {
     Grid3D t_therm_grid(config.mesh_size);
 
     double* t_therm = t_therm_grid.array().data();
@@ -702,7 +703,7 @@ Grid3D GasGrid::compute_thermal_timescale(double a) const {
 
             // Calculate the instantaneous change in internal energy
             double du_dt =
-                cooling_module.compute_du_dt(u, d_rho[i], Z_frac, a, config);
+                cooling.compute_du_dt(u, d_rho[i], Z_frac, a, config);
 
             // Prevent division by zero if the cell is in equilibrium
             if (std::abs(du_dt) > 1e-30) {

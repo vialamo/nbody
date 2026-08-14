@@ -13,10 +13,10 @@ This repository documents my work in cosmological N-body/hydrodynamics simulatio
     * **Cosmological Integrator:** A Kick-Drift-Kick (KDK) Leapfrog scheme that handles Hubble drag.
     * **Initial Conditions:** Computation of cosmological initial conditions. Particles are perturbed from a uniform lattice using the Zel'dovich Approximation, deriving physical displacements and velocities from a Gaussian random field generated in Fourier space using the **BBKS (Bardeen-Bond-Kaiser-Szalay) transfer function** to model the Cold Dark Matter power spectrum.
 * **Hydrodynamics:**
-    * **Grid-Based (Eulerian) Solver:** Implements a finite-volume solver for the adiabatic Euler equations on a fixed grid, tracking conservative variables (density, momentum, energy).
-    * **HLLC Riemann Solver:** Uses the Harten-Lax-van Leer-Contact (HLLC) approximate Riemann solver to compute fluxes between cells, capturing shocks and contact discontinuities without excessive numerical diffusion.
+    * **Dual Solvers (Eulerian & MFM):** Offers the choice between a fixed-grid **Eulerian** finite-volume solver and a Lagrangian **Meshless Finite Mass (MFM)** particle-based solver.
+    * **HLLC Riemann Solver:** Both methods utilize the Harten-Lax-van Leer-Contact (HLLC) approximate Riemann solver to compute fluxes.
     * **Operator Splitting:** Employs a multi-physics fractional step method to decouple and integrate hydrodynamics, gravitational kicks, and radiative cooling within a single global timestep.
-    * **Two-Way Coupling:** The gas density contributes to the total gravitational field via the PM solver, and the gas momentum/energy is updated by gravitational source terms during the KDK kicks.
+    * **Two-Way Coupling:** The gas mass natively contributes to the total gravitational field alongside Dark Matter, and the gas kinematics/energy are dynamically updated by gravitational source terms during the KDK kicks.
     * **Radiative Thermodynamics:** Employs an unconditionally stable, implicit Backward Euler solver (using a bisection root-finding method) to evolve gas energy while preserving kinetic energy via the Dual Energy Formalism. It features two operational modes: a baseline analytical model for primordial Bremsstrahlung cooling, and an advanced table-based model that incorporates metallicity-dependent cooling and cosmic ultraviolet background (UVB) heating.
 * **High-Performance Computing (HPC):**
     * **OpenMP Multithreading:** Heavy loops (such as the Riemann solver, mass assignment, and grid calculations) are parallelized across available CPU cores.
@@ -167,8 +167,9 @@ The simulation is configured using a standard INI file format. The configuration
 Defines the spatial properties and resolution of the simulation box.
 
 * **`domain_size`**: The internal code-unit length of the box (typically set to `1.0` for natural units).
-* **`mesh_size_1d`**: The number of grid cells along one axis for the Poisson solver and hydrodynamics (e.g., `32` creates a 32x32x32 computational grid).
+* **`mesh_size_1d`**: The number of grid cells along one axis for the Poisson solver and hydrodynamics, if using the eulerian method (e.g., `32` creates a 32x32x32 computational grid).
 * **`num_particles_1d`**: The number of N-body particles along one axis (e.g., `32` creates 32,768 total particles). Often matched to `mesh_size` to avoid interpolation artifacts.
+* **`num_gas_particles_1d`**: The number of gas particles along one axis, when using MFM for hydrodynamics.
 * **`box_size_mpc`**: The physical comoving size of the simulation box in Megaparsecs (Mpc). Used to map internal code units back to physical reality.
 
 ### `[cosmology]`
@@ -192,6 +193,7 @@ Defines the cosmological model of the universe.
 
 Controls the generation of the primordial density field and particle distributions.
 
+* **`setup`**: Initial configuration for gas and DM. Can be "cosmological" for a normal simulation, but also "sod_shock_tube" or "adiabatic_expansion" to create initial conditions for these specific tests. In these cases, gravity and DM will be automatically disabled and expansion adjusted according to the specific test.
 * **`initial_gas_temp_k`**: The physical temperature of the baryonic gas at `start_a`, in Kelvin.
 * **`seed_metallicity_solar`**: The initial uniform metallicity mass fraction (Z) of the gas, expressed as a ratio to the present-day solar metallicity ($Z\odot$). Typically set to 0.0.
 * **`fixed_ics`**: Boolean. If `true`, the Zeldovich field is generated with the exact theoretical power amplitude (while keeping random phases). If false, it defaults to traditional Gaussian random amplitudes and phases.
@@ -203,13 +205,19 @@ Controls the generation of the primordial density field and particle distributio
 
 Configures the fluid dynamics solver for the baryonic gas.
 
-* **`use_hydro`**: Boolean flag to enable or disable the hydrodynamics solver. If `false`, the code runs as a dark-matter-only N-body simulation.
+* **`hydro_method`**: Te method used for hydrodynamics. It can be "none", "eulerian" or "mfm".
 * **`gamma`**: The adiabatic index (ratio of specific heats) of the gas. Set to `1.6666666667` (5/3) for a monatomic, non-relativistic ideal gas.
 * **`enable_cooling`**: Boolean. If `true`, the code activates the implicit radiative cooling solver to extract thermal energy from the gas over time.
 * **`primordial_mu`**: The mean molecular weight of the gas (e.g., `1.22` for neutral primordial hydrogen/helium gas). Used to accurately map internal energy to physical temperatures.
 * **`temp_floor_k`**: The minimum temperature (in Kelvin) the gas is allowed to reach. Physically, this ensures the gas does not cool below the baseline heat of the universe, such as the Cosmic Microwave Background (CMB). Note that internally, the radiative cooling module halts at `cooling_cutoff_k` regardless, but this parameter acts as the ultimate mathematical safety net for the hydrodynamics engine.
 * **`cooling_cutoff_k`**: The minimum temperature (in Kelvin) the gas is allowed to reach via the analytical radiative cooling. The gas does not radiate below this temperature. (Note: This parameter is ignored if a cooling table is provided).
 * **`cooling_table_path`**: The file path to a pre-computed HDF5 cooling table (such as the HM2012 tables provided by Grackle) to compute metallicity-dependent cooling and UVB heating. When a table is provided, the analytical `cooling_cutoff_k` is overridden, and the code instead dynamically halts cooling at either the CMB temperature or `temp_floor_k` (whichever is higher). The code has been tested with the Grackle data files (`CloudyData_UVB=HM2012.h5` is recommended), which can be found [here](https://github.com/grackle-project/grackle_data_files/tree/928696482fbe15d9bac4382de6134d95568f099c/input).
+
+### `[mfm]`
+
+* **`mfm_target_neighbors`**: The desired effective number of interacting particles enclosed within the smoothing kernel of each gas particle (typically 32).
+* **`mfm_neighbor_tolerance`**: The acceptable deviation from the target number of neighbors (e.g., 0.1). A tighter tolerance improves accuracy but may require more iterations.
+* **`mfm_max_iterations`**: The maximum number of Newton-Raphson iterations the solver is allowed to perform when dynamically adjusting a particle's smoothing length to hit the target number of neighbors.
 
 ### `[subgrid]`
 
@@ -295,22 +303,39 @@ This group contains flat 1D arrays for all N-body dark matter particles.
 
 ### Baryonic Gas (`/Gas`)
 
-If hydrodynamics is enabled (`use_hydro = true`), this group contains the fluid state of the simulation.
+If hydrodynamics is enabled (`hydro_method` is not `none`), this group contains the fluid state of the simulation. The specific datasets written to this group depend on whether the Eulerian or MFM solver is used.
 
-**Group Attributes:**
+**Shared Group Attributes:**
+Regardless of the active hydro solver, the group contains the following energy tracking attributes:
 
-* **`cumulative_radiated_energy`**: *(Only present if `enable_cooling = true`)*. The total, integrated energy radiated away by the gas up to the current snapshot in code units. To convert this value to true physical energy (Ergs), multiply it by the physical energy unit conversion factor and **multiply by $a^2$**.
-* **`cumulative_photoheating_energy`**: *(Only present if `enable_cooling = true`)*. The total, integrated thermal energy injected into the gas by the cosmic ultraviolet background up to the current snapshot in code units. To convert to true physical energy (Ergs), multiply by the physical energy unit conversion factor and **multiply by $a^2$**.
-* **`cumulative_gravitational_work`**: The total, integrated kinetic energy injected into the gas by the gravitational field up to the current snapshot in code units. To convert this value to true physical energy (Ergs), multiply it by the physical energy unit conversion factor and **multiply by $a^2$**.
-* **`cumulative_expansion_work`**: The total, integrated $P dV$ thermodynamic work performed by the gas against the expanding cosmic metric up to the current snapshot in code units. To convert this value to true physical energy (Ergs), multiply it by the physical energy unit conversion factor and **multiply by $a^2$**.
+* **`cumulative_radiated_energy`**: *(Only present if `enable_cooling = true`)*. The total, integrated energy radiated away by the gas up to the current snapshot in code units. To convert this value to true physical energy (Ergs), multiply it by the physical energy unit conversion factor and by $a^2$.
+* **`cumulative_photoheating_energy`**: *(Only present if `enable_cooling = true`)*. The total, integrated thermal energy injected into the gas by the cosmic ultraviolet background up to the current snapshot in code units. To convert to true physical energy (Ergs), multiply by the physical energy unit conversion factor and by $a^2$.
+* **`cumulative_gravitational_work`**: The total, integrated kinetic energy injected into the gas by the gravitational field up to the current snapshot in code units. To convert this value to true physical energy (Ergs), multiply it by the physical energy unit conversion factor and by $a^2$.
+* **`cumulative_expansion_work`**: The total, integrated $P dV$ thermodynamic work performed by the gas against the expanding cosmic metric up to the current snapshot in code units. To convert this value to true physical energy (Ergs), multiply it by the physical energy unit conversion factor and by $a^2$.
 
-**3D Eulerian Grids:**
-These datasets are flattened into 1D arrays in row-major order:
+#### Eulerian Mesh Datasets (`hydro_method = "eulerian"`)
+
+If the Eulerian solver is used, the data is exported as 3D grids flattened into 1D arrays in row-major order:
 
 * **`density`**: The *comoving* mass density. Because the physical volume of the grid cells expands with the universe, to calculate the true physical density, you must multiply this array by the physical mass/volume unit conversions and **divide by $a^3$**.
 * **`momentum_[x,y,z]`**: Comoving momentum density.
 * **`energy`**: The total comoving energy density (Kinetic + Internal). To convert this grid to true physical energy, you must apply the conversion factors and **multiply by $a^2$**.
 * **`pressure`**: Comoving thermal pressure. Like energy, it must be scaled by $a^2$ to reflect physical pressure.
-* **`temperature`**: *(Only present if `enable_cooling = true`)*. Unlike the other grids, the simulation engine explicitly converts the internal energy of the gas into **Physical Kelvin** before writing this array to disk. No scale factor corrections are needed for this dataset.
-* **`metal_density`**: The *comoving* mass density of heavy elements (metals). Like the main gas density, converting this to a true physical density requires applying the mass/volume unit conversions and **dividing by $a^3$**. *(Note: To calculate the dimensionless metallicity fraction, $Z$, for data analysis, you can simply divide this array directly by the `density` array, as the comoving scale factors cancel out).*
+* **`temperature`**: Unlike the other grids, the simulation engine explicitly converts the internal energy of the gas into **Physical Kelvin** before writing this array to disk. No scale factor corrections are needed for this dataset.
+* **`metal_density`**: The *comoving* mass density of heavy elements (metals). Like the main gas density, converting this to a true physical density requires applying the mass/volume unit conversions and **dividing by $a^3$**. *(Note: To calculate the dimensionless metallicity fraction, $Z$, for data analysis, you can divide this array by the `density` array, as the comoving scale factors cancel out).*
 * **`thermal_timescale`**: The time, in code units, required for a cell to radiate all its heat at the current rate (if negative), or to double its current internal energy (if positive).
+
+#### MFM Particle Datasets (`hydro_method = "mfm"`)
+
+If the Meshless Finite Mass (MFM) solver is used, the data is exported as 1D arrays where each index corresponds to a specific gas particle:
+
+* **`position_[x,y,z]`**: The comoving coordinates of the gas particles.
+* **`velocity_[x,y,z]`**: The comoving velocities (peculiar velocities) of the gas particles.
+* **`acceleration_[x,y,z]`**: The total comoving accelerations experienced by the particles.
+* **`mass`**: The mass of each gas particle.
+* **`smoothing_length`**: The adaptive kernel radius ($h$) for each particle.
+* **`density`**: The *comoving* mass density computed at the particle's location. Apply volume conversions and **divide by $a^3$** for physical density.
+* **`pressure`**: Comoving thermal pressure. Must be scaled by $a^2$ for physical pressure.
+* **`internal_energy`**: The specific comoving internal energy (energy per unit mass, $u$) of the particle.
+* **`metal_fraction`**: Unlike the Eulerian solver which tracks metal density, MFM directly tracks the dimensionless mass fraction of metals ($Z$). No conversions are needed.
+* **`temperature`**: Converted internally and written directly in **Physical Kelvin**. No scale factor corrections are required.

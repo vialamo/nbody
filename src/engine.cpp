@@ -1,6 +1,7 @@
 #include "engine.h"
 
 #include <algorithm>
+#include <iostream>
 
 #include "gas.h"
 #include "ics.h"
@@ -42,8 +43,20 @@ TimestepInfo SimulationEngine::get_timestep() const {
     }
 
     // Get raw physics constraints
-    ts.dt_hydro = state.gas.get_cfl_timestep();
-    ts.dt_grav = state.dm.get_gravity_timestep(config);
+    if (config.hydro_method == HydroMethod::Eulerian) {
+        ts.dt_hydro = state.gas->get_cfl_timestep();
+    } else if (config.hydro_method == HydroMethod::MFM) {
+        ts.dt_hydro = state.mfm_gas->get_cfl_timestep(config);
+    } else {
+        ts.dt_hydro = std::numeric_limits<double>::infinity();
+    }
+
+    double dt_grav_dm = state.dm.get_gravity_timestep(config);
+    double dt_grav_sph = std::numeric_limits<double>::infinity();
+    if (config.hydro_method == HydroMethod::MFM) {
+        dt_grav_sph = state.mfm_gas->get_gravity_timestep(config);
+    }
+    ts.dt_grav = std::min(dt_grav_dm, dt_grav_sph);
 
     // The Macro Step is bounded by the SLOWER of the two primary physics
     double base_macro = std::max(ts.dt_hydro, ts.dt_grav);
@@ -57,6 +70,11 @@ TimestepInfo SimulationEngine::get_timestep() const {
     // Apply safety caps
     ts.dt_macro = std::min({base_macro, dt_expansion, config.fixed_dt});
 
+    if (!config.enable_subcycling) {
+        ts.dt_macro =
+            std::min({ts.dt_hydro, ts.dt_grav, dt_expansion, config.fixed_dt});
+    }
+
     // Force the simulation to land on the next output target
     if (config.save_HDF5_every_delta_a > 0.0 && config.expanding_universe) {
         double t_start = get_time_from_scale_factor(config.a_start, config);
@@ -64,19 +82,17 @@ TimestepInfo SimulationEngine::get_timestep() const {
         double target_t = get_time_from_scale_factor(next_output_a, config);
 
         double dt_snapshot = target_t - current_t;
-
         const double MIN_VALID_DT = 1e-10;
-
         if (dt_snapshot > MIN_VALID_DT && dt_snapshot < ts.dt_macro) {
             ts.dt_macro = dt_snapshot;
         }
     }
 
     // Determine who subcycles
-    if (ts.dt_hydro < ts.dt_grav) {
+    if (ts.dt_hydro < ts.dt_grav && ts.dt_hydro < ts.dt_macro) {
         ts.subcycle_hydro = true;
         ts.subcycle_grav = false;
-    } else if (ts.dt_hydro > ts.dt_grav) {
+    } else if (ts.dt_hydro > ts.dt_grav && ts.dt_grav < ts.dt_macro) {
         ts.subcycle_hydro = false;
         ts.subcycle_grav = true;
     }
@@ -98,11 +114,15 @@ void SimulationEngine::step() {
     current_ts = get_timestep();
 
     needs_more_cycles =
-        state.scale_factor < config.a_end && cycle_count < config.max_cycles;
+        ((config.expanding_universe && state.scale_factor < config.a_end) ||
+         (!config.expanding_universe && state.total_time < config.a_end)) &&
+        cycle_count < config.max_cycles;
 
     // I/O and Logging
     const double TOLERANCE = 1e-7;
-    bool must_save_snapshot = state.scale_factor >= (next_output_a - TOLERANCE);
+    bool must_save_snapshot =
+        state.scale_factor >= (next_output_a - TOLERANCE) ||
+        (!config.expanding_universe && cycle_count % 4 == 0);
     if (config.save_HDF5_every_delta_a > 0.0 &&
         (!needs_more_cycles || must_save_snapshot)) {
         ScopedTimer io_timer(diagnostics, TimerRegion::IO);
@@ -122,7 +142,15 @@ void SimulationEngine::step() {
         (!needs_more_cycles ||
          elapsed.count() >= config.debug_info_every_seconds)) {
         // Update dt_cool for diagnostics
-        current_ts.dt_cool = state.gas.get_cooling_timestep(state.scale_factor);
+        if (config.hydro_method == HydroMethod::Eulerian) {
+            current_ts.dt_cool = state.gas->get_cooling_timestep(
+                state.scale_factor, state.cooling);
+        } else if (config.hydro_method == HydroMethod::MFM) {
+            current_ts.dt_cool = state.mfm_gas->get_cooling_timestep(
+                state.scale_factor, config, state.cooling);
+        } else {
+            current_ts.dt_cool = std::numeric_limits<double>::infinity();
+        }
         diagnostics.update_physics(state, current_ts, config);
         logger.log(diagnostics, config);
         diagnostics.reset_accumulators();

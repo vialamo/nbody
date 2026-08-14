@@ -83,7 +83,7 @@ def verify_energy(snapshot_dir):
     with h5py.File(files[0], 'r') as f:
         config = dict(f['Config'].attrs)
         
-        if bool(config.get('use_hydro', 0)):
+        if bool(config.get('hydro_mode', "none") != "none"):
             print(f"{RED}Warning: Simulation contains Gas. This script is designed for pure DM runs!{RESET}")
             
         G = config['G']
@@ -168,9 +168,7 @@ def verify_energy(snapshot_dir):
     print(f"Initial Energy (E0): {E0:.5e}")
     print(f"Final Energy Error : {fractional_error[-1]*100:.5f} %")
     
-    # =========================================================================
     # Plotting
-    # =========================================================================
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
     fig.suptitle(f"Offline Exact N-Body Energy Conservation\n{os.path.basename(os.path.normpath(snapshot_dir))}", fontsize=14)
     

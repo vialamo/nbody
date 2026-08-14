@@ -1,9 +1,9 @@
 #pragma once
 
 #include "config.h"
-#include "cooling.h"
 #include "types.h"
 
+class Cooling;
 class GasGrid;
 struct SimState;
 struct ZeldovichField;
@@ -74,13 +74,12 @@ class GasGrid {
     double pressure_floor;
 
     RiemannSolver solver;
-    Cooling cooling_module;
     const Config& config;
 
     friend struct GasGridTestAccess;
     friend void initialize_gas(SimState& state, const Config& config,
                                const ZeldovichField& zf);
-    friend void apply_gas_kick(GasGrid& gas, const Grid3D& grav_x,
+    friend void apply_mesh_gas_gravity_kick(GasGrid& gas, const Grid3D& grav_x,
                                const Grid3D& grav_y, const Grid3D& grav_z,
                                double dt, double a, double H,
                                const Config& config);
@@ -92,9 +91,9 @@ class GasGrid {
     GasGrid(const Config& conf);
 
     void hydro_step(double dt);
-    void apply_cooling(double dt, double a);
+    void apply_cooling(double dt, double a, Cooling& cooling);
     double get_cfl_timestep() const;
-    double get_cooling_timestep(double a) const;
+    double get_cooling_timestep(double a, Cooling& cooling) const;
 
     const Grid3D& get_density() const { return density; }
     const Grid3D& get_momentum_x() const { return momentum_x; }
@@ -131,5 +130,5 @@ class GasGrid {
     }
     void add_expansion_work(double w) { accumulated_expansion_work += w; }
 
-    Grid3D compute_thermal_timescale(double a) const;
+    Grid3D compute_thermal_timescale(double a, const Cooling& cooling) const;
 };

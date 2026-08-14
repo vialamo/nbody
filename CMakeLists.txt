@@ -33,12 +33,13 @@ set(CORE_SOURCES
     src/diagnostics.cpp
     src/engine.cpp
     src/gas.cpp
-    src/hdf5_writter.cpp
+    src/hdf5_writer.cpp
     src/ics.cpp
     src/integrator.cpp
     src/logger.cpp
     src/math_utils.cpp
     src/particles.cpp
+    src/mfm.cpp
     src/types.cpp
     src/utils.cpp
 )
@@ -182,6 +183,7 @@ add_executable(run_tests
     tests/test_gravity.cpp
     tests/test_hydro.cpp
     tests/test_ics.cpp
+    tests/test_mfm.cpp
 )
 
 target_link_libraries(run_tests PRIVATE SimulationCore Catch2::Catch2WithMain)

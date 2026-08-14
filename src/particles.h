@@ -20,12 +20,12 @@ struct CellList {
 
 class ParticleSystem {
    private:
-    CellList cell_list;
     std::vector<CIC_Data> cic_data;
 
     friend struct ParticleTestAccess;
 
    public:
+    CellList cell_list;
     Grid3D dm_rho;
 
     size_t num_particles = 0;
@@ -46,6 +46,9 @@ class ParticleSystem {
 
     double max_accel_sq;
 
+    double accumulated_gravitational_work = 0.0;
+    double accumulated_expansion_work = 0.0;
+
     ParticleSystem(const Config& config);
 
     void bin_and_assign_mass(const Config& config);
@@ -53,7 +56,7 @@ class ParticleSystem {
     void interpolate_cic_forces(const Grid3D& ax_grid, const Grid3D& ay_grid,
                                 const Grid3D& az_grid, const Config& config);
 
-    void compute_pp_forces(const Config& config, Diagnostics& diag);
+    void compute_and_add_pp_forces(const Config& config, Diagnostics& diag);
 
     void compute_gas_dm_pp_forces(const GasGrid& gas, Grid3D& grav_x,
                                   Grid3D& grav_y, Grid3D& grav_z,
@@ -66,3 +69,18 @@ class ParticleSystem {
     void add_particle(double px, double py, double pz, double vx, double vy,
                       double vz, double m);
 };
+
+
+void compute_and_add_generic_pp_forces(
+    size_t n_parts,
+    const double* __restrict__ pos_x,
+    const double* __restrict__ pos_y,
+    const double* __restrict__ pos_z,
+    const double* __restrict__ mass,
+    double* __restrict__ acc_x,
+    double* __restrict__ acc_y,
+    double* __restrict__ acc_z,
+    const int* __restrict__ cell_start,
+    const int* __restrict__ cell_count,
+    const Config& config,
+    Diagnostics& diag);

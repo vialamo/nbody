@@ -32,7 +32,10 @@ class Diagnostics {
     size_t non_converged_cooling_cells = 0;
     double energy_err = 0.0;
     double initial_gas_energy = 0.0;
+    double dm_energy_err = 0.0;
+    double initial_dm_energy = 0.0;
     bool energy_initialized = false;
+    bool dm_energy_initialized = false;
 
     // Performance State
     int accumulated_cycles = 0;

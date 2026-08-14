@@ -1,4 +1,4 @@
-#include "hdf5_writter.h"
+#include "hdf5_writer.h"
 
 #include <iostream>
 
@@ -117,6 +117,8 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                         config.physical_softening_cap_a);
 
         // [initial_conditions]
+        set_attr_string(config_group, "setup",
+                        InitialConfig::to_string(config.initial_setup));
         set_attr_bool(config_group, "fixed_ics", config.fixed_ics);
         set_attr_bool(config_group, "invert_phases", config.invert_phases);
         set_attr_bool(config_group, "standing_particles",
@@ -128,7 +130,8 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         set_attr_int(config_group, "seed", config.seed);
 
         // [hydro]
-        set_attr_bool(config_group, "use_hydro", config.use_hydro);
+        set_attr_string(config_group, "hydro_method",
+                        HydroConfig::to_string(config.hydro_method));
         set_attr_double(config_group, "gamma", config.gamma);
         set_attr_bool(config_group, "enable_cooling", config.enable_cooling);
         set_attr_double(config_group, "primordial_mu", config.primordial_mu);
@@ -137,6 +140,11 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                         config.cooling_cutoff_k);
         set_attr_string(config_group, "cooling_table_path",
                         config.cooling_table_path);
+
+        // [MFM]
+        set_attr_double(config_group, "mfm_target_neighbors", config.mfm_target_neighbors);
+        set_attr_double(config_group, "mfm_neighbor_tolerance", config.mfm_neighbor_tolerance);
+        set_attr_int(config_group, "mfm_max_iterations", config.mfm_max_iterations);
 
         // [subgrid]
         set_attr_bool(config_group, "enable_subgrid_gravity",
@@ -193,6 +201,11 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
 
         H5::Group particle_group = root_group.createGroup("Particles");
 
+        set_attr_double(particle_group, "cumulative_gravitational_work",
+                        state.dm.accumulated_gravitational_work);
+        set_attr_double(particle_group, "cumulative_expansion_work",
+                        state.dm.accumulated_expansion_work);
+
         write_particle_vec(particle_group, "position_x", state.dm.pos_x);
         write_particle_vec(particle_group, "position_y", state.dm.pos_y);
         write_particle_vec(particle_group, "position_z", state.dm.pos_z);
@@ -208,31 +221,32 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         write_particle_vec(particle_group, "mass", state.dm.mass);
         particle_group.close();
 
-        if (config.use_hydro) {
+        if (config.hydro_method != HydroMethod::None) {
             H5::Group gas_group = root_group.createGroup("Gas");
-            set_attr_double(gas_group, "cumulative_radiated_energy",
-                            state.gas.get_accumulated_radiated_energy());
-            set_attr_double(gas_group, "cumulative_photoheating_energy",
-                            state.gas.get_accumulated_photoheating_energy());
-            set_attr_double(gas_group, "cumulative_gravitational_work",
-                            state.gas.get_accumulated_gravitational_work());
-            set_attr_double(gas_group, "cumulative_expansion_work",
-                            state.gas.get_accumulated_expansion_work());
-            write_grid(gas_group, "density", state.gas.get_density());
-            write_grid(gas_group, "momentum_x", state.gas.get_momentum_x());
-            write_grid(gas_group, "momentum_y", state.gas.get_momentum_y());
-            write_grid(gas_group, "momentum_z", state.gas.get_momentum_z());
-            write_grid(gas_group, "energy", state.gas.get_energy());
-            write_grid(gas_group, "pressure", state.gas.get_pressure());
-            write_grid(gas_group, "metal_density",
-                       state.gas.get_metal_density());
-            write_grid(gas_group, "thermal_timescale",
-                       state.gas.compute_thermal_timescale(state.scale_factor));
+            if (config.hydro_method == HydroMethod::Eulerian) {
+                GasGrid& gas = *state.gas;
+                set_attr_double(gas_group, "cumulative_radiated_energy",
+                                gas.get_accumulated_radiated_energy());
+                set_attr_double(gas_group, "cumulative_photoheating_energy",
+                                gas.get_accumulated_photoheating_energy());
+                set_attr_double(gas_group, "cumulative_gravitational_work",
+                                gas.get_accumulated_gravitational_work());
+                set_attr_double(gas_group, "cumulative_expansion_work",
+                                gas.get_accumulated_expansion_work());
+                write_grid(gas_group, "density", gas.get_density());
+                write_grid(gas_group, "momentum_x", gas.get_momentum_x());
+                write_grid(gas_group, "momentum_y", gas.get_momentum_y());
+                write_grid(gas_group, "momentum_z", gas.get_momentum_z());
+                write_grid(gas_group, "energy", gas.get_energy());
+                write_grid(gas_group, "pressure", gas.get_pressure());
+                write_grid(gas_group, "metal_density", gas.get_metal_density());
+                write_grid(gas_group, "thermal_timescale",
+                           gas.compute_thermal_timescale(state.scale_factor,
+                                                         state.cooling));
 
-            if (config.enable_cooling) {
                 Grid3D temp_grid(config.mesh_size);
-                const Grid3D& rho = state.gas.get_density();
-                const Grid3D& ie = state.gas.get_internal_energy();
+                const Grid3D& rho = gas.get_density();
+                const Grid3D& ie = gas.get_internal_energy();
 
                 int total_cells =
                     config.mesh_size * config.mesh_size * config.mesh_size;
@@ -247,8 +261,41 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                     }
                 }
                 write_grid(gas_group, "temperature", temp_grid);
-            }
+            } else if (config.hydro_method == HydroMethod::MFM) {
+                GasParticleSystem& gas = *state.mfm_gas;
+                set_attr_double(gas_group, "cumulative_radiated_energy",
+                                gas.accumulated_radiated_energy);
+                set_attr_double(gas_group, "cumulative_photoheating_energy",
+                                gas.accumulated_photoheating_energy);
+                set_attr_double(gas_group, "cumulative_gravitational_work",
+                                gas.accumulated_gravitational_work);
+                set_attr_double(gas_group, "cumulative_expansion_work",
+                                gas.accumulated_expansion_work);
 
+                write_particle_vec(gas_group, "position_x", gas.pos_x);
+                write_particle_vec(gas_group, "position_y", gas.pos_y);
+                write_particle_vec(gas_group, "position_z", gas.pos_z);
+                write_particle_vec(gas_group, "velocity_x", gas.vel_x);
+                write_particle_vec(gas_group, "velocity_y", gas.vel_y);
+                write_particle_vec(gas_group, "velocity_z", gas.vel_z);
+                write_particle_vec(gas_group, "acceleration_x", gas.acc_x);
+                write_particle_vec(gas_group, "acceleration_y", gas.acc_y);
+                write_particle_vec(gas_group, "acceleration_z", gas.acc_z);
+
+                write_particle_vec(gas_group, "mass", gas.mass);
+                write_particle_vec(gas_group, "smoothing_length", gas.h);
+                write_particle_vec(gas_group, "density", gas.rho);
+                write_particle_vec(gas_group, "pressure", gas.pressure);
+                write_particle_vec(gas_group, "internal_energy", gas.u);
+                write_particle_vec(gas_group, "metal_fraction", gas.metal_frac);
+
+                std::vector<double> temp_vec(gas.num_particles);
+                for (size_t i = 0; i < gas.num_particles; ++i) {
+                    temp_vec[i] = Cooling::get_temp_from_internal_energy(
+                        gas.u[i], state.scale_factor, config);
+                }
+                write_particle_vec(gas_group, "temperature", temp_vec);
+            }
             gas_group.close();
         }
         root_group.close();

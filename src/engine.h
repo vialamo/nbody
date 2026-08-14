@@ -3,7 +3,7 @@
 
 #include "config.h"
 #include "diagnostics.h"
-#include "hdf5_writter.h"
+#include "hdf5_writer.h"
 #include "logger.h"
 #include "state.h"
 

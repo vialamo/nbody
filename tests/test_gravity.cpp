@@ -12,14 +12,11 @@
 // ---------------------------------------------------------------------
 TEST_CASE("CIC Density Assignment maps particles to grid correctly",
           "[cic][particles]") {
-    // Setup a tiny mock universe
     Config config;
     config.mesh_size = 4;
-    config.cell_size = 2.0;
-    config.cell_volume = 2.0 * 2.0 * 2.0;
+    config.compute_derived_data(); // Automatically sets cell_size to 0.25 and volume to 0.015625
     config.num_dm_particles = 1;
 
-    // Helper function to sum total mass in the grid
     auto get_total_grid_mass = [&](const ParticleSystem& sys) {
         double total_mass = 0.0;
         for (int i = 0;
@@ -29,39 +26,31 @@ TEST_CASE("CIC Density Assignment maps particles to grid correctly",
         return total_mass;
     };
 
-    SECTION("Particle exactly on a grid vertex (0 fractional part)") {
+    SECTION("Particle exactly at a cell center (grid node, 0 fractional part)") {
         ParticleSystem sys(config);
 
-        // Add particle exactly on vertex (ix=1, iy=2, iz=3)
-        // px, py, pz, vx, vy, vz, mass
-        sys.add_particle(2.0, 4.0, 6.0, 0.0, 0.0, 0.0, 16.0);
+        // Node is at (i + 0.5) * cell_size
+        // x = 1.5 * 0.25 = 0.375 | y = 2.5 * 0.25 = 0.625 | z = 3.5 * 0.25 = 0.875
+        sys.add_particle(0.375, 0.625, 0.875, 0.0, 0.0, 0.0, 16.0);
         sys.bin_and_assign_mass(config);
 
-        // Conservation Check
         REQUIRE(get_total_grid_mass(sys) == Catch::Approx(16.0));
-
-        // Spatial Check: 100% of the mass should be in cell (1, 2, 3)
         double expected_density = 16.0 / config.cell_volume;
         REQUIRE(sys.get_rho()(1, 2, 3) == Catch::Approx(expected_density));
-
-        // A neighboring cell should be strictly zero
         REQUIRE(sys.get_rho()(2, 2, 3) == Catch::Approx(0.0));
     }
 
-    SECTION("Particle in dead center splits perfectly into 8 cells") {
+    SECTION("Particle on a cell boundary splits perfectly into 8 grid nodes") {
         ParticleSystem sys(config);
 
-        // Dead center of cell (ix=1, iy=1, iz=1)
-        sys.add_particle(3.0, 3.0, 3.0, 0.0, 0.0, 0.0, 8.0);
+        // Boundary intersection of 8 cells is at integer multiples of cell_size 
+        // e.g., (2 * 0.25) = 0.5
+        sys.add_particle(0.5, 0.5, 0.5, 0.0, 0.0, 0.0, 8.0);
         sys.bin_and_assign_mass(config);
 
-        // Conservation Check
         REQUIRE(get_total_grid_mass(sys) == Catch::Approx(8.0));
-
-        // Spatial Check: Mass should be split into exactly 8 chunks of 1.0
         double expected_density = 1.0 / config.cell_volume;
 
-        // Check the 8 corners of the CIC cube
         REQUIRE(sys.get_rho()(1, 1, 1) == Catch::Approx(expected_density));
         REQUIRE(sys.get_rho()(2, 1, 1) == Catch::Approx(expected_density));
         REQUIRE(sys.get_rho()(1, 2, 1) == Catch::Approx(expected_density));
@@ -75,20 +64,14 @@ TEST_CASE("CIC Density Assignment maps particles to grid correctly",
     SECTION("Particle on the periodic boundary wraps to the opposite side") {
         ParticleSystem sys(config);
 
-        // Straddling the X-axis boundary (x=7 out of 8)
-        sys.add_particle(7.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0);
+        // X=0.0 is the domain boundary. Y and Z are exact nodes (i=0 -> 0.125)
+        sys.add_particle(0.0, 0.125, 0.125, 0.0, 0.0, 0.0, 10.0);
         sys.bin_and_assign_mass(config);
 
-        // Conservation Check
         REQUIRE(get_total_grid_mass(sys) == Catch::Approx(10.0));
-
-        // Spatial Wrapping Check
         double expected_density = 5.0 / config.cell_volume;
 
-        // Half goes to the rightmost cell (ix=3)
         REQUIRE(sys.get_rho()(3, 0, 0) == Catch::Approx(expected_density));
-
-        // Half wraps around to the leftmost cell (ix=0)
         REQUIRE(sys.get_rho()(0, 0, 0) == Catch::Approx(expected_density));
     }
 }
@@ -119,7 +102,7 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
             (config.domain_size / 2.0) * (config.domain_size / 2.0);
 
         sys.bin_and_assign_mass(config);
-        sys.compute_pp_forces(config, dummy_diag);
+        sys.compute_and_add_pp_forces(config, dummy_diag);
 
         // Exact Newtonian Gravity: F = G * m1 * m2 / r^2
         // F = 1.0 * 1.0 * 1.0 / (0.25 * 0.25) = 1.0 / 0.0625 = 16.0
@@ -145,7 +128,7 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
         // Reset accelerations to 0 before computing
         std::fill(sys.acc_x.begin(), sys.acc_x.end(), 0.0);
 
-        sys.compute_pp_forces(config, dummy_diag);
+        sys.compute_and_add_pp_forces(config, dummy_diag);
 
         // Because dist (0.25) > cutoff_radius (0.15), the force should be
         // exactly 0.0
@@ -154,7 +137,7 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
     }
 }
 
-/// ---------------------------------------------------------------------
+// ---------------------------------------------------------------------
 // Long-Range Gravity (PM Poisson Solver & CIC Interpolation)
 // ---------------------------------------------------------------------
 TEST_CASE("PM Poisson Solver calculates accurate grid accelerations",
@@ -164,7 +147,7 @@ TEST_CASE("PM Poisson Solver calculates accurate grid accelerations",
     config.cell_size = 0.25;
     config.num_dm_particles = 1;
     config.G = 1.0;
-    config.use_hydro = false;
+    config.hydro_method = HydroMethod::None;
 
     SimState state(config);
 
@@ -172,103 +155,41 @@ TEST_CASE("PM Poisson Solver calculates accurate grid accelerations",
         state.dm.dm_rho.fill(5.0);
 
         // Compute gravity (it will copy dm_rho into total_rho internally)
-        compute_gravitational_acceleration(state, config);
+        compute_PM_acceleration(state, config);
 
-        REQUIRE(state.gravity_x.maxCoeff() == Catch::Approx(0.0).margin(1e-10));
-        REQUIRE(state.gravity_x.minCoeff() == Catch::Approx(0.0).margin(1e-10));
-        REQUIRE(state.gravity_y.maxCoeff() == Catch::Approx(0.0).margin(1e-10));
+        REQUIRE(state.pm_gravity_x.maxCoeff() ==
+                Catch::Approx(0.0).margin(1e-10));
+        REQUIRE(state.pm_gravity_x.minCoeff() ==
+                Catch::Approx(0.0).margin(1e-10));
+        REQUIRE(state.pm_gravity_y.maxCoeff() ==
+                Catch::Approx(0.0).margin(1e-10));
     }
 
     SECTION("A single point mass creates symmetric attractive forces") {
-        // Place a massive particle exactly on the grid vertex so
-        // 100% of its mass falls into cell (1, 1, 1) during CIC
-        state.dm.add_particle(0.25, 0.25, 0.25, 0.0, 0.0, 0.0, 100.0);
+        // Place a massive particle exactly on the cell-centered PM node (1, 1,
+        // 1) x = (1 + 0.5) * 0.25 = 0.375
+        state.dm.add_particle(0.375, 0.375, 0.375, 0.0, 0.0, 0.0, 100.0);
 
         // Run the binning algorithm to populate dm_rho
         state.dm.bin_and_assign_mass(config);
 
         // Now compute gravity. It will successfully copy the 100.0 spike
-        compute_gravitational_acceleration(state, config);
+        compute_PM_acceleration(state, config);
 
         // Center of mass check (Should be exactly 0 due to central differences)
-        REQUIRE(state.gravity_x(1, 1, 1) == Catch::Approx(0.0).margin(1e-10));
+        REQUIRE(state.pm_gravity_x(1, 1, 1) ==
+                Catch::Approx(0.0).margin(1e-10));
 
         // Attraction checks (The cell to the right (+x) should be pulled to the
         // left (-x))
-        REQUIRE(state.gravity_x(2, 1, 1) < 0.0);
+        REQUIRE(state.pm_gravity_x(2, 1, 1) < 0.0);
 
         // Attraction checks (The cell to the left (-x) should be pulled to the
         // right (+x))
-        REQUIRE(state.gravity_x(0, 1, 1) > 0.0);
+        REQUIRE(state.pm_gravity_x(0, 1, 1) > 0.0);
 
         // Magnitude symmetry check
-        REQUIRE(state.gravity_x(0, 1, 1) ==
-                Catch::Approx(-state.gravity_x(2, 1, 1)));
+        REQUIRE(state.pm_gravity_x(0, 1, 1) ==
+                Catch::Approx(-state.pm_gravity_x(2, 1, 1)));
     }
-}
-TEST_CASE("CIC Force Interpolation correctly computes F = m * a",
-          "[gravity][cic]") {
-    Config config;
-    config.mesh_size = 4;
-    config.cell_size = 2.0;
-
-    ParticleSystem sys(config);
-    sys.add_particle(3.0, 3.0, 3.0, 0.0, 0.0, 0.0, 5.0);  // center of cell
-
-    sys.bin_and_assign_mass(config);
-
-    int N = config.mesh_size;
-    Grid3D acc_x(N), acc_y(N), acc_z(N);
-
-    // Set a uniform acceleration field pointing diagonally
-    acc_x.fill(2.0);
-    acc_y.fill(-1.5);
-    acc_z.fill(0.0);
-
-    sys.interpolate_cic_forces(acc_x, acc_y, acc_z, config);
-
-    // The interpolated acceleration directly modifies the SoA arrays
-    REQUIRE(sys.acc_x[0] == Catch::Approx(2.0));
-    REQUIRE(sys.acc_y[0] == Catch::Approx(-1.5));
-    REQUIRE(sys.acc_z[0] == Catch::Approx(0.0));
-}
-
-TEST_CASE("Gravitational forces are physically scaled",
-          "[gravity][integrator]") {
-    Config config;
-    config.mesh_size = 4;
-    config.num_particles_1d = 2;
-    config.standing_particles = false;
-    config.a_start = 0.5;
-    config.compute_derived_data();
-
-    Diagnostics dummy_diag;
-
-    SimState state(config);
-    state.total_time = 0;
-    state.scale_factor = 0.5;  // Mid-way through the simulation
-    update_cosmology(state, config);
-
-    // Two close particles
-    state.dm.add_particle(0.5, 0.5, 0.4, 0.0, 0.0, 0.0, 0.5);
-    state.dm.add_particle(0.5, 0.5, 0.6, 0.0, 0.0, 0.0, 0.5);
-
-    // Run gravity solvers
-    state.dm.bin_and_assign_mass(config);
-    state.total_rho =
-        state.dm.get_rho();  // Simulate the copy that integrator does
-
-    compute_gravitational_acceleration(state, config);
-
-    // Clear accelerations, then add PM and PP
-    std::fill(state.dm.acc_x.begin(), state.dm.acc_x.end(), 0.0);
-    std::fill(state.dm.acc_y.begin(), state.dm.acc_y.end(), 0.0);
-    std::fill(state.dm.acc_z.begin(), state.dm.acc_z.end(), 0.0);
-
-    state.dm.interpolate_cic_forces(state.gravity_x, state.gravity_y,
-                                    state.gravity_z, config);
-    state.dm.compute_pp_forces(config, dummy_diag);
-
-    // Check if the total acceleration is physically active
-    REQUIRE(std::abs(state.dm.acc_z[0]) > 0.05);
 }

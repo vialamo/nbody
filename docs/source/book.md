@@ -13,37 +13,35 @@ vialamo@gmail.com
 
 ## Introduction
 
-Because astrophysicists cannot physically experiment on stars or galaxies in a laboratory, they use computers to build virtual patches of the cosmos. By seeding a simulation volume with the initial conditions of the Big Bang and stepping it forward in time using the laws of physics, we can watch 13.8 billion years of cosmic evolution unfold in a matter of days or weeks.
+Because astrophysicists cannot experiment on stars or galaxies in a laboratory, they use computers to build virtual patches of the cosmos. By seeding a simulation volume with the initial conditions of the Big Bang and stepping it forward in time using the laws of physics, we can watch 13.8 billion years of cosmic evolution unfold in a matter of days.
 
 **The Origins**
 
-The endeavor to simulate the cosmos began in the 1970s. Early N-body simulations used just a few hundred particles to study how galaxies might cluster together under gravity. By the 1980s, researchers were running the first 3-dimensional models of Cold Dark Matter (CDM). These early simulations were severely limited by the computers of their time; they treated entire galaxies as single points of mass and modeled only the force of gravity, ignoring the complex fluid dynamics of gas. 
+The endeavor to simulate the cosmos began in the 1970s. Early N-body simulations used just a few hundred particles to study how galaxies might cluster together under gravity. By the 1980s, researchers were running the first 3-dimensional models of Cold Dark Matter (CDM). These early simulations treated entire galaxies as single points of mass and modeled only the force of gravity, ignoring the complex fluid dynamics of gas. 
 
 **Applications**
 
-Cosmological simulations are some of the most intensive computational tasks nowadays. Projects like the Millennium Simulation, Illustris, and EAGLE utilize supercomputing clusters to track billions—and sometimes trillions—of particles. 
-
-These virtual universes are used as the primary theoretical laboratories for astrophysics, serving three main purposes:
+Projects like the Millennium Simulation, Illustris, and EAGLE utilize supercomputing clusters to track billions—and sometimes trillions—of particles. These virtual universes serve three main purposes:
 
 * **Testing the Standard Model:** We can easily alter the parameters of a simulation—adding more dark energy, changing the mass of dark matter particles, or altering the laws of gravity. By comparing the resulting "mock universe" to the real one, we can prove or disprove fundamental theories of physics.
 * **Calibrating Telescope Data:** Massive modern observatories (like the James Webb Space Telescope and the Euclid satellite) gather an overwhelming amount of data. Simulations provide the theoretical maps required to interpret those observations, helping astronomers distinguish between optical illusions (like redshift-space distortions) and true physical structures.
-* **Probing the Unobservable:** While a telescope can only capture a frozen snapshot of a galaxy at one specific moment in its life, a simulation allows us to continuously watch the processes of galaxy mergers, black hole feeding, and cosmic web formation from beginning to end.
+* **Probing the Unobservable:** While a telescope can only capture a snapshot of a galaxy at one specific moment in its life, a simulation allows us to watch the processes of galaxy mergers, black hole feeding, and cosmic web formation from beginning to end.
 
 ### Anatomy of Cosmological Simulations
 
-A cosmological simulation is a carefully coupled system of different physical frameworks designed to mimic the composition and behavior of the universe.
+A cosmological code contains different ingredients to mimic the composition and behavior of the universe.
 
-* **Collisionless Dark Matter :** Dark matter accounts for roughly 85% of the matter in the universe and dominates its gravitational landscape. Because it does not interact with light or experience thermodynamic pressure, we model it as "collisionless" particles. Computationally, this is handled by an **N-body solver**, which tracks millions of discrete, massive particles moving purely under the influence of gravity to form the filaments and halos of the cosmic web.
-* **Baryonic Gas:** Normal, visible matter (hydrogen and helium) behaves differently from dark matter. Gas clouds crash into each other, heat up, form shockwaves, and exert pressure. To simulate this, we require a **Hydrodynamics solver**. This typically involves tracking the conservation of mass, momentum, and energy as the fluid flows through space, while gravity links the dark matter and the gas together.
-* **The Expanding Background:** A cosmological simulation takes place in an expanding universe. Both the N-body particles and the hydrodynamic gas must be subjected to a cosmological background model to properly account for the dilution of density and the slowing of velocities due to cosmic expansion.
+* **Collisionless Dark Matter :** Dark matter accounts for roughly 85% of the matter in the universe and dominates its gravitational landscape. Because it does not interact with light or experience thermodynamic pressure, we model it as "collisionless" particles. This is handled by an **N-body solver**, which tracks millions of discrete, massive particles moving purely under the influence of gravity.
+* **Baryonic Gas:** Normal, visible matter behaves differently from dark matter. Gas clouds crash into each other, heat up, form shockwaves, and exert pressure. To simulate this, we require a **Hydrodynamics solver**. This typically involves tracking the conservation of mass, momentum, and energy as the fluid flows through space, while gravity links the dark matter and the gas together.
+* **The Expanding Background:** A cosmological simulation takes place in an expanding universe. Both the dark matter and the hydrodynamic gas must be subjected to a cosmological background model to properly account for the dilution of density and the slowing of velocities due to cosmic expansion.
 
 ### The Major Cosmological Codes
 
 The astrophysical community relies on a handful of open-source software packages to run these supercomputer simulations. 
 
-Modern codes are split by their approach to fluid dynamics: some treat gas as a collection of individual moving particles (**Lagrangian** methods like SPH), while others treat gas as a fluid flowing through a fixed or adaptive 3D grid (**Eulerian** methods like AMR).
+Codes are split by their approach to fluid dynamics: some treat gas as a collection of individual moving particles (**Lagrangian** methods like SPH), while others treat gas as a fluid flowing through a fixed or adaptive 3D grid (**Eulerian** methods like AMR).
 
-Here is a summary of the most prominent cosmological codes used in modern research and the underlying engines that drive them:
+Here is a summary of the most prominent cosmological codes and the underlying engines that drive them:
 
 | Code Name | Gravity Solver | Hydrodynamics Solver | Notable Simulations | Website / Repository |
 | :--- | :--- | :--- | :--- | :--- |
@@ -61,11 +59,11 @@ In Newtonian gravity, the equation of motion for particle $i$ with position vect
 
 $$m_i \frac{d^2 \mathbf{x}_i}{dt^2} = -G m_i \sum_{\substack{j=1 \\ j \neq i}}^{N} m_j \frac{\mathbf{x}_i - \mathbf{x}_j}{|\mathbf{x}_i - \mathbf{x}_j|^3}$$
 
-This coupled system of $3N$ second-order differential equations has no general analytic solution for $N > 2$, making it one of the foundational challenges of computational astrophysics.
+This coupled system of $3N$ second-order differential equations (N per axis) has no general analytic solution for $N > 2$, requiring numerical methods instead.
 
 ### Direct Summation
 
-The most straightforward numerical method for solving the N-body problem is the **direct-summation algorithm**, which explicitly computes the gravitational force on each particle from every other particle. The procedure for a single time step can be described as follows:
+The **direct-summation algorithm** is a numerical method for solving the N-body problem, which explicitly computes the gravitational force on each particle from every other particle. The procedure for a single time step can be described as follows:
 
 1. **Select a particle**, say particle $A$.
 2. **Loop over all other particles** $( B, C, D, \ldots )$.
@@ -74,14 +72,14 @@ The most straightforward numerical method for solving the N-body problem is the 
    where $\mathbf{r}_{AB} = \mathbf{x}_A - \mathbf{x}_B$ and $\hat{\mathbf{r}}_{AB} = \mathbf{r}_{AB}/|\mathbf{r}_{AB}|$.
 4. **Sum all pairwise forces** to obtain the total force on particle $A$:
    $$\mathbf{F}_A = \sum_{\substack{B=1 \\ B \neq A}}^{N}\mathbf{F}_{AB}$$
-5. **Update** particle $A$’s position and velocity using this total force (via an integration method such as Velocity Verlet).
+5. **Update** particle $A$’s position and velocity using this total force.
 6. **Repeat** the process for every particle in the system.
 
-Although conceptually simple and physically exact, the direct-summation method is computationally prohibitive for large $N.$ To compute the total force on one particle, we must evaluate $N - 1$ pairwise interactions. Doing this for all $N$ particles requires approximately $N(N - 1) \approx N^2$ force evaluations per time step.
+Although conceptually simple and exact, the direct-summation method is computationally prohibitive for large $N.$ To compute the total force on one particle, we must evaluate $N - 1$ pairwise interactions. Doing this for all $N$ particles requires approximately $N(N - 1) \approx N^2$ force evaluations per time step.
 
-In computational complexity terms, this corresponds to **$O(N^2)$** scaling — meaning that doubling the number of particles multiplies the total computational cost by roughly four. This quadratic growth rapidly becomes intractable: while $N \sim 10^3$ is easily manageable, $N \sim 10^6$ would require on the order of $10^{12}$ pairwise force evaluations per step.
+In computational complexity terms, this corresponds to **$O(N^2)$** scaling — meaning that doubling the number of particles multiplies the total computational cost by roughly four. This quadratic growth rapidly becomes intractable.
 
-Because of this steep scaling, the direct method is impractical for cosmological simulations, which often involve millions or billions of particles. To overcome this, we rely on **approximation schemes** — such as the **Particle-Mesh (PM)** and **Particle-Particle Particle-Mesh (P³M)** — that preserve physical accuracy while reducing computational cost from $O(N^2)$ to nearly $O(N \log N)$.
+Because of this steep scaling, the direct method is impractical for cosmological simulations. To overcome this, we rely on **approximation schemes** —such as the **Particle-Mesh (PM)**, explained later— that reduce computational cost.
 
 
 ## Boundaries and Singularities
@@ -115,7 +113,7 @@ Bagla, J. S., & Padmanabhan, T. (2004). *Cosmological N-Body Simulations*. arXiv
 
 ### The Euler Method
 
-To move the particles through time, we need an "integrator"—an algorithm that takes the current state of a particle (its position and velocity) and predicts its state a small moment later. The most intuitive and straightforward approach is the **Euler method**.
+To move the particles through time, we need an "integrator"—an algorithm that takes the current state of a particle (its position and velocity) and predicts its state a small moment later. A straightforward approach is the **Euler method**.
 
 The Euler method assumes that the velocity and acceleration are constant over one small time step, $\Delta t$. It calculates the force on the particle at its current position to find its acceleration, and then takes a linear step forward.
 
@@ -124,7 +122,7 @@ The update equations are:
 1.  **Update Position:** $\mathbf{x}_{n+1} = \mathbf{x}_n + \mathbf{v}_n \Delta t$
 2.  **Update Velocity:** $\mathbf{v}_{n+1} = \mathbf{v}_n + \mathbf{a}_n \Delta t$
 
-While simple, the Euler method's is blind to any changes that occur during the step. This error, while tiny on each step, is **systematic**. Over thousands of steps, it accumulates, failing to conserve energy. This makes the Euler method unsuitable for any simulation where long-term stability is important.
+While simple, the Euler method's is blind to any changes that occur during the step. This error, while tiny on each step, is **systematic**. Over thousands of steps, it accumulates, failing to conserve energy. This makes the Euler method unsuitable where long-term stability is important.
 
 ### Velocity Verlet
 
@@ -149,15 +147,15 @@ A **symplectic integrator** is designed to respect the underlying geometry of ph
 
 * A **non-symplectic** integrator, like the Euler method, consistently makes an error in the same direction. It always "cuts the corner" of the orbit, pushing the planet slightly outwards. These errors add up, causing the planet's energy to systematically increase and its orbit to spiral away.
 
-* A **symplectic** integrator, like Verlet, makes errors that are correlated. On one step, it might slightly overshoot the true orbit, but on a later step, it will undershoot it. The errors effectively cancel each other out over time. Instead of a catastrophic spiral, the simulated planet executes a stable "wobble" along the correct orbital path. The shape of the orbit might oscillate, but its average size and energy remain correct in the long term.
+* A **symplectic** integrator, like Verlet, makes errors that are correlated. On one step, it might slightly overshoot the true orbit, but on a later step, it will undershoot it. The errors effectively cancel each other out over time. The simulated planet executes a stable "wobble" along the correct orbital path. The shape of the orbit might oscillate, but its average size and energy remain correct in the long term.
 
-The deeper reason for this stability lies in a concept from classical mechanics called **phase space**. Phase space is an abstract map where every point represents the complete state of a particle—both its **position** and its **momentum**. For a system where energy is conserved, a fundamental rule known as **Liouville's Theorem** states that the "area" (or volume) of any group of states in phase space must stay constant as the system evolves.
+The deeper reason for this stability lies in a concept from classical mechanics called **phase space**. Phase space is an abstract map where every point represents the complete state of a particle—both its **position** and its **momentum**. For a system where energy is conserved, a rule known as **Liouville's Theorem** states that the "area" (or volume) of any group of states in phase space must stay constant as the system evolves.
 
 Symplectic integrators **preserve this phase space volume**. The bounded energy error (the "wobble") is a direct consequence of this property.
 
 ### The Kick-Drift-Kick Integrator
 
-The standard Velocity Verlet integrator is a powerful tool, but it was designed for a universe with static rules. The introduction of cosmic expansion adds a velocity-dependent term to the equations of motion (the "Hubble drag", explored in a later section). This new term creates a challenge for the standard Verlet algorithm because its symplectic nature is strictly defined for forces that depend only on position, not velocity. To handle this new term gracefully, we adopt a different formulation known as a **Leapfrog** scheme. The most common implementation, the **Kick-Drift-Kick (KDK)** integrator, is the standard choice in cosmological simulations.
+The introduction of cosmic expansion adds a velocity-dependent term to the equations of motion (the "Hubble drag", explored in a later section). This new term creates a challenge for the standard Verlet algorithm because its symplectic nature is defined for forces that depend only on position, not velocity. To handle this new term gracefully, we adopt a different formulation known as a **Leapfrog** scheme. The most common implementation, the **Kick-Drift-Kick (KDK)** integrator, is a common choice in cosmological simulations.
 
 The KDK scheme advances the system from a time $t$ to $t+\Delta t$ in three stages:
 
@@ -176,13 +174,13 @@ $$\mathbf{x}(t + \Delta t) = \mathbf{x}(t) + \mathbf{v}(t + \tfrac{1}{2}\Delta t
 Finally, the new acceleration, $\mathbf{a}(t + \Delta t)$, is computed from the forces at the new positions, $\mathbf{x}(t + \Delta t)$, and the **mid-step velocity**, $\mathbf{v}(t + \frac{1}{2}\Delta t)$. The acceleration is then used to complete the velocity update for the second half of the time step.
 $$\mathbf{v}(t + \Delta t) = \mathbf{v}(t + \tfrac{1}{2}\Delta t) + \mathbf{a}(t + \Delta t)\frac{\Delta t}{2}$$
 
-While mathematically equivalent to Verlet in simpler cases, this staggered formulation is particularly robust for handling the time-varying and velocity-dependent forces present in a cosmological simulation. The symmetric "kick-force-kick" structure gracefully incorporates these complexities, which is why the KDK leapfrog is a common integrator in modern cosmological N-body codes.
+This staggered formulation is more robust for handling the time-varying and velocity-dependent forces present in a cosmological simulation.
 
 #### Symmetry and Second-Order Accuracy
 
-In numerical physics, the "order of accuracy" dictates how fast errors shrink when we take smaller timesteps ($\Delta t$). A basic, asymmetric algorithm like the Forward Euler method is only *first-order* accurate ($O(\Delta t)$); if we cut the timestep in half, the error only drops by half.
+In numerical physics, the "order of accuracy" dictates how fast errors shrink when we take smaller timesteps ($\Delta t$). The Forward Euler method is only *first-order* accurate ($O(\Delta t)$); if we cut the timestep in half, the error only drops by half.
 
-The KDK scheme achieves higher accuracy through its **symmetry**. By splitting the velocity kick into two equal halves that perfectly bracket the position drift, the algorithm becomes **time-reversible**. For conservative forces like gravity, this means that if we paused the simulation, reversed all the velocities, and ran the KDK math backward, the particles would trace their steps back to their starting positions.
+The KDK scheme achieves higher accuracy through its **symmetry**. By splitting the velocity kick into two equal halves that bracket the position drift, the algorithm becomes **time-reversible**. For conservative forces like gravity, this means that if we paused the simulation, reversed all the velocities, and ran the KDK math backward, the particles would trace their steps back to their starting positions.
 
 In numerical calculus, any integration scheme that is symmetric and time-reversible causes the leading, first-order Taylor series error terms to cancel each other out. Because the first-order error is gone, the largest surviving error scales with the square of the timestep ($O(\Delta t^2)$). This means KDK is **second-order accurate**—if we cut the timestep in half, the integration error drops by a factor of four.
 
@@ -218,7 +216,7 @@ While NGP is very simple, it introduces inaccuracies. As we will explore in a la
 
 #### Poisson's Equation
 
-The potential field $\Phi$ can be determined from the mass density field, $\rho_{i,j,k}$. We can link mass to gravitational potential through the **Poisson's Equation**.
+The potential field $\Phi$ can be determined from the mass density field, $\rho_{i,j,k}$, through the **Poisson's Equation**.
 
 $$\nabla^2 \Phi = 4\pi G \rho$$
 
@@ -229,9 +227,9 @@ Where:
 * $G$ is the gravitational constant.
 * $\nabla^2$ (the **Laplacian**) is a mathematical operator that measures how much a function curves around a point—the **net curvature**.
 
-In this equation, mass acts as the source of curvature: where there is mass, the potential bends inward, forming gravitational wells that attract other masses. Where $\rho = 0$, there’s no net curvature. This may seem counterintuitive, as the potential field clearly forms a curved, gravitational well even in the empty space around a mass. The key is that the Laplacian, $\nabla^2\Phi$, measures the **net curvature**. In the smooth $1/r$ shape of a potential in empty space, the radial inward bending of the field is perfectly balanced by a natural geometric spreading effect in three dimensions. These two effects cancel each other out, resulting in zero net curvature.
+In this equation, mass acts as the source of curvature: where there is mass, the potential bends inward, forming gravitational wells. Where $\rho = 0$, there’s no net curvature. This may seem counterintuitive, as the potential field forms a curved, gravitational well even in the empty space around a mass. The key is that the Laplacian, $\nabla^2\Phi$, measures the **net curvature**. In the smooth $1/r$ shape of a potential, the radial inward bending of the field is balanced by a natural geometric spreading effect in three dimensions. These two effects cancel each other out, resulting in zero net curvature.
 
-Possion's equation allows us to transition from Newton's "particle-to-particle" worldview to a continuous "field" worldview. Transitioning to this specific differential equation is a key element of the PM method: as we will see in the next section, writing gravity in this form allows us to take advantage of the Convolution Theorem and Fast Fourier Transforms (FFTs) to solve the gravitational field in a fraction of the time. Here is the step-by-step derivation from Newton's law of gravity to Poisson's equation.
+Possion's equation allows us to transition from Newton's "particle-to-particle" worldview to a continuous "field" worldview. As we will see in the next section, writing gravity in this form allows us to take advantage of the Convolution Theorem and Fast Fourier Transforms (FFTs) to solve the gravitational field in a fraction of the time. Here is the step-by-step derivation from Newton's law of gravity to Poisson's equation.
 
 ##### Step 1: The Gravitational Field of a Point Mass
 
@@ -247,7 +245,7 @@ $$\boldsymbol{g} = -\nabla\Phi = -\frac{GM}{r^2}\hat{\boldsymbol{r}}$$
 
 ##### Step 2: The Gravitational Flux (Gauss's Law)
 
-Imagine wrapping that point mass inside a perfectly spherical imaginary surface (a Gaussian surface) with radius $r$. We want to calculate the total "flux" of the gravitational field pointing inward through that surface.
+Imagine wrapping that point mass inside a spherical surface (a Gaussian surface) with radius $r$. We want to calculate the total "flux" of the gravitational field pointing inward through that surface.
 
 To do this, we integrate the field $\boldsymbol{g}$ over the surface area $A$ of the sphere ($A = 4\pi r^2$):
 
@@ -272,7 +270,7 @@ $$\oint_S \boldsymbol{g} \cdot d\boldsymbol{A} = -4\pi G \int_V \rho(\boldsymbol
 
 ##### Step 4: The Divergence Theorem
 
-Now we use a fundamental tool from vector calculus: the **Divergence Theorem**. This theorem states that the flux of a vector field across a closed boundary is exactly equal to the volume integral of the *divergence* ($\nabla \cdot$) of that field inside the boundary.
+Now we use the **Divergence Theorem**. This theorem states that the flux of a vector field across a closed boundary is exactly equal to the volume integral of the *divergence* ($\nabla \cdot$) of that field inside the boundary.
 
 Applying it to our gravitational field gives:
 
@@ -281,12 +279,12 @@ $$\oint_S \boldsymbol{g} \cdot d\boldsymbol{A} = \int_V (\nabla \cdot \boldsymbo
 
 ##### Step 5: Equating the Integrals
 
-Because Step 3 and Step 4 are calculating the exact same flux, we can set them equal to each other:
+Because Step 3 and Step 4 are calculating the same flux, we can set them equal to each other:
 
 
 $$\int_V (\nabla \cdot \boldsymbol{g}) dV = \int_V (-4\pi G \rho) dV$$
 
-Because this must be true for *any* arbitrary volume $V$ we choose in our simulation box, the integrands themselves must be identical. We can strip away the integrals entirely to get the differential form of Gauss's Law:
+Because this must be true for *any* arbitrary volume $V$ we choose in our simulation box, the integrands themselves must be identical. We can strip away the integrals to get the differential form of Gauss's Law:
 
 
 $$\nabla \cdot \boldsymbol{g} = -4\pi G \rho$$
@@ -305,11 +303,11 @@ The divergence of a gradient ($\nabla \cdot \nabla$) is the **Laplacian operator
 
 $$\nabla^2\Phi = 4\pi G \rho$$
 
-Solving Poisson’s equation means finding the global shape of $\Phi$ given all the local sources $\rho$. Doing this directly is computationally expensive, but as we’ll see next, the Fast Fourier Transform (FFT) offers an efficient way to compute it by turning this differential problem into simple multiplications in frequency space.
+Solving Poisson’s equation means finding the global shape of $\Phi$ given all the local sources $\rho$. As we’ll see next, the Fast Fourier Transform (FFT) offers an efficient way to compute it.
 
 #### The FFT and the Convolution Theorem
 
-Given the mass density grid, $\rho$, and the rule connecting it to the potential, Poisson's Equation, the challenge now is to solve it. Although Poisson's equation is written as a differential equation ($\nabla^2$), solving it in real space means integrating Newton's law: calculating the potential at every grid point by summing the $1/r$ influence from all other grid points. This sliding, brute-force operation is known mathematically as a **convolution**. It's a slow, computationally expensive task.
+Given the mass density grid, $\rho$, and the rule connecting it to the potential, Poisson's Equation, the challenge now is to solve it. Although Poisson's equation is written as a differential equation ($\nabla^2$), solving it in real space means integrating Newton's law: calculating the potential at every grid point by summing the $1/r$ influence from all other grid points. This computationally expensive task operation is known as a **convolution**.
 
 Fortunately, there is a more efficient mathematical tool that can solve this problem: the **Fast Fourier Transform (FFT)**. This algorithm is used to take advantage of the **Convolution Theorem**.
 
@@ -364,11 +362,11 @@ This allows us to replace the slow, brute-force calculation with a faster three-
 
 3.  **Transform Back:** We take the resulting potential in frequency space, $\Phi_k$, and use the **Inverse Fast Fourier Transform (IFFT)** to convert it back into the real-space potential grid, $\Phi$, that we wanted.
 
-By taking this detour through frequency space, we replace a slow algorithm that scales as $O(M^6)$ (for a 3D grid with $M \times M \times M$ cells) with one that scales as $O(M^3 \log M)$. This is what makes the Particle-Mesh method convenient, enabling simulations with millions or billions of particles.
+With this process, we replace a slow algorithm that scales as $O(M^6)$ (for a 3D grid with $M \times M \times M$ cells) with one that scales as $O(M^3 \log M)$. This is what makes the Particle-Mesh method convenient.
 
 ### Step 2. From Potential to Force
 
-Now that we have the potential grid, $\Phi$, we can calculate the force grid. The physical relationship is universal: force is the negative gradient of the potential.
+Now that we have the potential grid, $\Phi$, we must calculate the force grid. The physical relationship is universal: force is the negative gradient of the potential.
 
 $$\mathbf{F} = -\nabla\Phi$$
 
@@ -653,7 +651,7 @@ Bagla, J. S. (2002). *TreePM: A code for cosmological N-body simulations.* Journ
 
 Up to this point, our simulation has taken place in a static box. However, our universe is not static; it is expanding. To accurately model the formation of structure, we must incorporate this expansion into our simulation.
 
-This is achieved by switching from familiar "proper" coordinates to a more abstract but powerful system called **comoving coordinates**. Instead of tracking particles in a fixed box, we track them on a virtual grid that expands along with the universe itself.
+This is achieved by switching from familiar "proper" coordinates to **comoving coordinates**. Instead of tracking particles in a fixed box, we track them on a virtual grid that expands along with the universe itself.
 
 ### The Hubble Flow
 
@@ -665,17 +663,17 @@ Where $H(t)$ is the Hubble parameter at time $t$. This flow is the background up
 
 ### Comoving Coordinates
 
-Tracking particles whose primary motion is this rapid expansion is computationally difficult. It's much easier to factor out the expansion. We do this by defining a **scale factor**, $a(t)$, which describes the relative size of the universe at any time $t$. By convention, $a=1$ today. In the past, $a$ was smaller.
+Computationally, it's convenient to factor out the expansion when tracking particles. We do this by defining a **scale factor**, $a(t)$, which describes the relative size of the universe at any time $t$. By convention, $a=1$ today. In the past, $a$ was smaller.
 
 We can now define two types of coordinates:
 
-* **Proper Coordinates ($\mathbf{r}$):** The real, physical distance between two objects that you would measure with a ruler at time $t$. This distance grows as the universe expands.
-* **Comoving Coordinates ($\mathbf{x}$):** The coordinates of an object on our virtual, expanding grid. If an object is moved *only* by the Hubble Flow, its comoving coordinates **do not change**.
+* **Proper Coordinates ($\mathbf{r}$):** The real, physical distance between two objects that we would measure with a ruler at time $t$. This distance grows as the universe expands.
+* **Comoving Coordinates ($\mathbf{x}$):** The coordinates of an object on the virtual, expanding grid. If an object is moved *only* by the Hubble Flow, its comoving coordinates **do not change**.
 
 The relationship between them is simple:
 $$\mathbf{r}(t) = a(t) \mathbf{x}$$
 
-A particle's true velocity is a combination of the Hubble Flow and its own, small-scale motion relative to the expanding grid. This local motion, caused by the gravitational pull of nearby structures, is called the **peculiar velocity**, $\mathbf{v}_{\text{pec}}$.
+A particle's true velocity is a combination of the Hubble Flow and its own motion relative to the expanding grid. This local motion, caused by the gravitational pull of nearby structures, is called the **peculiar velocity**, $\mathbf{v}_{\text{pec}}$.
 
 ### The Equations of Motion
 
@@ -687,143 +685,140 @@ Our goal is to rewrite this equation using **comoving coordinates**, $\mathbf{x}
 
 $$\frac{d^2\mathbf{x}}{dt^2} = \frac{\mathbf{g}_{\text{comoving}}(\mathbf{x})}{a^3} - 2H(t)\frac{d\mathbf{x}}{dt}$$
 
-Let's break down these two terms, which are the fundamental modifications needed for a cosmological simulation.
+Let's break down these two terms:
 
-* **Modified Gravity:** The first term, $\frac{\mathbf{g}_{\text{comoving}}(\mathbf{x})}{a^3}$, represents the force of gravity. The term $\mathbf{g}_{\text{comoving}}(\mathbf{x})$ is the gravitational acceleration that our force solvers (like PM or PP) calculate—it's the acceleration that would exist in a *static* universe if the particles were at their current comoving positions. The division by the scale factor cubed, $a^3$, is the crucial cosmological correction. As the universe expands by a factor of $a$, the volume of any given region increases by $a^3$. This dilutes the physical density of matter as $\rho \propto 1/a^3$. Since gravity is sourced by density, its strength weakens accordingly, and this term correctly captures that effect.
+* **Modified Gravity:** The first term, $\frac{\mathbf{g}_{\text{comoving}}(\mathbf{x})}{a^3}$, represents the force of gravity. The term $\mathbf{g}_{\text{comoving}}(\mathbf{x})$ is the gravitational acceleration that our force solvers (like PM or PP) calculate—it's the acceleration that would exist in a *static* universe if the particles were at their current comoving positions. The division by the scale factor cubed, $a^3$, is the cosmological correction. As the universe expands by a factor of $a$, the volume of any given region increases by $a^3$. This dilutes the physical density of matter as $\rho \propto 1/a^3$. Since gravity is sourced by density, its strength weakens accordingly, and this term captures that effect.
 
 * **Hubble Drag:** The second term, $-2H(t)\frac{d\mathbf{x}}{dt}$, is a new velocity-dependent "friction" term. The term $H(t)$ is the Hubble parameter ($\frac{1}{a}\frac{da}{dt}$), and $\frac{d\mathbf{x}}{dt}$ is the particle's **peculiar velocity** (its local motion relative to the expanding grid). This "Hubble drag" acts to slow down these peculiar velocities. In an expanding universe, a particle's local motion is constantly being damped by the stretching of space itself.
 
-By solving this new equation of motion, our simulation correctly captures the delicate interplay between the cosmic expansion that tries to pull everything apart and the force of gravity that tries to pull everything together.
-
 ### Cosmological Models and the Friedmann Equations
 
-The equation of motion we just derived tells us how particles respond to gravity and expansion, but it relies on two crucial background variables: the scale factor, $a(t)$, and the Hubble parameter, $H(t)$. To actually integrate the particle trajectories, our simulation needs to know exactly how these values evolve. Their behavior is not arbitrary; it is dictated by the fundamental laws of General Relativity.
+The equation of motion we just derived relies on the scale factor, $a(t)$, and the Hubble parameter, $H(t)$. To integrate the particle trajectories, we need to know how these values evolve. Their behavior is dictated by the laws of General Relativity.
 
-General Relativity is governed by **Einstein's Field Equations**. At their core, these equations describe the delicate balance between the geometry of the cosmos and the "stuff" inside it. They are elegantly summarized in tensor notation:
+General Relativity is governed by **Einstein's Field Equations**. These equations describe the balance between the geometry of the cosmos and the "stuff" inside it. They are summarized in tensor notation:
 
 $$G_{\mu\nu} + \Lambda g_{\mu\nu} = \frac{8\pi G}{c^4} T_{\mu\nu}$$
 
-In this formulation, the left side represents the canvas of spacetime itself: $G_{\mu\nu}$ measures the geometric curvature, $g_{\mu\nu}$ is the metric defining how distances are measured, and $\Lambda$ is the cosmological constant representing the inherent energy of the vacuum. The right side represents the contents: $T_{\mu\nu}$ is the stress-energy tensor, which tallies up all the mass, light, and fluid pressure in a given region. As physicist John Archibald Wheeler famously summarized: *"Spacetime tells matter how to move; matter tells spacetime how to curve."* However, because this compact line actually hides ten grueling, interconnected differential equations, solving it directly for an irregular, clumpy universe filled with billions of scattered galaxies is mathematically impossible.
+The left side represents the canvas of spacetime itself: $G_{\mu\nu}$ measures the geometric curvature, $g_{\mu\nu}$ is the metric defining how distances are measured, and $\Lambda$ is the cosmological constant representing the inherent energy of the vacuum. The right side represents the contents: $T_{\mu\nu}$ is the stress-energy tensor, which tallies up all the mass, light, and fluid pressure in a given region. As physicist John Archibald Wheeler summarized: *"Spacetime tells matter how to move; matter tells spacetime how to curve."* However, solving it directly for an irregular, clumpy universe filled with scattered galaxies is impossible.
 
-In the 1920s, physicist Alexander Friedmann simplified Einstein's field equations for a universe that is assumed to be uniform and isotropic on large scales. The resulting Friedmann equation acts as the master blueprint for cosmic expansion.
+In the 1920s, Alexander Friedmann simplified Einstein's field equations for a universe that is assumed to be uniform and isotropic on large scales. The result, known as the Friedmann equation, acts as the master blueprint for cosmic expansion.
 
-In modern cosmology, the geometric cosmological constant ($\Lambda$) from Einstein's equations is typically treated as an effective "vacuum energy density" ($\rho_\Lambda$). This fluid-like approach allows us to group dark energy alongside normal matter and radiation into a single total density term ($\rho_{tot}$), yielding a highly elegant and unified equation:
+The geometric cosmological constant ($\Lambda$) from Einstein's equations is typically treated as an effective "vacuum energy density" ($\rho_\Lambda$). This allows us to group dark energy alongside normal matter and radiation into a single total density term ($\rho_{tot}$), yielding a unified equation:
 
 $$H(t)^2 = \left( \frac{1}{a} \frac{da}{dt} \right)^2 = \frac{8\pi G}{3} \rho_{tot} - \frac{kc^2}{a^2}$$ Where: $$\rho_{tot} = \rho_m + \rho_r + \rho_\Lambda$$ $$\rho_\Lambda = \frac{\Lambda c^2}{8\pi G}$$ $$\rho_r = \frac{\epsilon}{c^2}$$ $$\epsilon = \frac{4\sigma}{c} T^4$$
 
 Here, $G$ is the gravitational constant, $k$ is a constant representing the overall geometric curvature of space, and $\rho_{tot}$ is the combined density of matter ($\rho_m$), radiation ($\rho_r$), and the inherent vacuum energy of space itself ($\rho_\Lambda$). For the radiation component, $\epsilon$ represents the thermodynamic energy density of the photon gas filling the universe, determined by the Stefan-Boltzmann constant ($\sigma$), the speed of light ($c$), and the temperature of the Cosmic Microwave Background ($T$).
 
-Observations of the real universe strongly indicate that our cosmos is geometrically "flat," meaning $k = 0$. This simplifies the mathematics significantly. In a perfectly flat universe, the expansion rate is exactly balanced by the total energy density. This specific equilibrium point is known as the critical density ($\rho_c$). Evaluated at any time $t$, it is defined entirely by the Hubble parameter and the gravitational constant:
+Observations of the real universe indicate that our cosmos is geometrically "flat," meaning $k = 0$. In a flat universe, the expansion rate is balanced by the total energy density. This equilibrium point is known as the critical density ($\rho_c$). Evaluated at any time $t$, it is defined by the Hubble parameter and the gravitational constant:
 
 $$\rho_c(t) = \frac{3H(t)^2}{8\pi G}$$
 
-Because the critical density acts as the universal balancing point, cosmologists express the composition of the universe using dimensionless density parameters ($\Omega_m$ for matter, $\Omega_r$ for radiation, and $\Omega_\Lambda$ for dark energy). These are defined simply as the ratio of a given component's density to the critical density:
+Because the critical density acts as the universal balancing point, cosmologists express the composition of the universe using dimensionless density parameters ($\Omega_m$ for matter, $\Omega_r$ for radiation, and $\Omega_\Lambda$ for dark energy). These are defined as the ratio of a given component's density to the critical density:
 
 $$\Omega_m = \frac{\rho_m}{\rho_c}, \quad \Omega_r = \frac{\rho_r}{\rho_c}, \quad \Omega_\Lambda = \frac{\rho_\Lambda}{\rho_c}$$
 
-Under this unified framework, because we live in a flat universe where the total density equals the critical density ($\rho_{tot} = \rho_c$), the sum of these fractions must equal one:
+In a flat universe, where the total density equals the critical density ($\rho_{tot} = \rho_c$), the sum of these fractions must equal one:
 
 $$\Omega_m + \Omega_r + \Omega_\Lambda = 1$$
 
-For our simulation to be a consistent representation of reality, the mean matter density of our computational grid must equal the matter fraction of this critical density evaluated at the present day ($H_0$):
+For our simulation to be a consistent representation of reality, the mean matter density must equal the matter fraction of this critical density evaluated at the present day:
 
 $$\bar{\rho}_m = \Omega_m \rho_{c,0}$$
 
-While the complete Friedmann framework accounts for the presence of radiation ($\Omega_r$), it is standard practice in N-body cosmological simulations to set $\Omega_r = 0$. This approximation is justified by the physics of cosmic expansion: while matter density dilutes as $a^{-3}$ due to the increasing volume of space, radiation density dilutes much faster, scaling as $a^{-4}$, because the expansion of space also stretches the physical wavelength of the photons, and a photon's energy is inversely proportional to its wavelength ($E \propto 1/\lambda$). Consequently, by the time a standard N-body simulation initializes (typically around a redshift of $z = 100$), the gravitational influence of radiation has become mathematically negligible. To streamline the computational integrator, modern codes safely ignore it, operating strictly under the assumption that $\Omega_m + \Omega_\Lambda = 1$.
+While the complete Friedmann framework accounts for the presence of radiation ($\Omega_r$), it is common practice in cosmological simulations to set $\Omega_r = 0$. This approximation is justified by the physics of cosmic expansion: while matter density dilutes as $a^{-3}$ due to the increasing volume of space, radiation density dilutes much faster, scaling as $a^{-4}$, because the expansion of space also stretches the physical wavelength of the photons, and a photon's energy is inversely proportional to its wavelength ($E \propto 1/\lambda$). Consequently, by the time a standard N-body simulation initializes (typically around a redshift of $z = 100$), the gravitational influence of radiation has become negligible. Codes often ignore it, assuming that $\Omega_m + \Omega_\Lambda = 1$.
 
-It is also important to note that the total matter density parameter, $\Omega_m$, is actually a composite of two distinct types of mass: baryonic matter ($\Omega_b$) and dark matter ($\Omega_{dm}$). Baryonic matter accounts for all the "normal" matter in the universe—such as the cosmic gas, stars, and planets—while dark matter represents the invisible, collisionless mass that provides the dominant gravitational framework for structure formation. Mathematically, this is expressed simply as $\Omega_m = \Omega_b + \Omega_{dm}$. In a standard gravity-only N-body simulation, our particles represent this combined total mass. However, when we later introduce hydrodynamics to the code, we must explicitly separate these fractions, as the baryonic gas experiences fluid pressure and thermal dynamics, while the dark matter continues to respond exclusively to gravity.
+Note that the total matter density parameter, $\Omega_m$, is actually a composite of baryonic matter ($\Omega_b$) and dark matter ($\Omega_{dm}$). Baryonic matter accounts for all the "normal" matter in the universe—such as the cosmic gas, stars, and planets—while dark matter represents the invisible, collisionless mass that provides the dominant gravitational framework for structure formation. This is expressed as $\Omega_m = \Omega_b + \Omega_{dm}$. In a gravity-only N-body simulation, our particles represent this combined total mass. However, when we later introduce hydrodynamics to the code, we must separate these fractions, as the baryonic gas experiences fluid pressure and thermal dynamics, while the dark matter responds exclusively to gravity.
 
-A **cosmological model** is simply a specific "recipe" of these cosmic ingredients. By defining what our virtual universe is made of (the total density $\rho$ and its composition ($\Omega_m$, $\Omega_r$ and $\Omega_\Lambda$) and plugging them into the Friedmann equation, we can mathematically solve for the exact historical trajectory of the expansion. 
+A **cosmological model** is a specific "recipe" of these cosmic ingredients. By defining the total density $\rho$ and its composition ($\Omega_m$, $\Omega_r$ and $\Omega_\Lambda$) and plugging them into the Friedmann equation, we can solve for the trajectory of the expansion. 
 
 For the purposes of our simulation, there are two primary models of interest: the classic, matter-dominated model (Einstein-de Sitter) and the modern, dark-energy-driven model ($\Lambda$CDM).
 
 ### An Einstein-de Sitter Universe
 
-For a simulation to be physically meaningful, it must be based on a self-consistent cosmological model. The simplest and most classic model for a matter-dominated universe is the **Einstein-de Sitter (EdS)** model. This is a specific solution to Einstein's Friedmann equations that describes a flat, expanding universe containing only matter ($\Omega_m = 1$) and no dark energy ($\Omega_\Lambda = 0$):
+The classic model for a matter-dominated universe is the **Einstein-de Sitter (EdS)**. This solution to Einstein's Friedmann equations describes a flat, expanding universe containing only matter ($\Omega_m = 1$) and no dark energy ($\Omega_\Lambda = 0$):
 
 $$H(t)^2 = \frac{8\pi G}{3}\rho(t)$$
 
-In an EdS universe, the expansion of space is constantly being decelerated by the gravitational pull of its own mass. This physical reality is described by a simple power-law relationship between the scale factor, $a(t)$, and cosmic time, $t$:
+In an EdS universe, the expansion of space is constantly being decelerated by the gravitational pull of its own mass. This is described by a power-law relationship between the scale factor, $a(t)$, and cosmic time, $t$:
 $$a(t) \propto t^{2/3}$$
-From this, the Hubble parameter also becomes a simple function of time:
+The Hubble parameter also becomes a function of time:
 $$H(t) = \frac{1}{a(t)} \frac{da(t)}{dt} = \frac{2}{3t}$$
 
 ### The $\Lambda$CDM Model
 
-The Einstein-de Sitter (EdS) model is mathematically elegant and perfectly describes a universe dominated entirely by the gravity of matter. For decades, it was the standard model of cosmology. However, in 1998, observations of distant supernovae revealed a shocking truth: the expansion of our universe is not slowing down due to gravity; it is accelerating.
+In 1998, observations revealed that the expansion of our universe is not slowing down due to gravity; it is accelerating.
 
-To model the real universe, we must upgrade from EdS to the **$\Lambda$CDM (Lambda Cold Dark Matter)** model. This model introduces a new component to the cosmos: **Dark Energy**, represented by the cosmological constant, $\Lambda$. Dark energy acts as a repulsive negative pressure inherent to space itself, pushing the universe apart.
+The **$\Lambda$CDM$ (Lambda Cold Dark Matter)** model introduces a new component: **Dark Energy**, represented by the cosmological constant, $\Lambda$. Dark energy acts as a repulsive negative pressure inherent to space itself, pushing the universe apart.
 
 In a flat $\Lambda$CDM universe, the total density is made up of matter ($\Omega_m \approx 0.3$) and dark energy ($\Omega_\Lambda \approx 0.7$), such that $\Omega_m + \Omega_\Lambda = 1$. The Friedmann equation expands to include this new term:
 
 $$H(t)^2 = H_0^2 \left( \frac{\Omega_m}{a(t)^3} + \Omega_\Lambda \right)$$
 
-Where $H_0$ is the **Hubble Constant**—the exact rate at which the universe is expanding right now, that is, the value of the Hubble parameter ($H(t)$) measured at the present.
+Where $H_0$ is the **Hubble Constant**—the rate at which the universe is expanding right now, that is, the value of the Hubble parameter, $H(t)$, measured at the present.
 
-Notice that the matter density dilutes as the universe expands ($1/a^3$), but the dark energy density ($\Omega_\Lambda$) remains perfectly constant. This creates a fascinating cosmic tug-of-war. In the early universe, when $a(t)$ was very small, the dense matter term completely dominated the Friedmann equation. The universe behaved almost exactly like an EdS model, decelerating as gravity pulled matter together. However, as space expanded and matter diluted, the constant outward push of dark energy eventually overtook the fading pull of gravity. Today, dark energy dominates, and the expansion is accelerating.
+Notice that the matter density dilutes as the universe expands ($1/a^3$), but the dark energy density ($\Omega_\Lambda$) remains constant. This creates a cosmic tug-of-war. In the early universe, when $a(t)$ was very small, the dense matter term dominated the Friedmann equation. The universe behaved almost like an EdS model, decelerating as gravity pulled matter together. However, as space expanded and matter diluted, the outward push of dark energy eventually overtook the fading pull of gravity. Today, dark energy dominates, and the expansion is accelerating.
 
-The exact solution for the scale factor $a(t)$ in a flat $\Lambda$CDM universe gracefully captures both of these eras—the early deceleration and the late acceleration—using a hyperbolic sine function:
+The solution for the scale factor $a(t)$ in a flat $\Lambda$CDM universe captures both of these eras—the early deceleration and the late acceleration—using a hyperbolic sine function:
 
 $$a(t) = \left( \frac{\Omega_m}{\Omega_\Lambda} \right)^{1/3} \sinh^{2/3} \left( \frac{3}{2} H_0 \sqrt{\Omega_\Lambda} t \right)$$
 
-By using this equation, along with its corresponding Hubble parameter $H(a)$, our simulation smoothly transitions from the matter-dominated epoch (where structures rapidly form) into the dark-energy-dominated epoch (where the cosmic web is stretched and frozen in place). 
-
-Dark energy actively fights against the formation of galaxies. In a pure matter universe, structures grow steadily forever. But in a $\Lambda$CDM universe, the accelerated stretching of space pulls matter apart faster than gravity can pull it together, eventually halting the hierarchical growth of the cosmos.
+This equation smoothly transitions from the matter-dominated epoch (where structures rapidly form) into the dark-energy-dominated epoch (where the cosmic web is stretched and frozen in place). In a $\Lambda$CDM universe, the accelerated stretching of space pulls matter apart faster than gravity can pull it together, eventually halting the hierarchical growth of the cosmos.
 
 
 ### General Relativity and Cosmic Expansion
 
-In our simulation model, the scale factor $a(t)$ is a global variable. It multiplies the distance between every single coordinate in the comoving grid equally. When dark matter clumps together to form a dense halo, the grid underneath it continues to expand, and the particles must generate inward "peculiar velocities" to fight against this background stretching and remain gravitationally bound. 
+In our simulation model, the scale factor $a(t)$ multiplies the distance between every single coordinate in the comoving grid. When dark matter clumps together to form a dense halo, the grid underneath it continues to expand, and the particles must generate inward "peculiar velocities" to fight against this background stretching and remain gravitationally bound. 
 
 However, under Einstein's General Relativity, **space does not expand independently of the matter inside it.** In this section we will understand why our simulation's approach still yields the correct physics.
 
-To begin, we have to look at how General Relativity actually defines the shape of space. This is governed by the Einstein Field Equations:
+Let's look at how the shape of space is governed by the Einstein Field Equations:
 
 $$G_{\mu\nu} + \Lambda g_{\mu\nu} = \frac{8\pi G}{c^4} T_{\mu\nu}$$
 
 The right side of the equation ($T_{\mu\nu}$) tallies up the mass and energy in a given region. The left side describes how the geometry of spacetime bends and stretches in response. The foundational building block of that geometry is the metric tensor, $g_{\mu\nu}$.
 
-In simple terms, a metric is a mathematical ruler. It defines exactly how physical distances and time intervals are measured in a curved universe.
+In simple terms, a metric is a mathematical ruler. It defines how distances and time intervals are measured in a curved universe.
 
 In standard Newtonian physics, if we want to measure the spatial distance ($ds$) between two points on a flat, static grid, we use the 3D Pythagorean theorem: $ds^2 = dx^2 + dy^2 + dz^2$. However, if those coordinates are sitting in a spacetime warped by gravity or cosmic expansion, that flat-space formula no longer works. The metric tensor ($g_{\mu\nu}$) acts as the correction factor, modifying the Pythagorean theorem to account for the stretching of space and the dilation of time.
 
-Mathematically, this relationship is expressed by multiplying the metric tensor against the differential coordinate steps ($dx^\mu$ and $dx^\nu$). Using the Einstein summation convention—where repeating indices imply a sum over all four spacetime dimensions (one for time, three for space)—the universal formula for measuring spacetime intervals is written as:
+This relationship is expressed by multiplying the metric tensor against the differential coordinate steps ($dx^\mu$ and $dx^\nu$). Using the Einstein summation convention—where repeating indices imply a sum over all four spacetime dimensions—the universal formula for measuring spacetime intervals is written as:
 $$ds^2 = g_{\mu\nu} dx^\mu dx^\nu$$
-We can think of $g_{\mu\nu}$ as a $4 \times 4$ matrix, and the coordinates as a vector: $(dt, dx, dy, dz)$. In a perfectly flat, empty universe (the "Minkowski" metric of Special Relativity), this matrix is incredibly simple. It consists of the speed of light for the time component, $1$s for the spatial components, and $0$s everywhere else:
+We can think of $g_{\mu\nu}$ as a $4 \times 4$ matrix, and the coordinates as a vector: $(dt, dx, dy, dz)$. In a flat, empty universe (the "Minkowski" metric of Special Relativity), this matrix consists of the speed of light for the time component, $1$s for the spatial components, and $0$s everywhere else:
 $$g_{\mu\nu} = \begin{pmatrix} -c^2 & 0 & 0 & 0 \\ 0 & 1 & 0 & 0 \\ 0 & 0 & 1 & 0 \\ 0 & 0 & 0 & 1 \end{pmatrix}$$
-If we multiply this matrix through the $ds^2$ equation, the zeros eliminate all the cross-terms, and we get the classic flat-space distance formula:
+If we multiply this matrix through the $ds^2$ equation, we get the classic flat-space distance formula:
 $$ds^2 = -c^2 dt^2 + dx^2 + dy^2 + dz^2$$
-If we freeze time so that the clock isn't ticking ($dt = 0$), this perfectly recovers the standard 3D Pythagorean theorem.
+If we freeze time ($dt = 0$), this recovers the standard 3D Pythagorean theorem.
 
-But when mass or cosmic expansion is introduced, the components of this $g_{\mu\nu}$ matrix change. The $1$s might be replaced by time-dependent variables, or the $0$s might become complex fractions. This alters the underlying geometry, meaning the exact same coordinate points will yield a completely different physical distance, $ds$.
+But when mass or cosmic expansion is introduced, the $1$s might be replaced by time-dependent variables, or the $0$s might become complex fractions. This alters the underlying geometry, meaning the same coordinate points will yield a different distance, $ds$.
 
-When cosmologists solve Einstein's equations, the ultimate goal is finding the correct metric—the correct "ruler"—for the specific arrangement of mass they are studying. When we look at the universe, we are confronted with two very different arrangements of mass, which require two entirely different mathematical rulers.
+Solving the Einstein's equations means finding the correct metric—the "ruler"—for a specific arrangement of mass. Different arrangements require different rulers.
 
 #### The FLRW Metric: A Uniform Universe
 
-To model the global expansion of the universe, cosmologists use a foundational solution to Einstein’s equations known as the **FLRW metric** (Friedmann–Lemaître–Robertson–Walker). To derive this metric, we assume the universe is a perfectly smooth, uniform fluid with no localized clumps, stars, or galaxies. Solving the field equations for this uniform mist yields the following geometry:
+To model the global expansion of the universe, cosmologists use the **FLRW metric** (Friedmann–Lemaître–Robertson–Walker). To derive this metric, we assume the universe is a smooth, uniform fluid with no localized clumps, stars, or galaxies. This yields the following geometry:
 $$ds^2 = -c^2 dt^2 + a(t)^2 (dx^2 + dy^2 + dz^2)$$
-In this equation, the spatial coordinates ($dx$, $dy$, $dz$) are multiplied by the scale factor $a(t)$. This is the rigorous mathematical origin of expanding space: because the scale factor depends on time, the physical distance ($ds$) between two stationary coordinate points strictly increases as the clock ticks. This perfectly describes the vast, empty cosmic voids between distant galaxy clusters.
+In this equation, the spatial coordinates ($dx$, $dy$, $dz$) are multiplied by the scale factor $a(t)$. This is the expanding space: because the scale factor depends on time, the physical distance ($ds$) between two stationary coordinate points increases as the clock ticks. This describes the cosmic voids between distant galaxy clusters.
 
 #### The Schwarzschild Metric: A Clumped Universe
 
-However, the real universe is not a perfectly smooth mist. Matter collapses into dense, localized structures like stars, galaxies, and clusters, leaving vast empty vacuums between them. If we plug a dense, spherical clump of mass into the Einstein Field Equations surrounded by empty space, the FLRW metric is no longer a valid solution. Instead, the geometry of space is described by the **Schwarzschild metric**:
+However, the real universe is not a perfectly smooth mist. Matter collapses into dense, localized structures like stars, galaxies, and clusters, leaving vacuums between them. If we plug a dense, spherical clump of mass into the Einstein Field Equations surrounded by empty space, the FLRW metric is no longer a valid solution. Instead, the geometry of space is described by the **Schwarzschild metric**:
 
 $$ds^2 = -\left(1 - \frac{2GM}{rc^2}\right)c^2 dt^2 + \left(1 - \frac{2GM}{rc^2}\right)^{-1} dr^2 + r^2 (d\theta^2 + \sin^2\theta d\phi^2)$$
 
-Crucially, **there is no time-dependent scale factor $a(t)$ attached to the spatial coordinates** ($dr$, $d\theta$, $d\phi$). The metric depends solely on the mass ($M$) and the radius from it ($r$). 
+Note that **there is no time-dependent scale factor $a(t)$ attached to the spatial coordinates** ($dr$, $d\theta$, $d\phi$). The metric depends solely on the mass ($M$) and the radius from it ($r$). 
 
-Mathematically, this proves that the space inside a dense, gravitationally bound system is completely static. The space between the Earth and the Sun, or between stars in the Milky Way, is not expanding. Gravity does not "compensate" for expansion in these regions; the expansion simply does not exist within this localized geometry. Physicists often model the universe as an "Einstein-Straus vacuole"—a "Swiss cheese" universe where the cheese is the smooth, expanding FLRW space, and the holes are static, non-expanding Schwarzschild regions where mass has concentrated.
+This shows that the space inside a dense, gravitationally bound system is static. The space between the Earth and the Sun, or between stars in the Milky Way, is not expanding. Gravity does not "compensate" for expansion in these regions; the expansion simply does not exist within this localized geometry. 
+Physicists often model the universe as an "Einstein-Straus vacuole"—a "Swiss cheese" universe where the cheese is the smooth, expanding FLRW space, and the holes are static, non-expanding Schwarzschild regions where mass has concentrated.
 
 #### Validity of the Simulation's Approximation
 
-This brings us to the core contradiction of an N-body simulation. Our model explicitly applies the expanding FLRW ruler ($a(t)$) to every single coordinate cell in the grid universally. According to strict General Relativity, that's fundamentally wrong: we are forcing space to expand inside our simulated galaxy clusters. To keep those clusters from ripping apart, our Newtonian integrator generates artificial "peculiar velocities," making the particles physically swim inward to constantly fight against a background expansion that shouldn't even be there.
+This brings us to a contradiction. Our model explicitly applies the expanding FLRW ruler ($a(t)$) universally. According to General Relativity, that's wrong: we are forcing space to expand inside our simulated galaxy clusters. To keep those clusters from ripping apart, our Newtonian integrator generates artificial "peculiar velocities," making the particles swim inward to fight against a background expansion that shouldn't be there.
 
-How can a computational model violating relativistic geometry accurately simulate the cosmos? The answer requires a mathematical bridge that proves our Newtonian "cheat" actually mimics the true geometry of spacetime: **Cosmological Perturbation Theory**.
+To prove that, despite violating relativistic geometry, our Newtonian "cheat" actually mimics the geometry of spacetime we'll use **Cosmological Perturbation Theory**.
 
 #### Cosmological Perturbation Theory
 
-The Newtonian approximation is not an exact, universal equivalence to General Relativity; rather, it is a highly constrained, rigorously proven limit. There is a mathematical bridge—**Cosmological Perturbation Theory**—that demonstrates exactly how and when Einstein's equations simplify into our model.
+The Newtonian approximation is not an exact, universal equivalence to General Relativity; rather, it is a constrained proven limit. **Cosmological Perturbation Theory** demonstrates how and when Einstein's equations simplify into our model.
 
 In General Relativity, we cannot blindly superimpose Newtonian gravity on top of the expanding FLRW universe. Instead, physicists define a metric that represents an expanding universe containing slight localized "wrinkles" or "dimples" of gravity. This is known as the **Conformal Newtonian Gauge**:
 
@@ -835,29 +830,27 @@ Notice the composition of this metric:
 2. We have introduced $\Phi$, the local gravitational potential representing the "wrinkles" in spacetime caused by clumps of dark matter.
 3. The speed of light, $c$, is explicitly included to anchor the relativity.
 
-To prove that our N-body simulation is valid, cosmologists insert this "wrinkled" metric into the complex Einstein Field Equations and apply three strict mathematical limits to mirror the conditions of a standard galaxy cluster:
+To prove that our N-body simulation is valid, cosmologists insert this "wrinkled" metric into the complex Einstein Field Equations and apply three mathematical limits to mirror the conditions of a standard galaxy cluster:
 
 1. **Weak Gravity:** The local gravitational potential is tiny compared to the speed of light squared ($\Phi \ll c^2$).
 2. **Slow Motion:** The peculiar velocities of the particles are much slower than the speed of light ($v \ll c$).
 3. **Sub-Horizon Scales:** The comoving size of the simulation domain ($L$) is much smaller than the observable universe ($L \ll c/H$).
 
-When these three limits are applied, the massive complexity of General Relativity collapses. The vast majority of the relativistic terms safely cancel out to zero. What remains is a single, elegant equation defining how the gravitational potential $\Phi$ behaves within the expanding grid:
+When these three limits are applied, the majority of the relativistic terms cancel out. What remains is an equation defining how the gravitational potential $\Phi$ behaves within the expanding grid:
 $$\nabla^2 \Phi = 4\pi G a^2 (\rho - \bar{\rho})$$
-This is the cosmological Poisson equation, and it is the exact mathematical foundation of our gravity solver. Notice the right side of the equation: $\rho$ is the actual density in a local region, and $\bar{\rho}$ is the average background density of the universe. The term $(\rho - \bar{\rho})$ proves that in an expanding universe, gravity is only generated by the *overdensity*—the amount of mass that exceeds the background average. 
+This is the cosmological Poisson equation, and it is the foundation of our gravity solver. Notice the right side of the equation: $\rho$ is the actual density in a local region, and $\bar{\rho}$ is the average background density of the universe. The term $(\rho - \bar{\rho})$ proves that in an expanding universe, gravity is only generated by the *overdensity*—the amount of mass that exceeds the background average. 
 
-Historically, simply subtracting this background density was a controversial mathematical trick known as the "Jeans Swindle." In 1902, physicist James Jeans tried to calculate the gravitational collapse of gas in a static, infinite universe using Newtonian physics. He immediately ran into a mathematical paradox: according to strict Newtonian rules, an infinite universe filled with a uniform background mass ($\bar{\rho}$) would generate an infinite gravitational potential, breaking the equations entirely. To force his calculations to work, Jeans simply "swindled" the math. He arbitrarily declared that the uniform background mass exerted no net gravity, explicitly ignored it, and applied Poisson's equation only to the local density variations.
+Subtracting this background density is a "trick" known as the "Jeans Swindle": the uniform background mass exerts no net gravity, can be ignored, and we can apply Poisson's equation only to the local density variations.
 
-For decades, this was viewed as a mathematical cheat because it is strictly illegal in a static Newtonian framework. However, the perturbation theory we just applied provides the rigorous justification for using the Jeans Swindle in our model. In the limit of slow-moving particles and weak gravity, the shifting spacetime of the universe mathematically reduces to a modified Newtonian Poisson equation where the background density is naturally and correctly subtracted. The expansion of space acts as a perfect mathematical sink for the background mass, leaving only the local overdensities to drive the structural collapse.
+The perturbation theory we just applied provides the justification for using the Jeans Swindle in our model. In the limit of slow-moving particles and weak gravity, the shifting spacetime of the universe reduces to a modified Newtonian Poisson equation where the background density is subtracted. Only the local overdensities to drive the structural collapse.
 
 #### Limitations of the approximation
 
-Because our model is built upon these three limits, it inherently defines the boundaries of what it can physically simulate. If we violate them, the Newtonian approximation does not just lose accuracy; it fundamentally misrepresents the physics:
+These three limits define the boundaries of what we can simulate:
 
 * **Breaking the slow-motion limit ($v \ll c$):** If a particle were accelerated to a significant fraction of the speed of light (e.g., material ejected in a relativistic jet), our Newtonian integrator would calculate the wrong trajectory. Under Newtonian mechanics, a continuous force causes continuous acceleration, which would eventually push our simulation particles faster than the speed of light. In reality, relativity dictates that as an object approaches $c$, its momentum scales non-linearly, requiring infinite energy to accelerate further. Our code lacks the Lorentz transformations required to enforce this cosmic speed limit.
-* **Breaking the weak gravity limit ($\Phi \ll c^2$):** If a supermassive black hole formed in our box, the local gravitational potential $\Phi$ would approach $c^2$. Our code operates on the assumption that space is a flat, rigid Cartesian grid, and that gravity is merely a force vector pulling particles through it. In reality, extreme gravity severely warps the geometry of spacetime, creating phenomena like event horizons and severe local time dilation. A simple $1/r^2$ Newtonian force calculation completely fails to capture the complex, non-Euclidean behavior of matter falling into deeply curved gravitational wells.
-* **Breaking the sub-horizon limit ($L \ll c/H$):** If we attempted to simulate a massive domain 10,000 Megaparsecs across, our treatment of large-scale gravity would fail. Our code's Poisson solver calculates the gravitational potential of the entire grid at a single, frozen timestep. Inherently, it assumes gravity travels at infinite speed. For a 100 Mpc box, the light-travel delay is negligible compared to the slow movement of galaxies. But for a 10,000 Mpc box, our instantaneous calculation would physically violate causality, allowing a galaxy on one side of the universe to immediately feel the gravitational pull of a cluster on the far opposite side. To prevent faster-than-light gravity over vast cosmic distances, we would have to abandon the simple Poisson solver and use relativistic "retarded potentials" that account for the billions of years it takes for gravitational ripples to travel.
-
-However, for a 100 Mpc domain forming standard dark matter halos and galactic filaments, the Newtonian approximation holds so tightly that the dynamic difference between our code and a supercomputer solving raw General Relativity is practically indistinguishable.
+* **Breaking the weak gravity limit ($\Phi \ll c^2$):** If a supermassive black hole formed in our box, the local gravitational potential $\Phi$ would approach $c^2$. Our code operates on the assumption that space is a flat, rigid Cartesian grid, and that gravity is merely a force vector pulling particles through it. In reality, extreme gravity severely warps the geometry of spacetime, creating phenomena like event horizons and severe local time dilation. A simple $1/r^2$ Newtonian force calculation fails to capture the non-Euclidean behavior of matter falling into deeply curved gravitational wells.
+* **Breaking the sub-horizon limit ($L \ll c/H$):** If we attempted to simulate a massive domain 10,000 Megaparsecs across, our treatment of large-scale gravity would fail. Our code's Poisson solver calculates the gravitational potential of the entire grid at a single, frozen timestep. It assumes gravity travels at infinite speed. For a 100 Mpc box, the light-travel delay is negligible compared to the slow movement of galaxies. But for a 10,000 Mpc box, our instantaneous calculation would violate causality, allowing a galaxy on one side of the universe to immediately feel the gravitational pull of a cluster on the far opposite side. To prevent faster-than-light gravity over vast cosmic distances, we would have to use relativistic "retarded potentials" that account for the time it takes for gravitational ripples to travel.
 
 *Key Literature & Further Reading*  
 Springel, V. (2005). The cosmological simulation code GADGET-2. *Monthly Notices of the Royal Astronomical Society*, 364(4), 1105-1134. Available at: [https://arxiv.org/abs/astro-ph/0505010](https://arxiv.org/abs/astro-ph/0505010)
@@ -866,13 +859,13 @@ Green, S. R., & Wald, R. M. (2012). Newtonian and relativistic cosmologies. *Phy
 
 ## Natural Units
 
-To simplify the implementation, and for numerical stability, it is standard practice to work in a system of **natural units**. Any system of units requires three fundamental base quantities: Mass, Length, and Time. 
+To simplify the implementation, and for numerical stability, it is common practice to work in a system of **natural units**. Any system of units requires three fundamental quantities: Mass, Length, and Time. 
 
-It is standard convention in modern cosmological codes to define define the mass and length units by setting the total mass of the system to $M_{total} = 1$ and the comoving side length of the box to $L = 1$. It is also universally standard to set the present-day scale factor to $a_0 = 1$. 
+It is standard convention in modern cosmological codes to define define the mass and length units by setting the total mass of the system to $M_{total} = 1$ and the comoving side length of the box to $L = 1$. It is also standard to set the present-day scale factor to $a_0 = 1$. 
 
-To complete the system, we must define a code unit of time. While we could theoretically choose any arbitrary duration (such as one billion physical years), doing so would cause our calculated value for $G$ to change every time we simulate a different cosmology. Instead, we want to define a time unit that mathematically absorbs the cosmological parameters, allowing $G$ to remain a permanent, universal constant in our code.
+To complete the system, we must define a code unit of time. While we could choose any arbitrary duration (such as one billion physical years), doing so would cause our calculated value for $G$ to change every time we simulate a different cosmology. Instead, we want to define a time unit that absorbs the cosmological parameters, allowing $G$ to remain a permanent, universal constant in our code.
 
-To do this, we base our time unit on the fundamental dynamical timescale of a purely matter-dominated universe. In a classic Einstein-de Sitter model, the physical age of the universe is exactly $\frac{2}{3H_0}$. We adapt this foundational timescale to serve as our base code unit of time ($t_{unit}$) by explicitly dividing it by the square root of the matter fraction:
+To do this, we base our time unit on the dynamical timescale of a purely matter-dominated universe. In a classic Einstein-de Sitter model, the physical age of the universe is $\frac{2}{3H_0}$. We adapt this timescale to serve as our base code unit of time ($t_{unit}$) by dividing it by the square root of the matter fraction:
 
 $$t_{unit} = \frac{2}{3 H_{0, \text{phys}} \sqrt{\Omega_m}}$$
 
@@ -880,19 +873,19 @@ Because the physical Hubble parameter has units of inverse time ($1/t$), convert
 
 $$H_0 = \frac{2}{3\sqrt{\Omega_m}}$$
 
-By anchoring our time unit in this very specific way, we have intentionally entangled the internal expansion rate with the matter density. As we will see, this deliberate mathematical choice acts as a perfect counterweight in the Friedmann equations, allowing us to lock the strength of gravity to a single, unchanging number across all flat cosmological models.
+By anchoring our time unit in this way, we have intentionally entangled the internal expansion rate with the matter density. As we will see, this deliberate choice acts as a counterweight in the Friedmann equations, allowing us to lock the strength of gravity to a single, unchanging number across all flat cosmological models.
 
-It may seem counterintuitive that we derived our fundamental time unit from the mathematics of an Einstein-de Sitter (matter-only) universe, especially when modern simulations almost exclusively model $\Lambda$CDM (dark-energy-dominated) universes. However, this is a deliberate computational trick. Dark energy is a perfectly smooth vacuum energy; it does not cluster, and therefore it does not enter the Poisson equation for local gravity. By defining our time unit using the EdS timescale, we cleanly isolate the matter density ($\Omega_m$) and absorb it into the time variable, leaving the gravity solver completely independent of the cosmology. The complex effects of dark energy are handled entirely elsewhere in the code—specifically, within the calculation of the global background expansion, $a(t)$.
+It may seem counterintuitive that we derived our time unit from an Einstein-de Sitter universe, when modern simulations almost exclusively model $\Lambda$CDM universes. However, this is a deliberate computational trick. Dark energy is a perfectly smooth vacuum energy; it does not cluster, and therefore it does not enter the Poisson equation for local gravity. By defining our time unit using the EdS timescale, we isolate the matter density ($\Omega_m$) and absorb it into the time variable, leaving the gravity solver independent of the cosmology. The effects of dark energy are handled elsewhere in the code—specifically, within the calculation of the global background expansion, $a(t)$.
 
 ### Deriving the Gravitational Constant ($G$)
 
 To derive the value of the gravitational constant ($G$) required for our code, we must ensure that the mean density of our simulation grid matches the physical matter density of a flat universe. As established, this physical matter density is a fraction of the critical density: $\bar{\rho}_m = \Omega_m \rho_c$.
 
-In our natural unit system, the present-day Hubble parameter is defined as $H_0 = \frac{2}{3\sqrt{\Omega_m}}$ to ensure the correct timeline for cosmic expansion. If we substitute this definition into the physical matter density equation, a mathematical cancellation occurs:
+In our natural unit system, the present-day Hubble parameter is defined as $H_0 = \frac{2}{3\sqrt{\Omega_m}}$. If we substitute this definition into the physical matter density equation, a cancellation occurs:
 
 $$\bar{\rho}_m = \Omega_m \left( \frac{3 \left( \frac{2}{3\sqrt{\Omega_m}} \right)^2}{8\pi G} \right)$$
 
-When we expand the squared Hubble term, the $\Omega_m$ in the denominator perfectly cancels out the $\Omega_m$ scaling the equation:
+When we expand the squared Hubble term, the $\Omega_m$ in the denominator cancels out the $\Omega_m$ scaling the equation:
 
 $$\bar{\rho}_m = \Omega_m \left( \frac{3 \left( \frac{4}{9\Omega_m} \right)}{8\pi G} \right) = \frac{12}{72\pi G} = \frac{1}{6\pi G}$$
 
@@ -900,39 +893,35 @@ Now, we look at the computational side. The mean density of our simulation box i
 
 $$\bar{\rho}_m = \frac{M_{total}}{L^3}$$
 
-Equating our mean density to the physical matter density gives us our final consistency relation for $G$:
+Equating our mean density to the physical matter density gives us the consistency relation for $G$:
 
 $$\frac{M_{total}}{L^3} = \frac{1}{6\pi G}$$
 
 $$G = \frac{L^3}{6\pi M_{total}}$$
 
-Because we chose $M_{total} = 1$ and $L = 1$ for our natural units, this simplifies to a final, permanent constant:
+Because we chose $M_{total} = 1$ and $L = 1$ as natural units, this simplifies to a constant:
 
 $$G = \frac{1}{6\pi}$$
 
-The $\Omega_m$ parameter drops out of the calculation. Because the code's definition of the expansion rate ($H_0$) inherently absorbs the matter fraction, the required strength of gravity in our simulation units becomes a universal constant. For any flat cosmology—whether it is a simple matter-only EdS model or a complex dark-energy-driven $\Lambda$CDM model—this exact value for $G$ ensures that the gravitational pull in our code is perfectly balanced against the expansion of space.
+The $\Omega_m$ parameter drops out of the calculation. Because the code's definition of the expansion rate ($H_0$) absorbs the matter fraction, the strength of gravity in code units becomes a constant for any flat cosmology.
 
 ### Hubble: Physical vs. Code Units
 
-Because we intentionally constructed our time unit to force our internal expansion rate to $H_0 = \frac{2}{3\sqrt{\Omega_m}}$, a sharp reader might wonder how we input the *actual* observed expansion rate of the universe. In observational cosmology, the matter density ($\Omega_m$) and the true physical Hubble constant are completely independent parameters.
+Because we intentionally constructed our time unit to force the internal expansion rate to $H_0 = \frac{2}{3\sqrt{\Omega_m}}$, a sharp reader might wonder how we input the *actual* observed expansion rate of the universe. In cosmology, the matter density ($\Omega_m$) and the true physical Hubble constant are independent parameters.
 
 To resolve this, cosmological codes split the concept of the Hubble parameter into two distinct roles:
 
 * **The Physical Hubble Parameter ($h$):** In astronomy, the real-world Hubble constant is traditionally written as $H_{0, \text{phys}} = 100 \cdot h \text{ km/s/Mpc}$, where $h$ is a dimensionless scaling factor (typically around 0.7). This parameter represents the true physical expansion speed. It is used exclusively during the setup and analysis phases to calculate the real physical size of the primordial density fluctuations, set the initial conditions, and translate the final simulation outputs back into standard physical units like Megaparsecs and Kelvin.
-* **The Internal Code-Unit Hubble Parameter ($H_0$):** Once the simulation starts integrating, it stops thinking in kilometers and seconds. It strictly uses the derived internal rate ($H_0 = \frac{2}{3\sqrt{\Omega_m}}$) to step the time clock forward, stretch the scale factor $a(t)$, and apply Hubble drag to the particles on the grid.
-
-By managing this strict separation, the code's internal gravity solver remains mathematically elegant and constant, while still allowing the user to configure their initial conditions with any real-world combination of $\Omega_m$ and $h$ they choose.
+* **The Internal Code-Unit Hubble Parameter ($H_0$):** Once the simulation starts integrating, it uses the derived internal rate ($H_0 = \frac{2}{3\sqrt{\Omega_m}}$) to step time forward, stretch the scale factor $a(t)$, and apply Hubble drag to the particles on the grid.
 
 ### Translating Natural Units to Physical Reality
 
-While natural units keep the computer's floating-point math stable by bounding variables between 0.0 and 1.0, we eventually need to translate our simulation data back into Megaparsecs, Solar Masses, and Gigayears to compare our "mock universe" with actual telescope observations. 
-
-Because we locked our natural unit system to the fundamental cosmological expansion parameters ($\Omega_m$ and $H_0$), we can rigorously derive the exact physical value of 1.0 code unit for Length, Mass, Time, and Velocity.
+Eventually, we'll need to translate our simulation data back into Megaparsecs, Solar Masses, and Gigayears to compare our "mock universe" with actual telescope observations. We must derive the physical value of 1.0 code unit for Length, Mass, Time, and Velocity.
 
 **1. The Length Unit ($[L]$)**
-The length unit is the foundational choice of the simulation, representing the comoving size of the virtual patch of space we wish to model. If we decide our simulation box represents a region 100 Megaparsecs across, then $1.0$ code unit of distance is strictly defined as $L_{box} = 100 \text{ Mpc}$. 
+The length unit represents the comoving size of the virtual patch of space we are simulating. If we decide our simulation box represents a region 100 Megaparsecs across, then $1.0$ code unit of distance is defined as $L_{box} = 100 \text{ Mpc}$. 
 
-Because this is a comoving length, the coordinate system expands with the universe. The *physical* distance measured by a hypothetical tape measure at any point in the simulation is simply $a(t) \times L_{box}$.
+Because this is a comoving length, the coordinate system expands with the universe. The *physical* distance is $a(t) \times L_{box}$.
 
 **2. The Mass Unit ($[M]$)**
 Because we defined the total mass of our system as $M_{total} = 1$, one unit of code mass represents the total physical mass of the entire simulated universe. 
@@ -942,101 +931,99 @@ $$G = 6.674 \times 10^{-11} \text{ m}^3 \text{ kg}^{-1} \text{ s}^{-2}$$
 $$H_0 = 100h \text{ km s}^{-1} \text{ Mpc}^{-1}$$
 $$\rho_{crit,0} = \frac{3H_0^2}{8\pi G} \approx 2.775 \times 10^{11} h^2 \ M_\odot / \text{Mpc}^3$$
 
-It is important to remember that the critical density ($\rho_{crit,0}$) represents the total mass-energy threshold required to make the universe's spatial geometry perfectly flat. In a standard $\Lambda$CDM universe, matter only makes up a fraction of this total energy budget (typically $\Omega_m \approx 0.3$), with dark energy making up the remainder. Because our simulation exclusively tracks mass, we cannot use the raw critical density to weigh our universe. We must multiply it by $\Omega_m$ to isolate the actual physical matter density residing inside our simulated box:
+It is important to remember that the critical density ($\rho_{crit,0}$) represents the total mass-energy threshold required to make the universe's spatial geometry flat. In a standard $\Lambda$CDM universe, matter only makes up a fraction of this total energy budget (typically $\Omega_m \approx 0.3$), with dark energy making up the remainder. In this case we must multiply the critical density by $\Omega_m$ to isolate the physical matter density in our simulated box:
 $$[M] = \Omega_m \rho_{crit,0} L_{box}^3$$
-If a single dark matter particle in the code has a mass of $m_p$, its physical mass is simply $m_p \times [M]$.
+If a particle in the code has a mass of $m_p$, its physical mass is $m_p \times [M]$.
 
 **3. The Time Unit ($[T]$)**
-To find out how many real years pass when our code's internal clock ticks from $t=0.0$ to $t=1.0$, we rely on the foundational time unit we defined earlier to lock our gravitational constant. As established, our code unit of time is defined by the physical Hubble parameter and the matter fraction:
+To find out how many years pass when our code's internal clock ticks from $t=0.0$ to $t=1.0$, we rely on the time unit we defined earlier. Our code unit of time is defined by the physical Hubble parameter and the matter fraction:
 $$[T] = \frac{2}{3 H_{0, phys} \sqrt{\Omega_m}}$$
 
-The physical Hubble parameter ($H_{0,phys}$) is typically expressed as $100h \text{ km s}^{-1} \text{ Mpc}^{-1}$. To get our time unit in Gigayears (Gyr), we convert $H_{0,phys}$ to $\approx 0.10227 h \text{ Gyr}^{-1}$. Substituting this into our equation gives us our exact translation factor:
+The physical Hubble parameter ($H_{0,phys}$) is typically expressed as $100h \text{ km s}^{-1} \text{ Mpc}^{-1}$. To get our time unit in Gigayears (Gyr), we convert $H_{0,phys}$ to $\approx 0.10227 h \text{ Gyr}^{-1}$. Substituting this into our equation gives us the translation factor:
 $$[T] = \frac{2}{3 (0.10227 h) \sqrt{\Omega_m}} \text{ Gyr}$$
 
 **4. The Velocity Unit ($[V]$)**
-Because velocity is kinematically derived from distance over time, fixing our Length and Time units strictly dictates our internal Velocity unit. 
+Velocity is derived from distance over time: 
 $$[V] = \frac{[L]}{[T]}$$
-Using the derivations above, the Megaparsecs neatly cancel out, yielding an exact conversion factor to translate code velocities into kilometers per second:
+Using the derivations above, the Megaparsecs cancel out, yielding a conversion factor to translate code velocities into kilometers per second:
 $$[V] = 150 \cdot h \cdot \sqrt{\Omega_m} \cdot L_{box} \text{ km/s}$$
 
-Once these four fundamental units are established, all other physical quantities in the simulation—such as the internal energy of the gas, pressure, and temperature—can be seamlessly derived using standard dimensional analysis.
+Once these units are established, all other physical quantities in the simulation—such as the internal energy of the gas, pressure, and temperature—can be derived using dimensional analysis.
 
 ## The Cosmic Timeline
 
 ### The Scale Factor ($a$) and Redshift ($z$)
 
-Before we look at the timeline of the universe, we need to define how cosmologists actually tell time. While it is intuitive to talk about "years since the Big Bang," it is incredibly difficult to calculate. Instead, astronomers rely on two interlocked variables to track the evolution of the cosmos: the scale factor ($a$) and cosmological redshift ($z$).
+Astronomers rely on two interlocked variables to track the evolution of the cosmos: the scale factor ($a$) and cosmological redshift ($z$).
 
 **The Scale Factor ($a$)**
-As we established, $a(t)$ is the mathematical engine of the universe's expansion. It tracks the relative, physical size of the coordinate grid. By convention, the scale factor today is set to exactly $a = 1$. When the universe was a quarter of its current size, $a = 0.25$. As we run our code forward from the early universe, $a$ continuously ticks upward toward 1.
+As we established, $a(t)$ tracks the relative, physical size of the coordinate grid. By convention, the scale factor today is set to $a = 1$. When the universe was a quarter of its current size, $a = 0.25$. As we run our code forward from the early universe, $a$ ticks upward toward 1.
 
 **Cosmological Redshift ($z$)**
 While $a$ is perfect for writing computer code, an astronomer cannot point a telescope at the sky and directly measure the "size of the coordinate grid." What they *can* measure is light. 
 
-As a photon travels across the universe to reach our telescopes, the space it is traveling through is expanding. This expansion physically stretches the photon's wavelength, shifting its color toward the red end of the spectrum. We call this stretching **Cosmological Redshift**, denoted by the letter **$z$**. 
+As a photon travels across the universe to reach our telescopes, the space it is traveling through is expanding. This expansion stretches the photon's wavelength, shifting its color toward the red end of the spectrum. We call this stretching **Cosmological Redshift**, denoted by the letter **$z$**. 
 
-**The Mathematical Link**
-Because the stretching of the light is tied exactly to the stretching of space itself, redshift and the scale factor are inversely related by a very simple, but universally important equation:
+**The Link**
+Because the stretching of the light is tied to the stretching of space, redshift and the scale factor are inversely related:
 
 $$a = \frac{1}{1+z}$$
 
-Because redshift is the actual, tangible thing we measure in the real world, it has become the universal "clock" for the history of the universe. In literature we will almost always see time denoted by $z$:
+In literature we will almost always see time denoted by $z$:
 
 * **$z = 0$:** Today ($a = 1$).
-* **$z = 1$:** The universe was exactly half its current size ($a = 0.5$).
+* **$z = 1$:** The universe was half its current size ($a = 0.5$).
 * **$z = 9$:** The universe was 1/10th its current size ($a = 0.1$).
 * **$z = 49$:** A typical starting time for generating simulation's initial conditions ($a = 0.02$).
 * **$z = 1100$:** The release of the Cosmic Microwave Background ($a \approx 0.0009$).
 * **$z \to \infty$:** The Big Bang ($a \to 0$).
 
-When reading cosmological texts, we can think of redshift as a measure of looking backward: the higher the $z$, the further back in time we are looking, the further away the object is, and the smaller and denser the universe was when that light was emitted.
+The higher the $z$, the further back in time we are looking, the further away the object is, and the smaller and denser the universe was when that light was emitted.
 
 ### Eras and epochs
 
-In cosmology, we divide the 13.8-billion-year history of the universe into distinct "eras." These divisions are not arbitrary historical chapters; they are strictly defined by the mathematics of the Friedmann equation. 
+In cosmology, we divide the 13.8-billion-year history of the universe into distinct "eras." These divisions are defined by the Friedmann equation. 
 $$H^2(a) = H_0^2 \left( \Omega_{r,0} a^{-4} + \Omega_{m,0} a^{-3} + \Omega_{k,0} a^{-2} + \Omega_{\Lambda,0} \right)$$
-Whichever component of the universe (radiation, matter, or dark energy) has the highest energy density dictates the expansion rate of space and the physical rules for how structures form.
+Whichever component of the universe (radiation, matter, or dark energy) has the highest energy density dictates the expansion rate and how structures form.
 
 For the purposes of cosmological simulations, the universe's history is defined by three major eras:
 
 #### The Radiation-Dominated Era (The Big Bang to ~50,000 Years)
-In the very early universe, space was incredibly small, dense, and unimaginably hot. During this time, the universe's energy budget was completely dominated by the kinetic energy of photons and relativistic particles (neutrinos).
+In the very early universe, space was small, dense, and hot. During this time, the universe's energy budget was dominated by the kinetic energy of photons and relativistic particles (neutrinos).
 
-* **The Physics:** In the early universe, the initial rate of spatial expansion triggered by the Big Bang was still very high. Even though the immense density of the radiation was acting as a gravitational "brake" to slow the universe down, the speed of expansion was still blistering. This rapid expansion acted like a cosmic treadmill: space stretched the dark matter particles away from each other much faster than their local gravity could pull them together. Consequently, the local gravitational collapse of dark matter was completely frozen—a phenomenon known as the **Mészáros effect**. It was only after the universe expanded enough for this "treadmill" to significantly slow down that local gravity finally took control and began building cosmic structures. 
-* **Simulation Context:** We rarely simulate this era directly with N-body codes. Instead, its effects are mathematically "baked in" to our initial conditions. The suppression of small-scale structures during this era is exactly what creates the mathematical curve of the **BBKS Transfer Function** (explained in a later section).
-* **The Transition:** As the universe expanded, radiation diluted much faster than physical matter. Around 50,000 years after the Big Bang, the density of radiation dropped below the density of matter, marking a shift in cosmic physics. Shortly after this transition (at about 380,000 years, or a redshift of roughly z = 1100), the universe cooled enough for the first neutral atoms to form, releasing the Cosmic Microwave Background (CMB).
+* **The Physics:** In the early universe, the initial rate of spatial expansion triggered by the Big Bang was still very high. This rapid expansion acted like a cosmic treadmill: space stretched the dark matter particles away from each other much faster than their local gravity could pull them together. Consequently, the local gravitational collapse of dark matter was frozen—a phenomenon known as the **Mészáros effect**. It was only after the universe expanded enough for this "treadmill" to slow down that local gravity took control and began building cosmic structures. 
+* **Simulation Context:** We rarely simulate this era directly with N-body codes. Instead, its effects are mathematically "baked in" to our initial conditions.
+* **The Transition:** As the universe expanded, radiation diluted faster than matter. Around 50,000 years after the Big Bang, the density of radiation dropped below the density of matter, marking a shift in cosmic physics. Shortly after this transition (at about 380,000 years, or a redshift of roughly z = 1100), the universe cooled enough for the first neutral atoms to form, releasing the Cosmic Microwave Background (CMB).
 
 #### The Matter-Dominated Era (~50,000 Years to ~9.8 Billion Years)
-Once the radiation diluted, the gravity of cold dark matter and baryonic gas took control of the energy budget. Unlike radiation, cold matter acts like a cosmic "dust"—it has mass, but it exerts practically zero large-scale macroscopic pressure. The global expansion rate dropped low enough that local gravity could finally fight back. Dark matter overdensities decoupled from the expanding background and collapsed inward, initiating the bottom-up, hierarchical assembly of the cosmic web.
+Once the radiation diluted, the gravity of cold dark matter and baryonic gas took control of the energy budget. Unlike radiation, cold matter acts like a cosmic "dust"—it has mass, but it doesn't exert pressure. The global expansion rate dropped low enough that local gravity could finally fight back. Dark matter overdensities decoupled from the expanding background and collapsed inward, initiating the bottom-up, hierarchical assembly of the cosmic web.
 
 * **The Physics:** This is the golden age of structure formation. With radiation pressure gone and the expansion slowing, gravity was finally free to pull matter together. The tiny primordial ripples left over from the Big Bang collapsed into the cosmic web, forming the first stars, galaxies, and galaxy clusters. 
-* **Simulation Context:** This era is the primary sandbox for computational cosmology. Our simulations typically start right near the beginning of this era (e.g., at redshift z = 49). Because dark energy is negligible here, the universe behaves like a simple Einstein-de Sitter model where the linear growth factor scales perfectly with the size of the universe: $D(t) \propto a(t)$. 
+* **Simulation Context:** This era is the primary sandbox for computational cosmology. Our simulations typically start right near the beginning of this era (e.g., at redshift z = 49). Because dark energy is negligible here, the universe behaves like an Einstein-de Sitter model where the linear growth factor scales with the size of the universe: $D(t) \propto a(t)$. 
 * **Key Epochs:** Inside this era, hydrodynamic simulations track two vital milestones:
     * *The Dark Ages:* The time before the first stars ignited, when the universe was filled with cold, neutral hydrogen gas.
-    * *Cosmic Dawn & The Epoch of Reionization:* The violent period when the first massive stars and quasars (actively feeding supermassive black holes at the centers of infant galaxies) ignited. These objects emitted such intense ultraviolet radiation that they blasted the surrounding cold, neutral hydrogen back into a hot plasma. This process started locally, blowing expanding "bubbles" of ionized gas around the UV emitters. Over hundreds of millions of years, these bubbles grew and merged until the entire intergalactic medium was completely reionized, fundamentally changing the fluid dynamics and thermal pressure of the universe.
+    * *Cosmic Dawn & The Epoch of Reionization:* The violent period when the first massive stars and quasars (actively feeding supermassive black holes at the centers of infant galaxies) ignited. These objects emitted such intense ultraviolet radiation that they blasted the surrounding cold, neutral hydrogen back into a hot plasma. This process started locally, blowing expanding "bubbles" of ionized gas around the UV emitters. Over hundreds of millions of years, these bubbles grew and merged until the entire intergalactic medium was completely reionized, changing the fluid dynamics and thermal pressure of the universe.
 
 #### The Dark Energy-Dominated Era (~9.8 Billion Years to Present)
-Matter dilutes as the universe expands, but the density of Dark Energy (the cosmological constant, $\Lambda$) remains perfectly constant. About 9.8 billion years after the Big Bang (around redshift z = 0.3), the density of matter finally diluted so much that Dark Energy became the dominant force in the cosmos.
+Matter dilutes as the universe expands, but the density of Dark Energy (the cosmological constant, $\Lambda$) remains constant. About 9.8 billion years after the Big Bang (around redshift z = 0.3), matter diluted so much that Dark Energy became the dominant force.
 
-* **The Physics:** Dark Energy acts as a repulsive pressure inherent to the vacuum of space. Under its dominance, the expansion of the universe stopped slowing down and began to violently accelerate.
-* **Simulation Context:** This late-time acceleration physically stretches the cosmic web apart faster than gravity can pull it together. This marks the epoch where the growth factor $D(t)$ stalls out and stops tracking the scale factor. Large-scale mergers between galaxy clusters become increasingly rare, and the largest structures begin to freeze in place.
+* **The Physics:** Dark Energy acts as a repulsive pressure inherent to the vacuum of space. Under its dominance, the expansion of the universe began to accelerate.
+* **Simulation Context:** This late-time acceleration stretches the cosmic web apart faster than gravity can pull it together. This marks the epoch where the growth factor $D(t)$ stalls out and stops tracking the scale factor. Large-scale mergers between galaxy clusters become increasingly rare, and the largest structures begin to freeze in place.
 
 #### A Note on the "Initial Kick" of the Big Bang
 
-Throughout these eras, we describe the universe's expansion as a continuous fight against the immense gravitational brakes of radiation and matter. However, this raises a profound physical paradox: if the early universe was so unimaginably dense, standard General Relativity dictates it should have immediately collapsed into a black hole under its own weight. So, where did the initial outward expansion come from?
-
-Standard General Relativity cannot answer this question. If we run the Friedmann equations backward, they perfectly describe how the universe behaves *after* the expansion started, but they offer absolutely no physical mechanism for what caused the initial "kick." In classical Big Bang cosmology, this impossibly fast initial expansion cannot be derived; it is simply accepted as a given initial condition. While modern theoretical physics attempts to solve this paradox with models like **Cosmic Inflation**—a brief, pre-radiation epoch where quantum fields exerted a temporary repulsive anti-gravity—standard cosmological codes do not need to simulate these quantum mechanics. For the purposes of computational cosmology, we simply accept the universe's initial outward expansion rate as a foundational mathematical starting line.
+General Relativity cannot tell where the initial expansion come from. While modern theoretical physics attempts to explain this with models like **Cosmic Inflation**, for the purposes of computational cosmology we simply accept it as a given initial condition.
 
 
 ## Initial Conditions
 
-The outcome of a cosmological simulation depends on its starting point. To accurately model our universe, we must generate a physical snapshot that captures the primordial density fluctuations that seeded all future cosmic structure.
+The outcome of a cosmological simulation depends on its starting point. To accurately model our universe, we must generate a snapshot that captures the primordial density fluctuations that seeded all future cosmic structure.
 
-Fortunately, in the early universe, these density fluctuations were tiny. Because the variations in the gravitational field were so weak and smooth, the initial clustering of matter was entirely **linear**. This is a massive advantage for computational cosmology: it means we do not need to waste computational resources running an N-body solver from the very beginning of time. 
+In the early universe, these density fluctuations were tiny. Because the variations in the gravitational field were so weak and smooth, the initial clustering of matter was **linear**. This is a massive advantage for computational cosmology: it means we do not need to waste computational resources running an N-body solver from the beginning of time. 
 
-Instead, we can fast-forward through the earliest epochs using an analytical framework called the **Zel'dovich Approximation**. Because the physics were still linear, this mathematical approximation can predict how those tiny primordial ripples displaced matter over millions of years. 
+Instead, we can fast-forward through the earliest epochs using the **Zel'dovich Approximation**. This analytical framework can predict how those tiny primordial ripples displaced matter over millions of years. 
 
-However, as matter gradually clumps together, local gravity becomes stronger and non-linear. Eventually, dark matter streams cross and gas violently collides. At this point, the linear Zel'dovich approximation breaks down. That breaking point is our simulation's starting line: we use the Zel'dovich approximation to instantly generate the universe's geometry right up to the edge of the linear regime—typically around a scale factor of $a = 0.02$, roughly 50 million years after the Big Bang. Where this analytical approximation starts to fail, our numerical solvers take over to compute the chaotic, non-linear birth of galaxies.
+However, as matter gradually clumps together, local gravity becomes stronger and non-linear. At this point, the linear Zel'dovich approximation breaks down. That breaking point is our simulation's starting line: we use the Zel'dovich approximation to generate the universe's geometry right up to the edge of the linear regime—typically around a scale factor of $a = 0.02$, roughly 50 million years after the Big Bang. Where this analytical approximation starts to fail, our numerical solvers take over to compute the chaotic, non-linear birth of galaxies.
 
 ### The Unperturbed State
 
@@ -1766,20 +1753,20 @@ Instead of performing expensive approximations to compute the forces inside a co
 
 ### Initial Conditions for the Gaseous Component
 
-In cosmological simulations, the baryonic gas and the dark matter must be initialized to reflect the physical reality of the universe long after the epoch of recombination. By the time a typical simulation begins, the gas has already spent millions of years falling into the gravitational potential wells excavated by the dark matter. 
+In cosmological simulations, the baryonic gas and the dark matter must be initialized to resemble the universe long after the epoch of recombination. By the time a typical simulation begins, the gas has already spent millions of years falling into the gravitational potential wells excavated by the dark matter. 
 
-Therefore, the gaseous component must be initialized in lockstep with the dark matter, sharing its exact density fluctuations and bulk velocity flows, governed by the Zel'dovich approximation.
+Therefore, the gaseous component must be initialized in lockstep with the dark matter, sharing its density fluctuations and bulk velocity flows, governed by the Zel'dovich approximation.
 
 **1. Initial Density**
-The gas density, $\rho_{\text{gas}}$, is not uniform; it must perfectly trace the initial density perturbations of the dark matter. Once the dark matter particles are displaced to their starting positions, their mass is mapped to the Eulerian grid (via schemes like Cloud-in-Cell) to establish the primordial dark matter density field. The gas density in each cell is then set directly proportional to this field, scaled by the cosmic baryon fraction—the ratio of total gas mass to total dark matter mass in the simulation. 
+The gas density, $\rho_{\text{gas}}$, must trace the initial density perturbations of the dark matter. Once the dark matter particles are displaced to their starting positions, their mass is mapped to the Eulerian grid (via schemes like Cloud-in-Cell) to establish the primordial dark matter density field. The gas density in each cell is then set directly proportional to this field, scaled by the cosmic baryon fraction—the ratio of gas mass to dark matter mass in the simulation. 
 
 **2. Initial Peculiar Velocity**
-The gas cannot start "at rest". Because it has been gravitationally influenced by the dark matter for millions of years prior to the start of the simulation, the gas shares the same large-scale velocity flows. To achieve this synchronization, the continuous primordial velocity field is calculated natively on the high-resolution Eulerian grid using the Zel'dovich approximation. The gas grid is directly populated with these continuous velocity vectors, $\mathbf{v}_{\text{pec}}$. The collisionless dark matter particles, rather than carrying the grid, simply sample their individual initial velocities from this same continuous background field based on their starting coordinates.
+Because the gas has been gravitationally influenced by the dark matter prior to the start of the simulation, it shares the same large-scale velocity flows. To achieve this synchronization, the primordial velocity field is calculated using the Zel'dovich approximation. The gas grid is populated with these velocity vectors, $\mathbf{v}_{\text{pec}}$. The dark matter particles sample their initial velocities from this field based on their starting coordinates.
 
 **3. Initial Energy**
-Because we employ the **Dual Energy Formalism**, we must initialize two separate energy fields. First, the explicitly tracked *internal* energy is initialized to a very low, uniform baseline. This ensures the gas starts "cold," meaning its thermal pressure is negligible and too weak to artificially resist the initial gravitational collapse. Second, the *total* energy of the gas grid is initialized as the sum of this internal thermal energy and the macroscopic kinetic energy ($E_k = \frac{1}{2}\rho v^2$) dictated by its initial primordial momentum.
+Because we employ the **Dual Energy Formalism**, we must initialize two separate energy fields. First, the explicitly tracked *internal* energy is initialized to a very low, uniform baseline. Second, the *total* energy of the gas grid is initialized as the sum of this internal thermal energy and the macroscopic kinetic energy ($E_k = \frac{1}{2}\rho v^2$) dictated by its initial primordial momentum.
 
-To set the internal energy baseline, we link the internal energy density directly to the physical temperature ($T$) of the early universe using the ideal gas law:
+To set the internal energy baseline, we link the internal energy density to the physical temperature ($T$) of the early universe using the ideal gas law:
 
 $$ie = \frac{\rho k_B T}{(\gamma - 1) \mu m_p}$$
 
@@ -2113,7 +2100,7 @@ The cosmic ultraviolet background (UVB) is a uniform radiation field originating
 
 #### Passive Scalar Advection
 
-To handle metallicity within our second-order Godunov-type scheme (HLLC + MUSCL + SSP-RK2), the grid tracks the conserved comoving metal mass density, $\rho_Z$. This metal density is treated as a "passive scalar" within the Eulerian hydrodynamics solver, meaning that it does not directly influence the pressure or sound speed of the fluid during the resolution of shockwaves or contact discontinuities. Instead, metals flow passively alongside the gas mass.
+To handle metallicity within our second-order Godunov-type scheme (a finite-volume method that computes fluid flow by solving for the wave interactions at cell boundaries, in this case using HLLC + MUSCL + SSP-RK2), the grid tracks the conserved comoving metal mass density, $\rho_Z$. This metal density is treated as a "passive scalar" within the Eulerian hydrodynamics solver, meaning that it does not directly influence the pressure or sound speed of the fluid during the resolution of shockwaves or contact discontinuities. Instead, metals flow passively alongside the gas mass.
 
 However, during the spatial reconstruction step of the Riemann solver, we extrapolate the primitive metal mass fraction to the cell interfaces rather than the conserved density:
 
@@ -2151,6 +2138,7 @@ Solving this implicit equation requires a numerical root-finding algorithm. The 
 
 A more appropriate method for this scenario is the bisection method. The bisection method is an unconditionally stable bracketing algorithm that doesn't depend on derivative calculations. It operates by identifying a lower bound ($u_{low}$) and an upper bound ($u_{high}$) that enclose the true root, ensuring that $f(u_{low})$ and $f(u_{high})$ have opposite signs. The algorithm calculates the midpoint of the bracket and evaluates the function. Depending on the sign of the result, the midpoint replaces either the upper or lower bound, halving the search interval with each step. The bisection method guarantees a physical solution regardless of how jagged the underlying function may be.
 
+*Key Literature & Further Reading*  
 Haardt, F., & Madau, P. (2012). *Radiative Transfer in a Clumpy Universe. IV. New Synthesis Models of the Cosmic UV/X-Ray Background*. The Astrophysical Journal, 746(2), 125.
 
 Smith, B. D., Bryan, G. L., Glover, S. C. O., et al. (2017). *GRACKLE: a chemistry and cooling library for astrophysics.* Monthly Notices of the Royal Astronomical Society, 466(2), 2217-2234.
@@ -2179,33 +2167,266 @@ Haardt, F., & Madau, P. (2001). *Modelling the UV/X-ray cosmic background with C
 
 Benítez-Llambay, A., & Frenk, C. S. (2020). *The detailed structure and the onset of galaxy formation in low-mass gaseous dark matter haloes*. Monthly Notices of the Royal Astronomical Society, 498(4), 4887–4900.
 
+## Meshless Finite Mass (MFM) Hydrodynamics
+
+Historically, cosmological hydrodynamics codes have relied on two philosophies: Lagrangian (particle-based) and Eulerian (grid-based) methods. 
+
+*   **Lagrangian methods**, most prominently smoothed particle hydrodynamics (SPH), discretize the fluid into particles that move with the flow, guaranteeing Galilean invariance and automatic spatial adaptivity. However, SPH has well-documented deficiencies: an intrinsic zeroth-order error at contact discontinuities (the “E0 error”), an artificial surface tension that suppresses fluid instabilities, and a dependence on artificial viscosity that degrades accuracy in subsonic turbulent flows.
+*   **Eulerian methods**, exemplified by adaptive mesh refinement (AMR), are mesh-based approaches where the volume is discretized into points or cells, and the fluid equations are solved across these elements. These methods employ Godunov-type finite-volume schemes and achieve high-order convergence on smooth flows with sharp shock capturing, but they suffer from advection errors that scale with the bulk velocity of the fluid relative to the grid and break Galilean invariance.
+
+The **Meshless Finite Mass (MFM)** method was developed to capture the advantages of both Lagrangian and Eulerian schemes. Implemented in the cosmological code GIZMO (built upon the framework of GADGET-3), MFM utilizes a Riemann solver to calculate fluxes (traditionally reserved for grid-based Eulerian codes), but applies it over a meshless, Lagrangian distribution of fixed mass particles that move through space under the influence of gravity, much like the collisionless particles used to model Dark Matter.
+
+The MFM method is defined by three interdependent components: a kernel-based volume partition that replaces the mesh with a continuous density estimate, a high-order matrix gradient estimator that provides second-order-accurate spatial derivatives, and a Riemann solver that computes Godunov-type fluxes across the effective faces between particles.
+
+### Volume Partitioning and Density
+
+In MFM the simulation volume is partitioned using a continuous, spherical "kernel" function centered on each particle, which smoothly overlaps with its neighbors.
+
+A differential $\nu$-dimensional volume $d^\nu x$ at any arbitrary coordinate $x$ is fractionally distributed among the nearest particles using a continuous weighting function. The fraction of the volume associated with particle $i$ is defined as $\psi_i(x)$:
+
+$$\psi_i(x) \equiv \frac{1}{\omega(x)} W(x - x_i, h(x))$$
+
+Here, $W$ is the kernel function, and $h(x)$ is the kernel size (often referred to as the smoothing length, and evaluated at the particle center as $h_i$). We can think of $h(x)$ as defining the particle's sphere of influence—the radial distance beyond which the kernel evaluates to zero and the particle no longer "sees" or interacts with its surroundings.
+
+To ensure that the sum of all fractional weights equals unity at every point, the weights are normalized by the function $\omega(x)$, which is the sum of the kernel contributions from all neighboring particles $j$:
+
+$$\omega(x) \equiv \sum_j W(x - x_j, h(x))$$
+
+To achieve second-order accuracy, the conservation of linear and angular momentum, and the locality of the hydrodynamic operations, $W$ must be continuous, have compact support (meaning $W=0$ when $\vert{}x - x_i\vert{} \gg h(x)$), and be symmetric. We'll use the 3D cubic spline kernel, defined as a function of the normalized distance $q \equiv \vert{}x - x_i\vert{} / h_i$:
+
+$$W(q, h_i) = \frac{8}{\pi h_i^3} \begin{cases} 1 + 6q^2(q - 1) & (0 \le q < \frac{1}{2}) \\ 2(1 - q)^3 & (\frac{1}{2} \le q < 1) \\ 0 & (q \ge 1) \end{cases}$$
+
+$h(x)$ is determined dynamically by constraining it against the smoothed particle number density, $n_i$, which makes the resolution adaptive. Note that $n_i$ is not a discrete integer count of particles, but rather the continuous sum of the fractional kernel weights from all overlapping neighbors. The code solves for $h_i$ iteratively to maintain a constant "effective" neighbor number, $N_{NGB}$. The formula used to define and solve for $h_i$ in $\nu$ dimensions is:  
+$$N_{NGB} = C_\nu h_i^\nu n_i = C_\nu h_i^\nu \sum_j W(x_i - x_j, h_i)$$
+Where:
+
+*  $C_\nu$ is the volume normalization constant for a $\nu$-dimensional sphere ($1$, $\pi$, and $4\pi/3$ for 1D, 2D, and 3D simulations, respectively).  
+*  $n_i$ is the smoothed particle number density, calculated by summing the kernel weights of the interacting particles.  
+*  $N_{NGB}$ is the target effective neighbor number chosen for the simulation (e.g., typically set to 32 when using the 3D cubic spline kernel in the MFM method).
+
+Because this formulation relies on the particle positions to estimate the number density rather than the fluid mass, it avoids dependencies on local fluid properties and guarantees that the kernel length remains continuous across the flow.
+
+The **effective volume** $V_i$ of particle $i$ is found by integrating its volume partition over all of space:
+
+$$V_i = \int \psi_i(x) d^\nu x$$
+
+For a general function where $h$ varies with position, it may not be possible to solve this integral analytically. However, by Taylor-expanding the terms, the volume can be approximated to second-order accuracy as:
+
+$$V_i = \omega(x_i)^{-1} (1 + \mathcal{O}(h^2))$$
+
+This expression becomes exact if the kernel length $h$ remains locally constant across the kernel domain. For this reason, we use a constant smoothing length $h_i$ for each particle, making $h(x) = h_i$ over its entire local domain.
+
+The density of the particle is then its fixed mass divided by this effective volume. This continuous volume partition means the initial density calculation in MFM is evaluated identically to standard SPH. The density $\rho_i$ of a particle can be computed as:  
+$$\rho_i = \frac{m_i}{V_i}$$
+
+### Gradient Estimation and Spatial Reconstruction
+
+To achieve second-order spatial accuracy, the MFM method must reconstruct the fluid variables at the effective face from the particle-centered values. The MFM method uses a matrix gradient estimator. The gradient of a quantity $q$ at particle $i$ is obtained by a least-squares fit over all neighbors within the kernel support:
+
+$$(\nabla q)_i = \mathbf{B}_i^{-1} \sum_j (q_j - q_i) \mathbf{x}_{ij} W(|\mathbf{x}_{ij}|, h_i)$$
+
+where $\mathbf{x}_{ij} = \mathbf{x}_j - \mathbf{x}_i$ and $\mathbf{B}_i$ is the moment matrix:
+
+$$\mathbf{B}_i = \sum_j \mathbf{x}_{ij} \otimes \mathbf{x}_{ij} W(|\mathbf{x}_{ij}|, h_i)$$
+
+This estimator is exact for linear functions — it returns the correct gradient for any field of the form $q(\mathbf{x}) = a + \mathbf{b} \cdot \mathbf{x}$ — regardless of the particle distribution.
+
+With the gradient in hand, the primitive variables (density, velocity, pressure) are extrapolated to the effective face using a MUSCL-type reconstruction:
+
+$$q_L = q_i + \phi_i (\nabla q)_i \cdot (\mathbf{x}_{\text{face}} - \mathbf{x}_i)$$
+
+where $q_L$ is the left state at the face, $\phi_i$ is a slope limiter that prevents spurious oscillations near discontinuities, and $\mathbf{x}_{\text{face}}$ is the position of the effective face. The right state $q_R$ is obtained analogously from particle $j$.
+
+The original theoretical formulation of MFM outlines a slope-limiter procedure employing a two-step limiting process:  
+
+* **Gradient Limiter:** First, a scalar slope limiter restricts the gradients to ensure that linearly reconstructed values at the faces do not exceed the maximum or minimum values found among a particle's interacting neighbors. The "true" gradient $(\nabla\phi)_{true}^i$ of a quantity $\phi$ is replaced by an effective limited gradient $(\nabla\phi)_{lim}^i$:
+
+$$(\nabla\phi)_{lim}^i = \alpha_i (\nabla\phi)_{true}^i$$
+
+where the scaling factor $\alpha_i$ is defined as:
+
+$$\alpha_i \equiv \min\left[1, \beta_i \min\left(\frac{\phi_{ij,ngb}^{max} - \phi_i}{\phi_{ij,mid}^{max} - \phi_i}, \frac{\phi_i - \phi_{ij,ngb}^{min}}{\phi_i - \phi_{ij,mid}^{min}}\right)\right]$$
+
+Here, $\phi_{ij,ngb}^{max}$ and $\phi_{ij,ngb}^{min}$ are the maximum and minimum values among all neighbors $j$ of particle $i$, while $\phi_{ij,mid}^{max}$ and $\phi_{ij,mid}^{min}$ are the maximum and minimum values reconstructed at the interfaces. The parameter $\beta_i$ (typically between 1 and 2) determines how aggressively the limiter acts.
+
+* **Pairwise Limiter:** Second, an additional pairwise limiter is applied directly to the reconstructed states at the interface between interacting particles $i$ and $j$. This step guarantees stability in extreme situations, such as very strong shocks, by enforcing strict monotonicity bounds (ensuring that the reconstructed interface values never overshoot or undershoot the actual values of the two interacting particles), parameterized by tunable constants. The initial interface estimate $\phi_{ij,mid}^0$ is replaced by a limited value $\phi_{ij,mid}^\prime$ based on the bounds of the interacting pair:
+
+$$\phi_{ij,mid}^{\prime} = \begin{cases} \phi_{i} & (\phi_{i} = \phi_{j}) \\ \max(\phi_{-}, \min[\overline{\phi}_{ij} + \delta_{2}, \phi_{ij,mid}^{0}]) & (\phi_{i} < \phi_{j}) \\ \min(\phi_{+}, \max[\overline{\phi}_{ij} - \delta_{2}, \phi_{ij,mid}^{0}]) & (\phi_{i} > \phi_{j}) \end{cases}$$
+
+where $\overline{\phi}_{ij}$ represents the linearly interpolated value between the particles:
+
+$$\overline{\phi}_{ij} \equiv \phi_{i} + \frac{\vert{}x_{ij} - x_{i}\vert{}}{\vert{}x_{j} - x_{i}\vert{}}(\phi_{j} - \phi_{i})$$
+
+The parameters $\delta_1 \equiv \psi_1 \vert{}\phi_i - \phi_j\vert{}$ and $\delta_2 \equiv \psi_2 \vert{}\phi_i - \phi_j\vert{}$ scale the allowed deviations using the tunable constants $\psi_1$ and $\psi_2$, while $\phi_-$ and $\phi_+$ bound the allowable overshoots based on $\delta_1$. 
+
+While the theoretical formulation of the MFM method describes the two-step pairwise slope limiting procedure above (Hopkins 2015, Appendix B), in the actual GIZMO implementation, gradient limiting is performed using a single-step vector magnitude limiter. Rather than evaluating reconstructed interface states individually with pairwise strictly monotonic bounds, the gradient magnitude $\Vert{}\nabla q\Vert{}_i$ is scaled directly to ensure that the maximum variation over a characteristic distance $\alpha_{\text{lim}} \cdot r_{\max}$ does not exceed the minimum absolute deviation to any neighbor:
+
+$$(\nabla q)_{\text{lim}, i} = (\nabla q)_i \cdot \min\left(1, \frac{\min(\vert{}\Delta q_{\min}\vert{}, \vert{}\Delta q_{\max}\vert{})}{\alpha_{\text{lim}} \cdot r_{\max} \cdot \Vert{}(\nabla q)_i\Vert{}}\right)$$
+
+where $\Delta q_{\min} = \min_j(q_j - q_i)$, $\Delta q_{\max} = \max_j(q_j - q_i)$, $r_{\max}$ is the maximum neighbor distance, and $\alpha_{\text{lim}} \in [0.25, 0.5]$ is a parameter controlling limiter aggressiveness (with $0.5$ providing strict monotonicity). This approach avoids an additional loop over all neighbors.
+
+### Effective Faces
+
+The effective face area $\mathbf{A}_{ij}$ between particles $i$ and $j$, wich enables a Godunov-type scheme, is defined as:
+
+$$\mathbf{A}_{ij} = V_i \tilde{\psi}_j(\mathbf{x}_i) - V_j \tilde{\psi}_i(\mathbf{x}_j)$$
+
+Here, $\tilde{\psi}_j(\mathbf{x}_i) \equiv \mathbf{B}_i (\mathbf{x}_j - \mathbf{x}_i) \psi_j(\mathbf{x}_i)$ represents a matrix-conditioned spatial weight (conditioning a vector means applying a transformation to correct for biases, skewness, or scaling in the raw data), where $\mathbf{B}_i$ is the inverse geometry matrix used for gradient estimation and $\psi_j(\mathbf{x}_i)$ is the scalar volume fraction particle $j$ contributes at $\mathbf{x}_i$. The effective face area vector $\mathbf{A}_{ij}$ is directed from particle $i$ to particle $j$, and its magnitude $|\mathbf{A}_{ij}|$ plays the role of the face area in the flux computation.
+
+To evaluate the fluxes across this interface, the Riemann problem must be solved at a specific spatial location $\mathbf{x}_{\text{face}}$ along the axis connecting the two particles. Because of the symmetry of the kernel, the second-order accurate quadrature point (the chosen point to approximate the value of an integral) is the location where the volume partition between the two particles is equal, given by:  
+$$\mathbf{x}_{\text{face}} = \mathbf{x}_i + \frac{h_i}{h_i + h_j}(\mathbf{x}_j - \mathbf{x}_i)$$
+
+In practice, however, using the first-order geometric midpoint $\mathbf{x}_{\text{face}} = (\mathbf{x}_i + \mathbf{x}_j) / 2$ yields nearly identical results in standard test problems and can often enhance numerical stability.
+
+### The Riemann Solver and Flux Computation
+
+The reconstructed left and right states at the effective face form a Riemann problem: two constant states separated by a discontinuity at $t = 0$. The solution of this Riemann problem provides the flux of mass, momentum, and energy across the face, which is then used to update the conserved quantities of particles $i$ and $j$.
+
+The MFM method in GIZMO uses an HLLC approximate Riemann solver, which resolves the contact discontinuity in addition to the two acoustic waves. The flux across the face is computed as:
+
+$$\mathbf{F}_{ij} = |\mathbf{A}_{ij}| \cdot \mathbf{F}_{\text{HLLC}}(q_L, q_R, \hat{\mathbf{n}}_{ij})$$
+
+where $\hat{\mathbf{n}}_{ij} = \mathbf{A}_{ij} / |\mathbf{A}_{ij}|$ is the unit normal to the effective face.
+
+The semi-discrete conservation equations are then:
+
+$$\frac{d\mathbf{U}_i}{dt} = -\sum_j \mathbf{F}_{ij} \cdot \mathbf{A}_{ij}$$
+
+where $\mathbf{U}_i = (m_i, m_i\mathbf{v}_i, E_i)$ is the vector of conserved quantities for particle $i$. Because the fluxes are antisymmetric ($\mathbf{F}_{ij} = -\mathbf{F}_{ji}$), the scheme conserves mass, momentum, and energy to machine precision regardless of the particle motion.
+
+### Adaptive Gravitational Softening
+
+Particle-based methods couple naturally to $N$-body gravitational solvers. However, to maintain consistency with the second-order spatial reconstruction of the fluid solver, the gravitational solver must also account for the distributed mass of the gas at second order. For an unstructured (where mass elements move freely rather than sitting on a fixed, regular grid) particle distribution, this means the gravitational softening must be adaptive and set equal to the smoothing length used for the hydrodynamic computations. This ensures that both solvers share an identical resolution limit and operate on a unified definition of the fluid volume.
+
+#### Continuous Mass Distribution
+
+In MFM, the differential mass at a point $x$ associated with a given particle $i$ is defined by the volume partition:
+
+$$dm_i = d^\nu x \rho(x) \frac{W(x - x_i, h(x))}{\omega(x)}$$
+
+Expanding this to leading order (treating the fluid properties as constant across the volume of a single particle) in the gradients of the density $\rho$ and the smoothing length $h$, the density distribution associated with a particle takes on the same functional form as the kernel centered on that particle:
+
+$$dm_i \approx m_i W(x - x_i, h_i) d^\nu x$$
+
+This way, we treat the fluid cells in the $N$-body solver as standard particles "softened" by the same kernel function used for the hydrodynamics, matching the kernel length $h_i$. On scales larger than $h_i$, the potential and the force match that of a Newtonian point mass. Inside the kernel radius, the gravitational potential $\Phi_i \equiv G m_i \phi_i$ is computed by integrating Poisson's equation over the kernel mass distribution.
+
+#### Conservative Force Law
+
+Because the fluid is compressible, the kernel lengths $h_i$ change as particles move closer together or further apart. We must maintain momentum and energy conservation when dealing with variable softening lengths. If we define the gravitational self-energy of the gas as $E_{grav} = \frac{1}{2} \sum_{i,j} G m_i m_j \phi(r_{ij}, h_j)$, we can derive the resulting forces.
+
+The conservative gravitational acceleration for particle $i$ interacting with particle $j$ is given by:
+
+$$m_i \frac{dv_i}{dt}\bigg\vert{}_{grav} = -\nabla_i E_{grav} = \mathbf{F}_{\text{sym}} + \mathbf{F}_{\text{corr}}$$
+
+This splits the force into two components: the symmetrized Newtonian force ($\mathbf{F}_{\text{sym}}$) and the softening variation correction ($\mathbf{F}_{\text{corr}}$). The full expression is:
+
+$$m_i \frac{dv_i}{dt}\bigg\vert{}_{grav} = -\sum_j \frac{G m_i m_j}{2} \left( \frac{\partial\phi(r, h_i)}{\partial r}\bigg\vert{}_{r_{ij}} + \frac{\partial\phi(r, h_j)}{\partial r}\bigg\vert{}_{r_{ij}} \right) \frac{\mathbf{r}_{ij}}{r_{ij}} - \sum_j \frac{G}{2} \left( \zeta_i \frac{\partial W(r, h_i)}{\partial r}\bigg\vert{}_{r_{ij}} + \zeta_j \frac{\partial W(r, h_j)}{\partial r}\bigg\vert{}_{r_{ij}} \right) \frac{\mathbf{r}_{ij}}{r_{ij}}$$
+
+Where $\mathbf{r}_{ij} = \mathbf{x}_i - \mathbf{x}_j$.
+
+**1. The Symmetrized Newtonian Force:** The first term containing $\frac{\partial\phi}{\partial r}$ is the modified $1/r^2$ gravitational force. Because interacting particles $i$ and $j$ often have different smoothing lengths, the force is symmetrized by averaging the potential derivatives, guaranteeing that Newton's third law is obeyed.
+
+**2. The $\zeta$ Correction Term:** The second term containing $\frac{\partial W}{\partial r}$ accounts for the temporal and spatial derivatives of the kernel lengths. By moving the particles, the simulation changes the local density, which changes $h$, which in turn modifies the gravitational potential. This means additional work is done by the expanding or contracting potentials. Note that because the derivative of the kernel $\frac{\partial W}{\partial r}$ evaluates to zero outside the kernel radius, this correction term conveniently vanishes for distant particles.
+
+#### Computing the $\zeta$ (Zeta) Coefficients
+
+The correction factors $\zeta_a$ are evaluated for each particle using the dimensionless term $\Omega_a$, which tracks how the density changes relative to the smoothing length. The formulation is defined as:
+
+$$\zeta_a \equiv m_a \frac{h_a}{n_a \nu} \frac{1}{\Omega_a} \sum_b m_b \frac{\partial\phi(r_{ab}, h_a)}{\partial h_a}\bigg\vert{}_{h_a}$$
+
+$$\Omega_a \equiv 1 + \frac{h_a}{n_a \nu} \frac{\partial n_a}{\partial h_a} = 1 - \frac{h_a}{n_a \nu} \sum_b \left( \frac{r_{ab}}{h_a} \frac{\partial W(r, h_a)}{\partial r}\bigg\vert{}_{r_{ab}} + \frac{\nu}{h_a} W(r_{ab}, h_a) \right)$$
+
+where $\nu$ is the number of spatial dimensions.
+
+In code implementation, evaluating these terms fits into the existing MFM density iteration loop. During the Newton-Raphson solver that determines the smoothing length $h_i$, the term $\frac{\partial n_i}{\partial h_i}$ is already computed to find the root. Once $h_i$ converges, the code performs one final pass over the particle's neighbors to sum $m_b \frac{\partial\phi}{\partial h_a}$, finalizing $\zeta_i$.
+
+During the subsequent gravity loop, these pre-computed $\zeta$ values are utilized alongside the analytical derivatives of the specific kernel (e.g., the cubic spline) to resolve the conservative gravitational forces between all gas elements. For interactions between gas and collisionless components (like Dark Matter), the collisionless particles act as point masses that sample the adaptive potential of the gas without generating their own $\zeta$ variations.
+
+
+*Key Literature & Further Reading*  
+Hopkins, P. F. (2014). *A New Class of Accurate, Mesh-Free Hydrodynamic Simulation Methods.* MNRAS, 450, 53, (2015). Available at [https://doi.org/10.1093/mnras/stv195](https://doi.org/10.1093/mnras/stv195)
+
+Groth, F., Steinwandel, U. P., Valentini, M. & Dolag, K. (2023). *The cosmological simulation code OpenGadget3 – implementation of meshless finite mass.* MNRAS, (2023). Available at [https://doi.org/10.1093/mnras/stad2717](https://doi.org/10.1093/mnras/stad2717)
+
+
 ## Validation of the Hydrodynamic Solver
 
-While the N-body component of our simulation is validated by checking its adherence to conservation laws (energy, momentum) in a static universe, validating the hydrodynamic component is more complex. The goal is not simply to conserve energy; in fact, hydrodynamic shocks are *designed* to convert kinetic energy into thermal energy, a process that must be captured correctly.
-
-A hydrodynamic solver is instead validated by its ability to accurately reproduce the known analytical solutions to a set of classic, standardized test problems. These tests are the "unit tests" of computational fluid dynamics.
+A hydrodynamic solver is typically validated by its ability to reproduce the known analytical solutions to a set of classic test problems. For all the tests mentioned in this section, the gravitational solver must be turned off.
 
 ### Conservation in a Closed Box
 
-The most fundamental test is to ensure the solver correctly conserves all quantities in the absence of external forces.
+This test ensures the solver conserves all quantities in the absence of external forces.
 
-* **The Setup:** A periodic, non-expanding box is initialized with a random distribution of gas densities, pressures, and velocities. The gravitational solver is turned off.
-* **The Validation:** The simulation is run for many time steps. At each step, the code must verify that the following total quantities, summed over all grid cells, remain constant to machine precision:
+* **The Setup:** A periodic, non-expanding box is initialized with a random distribution of gas densities, pressures, and velocities.
+* **The Validation:** The simulation is run for many time steps. At each step, the following total quantities, summed over all grid cells, must remain constant to machine precision:
     1.  **Total Mass:** $M_{total} = \sum_i \rho_i L^3$
     2.  **Total Momentum:** $\mathbf{P}_{total} = \sum_i (\rho \mathbf{v})_i L^3$
     3.  **Total Energy:** $E_{total} = \sum_i E_i L^3$
-* **What it Proves:** This test confirms that the numerical flux calculations are perfectly balanced—that any mass, momentum, or energy that leaves one cell correctly enters its neighbor, with no numerical "leaks" or "sources."
+* **What it Proves:** This test confirms that the flux calculations are balanced—that any mass, momentum, or energy that leaves one cell correctly enters its neighbor, with no numerical "leaks" or "sources."
 
 ### The 1D Shock-Tube
 
-This test has a known, exact analytical solution (the **Sod Shock Tube** is the most famous variant) that validates the code's ability to handle all three fundamental wave structures.
+This test has a known analytical solution (the **Sod Shock Tube**, named after Gary A. Sod, is the most famous variant) that validates the code's ability to handle all three fundamental wave structures.
 
 * **The Setup:** A 1D tube of gas is initialized with a "diaphragm" at its center. The gas on the "Left" state has a high density and pressure, while the gas on the "Right" state has a low density and pressure. At $t=0$, the diaphragm is removed.
-* **The Expected Result:** The collision of the two states generates a self-similar wave structure (meaning its shape remains perfectly constant as it stretches over time). This structure is complex, splitting into three distinct features (see below).
-* **The Validation:** After evolving the system to a time $t$, a snapshot of the simulation's density, pressure, and velocity along the 1D line is plotted. This numerical result must be compared directly against the known, exact mathematical solution. A successful test will correctly capture the speed, position, and amplitude of the three key features:
+* **The Expected Result:** The collision of the two states generates a self-similar wave structure (meaning its shape remains constant as it stretches over time). This structure is complex, splitting into three distinct features (see below).
+* **The Validation:** After evolving the system to a time $t$, a snapshot of the simulation's density, pressure, and velocity along the 1D line is plotted. This must be compared against the known mathematical solution. A successful test will capture the speed, position, and amplitude of the three key features:
     1.  A **Shock Wave** (an abrupt, discontinuous compression) propagating into the low-density region.
     2.  A **Rarefaction Fan** (a smooth, continuous expansion) propagating back into the high-density region.
     3.  A **Contact Discontinuity** (a jump in density, but not pressure) separating the two materials. Capturing this specific feature sharply, without excessive smearing, is the primary benchmark for the **HLLC Riemann solver**.
+
+#### Physical Assumptions of the Analytical Model
+
+The model enforces the following assumptions:
+
+* **Ideal, Adiabatic Gas:** The fluid obeys the ideal gas equation of state without any radiative cooling, heating, or thermal conduction.
+* **Pure Hydrodynamics:** The system is isolated. No external body forces, such as gravity or cosmological expansion, are present.
+* **Exact Initial States:** The fluid begins at rest ($v_L = v_R = 0$). The left state is initialized with $P_L = 1.0$ and $\rho_L = 1.0$, while the right state is set to $P_R = 0.1$ and $\rho_R = 0.125$.
+
+
+#### The Analytical Solution and Wave Regions
+
+The sudden removal of the diaphragm divides the 1D space into five regions, separated by moving boundaries. Let $c_L = \sqrt{\gamma P_L / \rho_L}$ represent the initial speed of sound in the unperturbed left state.
+
+* **Region 1: Unperturbed Left State:** This is the gas that the rarefaction wave has not yet reached ($x \le x_0 - c_L t$). The fluid remains at its initial state $\rho_L$, $P_L$, and $v_L$.
+
+* **Region 2: The Rarefaction Fan:** An isentropic (meanning that a process occurs at constant entropy, so pressure and density become locked by the polytropic relation: $P \propto \rho^\gamma$), self-similar expansion wave. The fluid variables change continuously. The local velocity expands according to $v = \frac{2}{\gamma + 1} \left( c_L + \frac{x - x_0}{t} \right)$. As the gas accelerates and expands, the local sound speed drops to $c_{fan} = c_L - 0.5 (\gamma - 1) v$. Density and pressure follow smooth isentropic relations: $\rho = \rho_L ( c_{fan} / c_L )^{\frac{2}{\gamma - 1}}$ and $P = P_L ( c_{fan} / c_L )^{\frac{2\gamma}{\gamma - 1}}$.
+
+* **Region 3: Post-Fan Plateau (Star State Left):** The fully expanded gas behind the contact discontinuity. The state sits at constant intermediate values $\rho_3$, $P_*$, and $u_*$.
+
+* **Region 4: Post-Shock Plateau (Star State Right):** The abruptly compressed gas immediately ahead of the contact discontinuity. Across a contact discontinuity, pressure and velocity must balance perfectly to avoid infinite accelerations, so $P = P_*$ and $v = u_*$. However, the density jumps to a new value, $\rho_4$.
+
+* **Region 5: Unperturbed Right State:** The gas ahead of the primary shock wave ($x > x_0 + V_{shock} t$). The state remains at $\rho_R$, $P_R$, and $v_R$.
+
+#### Deriving the Intermediate "Star" States
+
+The analytical solution relies in finding the thermodynamic properties of the intermediate "Star" region (Regions 3 and 4).
+
+**1. The Intermediate Pressure ($P_*$)**
+Across the contact discontinuity, pressure and velocity are continuous ($P_3 = P_4 = P_*$ and $u_3 = u_4 = u_*$). The pressure $P_*$ is found by equating the velocity change across the left rarefaction wave to the velocity change across the right shock wave. For initial rest states, this yields a non-linear equation:
+
+$$f(P_*) = f_L(P_*, W_L) + f_R(P_*, W_R) = 0$$
+
+Where $f_L$ represents the isentropic expansion and $f_R$ represents the shock jump conditions.
+
+**2. The Intermediate Velocity ($u_*$)**
+With $P_*$ known, the post-shock velocity is derived directly from the momentum jump conditions across the shock front:
+
+$$u_* = (P_* - P_R) \left( \frac{1 - \mu^2}{\rho_R (P_* + \mu^2 P_R)} \right)^{1/2}$$
+
+where $\mu^2 = (\gamma - 1) / (\gamma + 1)$.
+
+**3. The Densities ($\rho_3$ and $\rho_4$)**
+The two densities in the star region are calculated using different thermodynamic laws, reflecting their distinct physical histories:
+
+* **Region 3 ($\rho_3$):** This gas expanded smoothly, undergoing a reversible, isentropic process. Using the relationship $P/\rho^\gamma = \text{constant}$, the density evaluates to $\rho_3 = \rho_L (P_*/P_L)^{1/\gamma}$.
+
+* **Region 4 ($\rho_4$):** This gas was abruptly compressed by a shock, which is an entropy-generating process. It is governed by the Rankine-Hugoniot jump conditions: $\rho_4 = \rho_R \frac{P_* + \mu^2 P_R}{P_R + \mu^2 P_*}$.
+
+**4. The Shock Velocity ($V_{shock}$)**
+The propagation speed of the shock wave into the unperturbed right state is dictated by the mass and momentum fluxes across the shock front. Given the sound speed of the unperturbed right gas ($c_R = \sqrt{\gamma P_R / \rho_R}$), the Rankine-Hugoniot relations yield:
+
+$$V_{shock} = c_R \sqrt{\frac{\gamma + 1}{2\gamma} \frac{P_*}{P_R} + \frac{\gamma - 1}{2\gamma}}$$
 
 ### The Sedov-Taylor Blast Wave (Point Explosion)
 
@@ -2214,19 +2435,16 @@ This is the classic multi-dimensional test for how a code handles a powerful, sy
 * **The Setup:** A uniform, low-density gas fills the grid, initially at rest. At $t=0$, a very large amount of thermal energy is deposited into a single central cell.
 * **The Expected Result:** A strong, spherical shock wave propagates outwards from the center, sweeping the surrounding gas into a dense, hot shell. Because this explosion creates extreme hypersonic velocities (high Mach numbers), this is a premier stress-test for the **Dual Energy Formalism** and the **MUSCL slope limiters**, proving the code can handle violent energy conversions without crashing due to negative pressures.
 * **The Validation:** This test has a known self-similar solution and is validated in two ways:
-    1.  **Symmetry:** The shock front must remain perfectly spherical. Any "boxy" or distorted shape indicates that the dimensional splitting in the solver is introducing errors.
+    1.  **Symmetry:** The shock front must remain spherical. Any "boxy" or distorted shape indicates that the dimensional splitting in the solver is introducing errors.
     2.  **Propagation Speed:** The radius of the shock front, $R$, must grow with time, $t$, according to a specific power law. For an explosion in a uniform medium, this is $R(t) \propto t^{2/5}$. A log-log plot of radius versus time must produce a straight line with a slope of 2/5.
 
 ### The Kelvin-Helmholtz Instability
 
-This test is not about shocks, but about the code's ability to correctly model fluid mixing and the growth of instabilities.
+This test measures the code's ability to model fluid mixing and the growth of instabilities.
 
 * **The Setup:** A 2D box is initialized with two layers of fluid sliding past each other in opposite directions. For example, the top half has a velocity $v_x = +v$ and the bottom half has $v_x = -v$. A tiny, sinusoidal perturbation is introduced at the interface.
 * **The Expected Result:** The shear at the interface is unstable. The small initial perturbation should grow exponentially, causing the interface to roll up into a characteristic series of vortices. 
-* **The Validation:** This is a test of the solver's numerical diffusion. Resolving these vortices correctly is a major victory for **second-order spatial reconstruction** and the **HLLC solver**. Simpler, first-order solvers (like standard HLL) introduce so much artificial viscosity that they smear out the interface, artificially damping the instability and preventing the vortices from ever forming.
-
-Passing this standard suite of tests provides strong confidence that a hydrodynamic code is correctly solving the Euler equations and is ready for use in complex physical simulations.
-
+* **The Validation:** This is a test of the solver's numerical diffusion. Resolving these vortices correctly requires second-order spatial reconstruction and an adequate solver (like HLLC) to avoid introducing too much artificial viscosity.
 
 ## Adaptive Timestep
 
