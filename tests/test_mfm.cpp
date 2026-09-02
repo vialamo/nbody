@@ -13,7 +13,7 @@ TEST_CASE("MFM Gradient Estimator", "[hydro][mfm_gradients]") {
     // Setup Central Particle
     ParticleState p_i;
     p_i.pos = Eigen::Vector3d(5.0, 5.0, 5.0);
-    p_i.h = 1.0;
+    p_i.h = 0.7;
 
     // Evaluate fields at central position for baseline
     // Rho: 10.0 + 2x + 3y + 4z
@@ -75,8 +75,11 @@ TEST_CASE("MFM Gradient Estimator", "[hydro][mfm_gradients]") {
         REQUIRE(grads.grad_vx.z() == Catch::Approx(0.0).margin(1e-12));
     }
 
-    SECTION("Safely falls back to 1st order for pathological geometries") {
+    SECTION("Safely falls back to SPH gradients for pathological geometries") {
         std::vector<ParticleState> neighbors;
+
+        extern double g_pressure_floor;
+        g_pressure_floor = 1e-16;
 
         // Only insert neighbors aligned on the X-axis (1D line)
         for (int i = -1; i <= 1; i += 2) {
@@ -90,20 +93,32 @@ TEST_CASE("MFM Gradient Estimator", "[hydro][mfm_gradients]") {
         ParticleGradients grads =
             compute_single_particle_gradients(p_i, neighbors, domain_size);
 
-        // B matrix should evaluate to identically zero
-        REQUIRE(grads.B_matrix(0, 0) == 0.0);
-        REQUIRE(grads.B_matrix(1, 1) == 0.0);
-        REQUIRE(grads.B_matrix(2, 2) == 0.0);
+        // B matrix should evaluate to the Identity matrix during the fallback
+        REQUIRE(grads.B_matrix(0, 0) == 1.0);
+        REQUIRE(grads.B_matrix(1, 1) == 1.0);
+        REQUIRE(grads.B_matrix(2, 2) == 1.0);
 
-        // Gradients must collapse to 0.0 to enforce 1st-order Godunov
-        REQUIRE(grads.grad_rho.x() == 0.0);
+        // Off-diagonals should be zero
+        REQUIRE(grads.B_matrix(0, 1) == 0.0);
+
+        // The SPH fallback should successfully compute an X-gradient,
+        // so we only strictly assert that the Y and Z gradients remain zero.
         REQUIRE(grads.grad_rho.y() == 0.0);
         REQUIRE(grads.grad_rho.z() == 0.0);
+
+        REQUIRE(grads.grad_p.y() == 0.0);
+        REQUIRE(grads.grad_p.z() == 0.0);
+
+        REQUIRE(grads.grad_vx.y() == 0.0);
+        REQUIRE(grads.grad_vx.z() == 0.0);
     }
 }
 
 TEST_CASE("MFM Face Reconstruction and Limiting",
           "[hydro][mfm_reconstruction]") {
+    extern double g_pressure_floor;
+    g_pressure_floor = 1e-16;
+
     double domain_size = 10.0;
 
     // Setup Particle i (Left)

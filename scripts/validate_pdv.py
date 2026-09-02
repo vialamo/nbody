@@ -7,7 +7,7 @@ import sys
 import argparse
 import matplotlib.pyplot as plt
 
-def validate_adiabatic_expansion_physical(snapshot_dir):
+def validate_pdv_expansion(snapshot_dir):
     files = sorted(glob.glob(os.path.join(snapshot_dir, "snapshot_*.hdf5")))
     if not files:
         print(f"[ERROR] No HDF5 snapshots found in directory: '{snapshot_dir}'")
@@ -21,6 +21,7 @@ def validate_adiabatic_expansion_physical(snapshot_dir):
         
         gamma = config.get('gamma', 5.0/3.0)
         a_start = header['scale_factor']
+        hydro_method = config.get('hydro_method', b"none").decode('utf-8')
         
         # Load CGS conversion factors
         unit_density_cgs = units['unit_density_in_cgs']
@@ -54,10 +55,10 @@ def validate_adiabatic_expansion_physical(snapshot_dir):
         with h5py.File(file, 'r') as f:
             a_curr = f['Header'].attrs['scale_factor']
             
-            # Read current code units]
+            # Read current code units. np.mean works seamlessly for both flat grids and particle arrays.
             rho_code = np.mean(f['Gas/density'][:])
             P_code = np.mean(f['Gas/pressure'][:])
-            T_curr = np.mean(f['Gas/temperature'][:]) 
+            T_curr = np.mean(f['Gas/temperature'][:])
             
             # Convert to physical CGS variables
             rho_phys = (rho_code / (a_curr**3)) * unit_density_cgs
@@ -82,11 +83,15 @@ def validate_adiabatic_expansion_physical(snapshot_dir):
     T_exact = T_0 * (a_exact / a_start)**(-3.0 * (gamma - 1.0))
     P_exact = P_phys_0 * (a_exact / a_start)**(-3.0 * gamma)
 
+    # Styling based on solver method
+    label_prefix = "Eulerian Grid" if hydro_method == "eulerian" else "MFM Particles"
+    color_prefix = "darkorange" if hydro_method == "eulerian" else "royalblue"
+
     # Plot Setup
     fig, axs = plt.subplots(1, 3, figsize=(18, 5))
-    plt.subplots_adjust(bottom=0.15, wspace=0.25) 
+    plt.subplots_adjust(bottom=0.15, wspace=0.25)
 
-    sim_kwargs = {'color': 'royalblue', 'lw': 3, 'label': 'MFM Simulation'}
+    sim_kwargs = {'color': color_prefix, 'lw': 3, 'label': f'{label_prefix} Sim'}
     exact_kwargs = {'color': 'black', 'lw': 1.5, 'linestyle': '--', 'label': 'Exact Solution'}
     
     # 1. Density Panel
@@ -116,11 +121,11 @@ def validate_adiabatic_expansion_physical(snapshot_dir):
         ax.grid(True, linestyle=':', alpha=0.6)
         ax.legend(loc='upper right', fontsize=10)
 
-    fig.suptitle("Adiabatic Expansion Validation (Physical Units)", fontsize=16, fontweight='bold')
+    fig.suptitle("PdV Expansion Validation (Physical Units)", fontsize=16, fontweight='bold')
     plt.show()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="MFM Adiabatic Expansion physical validation.")
+    parser = argparse.ArgumentParser(description="PdV Adiabatic Expansion physical validation.")
     parser.add_argument("path", type=str, help="Path to snapshot directory.")
     parser.add_argument("-l", "--latest", action="store_true", help="Load latest run_* directory")
     
@@ -135,4 +140,4 @@ if __name__ == "__main__":
         runs = sorted(glob.glob(os.path.join(target_dir, "run_*")))
         if runs: target_dir = runs[-1]
         
-    validate_adiabatic_expansion_physical(target_dir)
+    validate_pdv_expansion(target_dir)

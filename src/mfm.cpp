@@ -9,8 +9,12 @@
 #include "diagnostics.h"
 #include "math_utils.h"
 
+// Enable to use the limiter explained in the Gizmo paper.
+// Disable to use the limiter used in the Gizmo code.
+// #define THEORETICAL_LIMITER
+
 constexpr double density_floor = 1e-12;
-constexpr double pressure_floor = 1e-16;
+double g_pressure_floor = 0.0;
 
 GasParticleSystem::GasParticleSystem(const Config& config)
     : gas_rho(config.mesh_size), cic_data(config.num_gas_particles) {
@@ -41,13 +45,18 @@ GasParticleSystem::GasParticleSystem(const Config& config)
     de_dt.reserve(config.num_gas_particles);
     metal_frac.reserve(config.num_gas_particles);
 
+    entropy.reserve(config.num_gas_particles);
+    max_rel_ke.reserve(config.num_gas_particles);
+    delta_E_grav.reserve(config.num_gas_particles);
+
     zeta.reserve(config.num_gas_particles);
 
     int num_cells = config.mesh_size * config.mesh_size * config.mesh_size;
     pm_cell_list.resize(num_cells, config.num_gas_particles);
 
-    double u_code_1K = Cooling::get_internal_energy_from_temp(1.0, 1.0, config);
-    pressure_floor = (config.gamma - 1.0) * density_floor * u_code_1K;
+    double u_code_K = Cooling::get_internal_energy_from_temp(0.1, 1.0, config);
+    pressure_floor = (config.gamma - 1.0) * density_floor * u_code_K;
+    g_pressure_floor = pressure_floor;
 }
 
 void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
@@ -77,6 +86,10 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
     de_dt.push_back(0.0);
     metal_frac.push_back(z_metal);
     B_matrix.push_back(Eigen::Matrix3d::Zero());
+
+    entropy.push_back(0.0);
+    max_rel_ke.push_back(0.0);
+    delta_E_grav.push_back(0.0);
 
     zeta.push_back(0.0);
 
@@ -117,6 +130,10 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& cell_start,
     std::vector<Eigen::Vector3d> new_grad_p(num_particles);
     std::vector<double> new_zeta(num_particles);
 
+    std::vector<double> new_entropy(num_particles);
+    std::vector<double> new_max_rel_ke(num_particles);
+    std::vector<double> new_delta_E_grav(num_particles);
+
     std::vector<int> write_offset = cell_start;
 
     for (size_t i = 0; i < num_particles; ++i) {
@@ -150,6 +167,9 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& cell_start,
         new_grad_vz[dest] = grad_vz[i];
         new_grad_p[dest] = grad_p[i];
         new_zeta[dest] = zeta[i];
+        new_entropy[dest] = entropy[i];
+        new_max_rel_ke[dest] = max_rel_ke[i];
+        new_delta_E_grav[dest] = delta_E_grav[i];
     }
 
     pos_x = std::move(new_px);
@@ -181,6 +201,9 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& cell_start,
     grad_vz = std::move(new_grad_vz);
     grad_p = std::move(new_grad_p);
     zeta = std::move(new_zeta);
+    entropy = std::move(new_entropy);
+    max_rel_ke = std::move(new_max_rel_ke);
+    delta_E_grav = std::move(new_delta_E_grav);
 }
 
 void GasParticleSystem::build_spatial_hash(double domain_size) {
@@ -191,7 +214,8 @@ void GasParticleSystem::build_spatial_hash(double domain_size) {
     for (size_t i = 0; i < num_particles; ++i) {
         if (h[i] > max_h) max_h = h[i];
     }
-    if (max_h <= 0.0) max_h = domain_size / 32.0;
+    if (max_h <= 0.0)
+        max_h = domain_size / std::cbrt(num_particles > 0 ? num_particles : 1);
 
     // Define grid
     hash_cell_size = max_h;
@@ -238,7 +262,7 @@ void GasParticleSystem::build_spatial_hash(double domain_size) {
 }
 
 // --------------------------------------------------------------------------------
-// Cubic Spline Kernel (GIZMO Convention)
+// Cubic Spline Kernel
 // Support radius is 1h. Returns W (value) and dWdh.
 // --------------------------------------------------------------------------------
 inline void GasParticleSystem::kernel_cubic_spline(double r, double h,
@@ -326,10 +350,12 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
     double target_N = config.mfm_target_neighbors;
     double tol = config.mfm_neighbor_tolerance;
     int max_iter = config.mfm_max_iterations;
-    double min_h = 0.05 * (config.domain_size / num_particles);
+    double min_h = 0.05 * (config.domain_size / std::cbrt(num_particles));
 
     const double r_s = config.PM_smoothing_cells * config.cell_size;
     const bool use_pm = config.use_PM;
+    double max_allowed_h =  // 4.0 * (domain_size / num_particles);
+        domain_size / 4.0;
 
 #pragma omp parallel for schedule(dynamic, 64)
     for (size_t i = 0; i < num_particles; ++i) {
@@ -449,10 +475,10 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
                 h_guess = h_new;
             }
 
-            // Clamp maximum smoothing length to physical limits
-            if (h_guess >= domain_size / 4.0) {
-                h_guess = domain_size / 4.0;
-                if (h_low >= domain_size / 4.0) break;  // Force exit if capped
+            // Clamp maximum smoothing length
+            if (h_guess >= max_allowed_h) {
+                h_guess = max_allowed_h;
+                if (h_low >= max_allowed_h) break;
             }
 
             if (h_guess < min_h) {
@@ -757,6 +783,8 @@ void GasParticleSystem::apply_cooling(double dt, double a, const Config& config,
     size_t non_converged_count = 0;
     size_t total_cycles = 0;
 
+    double gamma_minus_1 = config.gamma - 1.0;
+
 #pragma omp parallel for schedule(static)                                 \
     reduction(+ : total_radiated, total_photoheated, non_converged_count, \
                   total_cycles)
@@ -811,6 +839,11 @@ void GasParticleSystem::apply_cooling(double dt, double a, const Config& config,
                 // Update the internal energy
                 u[i] = u_current;
                 total_energy[i] += delta_u;
+
+                // Sync the entropy so the dual-energy switch
+                // doesn't override the update
+                entropy[i] =
+                    gamma_minus_1 * u[i] / std::pow(rho[i], gamma_minus_1);
 
                 // Track total energy change using the particle mass
                 double delta_E = delta_u * mass[i];
@@ -1811,36 +1844,66 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
     const double u_floor =
         Cooling::get_internal_energy_from_temp(config.temp_floor_k, a, config);
 
-#pragma omp parallel for simd schedule(static)
+    const double alpha_kin = 0.001;
+    const double alpha_grav = 0.001;
+
+    double step_floor_heating = 0.0;
+    double step_entropy_switch = 0.0;
+
+#pragma omp parallel for simd reduction( \
+        + : step_floor_heating, step_entropy_switch) schedule(static)
     for (size_t i = 0; i < num_particles; ++i) {
         rho[i] = std::max(rho[i], density_floor);
-        // Calculate specific kinetic energy: ke = 1/2 * v^2
+
+        // Calculate specific kinetic energy
         double ke = 0.5 * (vel_x[i] * vel_x[i] + vel_y[i] * vel_y[i] +
                            vel_z[i] * vel_z[i]);
 
-        // DUAL ENERGY FORMALISM SWITCH
-        if (u[i] > 1e-4 * ke) {
-            // Thermal Dominated Regime (Subsonic/Shocked): Trust Total Energy
-            u[i] = std::max(total_energy[i] - ke, u_floor);
+        // Evaluate the Energy-Entropy Switch
+        double threshold_kin = alpha_kin * (max_rel_ke[i] + u[i]);
+        double threshold_grav = alpha_grav * delta_E_grav[i];
+
+        if (u[i] < threshold_kin || u[i] < threshold_grav) {
+            // FALLBACK TRIGGERED: Extreme Mach number detected.
+            // Discard the 'u' updated by the Riemann solver and use
+            // entropy-based adiabatic evolution. S = (gamma-1) * u /
+            // rho^(gamma-1) -> u = S * rho^(gamma-1) / (gamma-1)
+            double u_new =
+                entropy[i] * std::pow(rho[i], gamma_minus_1) / gamma_minus_1;
+
+            // Track the energy injected (or removed) by the switch
+            step_entropy_switch += (u_new - u[i]) * mass[i];
+            u[i] = u_new;
         } else {
-            // Kinetic Dominated Regime (Hypersonic): Trust Tracked Internal
-            // Energy
-            total_energy[i] = u[i] + ke;
+            // NORMAL REGIME: Trust the integrated internal energy.
+            // Re-sync the entropy array to match the shock-heated state.
+            entropy[i] = gamma_minus_1 * u[i] / std::pow(rho[i], gamma_minus_1);
         }
 
         // Enforce thermodynamic floor
         if (u[i] < u_floor) {
+            // Track the added energy
+            double injected_u = u_floor - u[i];
+            step_floor_heating += injected_u * mass[i];
+
             u[i] = u_floor;
-            total_energy[i] = u[i] + ke;
+            // Sync the entropy array again if we hit the temperature floor
+            entropy[i] = gamma_minus_1 * u[i] / std::pow(rho[i], gamma_minus_1);
         }
 
-        // Calculate pressure: P = (gamma - 1) * rho * u
+        // Calculate pressure based on 'u'
         pressure[i] = gamma_minus_1 * rho[i] * u[i];
 
-        // Constrain metal fraction to physical bounds [0, 1]
+        // Passively sync total energy for diagnostic conservation tracking
+        // Total energy no longer drives the hydrodynamics
+        total_energy[i] = u[i] + ke;
+
         metal_frac[i] = std::max(0.0, std::min(metal_frac[i], 1.0));
     }
     num_cycles++;
+
+    accumulated_photoheating_energy += step_floor_heating;
+    accumulated_entropy_switch_energy += step_entropy_switch;
 }
 
 // Cubic spline kernel
@@ -1857,9 +1920,7 @@ inline void compute_kernel(double r, double h, double& W) {
     }
 }
 
-// #define THEORETICAL_LIMITER
 #ifdef THEORETICAL_LIMITER
-
 // Helper for the Pairwise Limiter signs
 inline int math_sign(double x) { return (x > 0.0) ? 1 : ((x < 0.0) ? -1 : 0); }
 
@@ -1930,22 +1991,50 @@ double apply_pairwise_limiter(double phi_L_center, double phi_R_center,
 }
 
 #else
-// GIZMO Scalar Gradient Vector Limiter
-inline void gizmo_scalar_limiter(Eigen::Vector3d& grad, double valmax,
-                                 double valmin, double alim, double h) {
+// Scalar Gradient Vector Limiter (Translated from GIZMO's local_slopelimiter)
+inline void scalar_limiter(Eigen::Vector3d& grad, double valmax, double valmin,
+                           double alim, double h, double shoot_tol,
+                           bool pos_preserve, double d_max, double val_cen) {
     double d_abs = grad.norm();
     if (d_abs > 0.0) {
+        // Inverse change over distance for limiter
+        double cfac = 1.0 / (alim * h * d_abs);
+
         double abs_max = std::abs(valmax);
         double abs_min = std::abs(valmin);
 
-        // GIZMO gets the smallest absolute deviation
-        if (abs_max < abs_min) std::swap(abs_max, abs_min);
+        // Get largest positive/negative deviations, determine smaller in
+        // absolute value
+        if (abs_max < abs_min) {
+            std::swap(abs_max, abs_min);
+        }
 
-        // GIZMO f_corr_overshoot (with shoot_tol = 0.0 for strict monotonicity)
-        double limit = abs_min;
+        // = abs_min for shoot_tol = 0; don't let gradient deviate by more than
+        // this in size, slightly larger if 'shoot_tol' allows some overshoot
+        // tolerance
+        double f_corr_overshoot =
+            std::min(abs_min + shoot_tol * abs_max, abs_max);
 
-        // Inverse change over distance for limiter
-        double cfac = limit / (alim * h * d_abs);
+        // Multiply by the correction factor of interest
+        cfac *= f_corr_overshoot;
+
+        // Demand that the limited slope be strictly positivity-preserving over
+        // the maximal range to any neighbors
+        if (pos_preserve) {
+            constexpr double MIN_REAL_NUMBER = 1e-30;
+
+            // Minimum value: smaller of overshoot target or half
+            // positive-definite value, but cannot go negative in larger range
+            double fmin = std::min(
+                val_cen,
+                std::max(0.0, std::max(MIN_REAL_NUMBER * val_cen,
+                                       std::min(0.5 * (val_cen + valmin),
+                                                val_cen - f_corr_overshoot))));
+
+            // Use more conservative limiter, of cfac above or this,
+            // over longer range d_max, to restrict here
+            cfac = std::min((((val_cen - fmin) / d_max) / d_abs), cfac);
+        }
 
         // Scalar gradient correction
         if (cfac < 1.0) {
@@ -1953,8 +2042,17 @@ inline void gizmo_scalar_limiter(Eigen::Vector3d& grad, double valmax,
         }
     }
 }
-
 #endif
+
+inline double compute_condition_number(const Eigen::Matrix3d& E,
+                                       const Eigen::Matrix3d& B) {
+    // Eq. C2: The sum of the squared elements of the matrices
+    double norm_E_sq = E.squaredNorm();
+    double norm_B_sq = B.squaredNorm();
+
+    // Eq. C1: N_cond = (1 / v) * sqrt(||E^-1|| * ||E||) where v = 3
+    return (1.0 / 3.0) * std::sqrt(norm_E_sq * norm_B_sq);
+}
 
 // MFM Gradient Estimator
 ParticleGradients compute_single_particle_gradients(
@@ -1967,6 +2065,7 @@ ParticleGradients compute_single_particle_gradients(
     out.grad_vx = Eigen::Vector3d::Zero();
     out.grad_vy = Eigen::Vector3d::Zero();
     out.grad_vz = Eigen::Vector3d::Zero();
+    out.ill_conditioned = false;
 
     Eigen::Matrix3d E = Eigen::Matrix3d::Zero();
 
@@ -2001,30 +2100,35 @@ ParticleGradients compute_single_particle_gradients(
     E(2, 0) = E(0, 2);
     E(2, 1) = E(1, 2);
 
-    double trace = E(0, 0) + E(1, 1) + E(2, 2);
-    double epsilon = 1e-6;  // Small regularization factor
-
-    E(0, 0) += epsilon * trace;
-    E(1, 1) += epsilon * trace;
-    E(2, 2) += epsilon * trace;
-
     double det = E.determinant();
-    double h2 = p_i.h * p_i.h;
-    double det_threshold = 1e-4 * (h2 * h2 * h2);
+    out.ill_conditioned =
+        true;  // Assume ill-conditioned until proven otherwise
 
-    // A matrix can't be inverted if it's determinant is zero
-    // If condition is not met, all gradients will be returned as zero
-    // degrading the spatial reconstruction to 1st-order (piecewise flat)
-    if (std::abs(det) > det_threshold) {
+    // We still need a tiny guard so E.inverse() doesn't crash on pure zeroes
+    if (std::abs(det) > 1e-30) {
+        Eigen::Matrix3d temp_B = E.inverse();
+
+        // Calculate the condition number
+        double N_cond = compute_condition_number(E, temp_B);
+
+        // Threshold (Hopkins recommends 100 - 1000)
+        constexpr double N_cond_crit = 1000.0;
+
+        if (N_cond <= N_cond_crit) {
+            out.B_matrix = temp_B;
+            out.ill_conditioned = false;
+        }
+    }
+
+    if (!out.ill_conditioned) {
         out.B_matrix = E.inverse();
-
         Eigen::Vector3d sum_rho = Eigen::Vector3d::Zero();
         Eigen::Vector3d sum_p = Eigen::Vector3d::Zero();
         Eigen::Vector3d sum_vx = Eigen::Vector3d::Zero();
         Eigen::Vector3d sum_vy = Eigen::Vector3d::Zero();
         Eigen::Vector3d sum_vz = Eigen::Vector3d::Zero();
 
-        // Track the min/max differences for the GIZMO limiter
+        // Track the min/max differences for the face-extrapolated limiter
         double d_rho_max = 0.0, d_rho_min = 0.0;
         double d_p_max = 0.0, d_p_min = 0.0;
         double d_vx_max = 0.0, d_vx_min = 0.0;
@@ -2033,7 +2137,7 @@ ParticleGradients compute_single_particle_gradients(
 
         double r_max = 1e-12;
 
-        // Sum differences
+        // Calculate sums and record extrema
         for (const auto& nj : neighbors) {
             double dx = mfm_periodic_displacement(nj.pos.x() - p_i.pos.x(),
                                                   domain_size);
@@ -2043,8 +2147,7 @@ ParticleGradients compute_single_particle_gradients(
                                                   domain_size);
 
             double r2 = dx * dx + dy * dy + dz * dz;
-            // LIMITER BOUNDS: Must see ALL particles that will interact in the
-            // Riemann solver
+            // Limiter bounds: Record extrema
             if ((r2 < p_i.h * p_i.h || r2 < nj.h * nj.h) && r2 > 1e-24) {
                 double r = std::sqrt(r2);
                 r_max = std::max(r_max, r);
@@ -2071,7 +2174,7 @@ ParticleGradients compute_single_particle_gradients(
                 d_vz_min = std::min(d_vz_min, d_vz);
             }
 
-            // GRADIENT SUMS: Built purely on the local kernel radius
+            // Gradient sums
             if (r2 < p_i.h * p_i.h && r2 > 1e-24) {
                 double r = std::sqrt(r2);
                 double W;
@@ -2158,17 +2261,80 @@ ParticleGradients compute_single_particle_gradients(
         out.grad_vz *= compute_gradient_alpha(
             d_vz_max, d_vz_min, phi_mid_max_vz, phi_mid_min_vz, beta);
 #else
+        // Apply the Scalar Limiter
+        double alim = 0.5;  // 0.5 is standard for aggressive limiting
+        double h_lim = std::max(p_i.h, r_max);
+        double d_max = h_lim;
+        double stol = 0.1;  // overshoot tolerance for pressure/velocity
 
-        // Apply the GIZMO Scalar Limiter
-        // GIZMO uses alim = 0.25 to 0.5. 0.5 is standard for aggressive
-        // limiting.
-        double alim = 0.5;
-        gizmo_scalar_limiter(out.grad_rho, d_rho_max, d_rho_min, alim, r_max);
-        gizmo_scalar_limiter(out.grad_p, d_p_max, d_p_min, alim, r_max);
-        gizmo_scalar_limiter(out.grad_vx, d_vx_max, d_vx_min, alim, r_max);
-        gizmo_scalar_limiter(out.grad_vy, d_vy_max, d_vy_min, alim, r_max);
-        gizmo_scalar_limiter(out.grad_vz, d_vz_max, d_vz_min, alim, r_max);
+        // Density: no overshoot tolerance (0.0), positivity preserving (true)
+        scalar_limiter(out.grad_rho, d_rho_max, d_rho_min, alim, h_lim, 0.0,
+                       true, d_max, p_i.rho);
+
+        // Pressure: standard overshoot tolerance (stol), positivity preserving
+        // (true)
+        scalar_limiter(out.grad_p, d_p_max, d_p_min, alim, h_lim, stol, true,
+                       d_max, p_i.pressure);
+
+        // Velocity: standard overshoot tolerance (stol), NOT positivity
+        // preserving (false)
+        scalar_limiter(out.grad_vx, d_vx_max, d_vx_min, alim, h_lim, stol,
+                       false, d_max, p_i.vel.x());
+        scalar_limiter(out.grad_vy, d_vy_max, d_vy_min, alim, h_lim, stol,
+                       false, d_max, p_i.vel.y());
+        scalar_limiter(out.grad_vz, d_vz_max, d_vz_min, alim, h_lim, stol,
+                       false, d_max, p_i.vel.z());
 #endif
+    } else {
+        // Matrix is ill-conditioned (pathological alignment).
+        // Fall back to standard SPH gradient estimator (Hopkins 2015, Eq. C4).
+        out.B_matrix = Eigen::Matrix3d::Identity();  // Dummy valid matrix
+        out.ill_conditioned = true;
+
+        // Use a dimensionally correct isotropic average for the dummy B-matrix
+        // to prevent Face Area explosions in the Riemann solver.
+        /*double trace_E = E(0, 0) + E(1, 1) + E(2, 2);
+        if (trace_E > 1e-24) {
+            out.B_matrix = (3.0 / trace_E) * Eigen::Matrix3d::Identity();
+        } else {
+            // Absolute fallback if particle is completely isolated
+            //double h2 = p_i.h * p_i.h;
+            out.B_matrix = (1.0 / h2) * Eigen::Matrix3d::Identity();
+        }*/
+
+        for (const auto& nj : neighbors) {
+            double dx = mfm_periodic_displacement(nj.pos.x() - p_i.pos.x(),
+                                                  domain_size);
+            double dy = mfm_periodic_displacement(nj.pos.y() - p_i.pos.y(),
+                                                  domain_size);
+            double dz = mfm_periodic_displacement(nj.pos.z() - p_i.pos.z(),
+                                                  domain_size);
+            double r2 = dx * dx + dy * dy + dz * dz;
+
+            // SPH gradient sums
+            if (r2 < p_i.h * p_i.h && r2 > 1e-24) {
+                double r = std::sqrt(r2);
+
+                // Fetch the derivative of the kernel respect to 'r' using the
+                // existing gravity helper
+                double dphi_dr_dummy, dW_dr;
+                compute_adaptive_gravity_terms(r, p_i.h, dphi_dr_dummy, dW_dr);
+
+                double V_j = nj.mass / nj.rho;
+
+                // grad_i W = - (dW/dr) * (x_j - x_i) / r
+                Eigen::Vector3d dx_vec(dx, dy, dz);
+                Eigen::Vector3d grad_W_i = -dW_dr * dx_vec / r;
+
+                // SPH gradient estimator: grad f_i = sum_j V_j (f_j - f_i)
+                // grad_i W_ij
+                out.grad_rho += V_j * (nj.rho - p_i.rho) * grad_W_i;
+                out.grad_p += V_j * (nj.pressure - p_i.pressure) * grad_W_i;
+                out.grad_vx += V_j * (nj.vel.x() - p_i.vel.x()) * grad_W_i;
+                out.grad_vy += V_j * (nj.vel.y() - p_i.vel.y()) * grad_W_i;
+                out.grad_vz += V_j * (nj.vel.z() - p_i.vel.z()) * grad_W_i;
+            }
+        }
     }
 
     return out;
@@ -2178,7 +2344,10 @@ void GasParticleSystem::compute_gradients(const Config& config) {
     if (num_particles == 0) return;
     double domain_size = config.domain_size;
 
-#pragma omp parallel for schedule(dynamic, 64)
+    size_t step_ill_conditioned = 0;
+
+#pragma omp parallel for reduction(+ : step_ill_conditioned) \
+    schedule(dynamic, 64)
     for (size_t i = 0; i < num_particles; ++i) {
         // Construct the isolated state for particle i
         ParticleState p_i;
@@ -2188,6 +2357,8 @@ void GasParticleSystem::compute_gradients(const Config& config) {
         p_i.rho = rho[i];
         p_i.pressure = pressure[i];
         p_i.h = h[i];
+
+        double local_max_rel_ke = 0.0;
 
         // Gather neighbors into a standard vector
         std::vector<ParticleState> neighbors;
@@ -2225,10 +2396,39 @@ void GasParticleSystem::compute_gradients(const Config& config) {
                         nj.pressure = pressure[j];
                         nj.h = h[j];
                         neighbors.push_back(nj);
+
+                        // Calculate periodic distance
+                        double dx = mfm_periodic_displacement(
+                            pos_x[j] - p_i.pos.x(), domain_size);
+                        double dy = mfm_periodic_displacement(
+                            pos_y[j] - p_i.pos.y(), domain_size);
+                        double dz = mfm_periodic_displacement(
+                            pos_z[j] - p_i.pos.z(), domain_size);
+                        double r2 = dx * dx + dy * dy + dz * dz;
+
+                        // evaluate if they are actually interacting neighbors
+                        if ((r2 < p_i.h * p_i.h || r2 < h[j] * h[j]) &&
+                            r2 > 1e-24) {
+                            double rel_vx = vel_x[j] - p_i.vel.x();
+                            double rel_vy = vel_y[j] - p_i.vel.y();
+                            double rel_vz = vel_z[j] - p_i.vel.z();
+                            double rel_v2 = rel_vx * rel_vx + rel_vy * rel_vy +
+                                            rel_vz * rel_vz;
+
+                            local_max_rel_ke =
+                                std::max(local_max_rel_ke, 0.5 * rel_v2);
+                        }
                     }
                 }
             }
         }
+
+        max_rel_ke[i] = local_max_rel_ke;
+
+        // Calculate delta E_grav = |a_grav| * h
+        double a_grav_mag = std::sqrt(
+            acc_x[i] * acc_x[i] + acc_y[i] * acc_y[i] + acc_z[i] * acc_z[i]);
+        delta_E_grav[i] = a_grav_mag * p_i.h;
 
         ParticleGradients grads =
             compute_single_particle_gradients(p_i, neighbors, domain_size);
@@ -2240,7 +2440,13 @@ void GasParticleSystem::compute_gradients(const Config& config) {
         grad_vx[i] = grads.grad_vx;
         grad_vy[i] = grads.grad_vy;
         grad_vz[i] = grads.grad_vz;
+
+        if (grads.ill_conditioned) {
+            step_ill_conditioned++;
+        }
     }
+
+    ill_conditioned_cases += step_ill_conditioned;
 }
 
 // MFM Face Reconstruction
@@ -2329,9 +2535,9 @@ ReconstructedFace compute_face_reconstruction(const ParticleState& p_i,
         std::max(p_j.rho + grad_j.grad_rho.dot(dx_face_j), density_floor);
 
     face.p_L =
-        std::max(p_i.pressure + grad_i.grad_p.dot(dx_face_i), pressure_floor);
+        std::max(p_i.pressure + grad_i.grad_p.dot(dx_face_i), g_pressure_floor);
     face.p_R =
-        std::max(p_j.pressure + grad_j.grad_p.dot(dx_face_j), pressure_floor);
+        std::max(p_j.pressure + grad_j.grad_p.dot(dx_face_j), g_pressure_floor);
 
     face.v_L.x() = p_i.vel.x() + grad_i.grad_vx.dot(dx_face_i);
     face.v_L.y() = p_i.vel.y() + grad_i.grad_vy.dot(dx_face_i);
@@ -2353,7 +2559,6 @@ ReconstructedFace compute_face_reconstruction(const ParticleState& p_i,
      // Velocity Reconstruction
      face.v_L = p_i.vel;
      face.v_R = p_j.vel;*/
-
 #endif
 
     face.is_valid = true;
@@ -2425,15 +2630,6 @@ Eigen::Vector3d compute_mfm_face_area_vector(const ParticleState& p_i,
     Eigen::Vector3d dx_vec = face.n * face.r;
     Eigen::Vector3d Area_vec =
         (V_i * V_j * W_i * (B_i * dx_vec)) + (V_i * V_j * W_j * (B_j * dx_vec));
-
-    // Physical Area Limiter (applied to magnitude)
-    double A_mag = Area_vec.norm();
-    double max_phys_area =
-        std::min(std::pow(V_i, 2.0 / 3.0), std::pow(V_j, 2.0 / 3.0));
-
-    if (A_mag > max_phys_area) {
-        Area_vec *= (max_phys_area / A_mag);
-    }
 
     return Area_vec;
 }
@@ -2550,8 +2746,8 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                                     p_i, grad_i.B_matrix, p_j, grad_j.B_matrix,
                                     face);
 
-                            // Check if the area is zero to prevent division by
-                            // zero
+                            // Check if the area is zero to prevent division
+                            // by zero
                             double A_mag = Area_vec.norm();
                             if (A_mag < 1e-20) continue;
 
@@ -2567,8 +2763,8 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                                 p_i.vel + fraction_i * (p_j.vel - p_i.vel);
 
                             // Because face.n is Area_vec.normalized(), vn_L
-                            // and vn_R inside this function will be correctly
-                            // projected onto the true face.
+                            // and vn_R inside this function will be
+                            // correctly projected onto the true face.
                             MFMFaceFlux flux_1d =
                                 solve_mfm_riemann(face, v_frame, config.gamma);
 

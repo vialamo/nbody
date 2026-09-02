@@ -314,15 +314,19 @@ GasGrid::GasGrid(const Config& conf)
       accumulated_photoheating_energy(0.0),
       accumulated_gravitational_work(0.0),
       accumulated_expansion_work(0.0),
+      accumulated_dual_energy_switch_energy(0.0),
       pressure_floor(0.0),
       config(conf) {
     double u_code_1K = Cooling::get_internal_energy_from_temp(1.0, 1.0, config);
     pressure_floor = (config.gamma - 1.0) * density_floor * u_code_1K;
 }
 
-void GasGrid::update_primitive_variables() {
+void GasGrid::update_primitive_variables(double a) {
     const int total_cells =
         config.mesh_size * config.mesh_size * config.mesh_size;
+
+    const double u_floor =
+        Cooling::get_internal_energy_from_temp(config.temp_floor_k, a, config);
 
     // Pre-calculate constants to avoid doing it inside the loop
     const double gamma_minus_1 = config.gamma - 1.0;
@@ -341,7 +345,11 @@ void GasGrid::update_primitive_variables() {
     double* ie_tracked = internal_energy.array().data();
     double* metal = metal_density.array().data();
 
-#pragma omp parallel for schedule(static)
+    double step_floor_heating = 0.0;
+    double step_entropy_switch = 0.0;
+
+#pragma omp parallel for simd reduction( \
+        + : step_floor_heating, step_entropy_switch) schedule(static)
     for (int i = 0; i < total_cells; ++i) {
         double local_rho = rho[i];
 
@@ -371,9 +379,23 @@ void GasGrid::update_primitive_variables() {
                     (e_tot - ke);  // Sync tracked IE to prevent drift
                 p = gamma_minus_1 * ie_tracked[i];
             } else {
-                // Hypersonic regime: Trust tracked IE.
+                // Hypersonic regime: Trust tracked IE
                 p = gamma_minus_1 * ie_tracked[i];
-                en[i] = p * inv_gamma_minus_1 + ke;  // Sync Total Energy
+                double new_e_tot = ie_tracked[i] + ke;
+                step_entropy_switch += (new_e_tot - e_tot) * config.cell_volume;
+                en[i] = new_e_tot;  // Sync Total Energy
+            }
+
+            double local_u = ie_tracked[i] / local_rho;
+            if (local_u < u_floor) {
+                // Track energy injected by the temperature floor
+                double injected_ie_density =
+                    (u_floor * local_rho) - ie_tracked[i];
+                step_floor_heating += injected_ie_density * config.cell_volume;
+
+                ie_tracked[i] = u_floor * local_rho;
+                p = gamma_minus_1 * ie_tracked[i];
+                en[i] = ie_tracked[i] + ke;
             }
 
             if (p < pressure_floor) {
@@ -395,13 +417,16 @@ void GasGrid::update_primitive_variables() {
             metal[i] = 0.0;
         }
     }
+
+    accumulated_photoheating_energy += step_floor_heating;
+    accumulated_dual_energy_switch_energy += step_entropy_switch;
 }
 
-void GasGrid::compute_and_apply_fluxes(double dt) {
+void GasGrid::compute_and_apply_fluxes(double dt, double a) {
     double factor = dt / config.cell_size;
 
     for (int axis = 0; axis < 3; ++axis) {
-        update_primitive_variables();
+        update_primitive_variables(a);
         solver.compute_fluxes(*this, axis, config.gamma);
 
         // Helper references to update original coordinates
@@ -478,7 +503,7 @@ void GasGrid::compute_and_apply_fluxes(double dt) {
     }
 }
 
-void GasGrid::hydro_step(double dt) {
+void GasGrid::hydro_step(double dt, double a) {
     // Backup the current conservative state (U^n)
     Grid3D old_rho = density;
     Grid3D old_mx = momentum_x;
@@ -490,12 +515,12 @@ void GasGrid::hydro_step(double dt) {
 
     // RK2 Stage 1
     // Advance using the initial state: U^{(1)} = U^n + dt * L(U^n)
-    compute_and_apply_fluxes(dt);
+    compute_and_apply_fluxes(dt, a);
 
     // RK2 Stage 2
     // Advance again using the intermediate state: U^{(2)} = U^{(1)} + dt *
     // L(U^{(1)})
-    compute_and_apply_fluxes(dt);
+    compute_and_apply_fluxes(dt, a);
 
     // Final Averaging
     int total_cells = config.mesh_size * config.mesh_size * config.mesh_size;
@@ -529,7 +554,7 @@ void GasGrid::hydro_step(double dt) {
 
     // Update primitive variables at the end so the gravity step has the
     // right values
-    update_primitive_variables();
+    update_primitive_variables(a);
 }
 
 double GasGrid::get_cfl_timestep() const {
@@ -623,7 +648,6 @@ void GasGrid::apply_cooling(double dt, double a, Cooling& cooling) {
 
             if (std::abs(delta_u) > 0.0) {
                 double delta_E_vol = delta_u * local_rho;
-                // Add the delta directly
                 d_ie[i] += delta_E_vol;
                 d_en[i] += delta_E_vol;
 
@@ -644,7 +668,7 @@ void GasGrid::apply_cooling(double dt, double a, Cooling& cooling) {
     this->accumulated_radiated_energy += total_radiated;
     this->accumulated_photoheating_energy += total_photoheated;
 
-    update_primitive_variables();
+    update_primitive_variables(a);
 }
 
 double GasGrid::get_cooling_timestep(double a, Cooling& cooling) const {

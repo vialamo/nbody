@@ -198,4 +198,8 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
         std::cout << "  [WARNING] Cooling solver failed to converge in "
                   << diag.non_converged_cooling_cells << " cells\n";
     }
+    if (diag.MFM_ill_conditioned_cases > 0) {
+        std::cout << "  [WARNING] MFM ill conditioned cases: "
+                  << diag.MFM_ill_conditioned_cases << "\n";
+    }
 }

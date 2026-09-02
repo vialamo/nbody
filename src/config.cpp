@@ -67,6 +67,7 @@ void Config::compute_derived_data() {
     }
 
     if (initial_setup == InitialSetup::SodShockTube) {
+        enable_subcycling = false;
         expanding_universe = false;
         enable_cooling = false;
         use_PM = false;
@@ -79,7 +80,20 @@ void Config::compute_derived_data() {
         total_mass = 0.625;
         a_end = 0.15;
     } else if (initial_setup == InitialSetup::AdiabaticExpansion) {
+        enable_subcycling = false;
         expanding_universe = true;
+        enable_cooling = false;
+        use_PM = false;
+        use_PP = false;
+        num_particles_1d = 0;
+        omega_lambda = 0.0;
+        omega_m = 1.0;
+        omega_baryon = 1.0;
+        gamma = 5.0 / 3.0;
+        total_mass = 1.0;
+    } else if (initial_setup == InitialSetup::SedovBlastwave) {
+        enable_subcycling = false;
+        expanding_universe = false;
         enable_cooling = false;
         use_PM = false;
         use_PP = false;
@@ -144,6 +158,11 @@ void Config::compute_derived_data() {
 
     const double dynamical_time = 1.0 / std::sqrt(G);
     fixed_dt = max_dt_dynamical_factor * dynamical_time;
+
+    // For now, disable subcycling when using MFM
+    if (hydro_method == HydroMethod::MFM) {
+        enable_subcycling = false; 
+    }
 
     init_derived_units();
 }
@@ -251,8 +270,6 @@ void Config::load(const std::string& filename) {
         "output", "save_hdf5_every_delta_a", save_HDF5_every_delta_a);
     debug_info_every_seconds = config_file.get_double(
         "output", "debug_info_every_seconds", debug_info_every_seconds);
-    enable_energy_diagnostics = config_file.get_bool(
-        "output", "enable_energy_diagnostics", enable_energy_diagnostics);
 
     num_threads = config_file.get_int("HPC", "num_threads", num_threads);
     enable_GPU = config_file.get_bool("HPC", "use_gpu", enable_GPU);

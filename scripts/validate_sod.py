@@ -99,6 +99,7 @@ def validate_sod_shock_interactive(snapshot_dir):
     with h5py.File(files[0], 'r') as f:
         config = f['Config'].attrs
         setup_type = config.get('setup', b"").decode('utf-8')
+        hydro_method = config.get('hydro_method', b"none").decode('utf-8')
         
         if setup_type != "sod_shock_tube":
             print(f"[ERROR] Expected config attribute 'setup'='sod_shock_tube'. Found: '{setup_type}'")
@@ -110,8 +111,7 @@ def validate_sod_shock_interactive(snapshot_dir):
         # Check Gamma
         if abs(gamma - (5.0/3.0)) > 1e-5:
             print(f"[WARNING] Expected gamma = 5/3 for this Shock test, but found {gamma:.5f}.")
-            print("          The analytical solution may not visually align with your data!")
-        
+            
         # Check Cosmological Expansion
         if bool(config.get('expanding_universe', 0)):
             print("[ERROR] Sod shock test requires a static box, but 'expanding_universe' is TRUE.")
@@ -127,9 +127,12 @@ def validate_sod_shock_interactive(snapshot_dir):
         use_pp = bool(config.get('use_pp', 0))
         if use_pm or use_pp:
             print(f"[ERROR] Sod shock test must be pure hydrodynamics.")
-            print(f"        Found gravity enabled: PM={use_pm}, PP={use_pp}")
             sys.exit(1)
 
+    # Styling based on solver method
+    label_prefix = "Eulerian Grid" if hydro_method == "eulerian" else "MFM Particles"
+    color_prefix = "darkorange" if hydro_method == "eulerian" else "royalblue"
+    
     # Plot Setup
     fig, axs = plt.subplots(2, 2, figsize=(14, 10))
     plt.subplots_adjust(bottom=0.15) 
@@ -138,9 +141,9 @@ def validate_sod_shock_interactive(snapshot_dir):
     axs[0, 1].set_ylim(-0.1, 1.2)  
     axs[1, 0].set_ylim(-0.05, 1.15) 
     
-    # Styling variables
-    scatter_kwargs = {'s': 4, 'color': 'royalblue', 'alpha': 0.6, 'label': 'MFM Simulation'}
-    sim_line_kwargs = {'color': 'royalblue', 'lw': 0.5, 'alpha': 0.8} # The thin connecting line
+    scatter_kwargs = {'s': 6 if hydro_method == "eulerian" else 4, 
+                      'color': color_prefix, 'alpha': 0.8, 'label': f'{label_prefix} Sim'}
+    sim_line_kwargs = {'color': color_prefix, 'lw': 1.0 if hydro_method == "eulerian" else 0.5, 'alpha': 0.8}
     exact_line_kwargs = {'color': 'black', 'lw': 1.5, 'linestyle': '--', 'label': 'Exact Solution'}
     
     # Density
@@ -169,7 +172,6 @@ def validate_sod_shock_interactive(snapshot_dir):
     line_sim_u, = axs[1, 1].plot([], [], **sim_line_kwargs)
     scat_u = axs[1, 1].scatter([], [], **scatter_kwargs)
     line_u, = axs[1, 1].plot([], [], **exact_line_kwargs)
-    
     axs[1, 1].set_ylabel(r"Internal Energy ($u$)")
     axs[1, 1].set_xlabel("Position (x)")
     axs[1, 1].set_title("Specific Internal Energy")
@@ -186,57 +188,73 @@ def validate_sod_shock_interactive(snapshot_dir):
         
         with h5py.File(target_file, 'r') as f:
             time = f['Header'].attrs['simulation_time']
-            x = f['Gas/position_x'][:]
-            y = f['Gas/position_y'][:]
-            z = f['Gas/position_z'][:]
-            rho = f['Gas/density'][:]
-            v_x = f['Gas/velocity_x'][:]
-            u = f['Gas/internal_energy'][:]
-            P = rho * u * (gamma - 1.0)
+            cfg = f['Config'].attrs
+            method = cfg.get('hydro_method', b'none').decode('utf-8')
+            
+            c_L = np.sqrt(gamma * 1.0 / 1.0)
+            
+            # Recalculate dynamic V_shock for the gray boundary boxes
+            P_R_plot = 0.1795
+            rho_R_plot = 0.25
+            c_R_plot = np.sqrt(gamma * P_R_plot / rho_R_plot)
+            _, _, P_star_plot, _ = get_exact_sod_solution(np.array([domain_size/2.0]), 1e-8, gamma)
+            V_shock = c_R_plot * np.sqrt((gamma + 1.0) / (2.0 * gamma) * (P_star_plot[0] / P_R_plot) + (gamma - 1.0) / (2.0 * gamma))
+            
+            left_bnd = c_L * time
+            right_bnd = domain_size - (V_shock * time)
+            
+            if method == "eulerian":
+                # Eulerian: Data is exported as flattened 3D grids. We must reshape them and extract the 1D center slice.
+                N = cfg.get('mesh_size_1d', 32)
+                dx = domain_size / float(N)
+                
+                # Reconstruct coordinates for the cell centers
+                x_all = np.linspace(dx/2.0, domain_size - dx/2.0, N)
+                
+                # Reshape arrays to (N, N, N) where shape is (x, y, z)
+                rho_3d = f['Gas/density'][:].reshape((N, N, N))
+                mom_x_3d = f['Gas/momentum_x'][:].reshape((N, N, N))
+                P_3d = f['Gas/pressure'][:].reshape((N, N, N))
+                
+                # Extract a 1D line exactly through the middle of the Y and Z axes
+                mid = N // 2
+                rho_line = rho_3d[:, mid, mid]
+                
+                # Convert momentum to velocity, and compute specific internal energy
+                v_line = mom_x_3d[:, mid, mid] / rho_line
+                P_line = P_3d[:, mid, mid]
+                u_line = P_line / (rho_line * (gamma - 1.0))
+                
+                valid_mask = (x_all >= left_bnd) & (x_all <= right_bnd)
+                x_v = x_all[valid_mask]
+                rho_v = rho_line[valid_mask]
+                v_v = v_line[valid_mask]
+                P_v = P_line[valid_mask]
+                u_v = u_line[valid_mask]
+                
+            elif method == "mfm":
+                x = f['Gas/position_x'][:]
+                y = f['Gas/position_y'][:]
+                z = f['Gas/position_z'][:]
+                rho = f['Gas/density'][:]
+                v_x = f['Gas/velocity_x'][:]
+                u = f['Gas/internal_energy'][:]
+                P = rho * u * (gamma - 1.0)
+                
+                safe_y_min, safe_y_max = domain_size * 0.495, domain_size * 0.505
+                safe_z_min, safe_z_max = domain_size * 0.495, domain_size * 0.505
+
+                valid_mask = (x >= left_bnd) & (x <= right_bnd) & \
+                             (y >= safe_y_min) & (y <= safe_y_max) & \
+                             (z >= safe_z_min) & (z <= safe_z_max)
+                
+                x_v = x[valid_mask]
+                rho_v = rho[valid_mask]
+                v_v = v_x[valid_mask]
+                P_v = P[valid_mask]
+                u_v = u[valid_mask]
             
         fig.suptitle(f"Sod Shock Validation - Snapshot {idx} (t={time:.4f})", fontsize=16)
-
-        # In the update(val) function:
-        c_L = np.sqrt(gamma * 1.0 / 1.0)
-        
-        # Recalculate dynamic V_shock for the gray boundary boxes
-        P_R_plot = 0.1795
-        rho_R_plot = 0.25
-        c_R_plot = np.sqrt(gamma * P_R_plot / rho_R_plot)
-        _, _, P_star_plot, _ = get_exact_sod_solution(np.array([domain_size/2.0]), 1e-8, gamma)
-        V_shock = c_R_plot * np.sqrt((gamma + 1.0) / (2.0 * gamma) * (P_star_plot[0] / P_R_plot) + (gamma - 1.0) / (2.0 * gamma))
-        
-        left_bnd = c_L * time
-        right_bnd = domain_size - (V_shock * time)
-
-        # We only keep the inner part of the Y-Z plane to ensure we are looking at pristine 1D flow.
-        safe_y_min, safe_y_max = domain_size * 0.495, domain_size * 0.505
-        safe_z_min, safe_z_max = domain_size * 0.495, domain_size * 0.505
-
-        # Add a small buffer to account for the kernel smoothing length (h) "reaching" into the error
-        h_buffer = 0.1 
-        
-        # Calculate dynamic intrusion depth
-        transverse_intrusion = (c_L * time) + h_buffer
-        
-        # Ensure we don't accidentally invert the bounds if the waves cross the center
-        #safe_y_min = min(transverse_intrusion, domain_size / 2.0)
-        #safe_y_max = max(domain_size - transverse_intrusion, domain_size / 2.0)
-        #safe_z_min = min(transverse_intrusion, domain_size / 2.0)
-        #safe_z_max = max(domain_size - transverse_intrusion, domain_size / 2.0)
-        
-        valid_mask = (x >= left_bnd) & (x <= right_bnd) & \
-                     (y >= safe_y_min) & (y <= safe_y_max) & \
-                     (z >= safe_z_min) & (z <= safe_z_max)
-        
-        #valid_mask = (x >= left_bnd) & (x <= right_bnd)
-        
-        # Filter valid particles
-        x_v = x[valid_mask]
-        rho_v = rho[valid_mask]
-        v_v = v_x[valid_mask]
-        P_v = P[valid_mask]
-        u_v = u[valid_mask]
         
         # Sort arrays strictly by x-coordinate to prevent zig-zag lines
         sort_idx = np.argsort(x_v)
@@ -264,11 +282,9 @@ def validate_sod_shock_interactive(snapshot_dir):
         line_u.set_data(x_exact, u_ex)
 
         if len(u_v) > 0:
-            # Find the min and max from both simulation and exact solution
             current_u_min = min(np.min(u_v), np.min(u_ex))
             current_u_max = max(np.max(u_v), np.max(u_ex))
             
-            # Add a 15% padding
             u_range = current_u_max - current_u_min
             padding = u_range * 0.15 if u_range > 0 else 0.5
             
@@ -298,7 +314,7 @@ def validate_sod_shock_interactive(snapshot_dir):
     plt.show()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Interactive MFM Sod Shock Tube validation.")
+    parser = argparse.ArgumentParser(description="Interactive MFM/Eulerian Sod Shock Tube validation.")
     parser.add_argument("path", type=str, help="Path to snapshot directory.")
     parser.add_argument("-l", "--latest", action="store_true", help="Load latest run_* directory")
     

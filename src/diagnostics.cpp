@@ -160,15 +160,13 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
 
     // Grid PM potential energy
     double w_code = 0.0;
-    if (config.enable_energy_diagnostics) {
-        int total_cells =
-            config.mesh_size * config.mesh_size * config.mesh_size;
-        double n3_inv = 1.0 / static_cast<double>(total_cells);
+
+    int total_cells = config.mesh_size * config.mesh_size * config.mesh_size;
+    double n3_inv = 1.0 / static_cast<double>(total_cells);
 #pragma omp parallel for reduction(+ : w_code)
-        for (int i = 0; i < total_cells; ++i) {
-            w_code += 0.5 * state.total_rho.data[i] *
-                      (state.phi.data[i] * n3_inv) * config.cell_volume;
-        }
+    for (int i = 0; i < total_cells; ++i) {
+        w_code += 0.5 * state.total_rho.data[i] * (state.phi.data[i] * n3_inv) *
+                  config.cell_volume;
     }
 
     // Raw code units
@@ -244,6 +242,9 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
 
         total_radiated_energy = e_rad;
         total_heated_energy = e_heat;
+
+        this->MFM_ill_conditioned_cases = gas.ill_conditioned_cases;
+        gas.ill_conditioned_cases = 0;
     } else {
         this->energy_err = 0.0;
     }

@@ -237,7 +237,7 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
     dt_hydro = []
     
     # Energy Arrays
-    kin_energies, therm_energies, rad_energies, heat_energies = [], [], [], []
+    kin_energies, therm_energies, rad_energies, heat_energies, switch_energies = [], [], [], [], []
     fractional_errors = []
     ke_dm_list, fractional_errors_dm = [], []
     cold_gas_fracs, max_metallicity = [], []
@@ -261,7 +261,7 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
             
             energy_conv = u_energy_cgs * (a**2)
 
-            # --- DM Particles ---
+            # DM Particles
             p_x = f['Particles/position_x'][:] * box_h_mpc
             p_y = f['Particles/position_y'][:] * box_h_mpc
             p_z = f['Particles/position_z'][:] * box_h_mpc
@@ -296,7 +296,7 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
                     max_dm_densities.append(max_rho_comoving * dm_phys_conv)
                     dm_scale_factors.append(a)
 
-            # --- Total Power Spectrum (DM + Gas) ---
+            # Total Power Spectrum (DM + Gas)
             tot_px, tot_py, tot_pz, tot_pmass = p_x, p_y, p_z, p_mass
             if has_particle_hydro:
                 gx = f['Gas/position_x'][:] * box_h_mpc
@@ -353,6 +353,9 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
                     thermal_timescale_densest.append(f['Gas/thermal_timescale'][local_max_coords])
                     mean_rho = np.mean(rho)
 
+                    switch_energy_code = f['Gas'].attrs.get('cumulative_dual_energy_switch_energy', 0.0)
+                    switch_energies.append(switch_energy_code)
+
                 elif has_particle_hydro:
                     vx, vy, vz = f['Gas/velocity_x'][:], f['Gas/velocity_y'][:], f['Gas/velocity_z'][:]
                     u_int = f['Gas/internal_energy'][:]
@@ -373,6 +376,9 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
                     gas_temp_densest_cell.append(temp[closest_idx])
                     thermal_timescale_densest.append(np.nan) 
                     mean_rho = np.sum(gas_mass) / domain_size**3
+
+                    switch_energy_code = f['Gas'].attrs.get('cumulative_entropy_switch_energy', 0.0)
+                    switch_energies.append(switch_energy_code)
 
                 p999_gas_densities.append(np.percentile(rho, 99.9) * n_H_conv)
                 max_gas_densities.append(np.max(rho) * n_H_conv)
@@ -542,6 +548,12 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
         if fractional_errors_dm:
             ax_err.plot(scale_factors, fractional_errors_dm, color='purple', lw=1.5, linestyle='-.', label='DM Frac Error')
             all_errs.extend(fractional_errors_dm)
+
+        if switch_energies:
+            switch_arr = np.array(switch_energies)
+            switch_frac = switch_arr / abs(initial_e_code) if initial_e_code != 0 else np.zeros_like(switch_arr)
+            ax_err.plot(scale_factors, switch_frac, color='magenta', lw=1.5, linestyle=':', label='Energy Switch Drift')
+            all_errs.extend(switch_frac)
             
         if all_errs:
             max_err = max(1e-4, np.max(np.abs(all_errs)) * 1.5)
@@ -586,7 +598,7 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
         axs[1, 1].text(0.5, 0.5, 'No Extreme States Data', ha='center', va='center')
 
     # Densest Cell Evolution
-    if has_hydro:
+    if has_hydro and has_eulerian_hydro:
         axs[1, 2].plot(scale_factors, rho_densest_cell, color='blue', lw=2, label='Density')
         axs[1, 2].set(yscale='log', xlabel='Scale Factor (a)', ylabel=r'Physical Density [$m_p$ cm$^{-3}$]')
         axs[1, 2].tick_params(axis='y', labelcolor='black')
@@ -616,7 +628,7 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
         axs[1, 2].legend(lines_left + lines_temp + lines_time, labels_left + labels_temp + labels_time, loc='upper left', fontsize=8)
         axs[1, 2].set_title('Densest cell (z=0) evolution')
     else:
-        axs[1, 2].text(0.5, 0.5, 'Hydro Disabled', ha='center', va='center')
+        axs[1, 2].text(0.5, 0.5, 'Graph Disabled', ha='center', va='center')
 
     # Phase Diagram
     if has_hydro and 'x_data' in locals():
@@ -660,7 +672,8 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
         f"{'Box Size':<9}: {str(box_size_mpc) + ' Mpc'}\n"
         f"{'Grid':<9}: {str(mesh_size) + '³'}\n"
         f"{'Particles':<9}: {n_dm_1d} ({num_dm_particles_total})\n"
-        f"{'Gas particles':<9}: {n_gas_1d} ({num_gas_particles})\n\n"
+        f"{'Gas particles':<9}: {n_gas_1d} ({num_gas_particles})\n"
+        f"{'Hydro method':<9}: {method}\n\n"
         f"Cosmology & Physics:\n"
         f"  {'Ω_m':<3}: {omega_m:<8} | {'Hubble (h)':<12}: {h_val:.2f}\n"
         f"  {'Ω_b':<3}: {omega_b:<8} | {'Gamma (γ)':<12}: {gamma:.3f}\n"

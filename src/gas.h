@@ -71,6 +71,7 @@ class GasGrid {
     double accumulated_photoheating_energy;
     double accumulated_gravitational_work;
     double accumulated_expansion_work;
+    double accumulated_dual_energy_switch_energy;
     double pressure_floor;
 
     RiemannSolver solver;
@@ -79,18 +80,25 @@ class GasGrid {
     friend struct GasGridTestAccess;
     friend void initialize_gas(SimState& state, const Config& config,
                                const ZeldovichField& zf);
+    friend void initialize_sod_shock_tube(SimState& state,
+                                          const Config& config);
     friend void apply_mesh_gas_gravity_kick(GasGrid& gas, const Grid3D& grav_x,
-                               const Grid3D& grav_y, const Grid3D& grav_z,
-                               double dt, double a, double H,
-                               const Config& config);
+                                            const Grid3D& grav_y,
+                                            const Grid3D& grav_z, double dt,
+                                            double a, double H,
+                                            const Config& config);
+    friend void initialize_adiabatic_expansion(SimState& state,
+                                               const Config& config);
+    friend void initialize_sedov_blastwave(SimState& state,
+                                           const Config& config);
 
-    void update_primitive_variables();
-    void compute_and_apply_fluxes(double dt);
+    void update_primitive_variables(double a);
+    void compute_and_apply_fluxes(double dt, double a);
 
    public:
     GasGrid(const Config& conf);
 
-    void hydro_step(double dt);
+    void hydro_step(double dt, double a);
     void apply_cooling(double dt, double a, Cooling& cooling);
     double get_cfl_timestep() const;
     double get_cooling_timestep(double a, Cooling& cooling) const;
@@ -124,6 +132,9 @@ class GasGrid {
     }
     double get_accumulated_expansion_work() const {
         return accumulated_expansion_work;
+    }
+    double get_accumulated_dual_energy_switch_energy() const {
+        return accumulated_dual_energy_switch_energy;
     }
     void add_gravitational_work(double w) {
         accumulated_gravitational_work += w;

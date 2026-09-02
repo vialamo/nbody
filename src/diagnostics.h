@@ -36,6 +36,7 @@ class Diagnostics {
     double initial_dm_energy = 0.0;
     bool energy_initialized = false;
     bool dm_energy_initialized = false;
+    size_t MFM_ill_conditioned_cases = 0;
 
     // Performance State
     int accumulated_cycles = 0;

@@ -1,64 +1,79 @@
 #pragma once
 #include <algorithm>
 #include <string>
+#include <cctype>
+
+namespace EnumUtils {
+    template <typename E>
+    struct Traits;
+
+    template <typename E>
+    std::string to_string(E value) {
+        size_t idx = static_cast<size_t>(value);
+        if (idx < static_cast<size_t>(E::Count)) {
+            return Traits<E>::names[idx];
+        }
+        return Traits<E>::names[static_cast<size_t>(Traits<E>::default_value)];
+    }
+
+    template <typename E>
+    E from_string(std::string str) {
+        std::transform(str.begin(), str.end(), str.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+
+        for (size_t i = 0; i < static_cast<size_t>(E::Count); ++i) {
+            if (str == Traits<E>::names[i]) {
+                return static_cast<E>(i);
+            }
+        }
+        return Traits<E>::default_value;
+    }
+}
 
 enum class HydroMethod { None, Eulerian, MFM, Count };
-
-namespace HydroConfig {
-constexpr const char* method_names[] = {"none", "eulerian", "mfm"};
-
-// Convert Enum -> String
-inline std::string to_string(HydroMethod method) {
-    size_t idx = static_cast<size_t>(method);
-    if (idx < static_cast<size_t>(HydroMethod::Count)) {
-        return method_names[idx];
-    }
-    return "none";
-}
-
-// Convert String -> Enum
-inline HydroMethod from_string(std::string str) {
-    std::transform(str.begin(), str.end(), str.begin(), ::tolower);
-    for (size_t i = 0; i < static_cast<size_t>(HydroMethod::Count); ++i) {
-        if (str == method_names[i]) {
-            return static_cast<HydroMethod>(i);
-        }
-    }
-    return HydroMethod::None;  // Default fallback
-}
-}  // namespace HydroConfig
 
 enum class InitialSetup {
     Cosmological,
     SodShockTube,
     AdiabaticExpansion,
+    SedovBlastwave,
     Count
 };
 
+template <>
+struct EnumUtils::Traits<HydroMethod> {
+    static constexpr const char* names[] = {"none", "eulerian", "mfm"};
+    static constexpr HydroMethod default_value = HydroMethod::None;
+};
+
+template <>
+struct EnumUtils::Traits<InitialSetup> {
+    static constexpr const char* names[] = {
+        "cosmological", "sod_shock_tube", "adiabatic_expansion", "sedov_blastwave"
+    };
+    static constexpr InitialSetup default_value = InitialSetup::Cosmological;
+};
+
+namespace HydroConfig {
+    inline std::string to_string(HydroMethod method) {
+        return EnumUtils::to_string(method);
+    }
+    
+    // Wrapper allows calling without <HydroMethod> template brackets
+    inline HydroMethod from_string(std::string str) {
+        return EnumUtils::from_string<HydroMethod>(std::move(str));
+    }
+}
+
 namespace InitialConfig {
-constexpr const char* names[] = {"cosmological", "sod_shock_tube",
-                                 "adiabatic_expansion"};
-
-// Convert Enum -> String
-inline std::string to_string(InitialSetup setup) {
-    size_t idx = static_cast<size_t>(setup);
-    if (idx < static_cast<size_t>(InitialSetup::Count)) {
-        return names[idx];
+    inline std::string to_string(InitialSetup setup) {
+        return EnumUtils::to_string(setup);
     }
-    return names[0];
-}
 
-// Convert String -> Enum
-inline InitialSetup from_string(std::string str) {
-    std::transform(str.begin(), str.end(), str.begin(), ::tolower);
-    for (size_t i = 0; i < static_cast<size_t>(InitialSetup::Count); ++i) {
-        if (str == names[i]) {
-            return static_cast<InitialSetup>(i);
-        }
+    inline InitialSetup from_string(std::string str) {
+        return EnumUtils::from_string<InitialSetup>(std::move(str));
     }
-    return InitialSetup::Cosmological;  // Default fallback
 }
-}  // namespace InitialConfig
 
 struct Config {
     // Domain
@@ -129,7 +144,6 @@ struct Config {
     // Output
     double save_HDF5_every_delta_a = 0.005;
     double debug_info_every_seconds = 30;
-    bool enable_energy_diagnostics = true;
 
     // HPC
     int num_threads = 0;

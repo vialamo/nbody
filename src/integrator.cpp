@@ -186,7 +186,7 @@ void apply_mesh_gas_gravity_kick(GasGrid& gas, const Grid3D& grav_x,
                                  const Config& config) {
     if (config.hydro_method != HydroMethod::Eulerian) return;
 
-    gas.update_primitive_variables();
+    gas.update_primitive_variables(a);
     double a3 = a * a * a;
 
     Grid3D total_ax_gas(config.mesh_size), total_ay_gas(config.mesh_size),
@@ -648,7 +648,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
             if (config.hydro_method == HydroMethod::Eulerian) {
                 {
                     ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
-                    state.gas->hydro_step(dt_h);
+                    state.gas->hydro_step(dt_h, a_mid);
                 }
                 if (config.enable_cooling) {
                     ScopedTimer cooling_timer(diag, TimerRegion::Cool);
@@ -657,10 +657,13 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
                                       state.gas->get_cooling_total_cycles());
                 }
             } else {
-                apply_particle_gas_drift(*state.mfm_gas, dt_h,
-                                         config.domain_size);
-                state.mfm_gas->compute_density_and_h(config, state.dm);
-                state.mfm_gas->hydro_step(config, a_mid, dt_h);
+                {
+                    ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
+                    apply_particle_gas_drift(*state.mfm_gas, dt_h,
+                                             config.domain_size);
+                    state.mfm_gas->compute_density_and_h(config, state.dm);
+                    state.mfm_gas->hydro_step(config, a_mid, dt_h);
+                }
 
                 if (config.enable_cooling) {
                     ScopedTimer cooling_timer(diag, TimerRegion::Cool);
@@ -753,7 +756,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
         if (config.hydro_method == HydroMethod::Eulerian) {
             {
                 ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
-                state.gas->hydro_step(ts.dt_macro);
+                state.gas->hydro_step(ts.dt_macro, mid_a);
             }
             if (config.enable_cooling) {
                 ScopedTimer cooling_timer(diag, TimerRegion::Cool);
@@ -763,13 +766,16 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
             }
         } else if (config.hydro_method == HydroMethod::MFM) {
             // Pure Hydro Full Step
-            apply_gas_particle_hydro_kick(*state.mfm_gas, ts.dt_macro / 2.0,
-                                          old_a);
-            apply_particle_gas_drift(*state.mfm_gas, ts.dt_macro,
-                                     config.domain_size);
-            state.mfm_gas->compute_density_and_h(config, state.dm);
+            {
+                ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
+                apply_gas_particle_hydro_kick(*state.mfm_gas, ts.dt_macro / 2.0,
+                                              old_a);
+                apply_particle_gas_drift(*state.mfm_gas, ts.dt_macro,
+                                         config.domain_size);
+                state.mfm_gas->compute_density_and_h(config, state.dm);
 
-            state.mfm_gas->hydro_step(config, mid_a, ts.dt_macro);
+                state.mfm_gas->hydro_step(config, mid_a, ts.dt_macro);
+            }
 
             if (config.enable_cooling) {
                 ScopedTimer cooling_timer(diag, TimerRegion::Cool);
@@ -778,8 +784,11 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
                 diag.add_substeps(SubstepCounter::Cool,
                                   state.mfm_gas->cooling_total_cycles);
             }
-            apply_gas_particle_hydro_kick(*state.mfm_gas, ts.dt_macro / 2.0,
-                                          target_a);
+            {
+                ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
+                apply_gas_particle_hydro_kick(*state.mfm_gas, ts.dt_macro / 2.0,
+                                              target_a);
+            }
         }
 
         // The Gas has now moved to dt, but DM is paused at dt/2.
@@ -818,7 +827,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
         if (config.hydro_method == HydroMethod::Eulerian) {
             {
                 ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
-                state.gas->hydro_step(dt);
+                state.gas->hydro_step(dt, mid_a);
             }
             if (config.enable_cooling) {
                 ScopedTimer cooling_timer(diag, TimerRegion::Cool);
@@ -827,9 +836,13 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
                                   state.gas->get_cooling_total_cycles());
             }
         } else if (config.hydro_method == HydroMethod::MFM) {
-            apply_particle_gas_drift(*state.mfm_gas, dt, config.domain_size);
-            state.mfm_gas->compute_density_and_h(config, state.dm);
-            state.mfm_gas->hydro_step(config, mid_a, dt);
+            {
+                ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
+                apply_particle_gas_drift(*state.mfm_gas, dt,
+                                         config.domain_size);
+                state.mfm_gas->compute_density_and_h(config, state.dm);
+                state.mfm_gas->hydro_step(config, mid_a, dt);
+            }
 
             if (config.enable_cooling) {
                 ScopedTimer cooling_timer(diag, TimerRegion::Cool);

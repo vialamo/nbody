@@ -629,13 +629,10 @@ void compute_and_add_generic_pp_forces(
         diag.add_prof_time(ProfRegion::Ret, diff_return);
     } else
 #endif
+    // ========================================================================
+    // CPU IMPLEMENTATION (Sorted Array + Chunked Gather Buffer)
+    // ========================================================================
     {
-        // ========================================================================
-        // CPU IMPLEMENTATION (Sorted Array + Gather Buffer)
-        // ========================================================================
-// ========================================================================
-// CPU IMPLEMENTATION (Sorted Array + Chunked Gather Buffer)
-// ========================================================================
 #pragma omp parallel for schedule(dynamic, 64)
         for (size_t i = 0; i < n_parts; ++i) {
             double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];

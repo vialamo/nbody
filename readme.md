@@ -252,7 +252,6 @@ Manages how and when the simulation writes data to disk.
 
 * **`save_hdf5_every_delta_a`**: The interval for writing full snapshot files (particles, mesh densities, velocities) to disk, measured in scale factor increments.
 * **`debug_info_every_seconds`**: The frequency (in seconds) at which the code prints its current status, timestep, and performance metrics to the console/log.
-* **`enable_energy_diagnostics`**: Boolean. If `true`, the code continuously calculates and verifies the conservation of energy and momentum, writing the error margins to the diagnostic file.
 
 ### `[HPC]`
 

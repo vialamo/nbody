@@ -142,9 +142,12 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                         config.cooling_table_path);
 
         // [MFM]
-        set_attr_double(config_group, "mfm_target_neighbors", config.mfm_target_neighbors);
-        set_attr_double(config_group, "mfm_neighbor_tolerance", config.mfm_neighbor_tolerance);
-        set_attr_int(config_group, "mfm_max_iterations", config.mfm_max_iterations);
+        set_attr_double(config_group, "mfm_target_neighbors",
+                        config.mfm_target_neighbors);
+        set_attr_double(config_group, "mfm_neighbor_tolerance",
+                        config.mfm_neighbor_tolerance);
+        set_attr_int(config_group, "mfm_max_iterations",
+                     config.mfm_max_iterations);
 
         // [subgrid]
         set_attr_bool(config_group, "enable_subgrid_gravity",
@@ -233,6 +236,9 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                                 gas.get_accumulated_gravitational_work());
                 set_attr_double(gas_group, "cumulative_expansion_work",
                                 gas.get_accumulated_expansion_work());
+                set_attr_double(
+                    gas_group, "cumulative_dual_energy_switch_energy",
+                    gas.get_accumulated_dual_energy_switch_energy());
                 write_grid(gas_group, "density", gas.get_density());
                 write_grid(gas_group, "momentum_x", gas.get_momentum_x());
                 write_grid(gas_group, "momentum_y", gas.get_momentum_y());
@@ -271,6 +277,8 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                                 gas.accumulated_gravitational_work);
                 set_attr_double(gas_group, "cumulative_expansion_work",
                                 gas.accumulated_expansion_work);
+                set_attr_double(gas_group, "cumulative_entropy_switch_energy",
+                                gas.accumulated_entropy_switch_energy);
 
                 write_particle_vec(gas_group, "position_x", gas.pos_x);
                 write_particle_vec(gas_group, "position_y", gas.pos_y);

@@ -48,6 +48,15 @@ class GasParticleSystem {
     std::vector<Eigen::Matrix3d>
         B_matrix;  // Geometric inverse matrix [1 / Code Length^2]
 
+    std::vector<double>
+        entropy;  // Entropic function (S = P / rho^gamma)
+                  // [Code Velocity^2 / (Code Mass / Code Length^3)^(gamma-1)]
+    std::vector<double> max_rel_ke;  // Maximum specific relative kinetic energy
+                                     // of neighbors [Code Velocity^2]
+    std::vector<double>
+        delta_E_grav;  // Specific gravitational energy variation across
+                       // smoothing length (|a_grav| * h) [Code Velocity^2]
+
     // Gradients are evaluated with respect to comoving coordinates
     // (d/dx_comoving)
     std::vector<Eigen::Vector3d> grad_rho;  // [Density / Code Length]
@@ -58,7 +67,8 @@ class GasParticleSystem {
 
     std::vector<double> zeta;  // Correction term for adaptive gravity softening
 
-    Grid3D gas_rho;
+    Grid3D gas_rho;  // Gridded comoving gas density for PM gravity/diagnostics
+                     // [Code Mass / Code Length^3]
 
     size_t cooling_failed_cells = 0;
     size_t cooling_total_cycles = 0;
@@ -66,7 +76,10 @@ class GasParticleSystem {
     double accumulated_photoheating_energy = 0.0;
     double accumulated_gravitational_work = 0.0;
     double accumulated_expansion_work = 0.0;
+    double accumulated_entropy_switch_energy = 0.0;
     double pressure_floor = 0.0;
+    size_t ill_conditioned_cases = 0;
+    size_t clamped_area_cases = 0;
 
     // Dynamic Spatial Hashing
     CellList sph_cell_list;
@@ -147,6 +160,7 @@ struct ParticleGradients {
     Eigen::Vector3d grad_vx;
     Eigen::Vector3d grad_vy;
     Eigen::Vector3d grad_vz;
+    bool ill_conditioned;
 };
 
 // Computes spatial gradients using least-squares matrix inversion.
@@ -197,13 +211,3 @@ struct MFMFaceFlux {
 // OUTPUT: The resolved pressure (P_star) and relative wave speed (S_star).
 MFMFaceFlux solve_mfm_riemann(const ReconstructedFace& face,
                               const Eigen::Vector3d& v_frame, double gamma);
-/*
-// Computes the effective geometric cross-section between two particles.
-// INPUT: Particle states, inverse B-matrices, and the valid face geometry.
-// OUTPUT: Effective scalar area [Code Length^2], bounded by the maximum
-// physical cross-section limiter.
-double compute_mfm_face_area(const ParticleState& p_i,
-                             const Eigen::Matrix3d& B_i,
-                             const ParticleState& p_j,
-                             const Eigen::Matrix3d& B_j,
-                             const ReconstructedFace& face);*/

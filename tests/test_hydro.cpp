@@ -16,7 +16,7 @@ struct GasGridTestAccess {
     static Grid3D& internal_energy(GasGrid& g) { return g.internal_energy; }
     static Grid3D& pressure(GasGrid& g) { return g.pressure; }
     static void update_primitive_variables(GasGrid& g) {
-        g.update_primitive_variables();
+        g.update_primitive_variables(1.0);
     }
 };
 

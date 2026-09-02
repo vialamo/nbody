@@ -414,7 +414,7 @@ void initialize_gas(SimState& state, const Config& config,
                 }
             }
         }
-        gas.update_primitive_variables();
+        gas.update_primitive_variables(state.scale_factor);
     } else if (config.hydro_method == HydroMethod::MFM) {
         int N_part = config.num_gas_particles_1d;
         double spacing = config.domain_size / N_part;
@@ -457,112 +457,371 @@ void initialize_gas(SimState& state, const Config& config,
 }
 
 void initialize_sod_shock_tube(SimState& state, const Config& config) {
-    // GADGET/GIZMO Shock Tube parameters (Hernquist & Katz variant)
+    // GADGET/GIZMO Shock Tube parameters (Hernquist & Katz 1989)
     double rho_L = 1.0;
     double rho_R = 0.25;
     double P_L = 1.0;
     double P_R = 0.1795;
 
-    // Using the 1D particle count to define the left-side resolution
-    int N = config.num_gas_particles_1d;
     double L = config.domain_size;
-
-    // Spacing: Right side spacing must scale by the cube root of the density
-    // ratio in 3D to maintain equal particle masses across the domain.
-    double dx_L = L / N;
-    double dx_R =
-        dx_L * std::cbrt(rho_L / rho_R);  // For a 4:1 ratio, cbrt(4) ≈ 1.5874
-
-    // Since mass is constant, we define it based on the left side
-    double particle_mass = rho_L * (dx_L * dx_L * dx_L);
-
-    // Internal energy: u = P / (rho * (gamma - 1))
     double gamma = config.gamma;
     double u_L = P_L / (rho_L * (gamma - 1.0));
     double u_R = P_R / (rho_R * (gamma - 1.0));
-
     double v_x = 0.0, v_y = 0.0, v_z = 0.0;
     double seed_metallicity = 0.0;
 
-    // Calculate starting offsets to ensure L/2.0 is exactly hit by the grid
-    std::vector<double> yz_coords_L;
-    double start_L = std::fmod(L / 2.0, dx_L);
-    if (start_L < 0.0) start_L += dx_L;  // Prevent negative float quirk
-    for (double pos = start_L; pos < L - 1e-5; pos += dx_L) {
-        yz_coords_L.push_back(pos);
-    }
+    if (config.hydro_method == HydroMethod::Eulerian) {
+        auto& gas = *state.gas;
+        int M = config.mesh_size;
 
-    std::vector<double> yz_coords_R;
-    double start_R = std::fmod(L / 2.0, dx_R);
-    if (start_R < 0.0) start_R += dx_R;
-    for (double pos = start_R; pos < L - 1e-5; pos += dx_R) {
-        yz_coords_R.push_back(pos);
-    }
+        for (int i = 0; i < M; ++i) {
+            for (int j = 0; j < M; ++j) {
+                for (int k = 0; k < M; ++k) {
+                    size_t idx = static_cast<size_t>(i) * M * M + j * M + k;
 
-    // LEFT SIDE (High Density, High Pressure)
-    // x goes from 0 to 0.5 * L (X stays unchanged, Y/Z use centered arrays)
-    for (double x = dx_L / 2.0; x < 0.5 * L; x += dx_L) {
-        for (double y : yz_coords_L) {
-            for (double z : yz_coords_L) {
-                // Keep the smoothing length slightly larger than the spacing to
-                // ensure overlap
-                double initial_h = 1.2 * dx_L;
-                state.mfm_gas->add_particle(x, y, z, v_x, v_y, v_z,
-                                            particle_mass, u_L, initial_h,
-                                            seed_metallicity);
+                    // Calculate cell center x-coordinate
+                    double x = (i + 0.5) * config.cell_size;
+
+                    // Assign Left or Right state based on the midpoint
+                    double rho = (x < L / 2.0) ? rho_L : rho_R;
+                    double u = (x < L / 2.0) ? u_L : u_R;
+
+                    gas.density.data[idx] = rho;
+                    gas.metal_density.data[idx] = rho * seed_metallicity;
+
+                    gas.velocity_x.data[idx] = v_x;
+                    gas.velocity_y.data[idx] = v_y;
+                    gas.velocity_z.data[idx] = v_z;
+                    gas.momentum_x.data[idx] = rho * v_x;
+                    gas.momentum_y.data[idx] = rho * v_y;
+                    gas.momentum_z.data[idx] = rho * v_z;
+
+                    double kin_energy =
+                        0.5 * rho * (v_x * v_x + v_y * v_y + v_z * v_z);
+                    gas.energy.data[idx] = (rho * u) + kin_energy;
+                    gas.internal_energy.data[idx] = rho * u;
+                }
             }
         }
-    }
+        gas.update_primitive_variables(state.scale_factor);
 
-    // RIGHT SIDE (Low Density, Low Pressure)
-    // x goes from 0.5 * L to L
-    for (double x = 0.5 * L + dx_R / 2.0; x < L; x += dx_R) {
-        for (double y : yz_coords_R) {
-            for (double z : yz_coords_R) {
-                double initial_h = 1.2 * dx_R;
-                state.mfm_gas->add_particle(x, y, z, v_x, v_y, v_z,
-                                            particle_mass, u_R, initial_h,
-                                            seed_metallicity);
+    } else if (config.hydro_method == HydroMethod::MFM) {
+        // Using the 1D particle count to define the left-side resolution
+        int N = config.num_gas_particles_1d;
+
+        // Spacing: Right side spacing must scale by the cube root of the
+        // density ratio in 3D to maintain equal particle masses across the
+        // domain.
+        double dx_L = L / N;
+        double dx_R =
+            dx_L *
+            std::cbrt(rho_L / rho_R);  // For a 4:1 ratio, cbrt(4) ≈ 1.5874
+
+        // Since mass is constant, we define it based on the left side
+        double particle_mass = rho_L * (dx_L * dx_L * dx_L);
+
+        // Calculate starting offsets to ensure L/2.0 is exactly hit by the grid
+        std::vector<double> yz_coords_L;
+        double start_L = std::fmod(L / 2.0, dx_L);
+        if (start_L < 0.0) start_L += dx_L;  // Prevent negative float quirk
+        for (double pos = start_L; pos < L - 1e-5; pos += dx_L) {
+            yz_coords_L.push_back(pos);
+        }
+
+        std::vector<double> yz_coords_R;
+        double start_R = std::fmod(L / 2.0, dx_R);
+        if (start_R < 0.0) start_R += dx_R;
+        for (double pos = start_R; pos < L - 1e-5; pos += dx_R) {
+            yz_coords_R.push_back(pos);
+        }
+
+        // LEFT SIDE (High Density, High Pressure)
+        // x goes from 0 to 0.5 * L (X stays unchanged, Y/Z use centered arrays)
+        for (double x = dx_L / 2.0; x < 0.5 * L; x += dx_L) {
+            for (double y : yz_coords_L) {
+                for (double z : yz_coords_L) {
+                    // Keep the smoothing length slightly larger than the
+                    // spacing to ensure overlap
+                    double initial_h = 1.2 * dx_L;
+                    state.mfm_gas->add_particle(x, y, z, v_x, v_y, v_z,
+                                                particle_mass, u_L, initial_h,
+                                                seed_metallicity);
+                }
+            }
+        }
+
+        // RIGHT SIDE (Low Density, Low Pressure)
+        // x goes from 0.5 * L to L
+        for (double x = 0.5 * L + dx_R / 2.0; x < L; x += dx_R) {
+            for (double y : yz_coords_R) {
+                for (double z : yz_coords_R) {
+                    double initial_h = 1.2 * dx_R;
+                    state.mfm_gas->add_particle(x, y, z, v_x, v_y, v_z,
+                                                particle_mass, u_R, initial_h,
+                                                seed_metallicity);
+                }
             }
         }
     }
 }
 
 void initialize_adiabatic_expansion(SimState& state, const Config& config) {
-    int N_part = config.num_gas_particles_1d;
-    double spacing = config.domain_size / N_part;
-    double gas_particle_mass =
-        config.gas_total_mass / (N_part * N_part * N_part);
-
     const double initial_internal_energy =
         Cooling::get_internal_energy_from_temp(config.initial_gas_temperature_k,
                                                state.scale_factor, config);
 
-    // Initial guess for smoothing length
-    double initial_h = 1.2 * spacing;
     double seed_metallicity = 0.0;
+    double v_x = 0.0, v_y = 0.0, v_z = 0.0;
 
-    double v_x = 0.0;
-    double v_y = 0.0;
-    double v_z = 0.0;
+    if (config.hydro_method == HydroMethod::Eulerian) {
+        auto& gas = *state.gas;
+        int M = config.mesh_size;
 
-    for (int i = 0; i < N_part; ++i) {
-        for (int j = 0; j < N_part; ++j) {
-            for (int k = 0; k < N_part; ++k) {
-                // Shift the gas lattice by half a spacing relative to DM to
-                // avoid perfect overlap
-                double qx = i * spacing;
-                double qy = j * spacing;
-                double qz = k * spacing;
+        // Calculate the uniform background density
+        double mean_gas_rho =
+            config.gas_total_mass / std::pow(config.domain_size, 3.0);
 
-                double p_x = fmod(qx + config.domain_size, config.domain_size);
-                double p_y = fmod(qy + config.domain_size, config.domain_size);
-                double p_z = fmod(qz + config.domain_size, config.domain_size);
+        for (int i = 0; i < M; ++i) {
+            for (int j = 0; j < M; ++j) {
+                for (int k = 0; k < M; ++k) {
+                    size_t idx = static_cast<size_t>(i) * M * M + j * M + k;
 
-                state.mfm_gas->add_particle(
-                    p_x, p_y, p_z, v_x, v_y, v_z, gas_particle_mass,
-                    initial_internal_energy, initial_h, seed_metallicity);
+                    // Uniform density and metallicity
+                    gas.density.data[idx] = mean_gas_rho;
+                    gas.metal_density.data[idx] =
+                        mean_gas_rho * seed_metallicity;
+
+                    // Zero velocity and momentum
+                    gas.velocity_x.data[idx] = v_x;
+                    gas.velocity_y.data[idx] = v_y;
+                    gas.velocity_z.data[idx] = v_z;
+                    gas.momentum_x.data[idx] = 0.0;
+                    gas.momentum_y.data[idx] = 0.0;
+                    gas.momentum_z.data[idx] = 0.0;
+
+                    // Because kinetic energy is zero, total energy = internal
+                    // energy
+                    gas.energy.data[idx] =
+                        mean_gas_rho * initial_internal_energy;
+                    gas.internal_energy.data[idx] =
+                        mean_gas_rho * initial_internal_energy;
+                }
             }
+        }
+        gas.update_primitive_variables(state.scale_factor);
+
+    } else if (config.hydro_method == HydroMethod::MFM) {
+        int N_part = config.num_gas_particles_1d;
+        double spacing = config.domain_size / N_part;
+        double gas_particle_mass =
+            config.gas_total_mass / (N_part * N_part * N_part);
+
+        // Initial guess for smoothing length
+        double initial_h = 1.2 * spacing;
+
+        for (int i = 0; i < N_part; ++i) {
+            for (int j = 0; j < N_part; ++j) {
+                for (int k = 0; k < N_part; ++k) {
+                    // Shift the gas lattice by half a spacing relative to DM to
+                    // avoid perfect overlap
+                    double qx = i * spacing;
+                    double qy = j * spacing;
+                    double qz = k * spacing;
+
+                    double p_x =
+                        fmod(qx + config.domain_size, config.domain_size);
+                    double p_y =
+                        fmod(qy + config.domain_size, config.domain_size);
+                    double p_z =
+                        fmod(qz + config.domain_size, config.domain_size);
+
+                    state.mfm_gas->add_particle(
+                        p_x, p_y, p_z, v_x, v_y, v_z, gas_particle_mass,
+                        initial_internal_energy, initial_h, seed_metallicity);
+                }
+            }
+        }
+    }
+}
+
+void initialize_sedov_blastwave(SimState& state, const Config& config) {
+    // Standard Sedov-Taylor parameters
+    double E_total = 1.0;
+    double rho_bg = 1.0;
+    double P_bg = 1e-5;  // Almost zero pressure for the background to create a
+                         // strong shock
+    double gamma = config.gamma;
+    double u_bg = P_bg / (rho_bg * (gamma - 1.0));
+    double seed_metallicity = 0.0;
+    double L = config.domain_size;
+    double center = L / 2.0;
+
+    // Define the injection radius
+    int N_res = (config.hydro_method == HydroMethod::Eulerian)
+                    ? config.mesh_size
+                    : config.num_gas_particles_1d;
+    double dx = L / static_cast<double>(N_res);
+    double R_inj = 2.0 * dx;
+
+    if (config.hydro_method == HydroMethod::Eulerian) {
+        auto& gas = *state.gas;
+        int M = config.mesh_size;
+
+        // Initialize uniform cold background
+        for (int i = 0; i < M; ++i) {
+            for (int j = 0; j < M; ++j) {
+                for (int k = 0; k < M; ++k) {
+                    size_t idx = static_cast<size_t>(i) * M * M + j * M + k;
+                    gas.density.data[idx] = rho_bg;
+                    gas.metal_density.data[idx] = 0.0;
+                    gas.velocity_x.data[idx] = 0.0;
+                    gas.velocity_y.data[idx] = 0.0;
+                    gas.velocity_z.data[idx] = 0.0;
+                    gas.momentum_x.data[idx] = 0.0;
+                    gas.momentum_y.data[idx] = 0.0;
+                    gas.momentum_z.data[idx] = 0.0;
+                    gas.internal_energy.data[idx] = rho_bg * u_bg;
+                    gas.energy.data[idx] = rho_bg * u_bg;
+                }
+            }
+        }
+
+        // Inject energy into the central region
+        double cell_vol = dx * dx * dx;
+        double inj_mass = 0.0;
+        std::vector<size_t> inj_indices;
+
+        for (int i = 0; i < M; ++i) {
+            for (int j = 0; j < M; ++j) {
+                for (int k = 0; k < M; ++k) {
+                    double x = (i + 0.5) * dx;
+                    double y = (j + 0.5) * dx;
+                    double z = (k + 0.5) * dx;
+                    double r = std::sqrt((x - center) * (x - center) +
+                                         (y - center) * (y - center) +
+                                         (z - center) * (z - center));
+
+                    if (r <= R_inj) {
+                        inj_indices.push_back(static_cast<size_t>(i) * M * M +
+                                              j * M + k);
+                        inj_mass += rho_bg * cell_vol;
+                    }
+                }
+            }
+        }
+
+        // Distribute specific internal energy
+        double u_inj = E_total / inj_mass;
+        for (size_t idx : inj_indices) {
+            gas.internal_energy.data[idx] += rho_bg * u_inj;
+            gas.energy.data[idx] += rho_bg * u_inj;
+        }
+        gas.update_primitive_variables(state.scale_factor);
+
+    } else if (config.hydro_method == HydroMethod::MFM) {
+        // Use a Face-Centered Cubic (FCC) lattice.
+        // FCC is close-packed (12 equidistant nearest neighbors) yielding good
+        // isotropic shock propagation, and tiles inside a cubic box.
+
+        // Calculate how many FCC unit cells we need to approximate the
+        // requested resolution
+        int N_cell = static_cast<int>(std::round(N_res / std::cbrt(4.0)));
+        if (N_cell < 1) N_cell = 1;
+
+        int total_particles = 4 * N_cell * N_cell * N_cell;
+        double L_c =
+            L / static_cast<double>(N_cell);  // Size of the cubic unit cell
+
+        double gas_particle_mass =
+            rho_bg * (L * L * L) / static_cast<double>(total_particles);
+        double effective_dx = std::cbrt(gas_particle_mass / rho_bg);
+        double initial_h = 1.2 * effective_dx;
+
+        struct PartData {
+            double x, y, z, r, weight;
+        };
+        std::vector<PartData> pdata;
+        pdata.reserve(total_particles);
+
+        double w_sum = 0.0;
+
+        // FCC Basis vectors inside a unit cell (scaled by L_c)
+        double basis[4][3] = {
+            {0.0, 0.0, 0.0}, {0.5, 0.5, 0.0}, {0.5, 0.0, 0.5}, {0.0, 0.5, 0.5}};
+
+        // Lay out FCC particles and calculate energy weights
+        for (int i = 0; i < N_cell; ++i) {
+            for (int j = 0; j < N_cell; ++j) {
+                for (int k = 0; k < N_cell; ++k) {
+                    for (int b = 0; b < 4; ++b) {
+                        double qx = (i + basis[b][0]) * L_c;
+                        double qy = (j + basis[b][1]) * L_c;
+                        double qz = (k + basis[b][2]) * L_c;
+
+                        // Microscopic grid-lock breaking noise
+                        double noise_x = ((rand() / (double)RAND_MAX) - 0.5) *
+                                         1e-4 * effective_dx;
+                        double noise_y = ((rand() / (double)RAND_MAX) - 0.5) *
+                                         1e-4 * effective_dx;
+                        double noise_z = ((rand() / (double)RAND_MAX) - 0.5) *
+                                         1e-4 * effective_dx;
+
+                        double p_x = std::fmod(qx + noise_x + L, L);
+                        double p_y = std::fmod(qy + noise_y + L, L);
+                        double p_z = std::fmod(qz + noise_z + L, L);
+
+                        double r = std::sqrt((p_x - center) * (p_x - center) +
+                                             (p_y - center) * (p_y - center) +
+                                             (p_z - center) * (p_z - center));
+
+                        // Gaussian energy smoothing
+                        double w = 0.0;
+                        if (r < 3.0 * R_inj) {
+                            w = std::exp(-(r * r) / (R_inj * R_inj));
+                        }
+                        w_sum += w;
+
+                        pdata.push_back({p_x, p_y, p_z, r, w});
+                    }
+                }
+            }
+        }
+
+        // Inject energy and initialize particles
+        constexpr bool smooth_energy_injection = true;
+
+        // Find the central particle for single-particle injection
+        double min_r = std::numeric_limits<double>::max();
+        size_t central_idx = 0;
+        if (!smooth_energy_injection) {
+            for (size_t i = 0; i < pdata.size(); ++i) {
+                if (pdata[i].r < min_r) {
+                    min_r = pdata[i].r;
+                    central_idx = i;
+                }
+            }
+        }
+
+        // Inject energy and initialize particles
+        for (size_t i = 0; i < pdata.size(); ++i) {
+            const auto& pd = pdata[i];
+            double particle_u = u_bg;
+
+            if (smooth_energy_injection) {
+                // Distribute E_total based on the gaussian weights
+                if (pd.weight > 0.0 && w_sum > 0.0) {
+                    double injected_E = E_total * (pd.weight / w_sum);
+                    particle_u += (injected_E / gas_particle_mass);
+                }
+            } else {
+                if (i == central_idx) {
+                    particle_u += (E_total / gas_particle_mass);
+                }
+            }
+
+            state.mfm_gas->add_particle(pd.x, pd.y, pd.z, 0.0, 0.0, 0.0,
+                                        gas_particle_mass, particle_u,
+                                        initial_h, seed_metallicity);
         }
     }
 }
@@ -588,6 +847,8 @@ SimState initialize_state(Config& config) {
         initialize_sod_shock_tube(state, config);
     } else if (config.initial_setup == InitialSetup::AdiabaticExpansion) {
         initialize_adiabatic_expansion(state, config);
+    } else if (config.initial_setup == InitialSetup::SedovBlastwave) {
+        initialize_sedov_blastwave(state, config);
     }
 
     config.expanding_universe = prev_expanding_universe;
