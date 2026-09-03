@@ -1854,7 +1854,7 @@ $$\Delta t_{\text{hydro}} \gg t_{\text{cool}}$$
 
 #### Limitations of Explicit Integration
 
-When a differential equation contains a timescale that is drastically shorter than the simulation's timestep, we refer to the equation as **stiff**. Explicit integrators become highly unstable when applied to stiff equations over standard simulation timesteps.
+When a differential equation contains a timescale that is drastically shorter than the simulation's timestep, we refer to the equation as **stiff**. Explicit integrators become unstable when applied to stiff equations over standard simulation timesteps.
 
 We can see why by looking back at our explicit Forward Euler equation. Let's imagine a dense gas cell where $t_{\text{cool}}$ is 10,000 years, but our hydro solver dictates we must take a step of $\Delta t = 1,000,000$ years.
 
@@ -1870,15 +1870,11 @@ The explicit solver assumes the gas continues to cool at its initial rate for th
 
 At first glance, the obvious solution to this overshoot is to shrink the global timestep $\Delta t$ to match the shortest cooling timescale. If the code took tinier steps, the explicit solver would remain stable. However, this is computationally unpractical. Forcing the hydrodynamics solver to run hundreds of extra times just to cool a small fraction of dense gas cells isn't a good solution.
 
-The standard solution is to abandon explicit integration for the thermodynamics and adopt a different approach.
-
 ### Implicit Integration
-
-To deal with the timescale mismatch between the slow hydrodynamics and the fast cooling, we can use **Implicit Integration** within the cooling operator.
 
 #### The Backward Euler Method
 
-As we saw earlier, explicit integration fails because it blindly projects the current cooling rate forward, resulting in massive overshoots. To fix this, we can use an **implicit** method, like the **Backward Euler** scheme.
+As we saw earlier, explicit integration fails because it blindly projects the current cooling rate forward, resulting in massive overshoots. To deal with the timescale mismatch between hydrodynamics and cooling, we can use an **Implicit Integration** method within the cooling operator, like the **Backward Euler** scheme.
 
 Instead of asking, *"How fast is the gas cooling right now?"*, the Backward Euler method asks, *"What future temperature would justify the energy lost to get there?"*
 
@@ -1888,7 +1884,7 @@ $$u^{n+1} = u^n - \Delta t \cdot \frac{\Lambda(T^{n+1}, \rho)}{\rho}$$
 
 Conveniently, because the cooling rate $\Lambda$ drops rapidly as the temperature drops ($\Lambda \propto \sqrt{T}$), evaluating it at the colder, future state creates an automatic, self-regulating feedback loop.
 
-If we take a massive timestep ($\Delta t$), the equation assumes the gas rapidly cools down early in the step and spends the rest of the time radiating at a very slow, gentle rate. This guarantees **unconditional stability**, meaning the numerical solution will never diverge or 'blow up', regardless of the size of the timestep $\Delta t$.
+If we take a massive timestep ($\Delta t$), the equation assumes the gas rapidly cools down early in the step and spends the rest of the time radiating at a slow rate. This guarantees **unconditional stability**, meaning the numerical solution will never diverge or 'blow up', regardless of the size of the timestep $\Delta t$.
 
 #### Newton-Raphson Root-Finding
 
@@ -1906,9 +1902,7 @@ $$u_{\text{next}} = u_{\text{guess}} - \frac{f(u_{\text{guess}})}{f'(u_{\text{gu
 
 Here, $f'$ is the derivative of the root-finding function with respect to the internal energy. In practice we can to compute this derivative numerically—by evaluating $\Lambda$ at $u_{\text{guess}}$ and at a slightly offset value to determine the local slope. This decouples the root-finding algorithm from the specific physics being modeled, allowing the cooling function to be upgraded with complex, tabulated atomic chemistry data without requiring a hard-coded analytical derivative.
 
-The solver repeats this process, converging toward the true future energy. Once the guess stops changing (reaching a strict tolerance), the solver exits. Furthermore, we can easily inject a hard **temperature floor** (e.g., the temperature of the Cosmic Microwave Background, or the 10,000 K **atomic cooling limit** established earlier) into this solver; if a Newton-Raphson guess ever drops below this floor, the solver immediately overrides the answer to the floor value and exits.
-
-This iterative engine allows the simulation to cool the gas, bridging the gap between the millions of years of cosmic expansion and the thousands of years of atomic radiation.
+The solver repeats this process, converging toward the true future energy. Once the guess stops changing (reaching a strict tolerance), the solver exits. Furthermore, we can inject a hard **temperature floor** (e.g., the temperature of the Cosmic Microwave Background, or the 10,000 K **atomic cooling limit** established earlier) into this solver; if a Newton-Raphson guess ever drops below this floor, the solver immediately overrides the answer to the floor value and exits.
 
 ### Coupling Cooling to the Simulation
 
@@ -1916,46 +1910,42 @@ The implicit solver calculates how much thermal energy the gas radiates away dur
 
 In the hydrodynamics solver, we established the **Dual Energy Formalism** to survive hypersonic flows. This means the grid tracks two different energy variables for every cell: the total energy density ($E = E_{\text{kin}} + E_{\text{int}}$) and the internal thermal energy density ($ie = E_{\text{int}}$).
 
-Radiative cooling strictly removes *thermal* energy. The photons escaping into space carry away heat, but they do not slow down the macroscopic bulk flow of the gas. The kinetic energy ($\frac{1}{2}\rho v^2$) must be preserved.
+Radiative cooling removes *thermal* energy. The photons escaping into space carry away heat, but they do not slow down the macroscopic bulk flow of the gas. The kinetic energy ($\frac{1}{2}\rho v^2$) must be preserved.
 
-Subtracting the radiated thermal energy, $\Delta E_{\text{vol}}$, solely from the independently tracked internal energy ($ie$) introduces a thermodynamic inconsistency. During the subsequent hydrodynamic step, the Dual Energy switch may evaluate the cell, detect a kinetically dominated flow, and overwrite the recently cooled internal energy by recalculating it directly from the total energy ($ie = E - E_{\text{kin}}$). Because the total energy array remained unmodified, this recalculation would artificially restore the lost thermal energy, causing the gas to spontaneously reheat.
-
-To extract the radiated light while preserving the kinetic velocity of the gas, the lost thermal energy must be substracted from **both** arrays:
+Since we are using the Dual Energy Formalism, to consistently extract the radiated light while preserving the kinetic velocity of the gas, the lost thermal energy must be substracted from **both**, internal energy and total energy arrays:
 
 $$ie_{\text{new}} = ie_{\text{old}} - \Delta E_{\text{vol}}$$
 $$E_{\text{new}} = E_{\text{old}} - \Delta E_{\text{vol}}$$
 
-Because $E_{\text{new}} - ie_{\text{new}} = (E_{\text{old}} - \Delta E_{\text{vol}}) - (ie_{\text{old}} - \Delta E_{\text{vol}}) = E_{\text{old}} - ie_{\text{old}}$, the kinetic energy remains untouched. The gas cools down, the pressure drops, but the fluid continues to flow at its exact physical speed.
+Because $E_{\text{new}} - ie_{\text{new}} = (E_{\text{old}} - \Delta E_{\text{vol}}) - (ie_{\text{old}} - \Delta E_{\text{vol}}) = E_{\text{old}} - ie_{\text{old}}$, the kinetic energy remains untouched. The gas cools down, the pressure drops, but the fluid continues to flow at the same speed.
 
 #### Thermodynamics in Comoving Coordinates
 
-In our cosmological simulation, the Eulerian grid is fixed in comoving space. While the comoving volume of a cell remains perfectly constant, the true physical volume it represents stretches with the scale factor, $a$.
+In our cosmological simulation, the Eulerian grid is fixed in comoving space. While the comoving volume of a cell remains constant, the true physical volume it represents stretches with the scale factor, $a$.
 
 Since the comoving velocity is defined as the time derivative of the comoving position: $v_{\text{code}} = \dot{x}$, the physical peculiar velocity of the gas is $v_{\text{phys}} = a \cdot v_{\text{code}}$. Because kinetic energy scales with the square of the velocity, the physical kinetic energy natively carries an $a^2$ dependence ($E_{\text{kin, phys}} \propto a^2 v_{\text{code}}^2$).
 
-To maintain absolute thermodynamic consistency within the Dual Energy Formalism, the internal energy must be scaled identically before it can be summed with the kinetic energy. Therefore, the internal energy density tracked by the solver ($ie_{\text{code}}$) relates to the physical internal energy density ($ie_{\text{phys}}$) via this exact scale factor:
+To maintain consistency within the Dual Energy Formalism, the internal energy must be scaled identically before it can be summed with the kinetic energy. Therefore, the internal energy density tracked by the solver ($ie_{\text{code}}$) relates to the physical internal energy density ($ie_{\text{phys}}$) via the scale factor:
 
 $$ie_{\text{phys}} = a^2 \cdot ie_{\text{code}}$$
 
-This mathematical transformation dictates every interaction between the cooling module and the hydrodynamic grid:
+This transformation dictates every interaction between the cooling module and the hydrodynamic grid:
 
 **1. Temperature and Cooling Conversions**
-When computing the physical temperature of the gas or querying complex, tabulated cooling functions ($\Lambda$), the solver cannot use the array values directly. It must first recover the physical specific internal energy by multiplying the code variables by $a^2$. Conversely, once the physical cooling rate is calculated, the required energy deduction ($\Delta E_{\text{vol}}$) must be mathematically mapped back to the grid by dividing the physical value by $a^2$ before applying the subtraction.
+When computing the physical temperature of the gas or querying tabulated cooling functions ($\Lambda$), the solver must first recover the physical specific internal energy by multiplying the code variables by $a^2$. Conversely, once the physical cooling rate is calculated, the required energy deduction ($\Delta E_{\text{vol}}$) must be mapped back to the grid by dividing the physical value by $a^2$ before applying the subtraction.
 
 **2. Adiabatic Expansion (PdV Work)**
-This coordinate transformation fundamentally alters the integration of adiabatic expansion. In a physical universe, a gas cools adiabatically as its volume expands, governed by its specific adiabatic index ($\gamma$). According to standard thermodynamics, the temperature of an expanding gas scales with its density as $T \propto \rho^{\gamma - 1}$. Because the physical density drops proportionally to the expanding volume ($\rho \propto a^{-3}$), the temperature—and therefore the physical internal energy for the constant mass of gas within a comoving cell—scales as:
+This coordinate transformation alters the integration of adiabatic expansion. In a physical universe, a gas cools adiabatically as its volume expands, governed by its specific adiabatic index ($\gamma$). The temperature of an expanding gas scales with its density as $T \propto \rho^{\gamma - 1}$. Because the physical density drops proportionally to the expanding volume ($\rho \propto a^{-3}$), the temperature—and therefore the physical internal energy for the constant mass of gas within a comoving cell—scales as:
 
 $$ie_{\text{phys}} \propto (a^{-3})^{\gamma - 1} = a^{-3(\gamma - 1)}$$
 
-Taking the time derivative of this mathematical relationship reveals the exact rate of energy loss. Applying the chain rule to the scale factor dependence yields:
+Taking the time derivative of this relationship we get the rate of energy loss. Applying the chain rule to the scale factor dependence yields:
 
 $$\frac{d}{dt}(ie_{\text{phys}}) \propto -3(\gamma - 1) a^{-3(\gamma - 1) - 1} \dot{a}$$
 
-By factoring out the original $a^{-3(\gamma - 1)}$ scaling and substituting the definition of the Hubble parameter ($H = \frac{\dot{a}}{a}$), it becomes clear that the physical internal energy strictly decays at a rate of $-3(\gamma - 1)H$:
+By factoring out the original $a^{-3(\gamma - 1)}$ scaling and substituting the definition of the Hubble parameter ($H = \frac{\dot{a}}{a}$), we see that the physical internal energy decays at a rate of $-3(\gamma - 1)H$:
 
 $$\frac{d}{dt}(ie_{\text{phys}}) = -3(\gamma - 1) \left(\frac{\dot{a}}{a}\right) a^{-3(\gamma - 1)} = -3(\gamma - 1)H \cdot ie_{\text{phys}}$$
-
-*(Note: For a standard monoatomic gas where $\gamma = 5/3$, this perfectly recovers the classical physical decay rate of $-2H$.)*
 
 However, because the simulation arrays must store the scaled $ie_{\text{code}}$ variable, the rate of change for the grid is governed by the chain rule:
 
@@ -1969,23 +1959,23 @@ Subtracting the expansion term to isolate the update rate for the simulation arr
 
 $$a^2 \frac{d}{dt}(ie_{\text{code}}) = \left[ -3(\gamma - 1) - 2 \right] H a^2 \cdot ie_{\text{code}}$$
 
-By factoring out the $a^2$ scaling on both sides and simplifying the mathematical coefficient (since $-3\gamma + 3 - 2 = -3\gamma + 1 = -(3\gamma - 1)$), the generalized code update rate emerges:
+By factoring out the $a^2$ scaling on both sides and simplifying the mathematical coefficient (since $-3\gamma + 3 - 2 = -3\gamma + 1 = -(3\gamma - 1)$) we get the generalized code update rate:
 
 $$\frac{d}{dt}(ie_{\text{code}}) = -(3\gamma - 1)H \cdot ie_{\text{code}}$$
 
-The physical thermodynamic cooling ($-3(\gamma - 1)H$) intrinsically combines with the coordinate system's mathematical stretching ($-2H$) to produce a strict $-(3\gamma - 1)H$ decay requirement. To consistently simulate the cosmological $PdV$ work and prevent the expansion of the universe from artificially heating the gas, the integrator must drain the internal and total energy arrays at this mathematically derived rate.
+The physical thermodynamic cooling ($-3(\gamma - 1)H$) combines with the coordinate system's stretching ($-2H$) to produce a $-(3\gamma - 1)H$ decay. To consistently simulate the cosmological $PdV$ work and prevent the expansion of the universe from artificially heating the gas, the integrator must drain the internal and total energy arrays at this rate.
 
 ### The Optically Thin Approximation
 
-In our implementation of radiative cooling, when a gas cell cools down, we mathematically subtract that thermal energy from the grid and permanently delete it from the simulation. From a strict conservation standpoint, this means our simulated universe is an open system leaking energy.
+In our implementation of radiative cooling, when a gas cell cools down, we subtract that thermal energy from the grid and permanently delete it from the simulation. From a conservation standpoint, this means our simulated universe is an open system leaking energy.
 
 In the real universe, a photon emitted by a decelerating electron could indeed travel across space, strike another atom, and transfer its energy back into heat. To simulate this accurately, we would need to upgrade our hydrodynamics engine to **Radiation Hydrodynamics (RHD)** by solving the Radiative Transfer equation.
 
-However, doing so is computationally prohibitive. To avoid this, standard cosmological codes rely on the **Optically Thin Approximation**. We assume that the cosmic gas is "optically thin," meaning it is transparent to its own radiation.
+However, doing so is computationally prohibitive. To avoid this, cosmological codes rely on the **Optically Thin Approximation**. We assume that the gas is "optically thin," meaning it is transparent to its own radiation.
 
-For the hot plasmas found inside collapsed dark matter halos, this is a good physical assumption. Even though the gas is compressed by gravity, cosmological densities are still a hard vacuum. When a high-energy X-ray photon is emitted via Bremsstrahlung cooling, its mean free path is so large that it will almost certainly sail entirely out of the galaxy, out of the dark matter halo, and completely out of the simulation box without ever striking another atom. Therefore, assuming the photon escapes into the void and permanently deleting its energy from the computational domain is a reliable representation of the physics.
+For the hot plasmas found inside collapsed dark matter halos, this is a good physical assumption. Even though the gas is compressed by gravity, cosmological densities are still a hard vacuum. When a high-energy X-ray photon is emitted via Bremsstrahlung cooling, its mean free path is so large that it will almost certainly sail entirely out of the galaxy, out of the dark matter halo, and out of the simulation box without ever striking another atom. Therefore, assuming the photon escapes into the void and permanently deleting its energy from the computational domain is a reliable representation of the physics.
 
-There are, of course, specific environments where this approximation breaks down. When gas condenses into star-forming molecular clouds, it becomes "optically thick" and opaque, trapping heat inside. Furthermore, during the Epoch of Reionization, dense neutral hydrogen violently absorbed incoming Ultraviolet light from the first stars. To account for these complex radiation effects without actually running a Radiative Transfer solver, modern simulations employ sub-grid approximations—mathematical rules that reproduce physics occurring on scales smaller than a single grid cell. A common technique is to assume the universe is bathed in a uniform, invisible glow of UV light, which we mimic by enforcing an artificial temperature floor—such as the 10,000 K atomic cooling limit—preventing the diffuse gas from cooling below the thermodynamic baseline set by this universal radiation background.
+There are also environments where this approximation breaks down. When gas condenses into star-forming molecular clouds, it becomes "optically thick" and opaque, trapping heat inside. Furthermore, during the Epoch of Reionization, dense neutral hydrogen violently absorbed incoming Ultraviolet light from the first stars. To account for these complex radiation effects without actually running a Radiative Transfer solver, simulations employ sub-grid approximations—rules that reproduce physics occurring on scales smaller than a single grid cell. A common technique is to assume the universe is bathed in a uniform glow of UV light, which we mimic by enforcing an artificial temperature floor—such as the 10,000 K atomic cooling limit—preventing the diffuse gas from cooling below the thermodynamic baseline set by this universal radiation background.
 
 ### The Subgrid Clumping Factor
 
@@ -2003,7 +1993,7 @@ Because an Eulerian solver assigns a single, smoothed average density ($\langle 
 
 $$\langle \rho \rangle^2 < \langle \rho^2 \rangle$$
 
-By smoothing out the dense clumps, the grid underestimates the true cooling rate. The thermal energy becomes trapped inside the cell, causing artificial pressure to build up. This numerical artifact results in an "adiabatic bounce," where the gas is blasted out of the gravitational well rather than condensing into a galactic core.
+This means the grid underestimates the true cooling rate. The thermal energy becomes trapped inside the cell, causing artificial pressure to build up. This numerical artifact results in a gas that is blasted out of the gravitational well rather than condensing into a galactic core.
 
 #### The Subgrid Clumping Model
 
@@ -2030,11 +2020,13 @@ The subgrid clumping factor acts as a correction to the squared average density 
 
 $$\Lambda_{true} = (C \times \langle \rho \rangle^2) f(T)$$
 
-where $f(T)$ represents the temperature-dependent physics of the cooling function. By enabling this subgrid model, the simulation acknowledges that overdense cells contain unresolved, dense knots of gas. The thermal energy is radiated away, allowing the pressure to drop and the gas to undergo collapse.
+where $f(T)$ represents the temperature-dependent physics of the cooling function.
 
-To calibrate the subgrid clumping amplitude ($A$), we require the simulation to reproduce the macroscopic condensed baryon fraction at $z=0$. Because our hydrodynamics model does not include a subgrid recipe for star formation, gas that cools below $T < 10^4$ K and reaches halo overdensities of $\Delta > 100$ remains trapped in the fluid phase. Therefore, our simulated cold dense gas fraction acts as a proxy for the total collapsed baryon budget—comprising both the interstellar medium (ISM) and stellar mass.
+To calibrate the subgrid clumping amplitude ($A$), we require the simulation to reproduce the macroscopic condensed baryon fraction at $z=0$. Because our hydrodynamics model does not include a subgrid recipe for star formation, gas that cools below $T < 10^4$ K and reaches halo overdensities of $\Delta > 100$ remains trapped in the fluid phase. Therefore, the simulated cold dense gas fraction acts as a proxy for the total collapsed baryon budget—comprising both the interstellar medium (ISM) and stellar mass.
 
 Observational baryon censuses in the local universe indicate that stars and stellar remnants account for roughly 5% to 7% of the total cosmic baryon density, while cold neutral gas (H I, He I and H$_2$) accounts for an additional 1.5% to 2% (Shull, Smith, & Danforth 2012). Consequently, we tune the parameter $A$ such that the final simulated cold dense gas mass fraction at $z=0$ settles within the interval 7% to 10%.
+
+This subgrid model acknowledges that overdense cells contain unresolved, dense knots of gas, where thermal energy is radiated away, allowing the pressure to drop and the gas to undergo collapse.
 
 *Key Literature & Further Reading*  
 **Radiative Physics:**  
@@ -2055,7 +2047,7 @@ Daisuke Nagai, Erwin Lau. (2011). *Gas Clumping in the Outskirts of Lambda-CDM C
 
 In astrophysics, the elemental composition of the universe is historically divided into three categories: Hydrogen (mass fraction $X$), Helium (mass fraction $Y$), and everything else. **Metallicity**, denoted by the letter $Z$, is the mass fraction of all elements heavier than helium (Pagel, 2009). The relationship defining the composition of any gas parcel is $X + Y + Z = 1$. The present-day metallicity in the Sun is approximately $Z \approx 0.014$ to $0.02$ (Asplund et al., 2009).
 
-These heavy elements were absent in the early cosmos. After the Big Bang, primordial nucleosynthesis produced almost exclusively Hydrogen and Helium, alongside microscopic traces of Lithium. Every element heavier than Helium had to be forged much later via stellar nucleosynthesis of the very first stars (Population III). When these massive, short-lived stars exhausted their fuel, they exploded as supernovae, seeding the surrounding gas with the first heavy elements and permanently altering the chemical and thermodynamic evolution of the universe.
+These heavy elements were absent in the early cosmos. After the Big Bang, primordial nucleosynthesis produced almost exclusively Hydrogen and Helium, alongside small traces of Lithium. Every element heavier than Helium had to be forged much later via stellar nucleosynthesis of the very first stars (Population III). When these massive, short-lived stars exhausted their fuel, they exploded as supernovae, seeding the surrounding gas with the first heavy elements and permanently altering the chemical and thermodynamic evolution of the universe.
 
 To form low-mass stars like the Sun, the gas temperature must drop to $\sim 10$ K (Bodenheimer, 2011). In a primordial universe ($Z=0$), gas cools very inefficiently. Below $10^4$ K, atomic hydrogen can no longer radiate efficiently, leaving only trace amounts of molecular hydrogen (H$_2$) as a coolant. H$_2$ is a poor radiator, meaning the gas remains relatively warm, which results in a high Jeans mass (the minimum mass a cloud must have for its gravity to overcome its internal thermal pressure, $M_J \propto \frac{T^{3/2}}{\rho^{1/2}}$) and the formation of massive, short-lived Population III stars (Bromm, Coppi, & Larson, 1999).
 
@@ -2089,13 +2081,13 @@ $Z$ becomes active in the energy equation. During the thermodynamic step, the so
 
 $$\frac{du}{dt} = \frac{\Gamma(T, \rho, z, Z) - \Lambda(T, \rho, z, Z)}{\rho}$$
 
-Because computing the quantum mechanical emission, ionization balance (the equilibrium where the rate of atoms being ionized equals the rate of ions reverting to neutral), and excitation states of every element on the fly is computationally expensive, some modern codes rely on pre-computed tables. These tables include the metal-dependent cooling rates and the heating rates generated by the photo-ionizing effect of the cosmic ultraviolet background (Haardt & Madau, 2001; Wiersma, Schaye, & Smith, 2009).
+Because computing the quantum mechanical emission, ionization balance (the equilibrium where the rate of atoms being ionized equals the rate of ions reverting to neutral), and excitation states of every element on the fly is computationally expensive, some codes rely on pre-computed tables. These tables include the metal-dependent cooling rates and the heating rates generated by the photo-ionizing effect of the cosmic ultraviolet background (Haardt & Madau, 2001; Wiersma, Schaye, & Smith, 2009).
 
 Our code uses data from Grackle, an open-source chemistry and radiative cooling library designed for astrophysical simulations of the Intergalactic Medium (IGM) (Smith et al., 2017). The specific data file implemented in this model, `HM2012.h5`, contains pre-computed, tabulated cooling and heating rates assuming ionization equilibrium generated using the photoionization code Cloudy. Cloudy numerically solves the quantum mechanical equations governing ionization balance, bound-bound emission lines (emission by excited bound electrons), and radiative recombination (radiation after a free electron is captured) for a vast array of atomic species. For the data table we are using, the Cloudy calculations were driven by the time-dependent ultraviolet background (UVB) model developed by Haardt & Madau (2012).
 
 The resulting file provides the volumetric energy loss and gain rates structured across a three-dimensional grid. The axes of this grid correspond to cosmological redshift, gas density, and temperature. The thermodynamic outputs are separated into primordial (Hydrogen and Helium) and metal-dependent contributions. This separation conveniently allows the solver to scale the metal-line cooling rates by the metallicity fraction within each cell.
 
-The pre-computed tables are explicitly dependent on redshift, as the intensity of the cosmic ultraviolet background and its corresponding photoheating rate evolve over time. The redshift-dependent background radiation is derived relying on input parameters for the chosen cosmology, including the Hubble constant, the matter density ($\Omega_M$), and the cosmological constant ($\Omega_\Lambda$). Consequently, the cooling tables are cosmology-dependent. Modifying a simulation's cosmological framework requires the generation of a new set of tables to ensure consistency.
+The pre-computed tables are dependent on redshift, as the intensity of the cosmic ultraviolet background and its corresponding photoheating rate evolve over time. The redshift-dependent background radiation is derived relying on input parameters for the chosen cosmology, including the Hubble constant, the matter density ($\Omega_M$), and the cosmological constant ($\Omega_\Lambda$). Consequently, the cooling tables are cosmology-dependent. Modifying a simulation's cosmological framework requires the generation of a new set of tables to ensure consistency.
 
 Moreover, the dependency of the model on redshift decouples the gas thermodynamics from the actual emission of ionizing sources, such as star-forming galaxies and active galactic nuclei, present within the simulation volume. With this abstraction, the photoionization and heating rates of the intergalactic medium are uniformly driven by the average global history of the real universe rather than the radiation dynamically generated by the simulation's own structures. The reason for allowing this violation of causality is that performing on-the-fly radiative transfer to track local photons, or solving the massive network of non-equilibrium chemical reactions would be too expensive computationally.
 

@@ -350,12 +350,13 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
     double target_N = config.mfm_target_neighbors;
     double tol = config.mfm_neighbor_tolerance;
     int max_iter = config.mfm_max_iterations;
-    double min_h = 0.05 * (config.domain_size / std::cbrt(num_particles));
+    const double mean_spacing =
+        domain_size / std::cbrt(num_particles > 0 ? num_particles : 1);
+    const double min_h = 0.05 * mean_spacing;
+    const double max_h = 4.0 * mean_spacing;
 
     const double r_s = config.PM_smoothing_cells * config.cell_size;
     const bool use_pm = config.use_PM;
-    double max_allowed_h =  // 4.0 * (domain_size / num_particles);
-        domain_size / 4.0;
 
 #pragma omp parallel for schedule(dynamic, 64)
     for (size_t i = 0; i < num_particles; ++i) {
@@ -476,9 +477,9 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
             }
 
             // Clamp maximum smoothing length
-            if (h_guess >= max_allowed_h) {
-                h_guess = max_allowed_h;
-                if (h_low >= max_allowed_h) break;
+            if (h_guess >= max_h) {
+                h_guess = max_h;
+                if (h_low >= max_h) break;
             }
 
             if (h_guess < min_h) {
@@ -806,14 +807,6 @@ void GasParticleSystem::apply_cooling(double dt, double a, const Config& config,
                 double dt_cell = (std::abs(du_dt) > 0.0)
                                      ? 0.1 * (u_current / std::abs(du_dt))
                                      : dt;
-
-                // PREVENT SUBCYCLING DEATH IN HIGH-DENSITY CLUMPS
-                // If the particle is already near the radiative floor and wants
-                // to cool further, the implicit solver will safely clamp it. We
-                // bypass the 10% restriction to prevent infinite loops.
-                if (u_current <= u_rad_floor * 1.05 && du_dt < 0.0) {
-                    dt_cell = dt;
-                }
 
                 dt_cell = std::min(dt_cell, dt - t_evolved);
 

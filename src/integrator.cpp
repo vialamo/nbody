@@ -395,6 +395,7 @@ static void apply_gas_particle_gravity_kick(GasParticleSystem& gas, double dt,
         gas.vel_y[i] = vy_new;
         gas.vel_z[i] = vz_new;
         gas.u[i] -= u_cooling;
+        //gas.entropy[i] -= gas.entropy[i] * expansion_factor;
 
         // Ensure total_energy absorbs both the change in KE and internal energy
         // to maintain perfect synchronization for the Dual Energy Formalism
