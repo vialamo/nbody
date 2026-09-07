@@ -2517,8 +2517,8 @@ ReconstructedFace compute_face_reconstruction(const ParticleState& p_i,
     // Enforce thermodynamic floors after the limiter
     face.rho_L = std::max(face.rho_L, density_floor);
     face.rho_R = std::max(face.rho_R, density_floor);
-    face.p_L = std::max(face.p_L, pressure_floor);
-    face.p_R = std::max(face.p_R, pressure_floor);
+    face.p_L = std::max(face.p_L, g_pressure_floor);
+    face.p_R = std::max(face.p_R, g_pressure_floor);
 
 #else
     // 2nd-order reconstruction using the scalar-limited gradients
@@ -2733,7 +2733,7 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                                     p_i, grad_i, p_j, grad_j, domain_size);
                             if (!face.is_valid) continue;
 
-                            // Compute the True Area Vector
+                            // Compute the Area Vector
                             Eigen::Vector3d Area_vec =
                                 compute_mfm_face_area_vector(
                                     p_i, grad_i.B_matrix, p_j, grad_j.B_matrix,

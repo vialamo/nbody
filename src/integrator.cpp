@@ -395,7 +395,7 @@ static void apply_gas_particle_gravity_kick(GasParticleSystem& gas, double dt,
         gas.vel_y[i] = vy_new;
         gas.vel_z[i] = vz_new;
         gas.u[i] -= u_cooling;
-        //gas.entropy[i] -= gas.entropy[i] * expansion_factor;
+        gas.entropy[i] -= gas.entropy[i] * expansion_factor;
 
         // Ensure total_energy absorbs both the change in KE and internal energy
         // to maintain perfect synchronization for the Dual Energy Formalism
@@ -409,11 +409,13 @@ static void apply_gas_particle_gravity_kick(GasParticleSystem& gas, double dt,
 }
 
 static void apply_gas_particle_hydro_kick(GasParticleSystem& gas, double dt,
-                                          double a) {
+                                          double a, const Config& config) {
     double a3 = a * a * a;
     double a2 = a * a;
     double inv_a = 1.0 / a;
     const size_t n = gas.num_particles;
+    double gamma_minus_1 = config.gamma - 1.0;
+    constexpr double min_energy = 1e-20;
 
 #pragma omp parallel for schedule(static)
     for (size_t i = 0; i < n; i++) {
@@ -431,8 +433,13 @@ static void apply_gas_particle_hydro_kick(GasParticleSystem& gas, double dt,
         gas.u[i] += gas.du_dt[i] * dt * inv_a;
         gas.total_energy[i] += gas.de_dt[i] * dt * inv_a;
 
-        if (gas.u[i] < 1e-20) gas.u[i] = 1e-20;
-        if (gas.total_energy[i] < 1e-20) gas.total_energy[i] = 1e-20;
+        if (gas.u[i] < min_energy) gas.u[i] = min_energy;
+        if (gas.total_energy[i] < min_energy) gas.total_energy[i] = min_energy;
+
+        // Keep comoving entropy synchronized with the shock-heated internal
+        // energy
+        gas.entropy[i] =
+            gamma_minus_1 * gas.u[i] / std::pow(gas.rho[i], gamma_minus_1);
     }
 }
 
@@ -642,7 +649,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
             // Micro-Kick 1
             if (config.hydro_method == HydroMethod::MFM) {
                 apply_gas_particle_hydro_kick(*state.mfm_gas, dt_h / 2.0,
-                                              a_start);
+                                              a_start, config);
             }
 
             // Hydro Drift
@@ -677,8 +684,8 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
 
             // Micro-Kick 2
             if (config.hydro_method == HydroMethod::MFM) {
-                apply_gas_particle_hydro_kick(*state.mfm_gas, dt_h / 2.0,
-                                              a_end);
+                apply_gas_particle_hydro_kick(*state.mfm_gas, dt_h / 2.0, a_end,
+                                              config);
             }
 
             t_sub += dt_h;
@@ -770,7 +777,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
             {
                 ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
                 apply_gas_particle_hydro_kick(*state.mfm_gas, ts.dt_macro / 2.0,
-                                              old_a);
+                                              old_a, config);
                 apply_particle_gas_drift(*state.mfm_gas, ts.dt_macro,
                                          config.domain_size);
                 state.mfm_gas->compute_density_and_h(config, state.dm);
@@ -788,7 +795,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
             {
                 ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
                 apply_gas_particle_hydro_kick(*state.mfm_gas, ts.dt_macro / 2.0,
-                                              target_a);
+                                              target_a, config);
             }
         }
 
@@ -815,7 +822,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
                            state.hubble_param, config);
         if (config.hydro_method == HydroMethod::MFM) {
             apply_gas_particle_hydro_kick(*state.mfm_gas, dt / 2.0,
-                                          state.scale_factor);
+                                          state.scale_factor, config);
         }
 
         // Approximate the scale factor at the half-step (t + dt/2)
@@ -864,7 +871,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
 
         if (config.hydro_method == HydroMethod::MFM) {
             apply_gas_particle_hydro_kick(*state.mfm_gas, dt / 2.0,
-                                          state.scale_factor);
+                                          state.scale_factor, config);
         }
     }
 }

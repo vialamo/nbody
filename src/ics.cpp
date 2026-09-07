@@ -788,7 +788,7 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
         }
 
         // Inject energy and initialize particles
-        constexpr bool smooth_energy_injection = true;
+        constexpr bool smooth_energy_injection = false;
 
         // Find the central particle for single-particle injection
         double min_r = std::numeric_limits<double>::max();
