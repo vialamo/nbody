@@ -103,6 +103,7 @@ void Config::compute_derived_data() {
         omega_baryon = 1.0;
         gamma = 5.0 / 3.0;
         total_mass = 1.0;
+        a_end = 0.1;
     }
 
     cell_size = domain_size / mesh_size;

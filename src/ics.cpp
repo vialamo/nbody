@@ -759,16 +759,16 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
                         double qz = (k + basis[b][2]) * L_c;
 
                         // Microscopic grid-lock breaking noise
-                        double noise_x = ((rand() / (double)RAND_MAX) - 0.5) *
+                        /*double noise_x = ((rand() / (double)RAND_MAX) - 0.5) *
                                          1e-4 * effective_dx;
                         double noise_y = ((rand() / (double)RAND_MAX) - 0.5) *
                                          1e-4 * effective_dx;
                         double noise_z = ((rand() / (double)RAND_MAX) - 0.5) *
-                                         1e-4 * effective_dx;
+                                         1e-4 * effective_dx;*/
 
-                        double p_x = std::fmod(qx + noise_x + L, L);
-                        double p_y = std::fmod(qy + noise_y + L, L);
-                        double p_z = std::fmod(qz + noise_z + L, L);
+                        double p_x = std::fmod(qx + /*noise_x +*/ L, L);
+                        double p_y = std::fmod(qy + /*noise_y +*/ L, L);
+                        double p_z = std::fmod(qz + /*noise_z +*/ L, L);
 
                         double r = std::sqrt((p_x - center) * (p_x - center) +
                                              (p_y - center) * (p_y - center) +

@@ -2137,7 +2137,7 @@ Historically, cosmological hydrodynamics codes have relied on two philosophies: 
 
 The **Meshless Finite Mass (MFM)** method was developed to capture the advantages of both Lagrangian and Eulerian schemes. Implemented in the cosmological code GIZMO (built upon the framework of GADGET-3), MFM utilizes a Riemann solver to calculate fluxes (traditionally reserved for grid-based Eulerian codes), but applies it over a meshless, Lagrangian distribution of fixed mass particles that move through space under the influence of gravity, much like the collisionless particles used to model Dark Matter.
 
-The MFM method is defined by three interdependent components: a kernel-based volume partition that replaces the mesh with a continuous density estimate, a high-order matrix gradient estimator that provides second-order-accurate spatial derivatives, and a Riemann solver that computes Godunov-type fluxes across the effective faces between particles.
+The MFM method is defined by three interdependent components: a kernel-based volume partition with a continuous density estimate, a least-squares matrix gradient estimator for second-order spatial reconstruction, and a Riemann solver that computes Godunov-type fluxes across the effective faces between particles.
 
 ### Volume Partitioning and Density
 
@@ -2177,7 +2177,7 @@ $$V_i = \omega(x_i)^{-1} (1 + \mathcal{O}(h^2))$$
 
 This expression becomes exact if the kernel length $h$ remains locally constant across the kernel domain. For this reason, we use a constant smoothing length $h_i$ for each particle, making $h(x) = h_i$ over its entire local domain.
 
-The density of the particle is then its fixed mass divided by this effective volume. This continuous volume partition means the initial density calculation in MFM is evaluated identically to standard SPH. The density $\rho_i$ of a particle can be computed as:  
+The density of the particle is then its fixed mass divided by this effective volume:  
 $$\rho_i = \frac{m_i}{V_i}$$
 
 ### Gradient Estimation and Spatial Reconstruction
@@ -2219,7 +2219,7 @@ $$\alpha_i \equiv \min\left[1, \beta_i \min\left(\frac{\phi_{ij,ngb}^{max} - \ph
 
 Here, $\phi_{ij,ngb}^{max}$ and $\phi_{ij,ngb}^{min}$ are the maximum and minimum values among all neighbors $j$ of particle $i$, while $\phi_{ij,mid}^{max}$ and $\phi_{ij,mid}^{min}$ are the maximum and minimum values reconstructed at the interfaces. The parameter $\beta_i$ (typically between 1 and 2) determines how aggressively the limiter acts.
 
-* **Pairwise Limiter:** Second, an additional pairwise limiter is applied directly to the reconstructed states at the interface between interacting particles $i$ and $j$. This step guarantees stability in extreme situations, such as very strong shocks, by enforcing strict monotonicity bounds (ensuring that the reconstructed interface values never overshoot or undershoot the actual values of the two interacting particles), parameterized by tunable constants. The initial interface estimate $\phi_{ij,mid}^0$ is replaced by a limited value $\phi_{ij,mid}^\prime$ based on the bounds of the interacting pair:
+* **Pairwise Limiter:** Second, an additional pairwise limiter is applied to the reconstructed states at the interface between interacting particles $i$ and $j$. This step guarantees stability in extreme situations, such as very strong shocks, by enforcing strict monotonicity bounds (ensuring that the reconstructed interface values never overshoot or undershoot the actual values of the two interacting particles), parameterized by tunable constants. The initial interface estimate $\phi_{ij,mid}^0$ is replaced by a limited value $\phi_{ij,mid}^\prime$ based on the bounds of the interacting pair:
 
 $$\phi_{ij,mid}^{\prime} = \begin{cases} \phi_{i} & (\phi_{i} = \phi_{j}) \\ \max(\phi_{-}, \min[\overline{\phi}_{ij} + \delta_{2}, \phi_{ij,mid}^{0}]) & (\phi_{i} < \phi_{j}) \\ \min(\phi_{+}, \max[\overline{\phi}_{ij} - \delta_{2}, \phi_{ij,mid}^{0}]) & (\phi_{i} > \phi_{j}) \end{cases}$$
 
@@ -2243,26 +2243,25 @@ $$\mathbf{A}_{ij} = V_i \tilde{\psi}_j(\mathbf{x}_i) - V_j \tilde{\psi}_i(\mathb
 
 Here, $\tilde{\psi}_j(\mathbf{x}_i) \equiv \mathbf{B}_i (\mathbf{x}_j - \mathbf{x}_i) \psi_j(\mathbf{x}_i)$ represents a matrix-conditioned spatial weight (conditioning a vector means applying a transformation to correct for biases, skewness, or scaling in the raw data), where $\mathbf{B}_i$ is the inverse geometry matrix used for gradient estimation and $\psi_j(\mathbf{x}_i)$ is the scalar volume fraction particle $j$ contributes at $\mathbf{x}_i$. The effective face area vector $\mathbf{A}_{ij}$ is directed from particle $i$ to particle $j$, and its magnitude $|\mathbf{A}_{ij}|$ plays the role of the face area in the flux computation.
 
-To evaluate the fluxes across this interface, the Riemann problem must be solved at a specific spatial location $\mathbf{x}_{\text{face}}$ along the axis connecting the two particles. Because of the symmetry of the kernel, the second-order accurate quadrature point (the chosen point to approximate the value of an integral) is the location where the volume partition between the two particles is equal, given by:  
+To evaluate the fluxes across this interface, the Riemann problem must be solved at a specific spatial location $\mathbf{x}_{\text{face}}$ along the axis connecting the two particles. The second-order accurate quadrature point (the chosen point to approximate the value of an integral) is the location where the volume partition between the two particles is equal. Because the kernel function is spherically symmetric, this point is where the fractional distance relative to each particle's smoothing length is equal, given by:  
 $$\mathbf{x}_{\text{face}} = \mathbf{x}_i + \frac{h_i}{h_i + h_j}(\mathbf{x}_j - \mathbf{x}_i)$$
 
-In practice, however, using the first-order geometric midpoint $\mathbf{x}_{\text{face}} = (\mathbf{x}_i + \mathbf{x}_j) / 2$ yields nearly identical results in standard test problems and can often enhance numerical stability.
+In practice, however, using the first-order geometric midpoint $\mathbf{x}_{\text{face}} = (\mathbf{x}_i + \mathbf{x}_j) / 2$ yields nearly identical results in standard test problems and can enhance numerical stability.
 
 ### The Riemann Solver and Flux Computation
 
-The reconstructed left and right states at the effective face form a Riemann problem: two constant states separated by a discontinuity at $t = 0$. The solution of this Riemann problem provides the flux of mass, momentum, and energy across the face, which is then used to update the conserved quantities of particles $i$ and $j$.
+The reconstructed left and right states at the effective face form a Riemann problem: two constant states separated by a discontinuity at $t = 0$. The MFM method evaluates this Riemann problem in a frame moving at the speed of the contact wave. Because the effective face moves with the fluid, there is no mass flux across the face.
 
-The MFM method in GIZMO uses an HLLC approximate Riemann solver, which resolves the contact discontinuity in addition to the two acoustic waves. The flux across the face is computed as:
+The Riemann solver provides the contact pressure ($P^*$) and the velocity of the face ($S^*$). Particles interact through mechanical forces. The contact pressure acts over the effective face area to exert a force, transferring momentum between the particles (a push). Simultaneously, because this pressure force is applied to a moving face, it computes the exact $PdV$ mechanical work being done as the particles compress or expand each other's volumes, which updates their internal energies.
 
-$$\mathbf{F}_{ij} = |\mathbf{A}_{ij}| \cdot \mathbf{F}_{\text{HLLC}}(q_L, q_R, \hat{\mathbf{n}}_{ij})$$
+The method uses an HLLC approximate Riemann solver. The flux vector across the face is computed as:  
+$$\mathbf{F}_{ij} = \tilde{\mathbf{F}}_{\text{HLLC}}(q_L, q_R) \cdot \mathbf{A}_{ij}$$
+where $\mathbf{A}_{ij}$ is the effective area vector of the face between particles $i$ and $j$ and $\sim$ is used to denote a numerical flux. The fluxes being exchanged are momentum and internal energy.
 
-where $\hat{\mathbf{n}}_{ij} = \mathbf{A}_{ij} / |\mathbf{A}_{ij}|$ is the unit normal to the effective face.
+The semi-discrete conservation equations for a particle are then:
+$$\frac{d\mathbf{U}_i}{dt} = -\sum_j \mathbf{F}_{ij}$$
 
-The semi-discrete conservation equations are then:
-
-$$\frac{d\mathbf{U}_i}{dt} = -\sum_j \mathbf{F}_{ij} \cdot \hat{\mathbf{n}}_{ij}$$
-
-where $\mathbf{U}_i = (m_i, m_i\mathbf{v}_i, E_i)$ is the vector of conserved quantities for particle $i$. Because the fluxes are antisymmetric ($\mathbf{F}_{ij} = -\mathbf{F}_{ji}$), the scheme conserves mass, momentum, and energy to machine precision regardless of the particle motion.
+where $\mathbf{U}_i = (\mathbf{P}_i, U_i)$ is the vector containing the particle's momentum and internal energy. Because the fluxes are antisymmetric ($\mathbf{F}_{ij} = -\mathbf{F}_{ji}$), the scheme manifestly conserves momentum to machine precision. 
 
 ### Dual Energy Formalism
 
@@ -2272,7 +2271,7 @@ To resolve this, the MFM implementation employs a dual energy formalism. Rather 
 
 $$\frac{dU}{dt} = \frac{dE}{dt} - \mathbf{v} \cdot \frac{d\mathbf{P}}{dt}$$
 
-where $E$ is the total energy and $\mathbf{P}$ is the momentum. Since MFM doesn't allow inter-particle mass fluxes, this formulation is equivalent to accumulating the $P dV$ work done by the fluxes at the effective faces. By trusting this integrated internal energy to determine the local pressure, the method sacrifices machine-accurate global total energy conservation in favor of maintaining accurate temperatures in hypersonic and gravity-dominated flows.
+where $E$ is the total energy and $\mathbf{P}$ is the momentum. Since MFM doesn't allow inter-particle mass fluxes, this formulation is equivalent to accumulating the $P dV$ work done by the fluxes at the effective faces. By trusting this integrated internal energy to determine the local pressure, the method sacrifices total energy conservation in favor of maintaining accurate temperatures in hypersonic and gravity-dominated flows.
 
 #### Extreme Mach Number Fallback
 
@@ -2280,7 +2279,7 @@ To implement the dual energy formalism, an entropy-based fallback switch is impl
 
 At each timestep, the expected thermal energy of a particle is compared against the maximum kinetic energy of its interacting neighbors and the work done by local gravitational forces. If the thermal energy falls below a conservative threshold (typically $\approx 0.1\%$) of these kinetic or gravitational energies, the Riemann solver's internal energy update is bypassed. Instead, the thermal energy is calculated as if the flow were undergoing purely adiabatic expansion, utilizing a passively tracked entropy variable. 
 
-In this context, "entropy" refers to the entropic function (or adiabatic constant) $S$, which dictates the relationship between pressure and density along an adiabatic fluid streamline via $P = S \rho^\gamma$. It is computed from the specific internal energy $u$ and density $\rho$ using the relation $S = (\gamma - 1) u / \rho^{\gamma - 1}$. When the fallback is triggered, the internal energy is overridden and recalculated from the current density using this stored entropy. Under normal shock conditions, this switch remains inactive, and the passive entropy array simply resynchronizes to the new, shock-heated state calculated by the Riemann solver.
+In this context, "entropy" refers to the entropic function $S$, which dictates the relationship between pressure and density along an adiabatic fluid streamline via $P = S \rho^\gamma$. It is computed from the specific internal energy $u$ and density $\rho$ using the relation $S = (\gamma - 1) u / \rho^{\gamma - 1}$. When the fallback is triggered, the internal energy is overridden and recalculated from the current density using this stored entropy. Under normal shock conditions, this switch remains inactive, and the passive entropy array simply resynchronizes to the new, shock-heated state calculated by the Riemann solver.
 
 ### Adaptive Gravitational Softening
 
@@ -2292,7 +2291,7 @@ In MFM, the differential mass at a point $x$ associated with a given particle $i
 
 $$dm_i = d^\nu x \rho(x) \frac{W(x - x_i, h(x))}{\omega(x)}$$
 
-Expanding this to leading order (treating the fluid properties as constant across the volume of a single particle) in the gradients of the density $\rho$ and the smoothing length $h$, the density distribution associated with a particle takes on the same functional form as the kernel centered on that particle:
+Expanding this to leading order (i.e., zeroth order, treating the fluid properties as constant across the volume of a particle) in the gradients of the density $\rho$ and the smoothing length $h$, the density distribution associated with a particle takes the same form as the kernel centered on that particle:
 
 $$dm_i \approx m_i W(x - x_i, h_i) d^\nu x$$
 
@@ -2300,7 +2299,7 @@ This way, we treat the fluid cells in the $N$-body solver as standard particles 
 
 #### Conservative Force Law
 
-The kernel lengths $h_i$ change as particles move closer together or further apart. We must maintain momentum and energy conservation when dealing with variable softening lengths. If we define the gravitational self-energy of the gas (the gravitational potential energy of the entire system of gas particles, resulting from their gravitational attraction) as $E_{grav} = \frac{1}{2} \sum_{i,j} G m_i m_j \phi(r_{ij}, h_j)$, we can derive the resulting forces.
+The kernel lengths $h_i$ change as particles move closer together or further apart. We must maintain momentum and energy conservation when dealing with variable softening lengths. If we define the gravitational self-energy of the gas (the gravitational potential energy of the entire system of gas particles) as $E_{grav} = \frac{1}{2} \sum_{i,j} G m_i m_j \phi(r_{ij}, h_j)$, we can derive the resulting forces.
 
 The conservative gravitational acceleration for particle $i$ interacting with particle $j$ is given by:
 

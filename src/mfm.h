@@ -81,6 +81,10 @@ class GasParticleSystem {
     size_t ill_conditioned_cases = 0;
     size_t clamped_area_cases = 0;
 
+    // Debugging
+    std::vector<double> cond_num;
+    std::vector<Eigen::Vector3d> raw_sum_p;
+
     // Dynamic Spatial Hashing
     CellList sph_cell_list;
     CellList pm_cell_list;
@@ -161,6 +165,10 @@ struct ParticleGradients {
     Eigen::Vector3d grad_vy;
     Eigen::Vector3d grad_vz;
     bool ill_conditioned;
+
+    // Debugging
+    double condition_number;
+    Eigen::Vector3d raw_sum_p;
 };
 
 // Computes spatial gradients using least-squares matrix inversion.

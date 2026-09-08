@@ -51,6 +51,9 @@ GasParticleSystem::GasParticleSystem(const Config& config)
 
     zeta.reserve(config.num_gas_particles);
 
+    cond_num.reserve(config.num_gas_particles);
+    raw_sum_p.reserve(config.num_gas_particles);
+
     int num_cells = config.mesh_size * config.mesh_size * config.mesh_size;
     pm_cell_list.resize(num_cells, config.num_gas_particles);
 
@@ -102,6 +105,9 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
     grad_vz.push_back(Eigen::Vector3d::Zero());
     grad_p.push_back(Eigen::Vector3d::Zero());
 
+    cond_num.push_back(0);
+    raw_sum_p.push_back(Eigen::Vector3d::Zero());
+
     num_particles++;
 }
 
@@ -133,6 +139,9 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& cell_start,
     std::vector<double> new_entropy(num_particles);
     std::vector<double> new_max_rel_ke(num_particles);
     std::vector<double> new_delta_E_grav(num_particles);
+
+    std::vector<double> new_cond_num(num_particles);
+    std::vector<Eigen::Vector3d> new_raw_sum_p(num_particles);
 
     std::vector<int> write_offset = cell_start;
 
@@ -170,6 +179,8 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& cell_start,
         new_entropy[dest] = entropy[i];
         new_max_rel_ke[dest] = max_rel_ke[i];
         new_delta_E_grav[dest] = delta_E_grav[i];
+        new_cond_num[dest] = cond_num[i];
+        new_raw_sum_p[dest] = raw_sum_p[i];
     }
 
     pos_x = std::move(new_px);
@@ -204,6 +215,8 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& cell_start,
     entropy = std::move(new_entropy);
     max_rel_ke = std::move(new_max_rel_ke);
     delta_E_grav = std::move(new_delta_E_grav);
+    raw_sum_p = std::move(new_raw_sum_p);
+    cond_num = std::move(new_cond_num);
 }
 
 void GasParticleSystem::build_spatial_hash(double domain_size) {
@@ -353,7 +366,8 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
     const double mean_spacing =
         domain_size / std::cbrt(num_particles > 0 ? num_particles : 1);
     const double min_h = 0.05 * mean_spacing;
-    const double max_h = 4.0 * mean_spacing;
+    //const double max_h = 4.0 * mean_spacing;
+    const double max_h = 0.3 * domain_size;
 
     const double r_s = config.PM_smoothing_cells * config.cell_size;
     const bool use_pm = config.use_PM;
@@ -649,6 +663,76 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         // SUM(m_b * dphi/dh)
         zeta[i] = (h_guess / (current_n * 3.0)) * (1.0 / Omega_i) * zeta_sum;
     }
+
+//#define MFM_VOLUME_LIMITER
+#ifdef MFM_VOLUME_LIMITER
+    // Prevents vacuum particles from artificially borrowing density from shocks
+    std::vector<double> limited_rho = rho;
+    constexpr double MAX_VOL_RATIO =
+        8.0;  // Tunable: Expected between 2.0 and 8.0
+
+#pragma omp parallel for schedule(dynamic, 64)
+    for (size_t i = 0; i < num_particles; ++i) {
+        double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
+        double my_vol = mass[i] / rho[i];
+        double max_neighbor_vol = 0.0;
+
+        int search_cells = static_cast<int>(std::ceil(h[i] / hash_cell_size));
+        search_cells = std::min(search_cells, hash_grid_dim / 2);
+
+        int ix = static_cast<int>(p1_x / hash_cell_size) % hash_grid_dim;
+        int iy = static_cast<int>(p1_y / hash_cell_size) % hash_grid_dim;
+        int iz = static_cast<int>(p1_z / hash_cell_size) % hash_grid_dim;
+        ix = (ix + hash_grid_dim) % hash_grid_dim;
+        iy = (iy + hash_grid_dim) % hash_grid_dim;
+        iz = (iz + hash_grid_dim) % hash_grid_dim;
+
+        for (int dx_c = -search_cells; dx_c <= search_cells; ++dx_c) {
+            for (int dy_c = -search_cells; dy_c <= search_cells; ++dy_c) {
+                for (int dz_c = -search_cells; dz_c <= search_cells; ++dz_c) {
+                    int n_ix = (((ix + dx_c) % hash_grid_dim) + hash_grid_dim) %
+                               hash_grid_dim;
+                    int n_iy = (((iy + dy_c) % hash_grid_dim) + hash_grid_dim) %
+                               hash_grid_dim;
+                    int n_iz = (((iz + dz_c) % hash_grid_dim) + hash_grid_dim) %
+                               hash_grid_dim;
+
+                    int cell_idx = n_iz * hash_grid_dim * hash_grid_dim +
+                                   n_iy * hash_grid_dim + n_ix;
+
+                    int start = sph_cell_list.cell_start[cell_idx];
+                    int end = start + sph_cell_list.cell_count[cell_idx];
+
+                    for (int j = start; j < end; ++j) {
+                        double dx =
+                            periodic_displacement(pos_x[j] - p1_x, domain_size);
+                        double dy =
+                            periodic_displacement(pos_y[j] - p1_y, domain_size);
+                        double dz =
+                            periodic_displacement(pos_z[j] - p1_z, domain_size);
+                        double r2 = dx * dx + dy * dy + dz * dz;
+
+                        if (r2 < h[i] * h[i] && r2 > 1e-24) {
+                            double neighbor_vol = mass[j] / rho[j];
+                            max_neighbor_vol =
+                                std::max(max_neighbor_vol, neighbor_vol);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Enforce the volume limit
+        if (max_neighbor_vol > 0.0 &&
+            my_vol > MAX_VOL_RATIO * max_neighbor_vol) {
+            double clamped_vol = MAX_VOL_RATIO * max_neighbor_vol;
+            limited_rho[i] = mass[i] / clamped_vol;
+        }
+    }
+
+    rho = std::move(limited_rho);
+
+#endif
 
     build_spatial_hash(config.domain_size);
 }
@@ -2096,6 +2180,7 @@ ParticleGradients compute_single_particle_gradients(
     double det = E.determinant();
     out.ill_conditioned =
         true;  // Assume ill-conditioned until proven otherwise
+    out.condition_number = -1.0;
 
     // We still need a tiny guard so E.inverse() doesn't crash on pure zeroes
     if (std::abs(det) > 1e-30) {
@@ -2103,6 +2188,7 @@ ParticleGradients compute_single_particle_gradients(
 
         // Calculate the condition number
         double N_cond = compute_condition_number(E, temp_B);
+        out.condition_number = N_cond;
 
         // Threshold (Hopkins recommends 100 - 1000)
         constexpr double N_cond_crit = 1000.0;
@@ -2191,6 +2277,7 @@ ParticleGradients compute_single_particle_gradients(
         out.grad_vx = out.B_matrix * sum_vx;
         out.grad_vy = out.B_matrix * sum_vy;
         out.grad_vz = out.B_matrix * sum_vz;
+        out.raw_sum_p = sum_p;
 
 #ifdef THEORETICAL_LIMITER
         // Scalar Gradient Limiter
@@ -2433,6 +2520,8 @@ void GasParticleSystem::compute_gradients(const Config& config) {
         grad_vx[i] = grads.grad_vx;
         grad_vy[i] = grads.grad_vy;
         grad_vz[i] = grads.grad_vz;
+        cond_num[i] = grads.condition_number;
+        raw_sum_p[i] = grads.raw_sum_p;
 
         if (grads.ill_conditioned) {
             step_ill_conditioned++;
@@ -2472,6 +2561,8 @@ ReconstructedFace compute_face_reconstruction(const ParticleState& p_i,
     Eigen::Vector3d dx_face_i = fraction_i * dx_vec;
     Eigen::Vector3d dx_face_j = -fraction_j * dx_vec;
 
+// #define DISABLE_LIMITER
+#ifndef DISABLE_LIMITER
 #ifdef THEORETICAL_LIMITER
     // Linearly interpolated "bar" values at the face
     double rho_bar = p_i.rho + fraction_i * (p_j.rho - p_i.rho);
@@ -2539,19 +2630,30 @@ ReconstructedFace compute_face_reconstruction(const ParticleState& p_i,
     face.v_R.x() = p_j.vel.x() + grad_j.grad_vx.dot(dx_face_j);
     face.v_R.y() = p_j.vel.y() + grad_j.grad_vy.dot(dx_face_j);
     face.v_R.z() = p_j.vel.z() + grad_j.grad_vz.dot(dx_face_j);
+#endif
+#else
+    // TEMPORARY DIAGNOSTIC: PURE 2ND-ORDER RECONSTRUCTION (NO LIMITERS)
 
-    // TEMPORARY FIRST-ORDER DIAGNOSTIC
-    // Density Reconstruction
-    /* face.rho_L = std::max(p_i.rho, density_floor);
-     face.rho_R = std::max(p_j.rho, density_floor);
+    // Density (with absolute physical floor to prevent NaN)
+    face.rho_L =
+        std::max(p_i.rho + grad_i.grad_rho.dot(dx_face_i), density_floor);
+    face.rho_R =
+        std::max(p_j.rho + grad_j.grad_rho.dot(dx_face_j), density_floor);
 
-     // Pressure Reconstruction
-     face.p_L = std::max(p_i.pressure, pressure_floor);
-     face.p_R = std::max(p_j.pressure, pressure_floor);
+    // Pressure (with absolute physical floor to prevent NaN)
+    face.p_L =
+        std::max(p_i.pressure + grad_i.grad_p.dot(dx_face_i), g_pressure_floor);
+    face.p_R =
+        std::max(p_j.pressure + grad_j.grad_p.dot(dx_face_j), g_pressure_floor);
 
-     // Velocity Reconstruction
-     face.v_L = p_i.vel;
-     face.v_R = p_j.vel;*/
+    // Velocity (completely unbounded)
+    face.v_L.x() = p_i.vel.x() + grad_i.grad_vx.dot(dx_face_i);
+    face.v_L.y() = p_i.vel.y() + grad_i.grad_vy.dot(dx_face_i);
+    face.v_L.z() = p_i.vel.z() + grad_i.grad_vz.dot(dx_face_i);
+
+    face.v_R.x() = p_j.vel.x() + grad_j.grad_vx.dot(dx_face_j);
+    face.v_R.y() = p_j.vel.y() + grad_j.grad_vy.dot(dx_face_j);
+    face.v_R.z() = p_j.vel.z() + grad_j.grad_vz.dot(dx_face_j);
 #endif
 
     face.is_valid = true;
