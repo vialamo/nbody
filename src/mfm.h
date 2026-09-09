@@ -80,10 +80,12 @@ class GasParticleSystem {
     double pressure_floor = 0.0;
     size_t ill_conditioned_cases = 0;
     size_t clamped_area_cases = 0;
+    size_t clamped_h_cases = 0;
 
     // Debugging
     std::vector<double> cond_num;
     std::vector<Eigen::Vector3d> raw_sum_p;
+    std::vector<double> n_enc_final;
 
     // Dynamic Spatial Hashing
     CellList sph_cell_list;

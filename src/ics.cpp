@@ -720,8 +720,8 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
 
     } else if (config.hydro_method == HydroMethod::MFM) {
         // Use a Face-Centered Cubic (FCC) lattice.
-        // FCC is close-packed (12 equidistant nearest neighbors) yielding good
-        // isotropic shock propagation, and tiles inside a cubic box.
+        // FCC is close-packed (12 equidistant nearest neighbors) and tiles
+        // inside a cubic box.
 
         // Calculate how many FCC unit cells we need to approximate the
         // requested resolution
@@ -735,7 +735,7 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
         double gas_particle_mass =
             rho_bg * (L * L * L) / static_cast<double>(total_particles);
         double effective_dx = std::cbrt(gas_particle_mass / rho_bg);
-        double initial_h = 1.2 * effective_dx;
+        double initial_h = 2.0 * effective_dx;
 
         struct PartData {
             double x, y, z, r, weight;
@@ -758,17 +758,9 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
                         double qy = (j + basis[b][1]) * L_c;
                         double qz = (k + basis[b][2]) * L_c;
 
-                        // Microscopic grid-lock breaking noise
-                        /*double noise_x = ((rand() / (double)RAND_MAX) - 0.5) *
-                                         1e-4 * effective_dx;
-                        double noise_y = ((rand() / (double)RAND_MAX) - 0.5) *
-                                         1e-4 * effective_dx;
-                        double noise_z = ((rand() / (double)RAND_MAX) - 0.5) *
-                                         1e-4 * effective_dx;*/
-
-                        double p_x = std::fmod(qx + /*noise_x +*/ L, L);
-                        double p_y = std::fmod(qy + /*noise_y +*/ L, L);
-                        double p_z = std::fmod(qz + /*noise_z +*/ L, L);
+                        double p_x = std::fmod(qx + L, L);
+                        double p_y = std::fmod(qy + L, L);
+                        double p_z = std::fmod(qz + L, L);
 
                         double r = std::sqrt((p_x - center) * (p_x - center) +
                                              (p_y - center) * (p_y - center) +

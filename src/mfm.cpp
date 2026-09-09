@@ -45,6 +45,13 @@ GasParticleSystem::GasParticleSystem(const Config& config)
     de_dt.reserve(config.num_gas_particles);
     metal_frac.reserve(config.num_gas_particles);
 
+    grad_rho.reserve(config.num_gas_particles);
+    grad_vx.reserve(config.num_gas_particles);
+    grad_vy.reserve(config.num_gas_particles);
+    grad_vz.reserve(config.num_gas_particles);
+    grad_p.reserve(config.num_gas_particles);
+    B_matrix.reserve(config.num_gas_particles);
+
     entropy.reserve(config.num_gas_particles);
     max_rel_ke.reserve(config.num_gas_particles);
     delta_E_grav.reserve(config.num_gas_particles);
@@ -53,6 +60,7 @@ GasParticleSystem::GasParticleSystem(const Config& config)
 
     cond_num.reserve(config.num_gas_particles);
     raw_sum_p.reserve(config.num_gas_particles);
+    n_enc_final.reserve(config.num_gas_particles);
 
     int num_cells = config.mesh_size * config.mesh_size * config.mesh_size;
     pm_cell_list.resize(num_cells, config.num_gas_particles);
@@ -107,6 +115,7 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
 
     cond_num.push_back(0);
     raw_sum_p.push_back(Eigen::Vector3d::Zero());
+    n_enc_final.push_back(0);
 
     num_particles++;
 }
@@ -365,14 +374,19 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
     int max_iter = config.mfm_max_iterations;
     const double mean_spacing =
         domain_size / std::cbrt(num_particles > 0 ? num_particles : 1);
-    const double min_h = 0.05 * mean_spacing;
-    //const double max_h = 4.0 * mean_spacing;
-    const double max_h = 0.3 * domain_size;
+    const double min_h_cap = 0.05 * mean_spacing;
+    const double max_h_cap = 0.5 * domain_size;
+
+    // Define the limits for this specific timestep
+    constexpr double MAX_H_GROWTH = 8.0;  // Tunable: max growth factor per step
+    const double grid_physical_limit =
+        ((hash_grid_dim - 1) / 2.0) * hash_cell_size;
 
     const double r_s = config.PM_smoothing_cells * config.cell_size;
     const bool use_pm = config.use_PM;
+    size_t num_h_clamped = 0;
 
-#pragma omp parallel for schedule(dynamic, 64)
+#pragma omp parallel for schedule(dynamic, 64) reduction(+ : num_h_clamped)
     for (size_t i = 0; i < num_particles; ++i) {
         double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
 
@@ -380,69 +394,64 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         double h_high = std::numeric_limits<double>::infinity();
         double h_guess = h[i];  // Start with current h
 
+        double step_max_h =
+            std::min({max_h_cap, grid_physical_limit, h[i] * MAX_H_GROWTH});
+
         int iter = 0;
-        double current_n = 0.0;      // Track number density (n_i)
-        double current_dn_dh = 0.0;  // Track derivative (dn_i/dh_i)
+        double current_n = 0.0;
+        double current_dn_dh = 0.0;
+        bool is_converged = false;
+        bool h_clamped = false;
+
+        int ix = static_cast<int>(p1_x / hash_cell_size) % hash_grid_dim;
+        int iy = static_cast<int>(p1_y / hash_cell_size) % hash_grid_dim;
+        int iz = static_cast<int>(p1_z / hash_cell_size) % hash_grid_dim;
+        ix = (ix + hash_grid_dim) % hash_grid_dim;
+        iy = (iy + hash_grid_dim) % hash_grid_dim;
+        iz = (iz + hash_grid_dim) % hash_grid_dim;
 
         while (iter < max_iter) {
             current_n = 0.0;
             current_dn_dh = 0.0;
 
-            // Determine how many hash cells to search based on current h_guess
             double search_radius = h_guess;
             int search_cells =
                 static_cast<int>(std::ceil(search_radius / hash_cell_size));
-            // Prevent wrapping around and double-counting the domain
-            search_cells = std::min(search_cells, hash_grid_dim / 2);
-
-            // Get current particle cell
-            int ix = static_cast<int>(p1_x / hash_cell_size) % hash_grid_dim;
-            int iy = static_cast<int>(p1_y / hash_cell_size) % hash_grid_dim;
-            int iz = static_cast<int>(p1_z / hash_cell_size) % hash_grid_dim;
-            ix = (ix + hash_grid_dim) % hash_grid_dim;
-            iy = (iy + hash_grid_dim) % hash_grid_dim;
-            iz = (iz + hash_grid_dim) % hash_grid_dim;
+            int dx_start = std::max(-search_cells, -hash_grid_dim / 2);
+            int dx_end = std::min(search_cells, (hash_grid_dim - 1) / 2);
 
             // Gather neighbors
-            for (int dx = -search_cells; dx <= search_cells; ++dx) {
-                for (int dy = -search_cells; dy <= search_cells; ++dy) {
-                    for (int dz = -search_cells; dz <= search_cells; ++dz) {
-                        // Get cell index
-                        int neighbor_ix =
-                            (((ix + dx) % hash_grid_dim) + hash_grid_dim) %
+            for (int dx_c = dx_start; dx_c <= dx_end; ++dx_c) {
+                for (int dy_c = dx_start; dy_c <= dx_end; ++dy_c) {
+                    for (int dz_c = dx_start; dz_c <= dx_end; ++dz_c) {
+                        int n_ix =
+                            (((ix + dx_c) % hash_grid_dim) + hash_grid_dim) %
                             hash_grid_dim;
-                        int neighbor_iy =
-                            (((iy + dy) % hash_grid_dim) + hash_grid_dim) %
+                        int n_iy =
+                            (((iy + dy_c) % hash_grid_dim) + hash_grid_dim) %
                             hash_grid_dim;
-                        int neighbor_iz =
-                            (((iz + dz) % hash_grid_dim) + hash_grid_dim) %
+                        int n_iz =
+                            (((iz + dz_c) % hash_grid_dim) + hash_grid_dim) %
                             hash_grid_dim;
 
-                        int cell_idx =
-                            neighbor_iz * hash_grid_dim * hash_grid_dim +
-                            neighbor_iy * hash_grid_dim + neighbor_ix;
-
-                        // Loop cell particles
+                        int cell_idx = n_iz * hash_grid_dim * hash_grid_dim +
+                                       n_iy * hash_grid_dim + n_ix;
                         int start = sph_cell_list.cell_start[cell_idx];
                         int end = start + sph_cell_list.cell_count[cell_idx];
 
                         for (int j = start; j < end; ++j) {
-                            double dist_x = periodic_displacement(
-                                pos_x[j] - p1_x, domain_size);
-                            double dist_y = periodic_displacement(
-                                pos_y[j] - p1_y, domain_size);
-                            double dist_z = periodic_displacement(
-                                pos_z[j] - p1_z, domain_size);
+                            double dx = periodic_displacement(pos_x[j] - p1_x,
+                                                              domain_size);
+                            double dy = periodic_displacement(pos_y[j] - p1_y,
+                                                              domain_size);
+                            double dz = periodic_displacement(pos_z[j] - p1_z,
+                                                              domain_size);
+                            double r2 = dx * dx + dy * dy + dz * dz;
 
-                            double r2 = dist_x * dist_x + dist_y * dist_y +
-                                        dist_z * dist_z;
                             if (r2 < search_radius * search_radius) {
                                 double r = std::sqrt(r2);
                                 double W, dWdh;
                                 kernel_cubic_spline(r, h_guess, W, dWdh);
-
-                                // MFM relies on particle positions,
-                                // summing only the kernel weights
                                 current_n += W;
                                 current_dn_dh += dWdh;
                             }
@@ -451,38 +460,28 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
                 }
             }
 
-            // Calculate effective number of neighbors enclosed in the kernel
-            // N_enc = (4/3) * pi * h^3 * n_i
             double h3 = h_guess * h_guess * h_guess;
             double N_enc = (4.0 / 3.0) * M_PI * h3 * current_n;
+            n_enc_final[i] = N_enc;
 
-            // Convergence Check
             if (std::abs(N_enc - target_N) < tol) {
+                is_converged = true;  // MARK CONVERGENCE
                 break;
             }
 
-            // Update safety boundaries
-            if (N_enc > target_N) {
+            if (N_enc > target_N)
                 h_high = h_guess;
-            } else {
+            else
                 h_low = h_guess;
-            }
 
-            // Calculate the derivative of N_enc with respect to h
-            // dN_enc/dh = (4/3)*pi * [3*h^2 * n_i + h^3 * dn_i/dh]
             double dN_enc_dh =
                 (4.0 / 3.0) * M_PI *
                 (3.0 * h_guess * h_guess * current_n + h3 * current_dn_dh);
 
-            // Newton-Raphson Step
             double h_new = h_guess;
-            if (dN_enc_dh > 0.0) {
+            if (dN_enc_dh > 0.0)
                 h_new = h_guess - (N_enc - target_N) / dN_enc_dh;
-            }
 
-            // Safe Newton-Raphson: Fall back to bisection if the Newton step
-            // overshoots our known boundaries or if the derivative is
-            // flat/invalid.
             if (h_new <= h_low || h_new >= h_high || dN_enc_dh <= 0.0) {
                 h_guess = std::isinf(h_high) ? (1.26 * h_guess)
                                              : 0.5 * (h_low + h_high);
@@ -490,14 +489,18 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
                 h_guess = h_new;
             }
 
-            // Clamp maximum smoothing length
-            if (h_guess >= max_h) {
-                h_guess = max_h;
-                if (h_low >= max_h) break;
+            if (h_guess >= step_max_h) {
+                h_guess = step_max_h;
+                // If we hit the physical grid limit or the growth limit before
+                // converging, we must stop and accept the current state. The
+                // grid will resize next step.
+                h_clamped = true;
+                break;
             }
 
-            if (h_guess < min_h) {
-                h_guess = min_h;
+            if (h_guess < min_h_cap) {
+                h_guess = min_h_cap;
+                h_clamped = true;
                 break;
             }
 
@@ -507,34 +510,89 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
             }
         }
 
-        // Commit final state for this particle
-        h[i] = h_guess;
+        if (h_clamped) {
+            num_h_clamped++;
+        }
 
-        // Compute effective volume and density for MFM
+        // Sync: Recompute sums if the loop exited due to a clamp
+        if (!is_converged) {
+            current_n = 0.0;
+            current_dn_dh = 0.0;
+            double search_radius = h_guess;
+            int search_cells =
+                static_cast<int>(std::ceil(search_radius / hash_cell_size));
+            int dx_start = std::max(-search_cells, -hash_grid_dim / 2);
+            int dx_end = std::min(search_cells, (hash_grid_dim - 1) / 2);
+
+            for (int dx_c = dx_start; dx_c <= dx_end; ++dx_c) {
+                for (int dy_c = dx_start; dy_c <= dx_end; ++dy_c) {
+                    for (int dz_c = dx_start; dz_c <= dx_end; ++dz_c) {
+                        int n_ix =
+                            (((ix + dx_c) % hash_grid_dim) + hash_grid_dim) %
+                            hash_grid_dim;
+                        int n_iy =
+                            (((iy + dy_c) % hash_grid_dim) + hash_grid_dim) %
+                            hash_grid_dim;
+                        int n_iz =
+                            (((iz + dz_c) % hash_grid_dim) + hash_grid_dim) %
+                            hash_grid_dim;
+
+                        int cell_idx = n_iz * hash_grid_dim * hash_grid_dim +
+                                       n_iy * hash_grid_dim + n_ix;
+                        int start = sph_cell_list.cell_start[cell_idx];
+                        int end = start + sph_cell_list.cell_count[cell_idx];
+
+                        for (int j = start; j < end; ++j) {
+                            double dx = periodic_displacement(pos_x[j] - p1_x,
+                                                              domain_size);
+                            double dy = periodic_displacement(pos_y[j] - p1_y,
+                                                              domain_size);
+                            double dz = periodic_displacement(pos_z[j] - p1_z,
+                                                              domain_size);
+                            double r2 = dx * dx + dy * dy + dz * dz;
+
+                            if (r2 < search_radius * search_radius) {
+                                double r = std::sqrt(r2);
+                                double W, dWdh;
+                                kernel_cubic_spline(r, h_guess, W, dWdh);
+                                current_n += W;
+                                current_dn_dh += dWdh;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Commit finalized state
+        h[i] = h_guess;
         double effective_volume = 1.0 / current_n;
         rho[i] = mass[i] / effective_volume;
 
         // Adaptive gravity softening corrections (GIZMO App. H2)
         // Equation H10: Omega_a = 1 + (h_a / (n_a * nu)) * (dn_a / dh_a)
-        double Omega_i = 1.0 + (h_guess / (current_n * 3.0)) * current_dn_dh;
+        double Omega_i = std::max(
+            1.0 + (h_guess / (current_n * 3.0)) * current_dn_dh, 1e-12);
 
         // Final gather loop to calculate zeta_i (Equation H9)
         double zeta_sum = 0.0;
 
         int search_cells =
             static_cast<int>(std::ceil(h_guess / hash_cell_size));
-        search_cells = std::min(search_cells, hash_grid_dim / 2);
 
-        int ix = static_cast<int>(p1_x / hash_cell_size) % hash_grid_dim;
-        int iy = static_cast<int>(p1_y / hash_cell_size) % hash_grid_dim;
-        int iz = static_cast<int>(p1_z / hash_cell_size) % hash_grid_dim;
+        int dx_start_zeta = std::max(-search_cells, -hash_grid_dim / 2);
+        int dx_end_zeta = std::min(search_cells, (hash_grid_dim - 1) / 2);
+
+        ix = static_cast<int>(p1_x / hash_cell_size) % hash_grid_dim;
+        iy = static_cast<int>(p1_y / hash_cell_size) % hash_grid_dim;
+        iz = static_cast<int>(p1_z / hash_cell_size) % hash_grid_dim;
         ix = (ix + hash_grid_dim) % hash_grid_dim;
         iy = (iy + hash_grid_dim) % hash_grid_dim;
         iz = (iz + hash_grid_dim) % hash_grid_dim;
 
-        for (int dx_c = -search_cells; dx_c <= search_cells; ++dx_c) {
-            for (int dy_c = -search_cells; dy_c <= search_cells; ++dy_c) {
-                for (int dz_c = -search_cells; dz_c <= search_cells; ++dz_c) {
+        for (int dx_c = dx_start_zeta; dx_c <= dx_end_zeta; ++dx_c) {
+            for (int dy_c = dx_start_zeta; dy_c <= dx_end_zeta; ++dy_c) {
+                for (int dz_c = dx_start_zeta; dz_c <= dx_end_zeta; ++dz_c) {
                     int n_ix = (((ix + dx_c) % hash_grid_dim) + hash_grid_dim) %
                                hash_grid_dim;
                     int n_iy = (((iy + dy_c) % hash_grid_dim) + hash_grid_dim) %
@@ -588,6 +646,11 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
                                      config.cutoff_radius / config.cell_size))
                                : config.mesh_size - 1;
 
+        if (use_pm) {
+            dm_dx_start = std::max(dm_dx_start, -config.mesh_size / 2);
+            dm_dx_end = std::min(dm_dx_end, (config.mesh_size - 1) / 2);
+        }
+
         int dm_ix = static_cast<int>(p1_x / config.cell_size);
         int dm_iy = static_cast<int>(p1_y / config.cell_size);
         int dm_iz = static_cast<int>(p1_z / config.cell_size);
@@ -632,8 +695,8 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
                                                           domain_size);
                         double r2 = dx * dx + dy * dy + dz * dz;
 
-                        // DM particles only affect gas zeta if they fall inside
-                        // the gas smoothing length
+                        // DM particles only affect gas zeta if they fall
+                        // inside the gas smoothing length
                         if (r2 < h_guess * h_guess && r2 > 1e-24) {
                             if (use_pm && r2 > config.cutoff_radius_squared)
                                 continue;
@@ -664,9 +727,10 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         zeta[i] = (h_guess / (current_n * 3.0)) * (1.0 / Omega_i) * zeta_sum;
     }
 
-//#define MFM_VOLUME_LIMITER
+// #define MFM_VOLUME_LIMITER
 #ifdef MFM_VOLUME_LIMITER
-    // Prevents vacuum particles from artificially borrowing density from shocks
+    // Prevents vacuum particles from artificially borrowing density from
+    // shocks
     std::vector<double> limited_rho = rho;
     constexpr double MAX_VOL_RATIO =
         8.0;  // Tunable: Expected between 2.0 and 8.0
@@ -678,7 +742,9 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         double max_neighbor_vol = 0.0;
 
         int search_cells = static_cast<int>(std::ceil(h[i] / hash_cell_size));
-        search_cells = std::min(search_cells, hash_grid_dim / 2);
+
+        int dx_start = std::max(-search_cells, -hash_grid_dim / 2);
+        int dx_end = std::min(search_cells, (hash_grid_dim - 1) / 2);
 
         int ix = static_cast<int>(p1_x / hash_cell_size) % hash_grid_dim;
         int iy = static_cast<int>(p1_y / hash_cell_size) % hash_grid_dim;
@@ -687,9 +753,9 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         iy = (iy + hash_grid_dim) % hash_grid_dim;
         iz = (iz + hash_grid_dim) % hash_grid_dim;
 
-        for (int dx_c = -search_cells; dx_c <= search_cells; ++dx_c) {
-            for (int dy_c = -search_cells; dy_c <= search_cells; ++dy_c) {
-                for (int dz_c = -search_cells; dz_c <= search_cells; ++dz_c) {
+        for (int dx_c = dx_start; dx_c <= dx_end; ++dx_c) {
+            for (int dy_c = dx_start; dy_c <= dx_end; ++dy_c) {
+                for (int dz_c = dx_start; dz_c <= dx_end; ++dz_c) {
                     int n_ix = (((ix + dx_c) % hash_grid_dim) + hash_grid_dim) %
                                hash_grid_dim;
                     int n_iy = (((iy + dy_c) % hash_grid_dim) + hash_grid_dim) %
@@ -734,6 +800,7 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
 
 #endif
 
+    clamped_h_cases += num_h_clamped;
     build_spatial_hash(config.domain_size);
 }
 
@@ -959,7 +1026,8 @@ double GasParticleSystem::get_cfl_timestep(const Config& config) const {
     double gamma = config.gamma;
     double domain_size = config.domain_size;
 
-    // Use dynamic scheduling because the number of neighbors varies per cell
+    // Use dynamic scheduling because the number of neighbors varies per
+    // cell
 #pragma omp parallel for reduction(min : min_dt) schedule(dynamic, 64)
     for (size_t i = 0; i < num_particles; ++i) {
         double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
@@ -982,10 +1050,13 @@ double GasParticleSystem::get_cfl_timestep(const Config& config) const {
 
         int search_cells = 1;  // Kernel support spans 1 hash cell in radius
 
+        int dx_start = std::max(-search_cells, -hash_grid_dim / 2);
+        int dx_end = std::min(search_cells, (hash_grid_dim - 1) / 2);
+
         // Neighbor Search
-        for (int dx_c = -search_cells; dx_c <= search_cells; ++dx_c) {
-            for (int dy_c = -search_cells; dy_c <= search_cells; ++dy_c) {
-                for (int dz_c = -search_cells; dz_c <= search_cells; ++dz_c) {
+        for (int dx_c = dx_start; dx_c <= dx_end; ++dx_c) {
+            for (int dy_c = dx_start; dy_c <= dx_end; ++dy_c) {
+                for (int dz_c = dx_start; dz_c <= dx_end; ++dz_c) {
                     int n_ix = (((ix + dx_c) % hash_grid_dim) + hash_grid_dim) %
                                hash_grid_dim;
                     int n_iy = (((iy + dy_c) % hash_grid_dim) + hash_grid_dim) %
@@ -1010,8 +1081,8 @@ double GasParticleSystem::get_cfl_timestep(const Config& config) const {
                                                               domain_size);
                         double r2 = dx * dx + dy * dy + dz * dz;
 
-                        // Particles interact if they overlap in either support
-                        // radius
+                        // Particles interact if they overlap in either
+                        // support radius
                         if (r2 < h_i * h_i || r2 < h[j] * h[j]) {
                             if (r2 > 1e-24) {
                                 double r = std::sqrt(r2);
@@ -1027,8 +1098,8 @@ double GasParticleSystem::get_cfl_timestep(const Config& config) const {
                                 double dvz = vel_z[j] - v1_z;
 
                                 // Dot product: (v_j - v_i) dot (x_j - x_i)
-                                // Note: Mathematically identical to (v_i - v_j)
-                                // dot (x_i - x_j) from Eq. 25
+                                // Note: Mathematically identical to (v_i -
+                                // v_j) dot (x_i - x_j) from Eq. 25
                                 double dv_dot_dx =
                                     dvx * dx + dvy * dy + dvz * dz;
 
@@ -1103,8 +1174,8 @@ double GasParticleSystem::get_gravity_timestep(const Config& config) const {
 
 // --------------------------------------------------------------------------------
 // Adaptive Gravitational Softening Kernel (GIZMO App. H2 / Price & Monaghan
-// 2007) Returns the exact d(phi)/dr potential derivative and d(W)/dr smoothing
-// derivative.
+// 2007) Returns the exact d(phi)/dr potential derivative and d(W)/dr
+// smoothing derivative.
 // --------------------------------------------------------------------------------
 inline void compute_adaptive_gravity_terms(double r, double h, double& dphi_dr,
                                            double& dW_dr) {
@@ -1159,6 +1230,13 @@ void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
     int dx_end =
         use_pm ? static_cast<int>(std::ceil(config.cutoff_radius / cell_size))
                : N - 1;
+
+    // Clamp to prevent gravity double-counting on small meshes
+    if (use_pm) {
+        dx_start = std::max(dx_start, -N / 2);
+        dx_end = std::min(dx_end, (N - 1) / 2);
+    }
+
     const int num_cells = N * N * N;
 
 #ifdef USE_GPU
@@ -1520,6 +1598,11 @@ void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
         use_pm ? static_cast<int>(std::ceil(config.cutoff_radius / cell_size))
                : N - 1;
 
+    if (use_pm) {
+        dx_start = std::max(dx_start, -N / 2);
+        dx_end = std::min(dx_end, (N - 1) / 2);
+    }
+
 #ifdef USE_GPU
     if (config.enable_GPU) {
         // ========================================================================
@@ -1650,8 +1733,8 @@ void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
                                 }
                             }
 
-                            // Evaluate kernel derivatives for DM particle (uses
-                            // fixed base_soft)
+                            // Evaluate kernel derivatives for DM particle
+                            // (uses fixed base_soft)
                             double dphi_dr_j;
                             if (r >= base_soft) {
                                 dphi_dr_j = 1.0 / (r * r);
@@ -1804,12 +1887,13 @@ void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
 
                     double r = std::sqrt(dist_sq + 1e-24);
 
-                    // Evaluate kernel derivatives for Gas particle (uses h_i)
+                    // Evaluate kernel derivatives for Gas particle (uses
+                    // h_i)
                     double dphi_dr_i, dW_dr_i;
                     compute_adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
 
-                    // Evaluate kernel derivatives for DM particle (uses fixed
-                    // base_soft)
+                    // Evaluate kernel derivatives for DM particle (uses
+                    // fixed base_soft)
                     double dphi_dr_j, dW_dr_j_dummy;
                     compute_adaptive_gravity_terms(r, base_soft, dphi_dr_j,
                                                    dW_dr_j_dummy);
@@ -1841,7 +1925,8 @@ void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
                     temp_dm_az[k] = -a_dm * dz;
                 }
 
-                // Apply atomics OUTSIDE the SIMD loop to protect vectorization
+                // Apply atomics OUTSIDE the SIMD loop to protect
+                // vectorization
                 for (int k = 0; k < num_neighbors; ++k) {
                     if (temp_dm_ax[k] != 0.0 || temp_dm_ay[k] != 0.0 ||
                         temp_dm_az[k] != 0.0) {
@@ -2068,7 +2153,8 @@ double apply_pairwise_limiter(double phi_L_center, double phi_R_center,
 }
 
 #else
-// Scalar Gradient Vector Limiter (Translated from GIZMO's local_slopelimiter)
+// Scalar Gradient Vector Limiter (Translated from GIZMO's
+// local_slopelimiter)
 inline void scalar_limiter(Eigen::Vector3d& grad, double valmax, double valmin,
                            double alim, double h, double shoot_tol,
                            bool pos_preserve, double d_max, double val_cen) {
@@ -2086,22 +2172,23 @@ inline void scalar_limiter(Eigen::Vector3d& grad, double valmax, double valmin,
             std::swap(abs_max, abs_min);
         }
 
-        // = abs_min for shoot_tol = 0; don't let gradient deviate by more than
-        // this in size, slightly larger if 'shoot_tol' allows some overshoot
-        // tolerance
+        // = abs_min for shoot_tol = 0; don't let gradient deviate by more
+        // than this in size, slightly larger if 'shoot_tol' allows some
+        // overshoot tolerance
         double f_corr_overshoot =
             std::min(abs_min + shoot_tol * abs_max, abs_max);
 
         // Multiply by the correction factor of interest
         cfac *= f_corr_overshoot;
 
-        // Demand that the limited slope be strictly positivity-preserving over
-        // the maximal range to any neighbors
+        // Demand that the limited slope be strictly positivity-preserving
+        // over the maximal range to any neighbors
         if (pos_preserve) {
             constexpr double MIN_REAL_NUMBER = 1e-30;
 
             // Minimum value: smaller of overshoot target or half
-            // positive-definite value, but cannot go negative in larger range
+            // positive-definite value, but cannot go negative in larger
+            // range
             double fmin = std::min(
                 val_cen,
                 std::max(0.0, std::max(MIN_REAL_NUMBER * val_cen,
@@ -2182,7 +2269,8 @@ ParticleGradients compute_single_particle_gradients(
         true;  // Assume ill-conditioned until proven otherwise
     out.condition_number = -1.0;
 
-    // We still need a tiny guard so E.inverse() doesn't crash on pure zeroes
+    // We still need a tiny guard so E.inverse() doesn't crash on pure
+    // zeroes
     if (std::abs(det) > 1e-30) {
         Eigen::Matrix3d temp_B = E.inverse();
 
@@ -2347,12 +2435,13 @@ ParticleGradients compute_single_particle_gradients(
         double d_max = h_lim;
         double stol = 0.1;  // overshoot tolerance for pressure/velocity
 
-        // Density: no overshoot tolerance (0.0), positivity preserving (true)
+        // Density: no overshoot tolerance (0.0), positivity preserving
+        // (true)
         scalar_limiter(out.grad_rho, d_rho_max, d_rho_min, alim, h_lim, 0.0,
                        true, d_max, p_i.rho);
 
-        // Pressure: standard overshoot tolerance (stol), positivity preserving
-        // (true)
+        // Pressure: standard overshoot tolerance (stol), positivity
+        // preserving (true)
         scalar_limiter(out.grad_p, d_p_max, d_p_min, alim, h_lim, stol, true,
                        d_max, p_i.pressure);
 
@@ -2367,20 +2456,21 @@ ParticleGradients compute_single_particle_gradients(
 #endif
     } else {
         // Matrix is ill-conditioned (pathological alignment).
-        // Fall back to standard SPH gradient estimator (Hopkins 2015, Eq. C4).
+        // Fall back to standard SPH gradient estimator (Hopkins 2015, Eq.
+        // C4).
         out.B_matrix = Eigen::Matrix3d::Identity();  // Dummy valid matrix
         out.ill_conditioned = true;
 
-        // Use a dimensionally correct isotropic average for the dummy B-matrix
-        // to prevent Face Area explosions in the Riemann solver.
-        /*double trace_E = E(0, 0) + E(1, 1) + E(2, 2);
+        // Use a dimensionally correct isotropic average for the dummy
+        // B-matrix to prevent Face Area explosions in the Riemann solver
+        double trace_E = E(0, 0) + E(1, 1) + E(2, 2);
         if (trace_E > 1e-24) {
             out.B_matrix = (3.0 / trace_E) * Eigen::Matrix3d::Identity();
         } else {
             // Absolute fallback if particle is completely isolated
-            //double h2 = p_i.h * p_i.h;
+            double h2 = p_i.h * p_i.h;
             out.B_matrix = (1.0 / h2) * Eigen::Matrix3d::Identity();
-        }*/
+        }
 
         for (const auto& nj : neighbors) {
             double dx = mfm_periodic_displacement(nj.pos.x() - p_i.pos.x(),
@@ -2395,8 +2485,8 @@ ParticleGradients compute_single_particle_gradients(
             if (r2 < p_i.h * p_i.h && r2 > 1e-24) {
                 double r = std::sqrt(r2);
 
-                // Fetch the derivative of the kernel respect to 'r' using the
-                // existing gravity helper
+                // Fetch the derivative of the kernel respect to 'r' using
+                // the existing gravity helper
                 double dphi_dr_dummy, dW_dr;
                 compute_adaptive_gravity_terms(r, p_i.h, dphi_dr_dummy, dW_dr);
 
@@ -2444,6 +2534,8 @@ void GasParticleSystem::compute_gradients(const Config& config) {
         std::vector<ParticleState> neighbors;
 
         int search_cells = 1;
+        int dx_start = std::max(-search_cells, -hash_grid_dim / 2);
+        int dx_end = std::min(search_cells, (hash_grid_dim - 1) / 2);
 
         int ix = static_cast<int>(p_i.pos.x() / hash_cell_size) % hash_grid_dim;
         int iy = static_cast<int>(p_i.pos.y() / hash_cell_size) % hash_grid_dim;
@@ -2452,9 +2544,9 @@ void GasParticleSystem::compute_gradients(const Config& config) {
         iy = (iy + hash_grid_dim) % hash_grid_dim;
         iz = (iz + hash_grid_dim) % hash_grid_dim;
 
-        for (int dx_c = -search_cells; dx_c <= search_cells; ++dx_c) {
-            for (int dy_c = -search_cells; dy_c <= search_cells; ++dy_c) {
-                for (int dz_c = -search_cells; dz_c <= search_cells; ++dz_c) {
+        for (int dx_c = dx_start; dx_c <= dx_end; ++dx_c) {
+            for (int dy_c = dx_start; dy_c <= dx_end; ++dy_c) {
+                for (int dz_c = dx_start; dz_c <= dx_end; ++dz_c) {
                     int n_ix = (((ix + dx_c) % hash_grid_dim) + hash_grid_dim) %
                                hash_grid_dim;
                     int n_iy = (((iy + dy_c) % hash_grid_dim) + hash_grid_dim) %
@@ -2486,7 +2578,8 @@ void GasParticleSystem::compute_gradients(const Config& config) {
                             pos_z[j] - p_i.pos.z(), domain_size);
                         double r2 = dx * dx + dy * dy + dz * dz;
 
-                        // evaluate if they are actually interacting neighbors
+                        // evaluate if they are actually interacting
+                        // neighbors
                         if ((r2 < p_i.h * p_i.h || r2 < h[j] * h[j]) &&
                             r2 > 1e-24) {
                             double rel_vx = vel_x[j] - p_i.vel.x();
@@ -2745,6 +2838,8 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
     // Search radius is 1 cell (max_h) to catch all pairwise
     // interactions
     int search_cells = 1;
+    int dx_start = std::max(-search_cells, -hash_grid_dim / 2);
+    int dx_end = std::min(search_cells, (hash_grid_dim - 1) / 2);
 
 #pragma omp parallel for schedule(dynamic, 64)
     for (size_t i = 0; i < num_particles; ++i) {
@@ -2772,9 +2867,9 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
         iy = (iy + hash_grid_dim) % hash_grid_dim;
         iz = (iz + hash_grid_dim) % hash_grid_dim;
 
-        for (int dx_c = -search_cells; dx_c <= search_cells; ++dx_c) {
-            for (int dy_c = -search_cells; dy_c <= search_cells; ++dy_c) {
-                for (int dz_c = -search_cells; dz_c <= search_cells; ++dz_c) {
+        for (int dx_c = dx_start; dx_c <= dx_end; ++dx_c) {
+            for (int dy_c = dx_start; dy_c <= dx_end; ++dy_c) {
+                for (int dz_c = dx_start; dz_c <= dx_end; ++dz_c) {
                     int n_ix = (((ix + dx_c) % hash_grid_dim) + hash_grid_dim) %
                                hash_grid_dim;
                     int n_iy = (((iy + dy_c) % hash_grid_dim) + hash_grid_dim) %

@@ -2193,7 +2193,11 @@ $$\mathbf{E}_i = \sum_j (\mathbf{x}_{ij} \otimes \mathbf{x}_{ij}) V_j W(\vert{}\
 
 This estimator is exact for linear functions — it returns the correct gradient for any field of the form $q(\mathbf{x}) = a + \mathbf{b} \cdot \mathbf{x}$ — regardless of the particle distribution.
 
-However, if specific pathological particle configurations appear (for example, if all particles in the kernel align along a single axis), the moment matrix $\mathbf{E}_i$ becomes ill-conditioned and cannot be reliably inverted. To handle these situations, we fall back to using standard SPH gradient estimators for that particle and timestep. For a generic quantity $q$, this SPH gradient estimator is defined as:
+To determine whether the moment matrix $\mathbf{E}_i$ can be reliably inverted, we evaluate its condition number, defined as:
+$$N_{\text{cond}} = \frac{1}{d} \sqrt{\Vert{}\mathbf{E}_i\Vert{}^2 \Vert{}\mathbf{B}_i\Vert{}^2}$$
+where $d = 3$ is the number of spatial dimensions.
+
+If specific pathological particle configurations appear (for example, if all particles in the kernel align along a single axis), the condition number will exceed a safe tolerance. When $N_{\text{cond}}$ surpasses a critical threshold (typically between 100 and 1000), the matrix is considered ill-conditioned. To handle these situations, we fall back to using standard SPH gradient estimators for that particle and timestep. For a generic quantity $q$, this SPH gradient estimator is defined as:
 
 $$(\nabla q)_i^{\text{SPH}} = \sum_j \frac{1}{\omega_j} q_j \nabla_i W_{ij}(h_i)$$
 
@@ -2311,9 +2315,9 @@ $$m_i \frac{dv_i}{dt}\bigg\vert{}_{grav} = -\sum_j \frac{G m_i m_j}{2} \left( \f
 
 Where $\mathbf{r}_{ij} = \mathbf{x}_i - \mathbf{x}_j$.
 
-**1. The Symmetrized Newtonian Force:** The first term containing $\frac{\partial\phi}{\partial r}$ is the modified $1/r^2$ gravitational force. Because interacting particles $i$ and $j$ often have different smoothing lengths, the force is symmetrized by averaging the potential derivatives, guaranteeing that Newton's third law is obeyed.
+* **The Symmetrized Newtonian Force:** The first term containing $\frac{\partial\phi}{\partial r}$ is the modified $1/r^2$ gravitational force. Because interacting particles $i$ and $j$ often have different smoothing lengths, the force is symmetrized by averaging the potential derivatives, guaranteeing that Newton's third law is obeyed.
 
-**2. The $\zeta$ Correction Term:** The second term containing $\frac{\partial W}{\partial r}$ accounts for the temporal and spatial derivatives of the kernel lengths. By moving the particles, the simulation changes the local density, which modifies the gravitational potential. This means additional work is done by the expanding or contracting potentials. Note that the derivative of the kernel $\frac{\partial W}{\partial r}$ conveniently evaluates to zero for distant particles outside the kernel radius.
+* **The $\zeta$ Correction Term:** The second term containing $\frac{\partial W}{\partial r}$ accounts for the temporal and spatial derivatives of the kernel lengths. By moving the particles, the simulation changes the local density, which modifies the gravitational potential. This means additional work is done by the expanding or contracting potentials. Note that the derivative of the kernel $\frac{\partial W}{\partial r}$ conveniently evaluates to zero for distant particles outside the kernel radius.
 
 #### Computing the $\zeta$ (Zeta) Coefficients
 

@@ -327,6 +327,8 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                 write_particle_vec(gas_group, "entropy", gas.entropy);
                 write_particle_vec(gas_group, "condition_number", gas.cond_num);
                 write_particle_vec3d(gas_group, "raw_sum_p", gas.raw_sum_p);
+                set_attr_int(gas_group, "clamped_h_cases", gas.clamped_h_cases);
+                write_particle_vec(gas_group, "n_enc", gas.n_enc_final);
             }
             gas_group.close();
         }
