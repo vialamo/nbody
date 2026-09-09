@@ -13,6 +13,9 @@
 // Disable to use the limiter used in the Gizmo code.
 // #define THEORETICAL_LIMITER
 
+// Disable limiter completely
+//#define DISABLE_LIMITER
+
 constexpr double density_floor = 1e-12;
 double g_pressure_floor = 0.0;
 
@@ -2367,6 +2370,7 @@ ParticleGradients compute_single_particle_gradients(
         out.grad_vz = out.B_matrix * sum_vz;
         out.raw_sum_p = sum_p;
 
+#ifndef DISABLE_LIMITER
 #ifdef THEORETICAL_LIMITER
         // Scalar Gradient Limiter
         double phi_mid_max_rho = 0.0, phi_mid_min_rho = 0.0;
@@ -2453,6 +2457,7 @@ ParticleGradients compute_single_particle_gradients(
                        false, d_max, p_i.vel.y());
         scalar_limiter(out.grad_vz, d_vz_max, d_vz_min, alim, h_lim, stol,
                        false, d_max, p_i.vel.z());
+#endif
 #endif
     } else {
         // Matrix is ill-conditioned (pathological alignment).
@@ -2654,7 +2659,6 @@ ReconstructedFace compute_face_reconstruction(const ParticleState& p_i,
     Eigen::Vector3d dx_face_i = fraction_i * dx_vec;
     Eigen::Vector3d dx_face_j = -fraction_j * dx_vec;
 
-// #define DISABLE_LIMITER
 #ifndef DISABLE_LIMITER
 #ifdef THEORETICAL_LIMITER
     // Linearly interpolated "bar" values at the face

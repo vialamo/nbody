@@ -440,6 +440,9 @@ static void apply_gas_particle_hydro_kick(GasParticleSystem& gas, double dt,
         // energy
         gas.entropy[i] =
             gamma_minus_1 * gas.u[i] / std::pow(gas.rho[i], gamma_minus_1);
+
+        // Keep pressure in sync
+        gas.pressure[i] = gamma_minus_1 * gas.rho[i] * gas.u[i];
     }
 }
 
