@@ -16,6 +16,10 @@
 // Disable limiter completely
 //#define DISABLE_LIMITER
 
+#ifdef DISABLE_LIMITER
+#define ZEROTH_ORDER_RECONSTRUCTION
+#endif
+
 constexpr double density_floor = 1e-12;
 double g_pressure_floor = 0.0;
 
@@ -1126,8 +1130,10 @@ double GasParticleSystem::get_cfl_timestep(const Config& config) const {
         }
 
         // Equation 24: dt_i = 2 * C_CFL * (h_i / v_sig_max)
+        // We remove the 2 factor so that the CFL factor config is
+        // similar for the eulerian mesh and MFM
         if (v_sig_max > 1e-9) {
-            double dt_i = 2.0 * h_i / v_sig_max;
+            double dt_i = h_i / v_sig_max;
             if (dt_i < min_dt) {
                 min_dt = dt_i;
             }
@@ -1991,10 +1997,47 @@ void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
     }
 }
 
-void GasParticleSystem::hydro_step(const Config& config, double a, double dt) {
+void GasParticleSystem::hydro_step(const Config& config, double a, double H,
+                                   double dt) {
+    /*double inv_a = 1.0 / a;
+    double dt_half = dt / 2.0;
+
+    // Cosmological adiabatic expansion cooling factor: (3*gamma - 1) * H *
+    // dt_half
+    double expansion_factor = (3.0 * config.gamma - 1.0) * H * dt_half;
+    double a3 = a * a * a;  // Comoving gravity scaling
+
+    // Cache old forces
+    std::vector<double> old_ax = hydro_acc_x;
+    std::vector<double> old_ay = hydro_acc_y;
+    std::vector<double> old_az = hydro_acc_z;
+    std::vector<double> old_dudt = du_dt;
+
+    // Temporal prediction (Extrapolate v and u to t^{n+1})
+    // This centers the thermodynamic state with the drifted geometry
+    for (size_t i = 0; i < num_particles; ++i) {
+        vel_x[i] += (old_ax[i] * inv_a + acc_x[i] / a3) * dt_half;
+        vel_y[i] += (old_ay[i] * inv_a + acc_y[i] / a3) * dt_half;
+        vel_z[i] += (old_az[i] * inv_a + acc_z[i] / a3) * dt_half;
+        u[i] += (old_dudt[i] * inv_a * dt_half) - (u[i] * expansion_factor);
+    }*/
+
     update_primitive_variables(config, a);
     compute_gradients(config);
     compute_hydro_forces(config, a, dt);
+
+   /* // Revert prediction (Back to t^{n+1/2})
+    // So "Kick 2" applies the newly computed forces
+    for (size_t i = 0; i < num_particles; ++i) {
+        vel_x[i] -= (old_ax[i] * inv_a + acc_x[i] / a3) * dt_half;
+        vel_y[i] -= (old_ay[i] * inv_a + acc_y[i] / a3) * dt_half;
+        vel_z[i] -= (old_az[i] * inv_a + acc_z[i] / a3) * dt_half;
+        u[i] =
+            (u[i] - old_dudt[i] * inv_a * dt_half) / (1.0 - expansion_factor);
+    }
+
+    // Re-sync the pressure back to n+1/2 so the CFL checker is accurate
+    update_primitive_variables(config, a);*/
 }
 
 void GasParticleSystem::update_primitive_variables(const Config& config,
@@ -2729,21 +2772,34 @@ ReconstructedFace compute_face_reconstruction(const ParticleState& p_i,
     face.v_R.z() = p_j.vel.z() + grad_j.grad_vz.dot(dx_face_j);
 #endif
 #else
-    // TEMPORARY DIAGNOSTIC: PURE 2ND-ORDER RECONSTRUCTION (NO LIMITERS)
+#ifdef ZEROTH_ORDER_RECONSTRUCTION
+    // Zeroth-order reconstruction (piecewise constant)
+    // Extremely diffusive, but perfectly stable without limiters.
+    face.rho_L = p_i.rho;
+    face.rho_R = p_j.rho;
 
-    // Density (with absolute physical floor to prevent NaN)
+    face.p_L = p_i.pressure;
+    face.p_R = p_j.pressure;
+
+    face.v_L = p_i.vel;
+    face.v_R = p_j.vel;
+
+#else
+    // TEMPORARY DIAGNOSTIC: 2nd-order reconstruction (no limiters)
+
+    // Use a 1% relative floor instead of absolute vacuum.
+    // Prevents infinite sound speed (c_s = sqrt(P/rho)) singularities.
     face.rho_L =
-        std::max(p_i.rho + grad_i.grad_rho.dot(dx_face_i), density_floor);
+        std::max(p_i.rho + grad_i.grad_rho.dot(dx_face_i), 0.01 * p_i.rho);
     face.rho_R =
-        std::max(p_j.rho + grad_j.grad_rho.dot(dx_face_j), density_floor);
+        std::max(p_j.rho + grad_j.grad_rho.dot(dx_face_j), 0.01 * p_j.rho);
 
-    // Pressure (with absolute physical floor to prevent NaN)
-    face.p_L =
-        std::max(p_i.pressure + grad_i.grad_p.dot(dx_face_i), g_pressure_floor);
-    face.p_R =
-        std::max(p_j.pressure + grad_j.grad_p.dot(dx_face_j), g_pressure_floor);
+    face.p_L = std::max(p_i.pressure + grad_i.grad_p.dot(dx_face_i),
+                        0.01 * p_i.pressure);
+    face.p_R = std::max(p_j.pressure + grad_j.grad_p.dot(dx_face_j),
+                        0.01 * p_j.pressure);
 
-    // Velocity (completely unbounded)
+    // Velocity (unbounded)
     face.v_L.x() = p_i.vel.x() + grad_i.grad_vx.dot(dx_face_i);
     face.v_L.y() = p_i.vel.y() + grad_i.grad_vy.dot(dx_face_i);
     face.v_L.z() = p_i.vel.z() + grad_i.grad_vz.dot(dx_face_i);
@@ -2751,6 +2807,7 @@ ReconstructedFace compute_face_reconstruction(const ParticleState& p_i,
     face.v_R.x() = p_j.vel.x() + grad_j.grad_vx.dot(dx_face_j);
     face.v_R.y() = p_j.vel.y() + grad_j.grad_vy.dot(dx_face_j);
     face.v_R.z() = p_j.vel.z() + grad_j.grad_vz.dot(dx_face_j);
+#endif
 #endif
 
     face.is_valid = true;
@@ -2793,6 +2850,12 @@ MFMFaceFlux solve_mfm_riemann(const ReconstructedFace& face,
         S_star = (face.p_R - face.p_L + face.rho_L * vn_L * (S_L - vn_L) -
                   face.rho_R * vn_R * (S_R - vn_R)) /
                  den_star;
+
+        // Enforce physical bounds on the Riemann fan.
+        // Prevents S_star from exploding to +/- infinity if den_star is
+        // corrupted
+        S_star = std::max(S_L, std::min(S_star, S_R));
+
         P_star = face.p_L + face.rho_L * (S_L - vn_L) * (S_star - vn_L);
 
         if (P_star < 0.0) P_star = 0.0;  // Floor to physical values

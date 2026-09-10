@@ -125,7 +125,7 @@ class GasParticleSystem {
     double get_cooling_timestep(double a, const Config& config,
                                 Cooling& cooling) const;
 
-    void hydro_step(const Config& config, double a, double dt);
+    void hydro_step(const Config& config, double a, double H, double dt);
 
     // Sync tracked internal energy, total energy, and compute pressure
     void update_primitive_variables(const Config& config, double a);

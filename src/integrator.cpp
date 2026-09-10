@@ -616,6 +616,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
         state.total_time += ts.dt_macro;
         update_cosmology(state, config);
         double target_a = state.scale_factor;
+        double target_H = state.hubble_param;
 
         // Rewind state
         state.total_time -= ts.dt_macro;
@@ -648,6 +649,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
             double a_start = old_a + alpha_start * (target_a - old_a);
             double a_mid = old_a + alpha_mid * (target_a - old_a);
             double a_end = old_a + alpha_end * (target_a - old_a);
+            double H_mid = old_H + alpha_mid * (target_H - old_H);
 
             // Micro-Kick 1
             if (config.hydro_method == HydroMethod::MFM) {
@@ -673,7 +675,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
                     apply_particle_gas_drift(*state.mfm_gas, dt_h,
                                              config.domain_size);
                     state.mfm_gas->compute_density_and_h(config, state.dm);
-                    state.mfm_gas->hydro_step(config, a_mid, dt_h);
+                    state.mfm_gas->hydro_step(config, a_mid, H_mid, dt_h);
                 }
 
                 if (config.enable_cooling) {
@@ -762,6 +764,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
         run_gravity_subcycles(0.0, ts.dt_macro / 2.0);
 
         double mid_a = old_a + 0.5 * (target_a - old_a);
+        double mid_H = old_H + 0.5 * (target_H - old_H);
 
         // Full Macro-Step Drift for Gas
         if (config.hydro_method == HydroMethod::Eulerian) {
@@ -785,7 +788,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
                                          config.domain_size);
                 state.mfm_gas->compute_density_and_h(config, state.dm);
 
-                state.mfm_gas->hydro_step(config, mid_a, ts.dt_macro);
+                state.mfm_gas->hydro_step(config, mid_a, mid_H, ts.dt_macro);
             }
 
             if (config.enable_cooling) {
@@ -831,6 +834,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
         // Approximate the scale factor at the half-step (t + dt/2)
         double mid_a =
             state.scale_factor * (1.0 + 0.5 * state.hubble_param * dt);
+        double mid_H = state.hubble_param;
 
         // DRIFT
         apply_dm_drift(state.dm, dt, config.domain_size);
@@ -852,7 +856,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
                 apply_particle_gas_drift(*state.mfm_gas, dt,
                                          config.domain_size);
                 state.mfm_gas->compute_density_and_h(config, state.dm);
-                state.mfm_gas->hydro_step(config, mid_a, dt);
+                state.mfm_gas->hydro_step(config, mid_a, mid_H, dt);
             }
 
             if (config.enable_cooling) {
