@@ -122,7 +122,9 @@ void SimulationEngine::step() {
     const double TOLERANCE = 1e-7;
     bool must_save_snapshot =
         state.scale_factor >= (next_output_a - TOLERANCE) ||
-        (!config.expanding_universe && cycle_count % 4 == 0);
+        (!config.expanding_universe && cycle_count % 4 == 0) ||
+        (config.initial_setup == InitialSetup::SedovBlastwave &&
+         cycle_count < 30);
     if (config.save_HDF5_every_delta_a > 0.0 &&
         (!needs_more_cycles || must_save_snapshot)) {
         ScopedTimer io_timer(diagnostics, TimerRegion::IO);

@@ -445,8 +445,8 @@ def validate_sedov_interactive(snapshot_dir):
             ax_nenc.set_ylim(0, 100)
 
         if np.count_nonzero(~np.isnan(S_plot)) > 0:
-            s_max = np.nanpercentile(S_plot, 98)
-            ax_S.set_ylim(-0.1, s_max * 1.5)
+            s_max = np.nanmax(S_plot)
+            ax_S.set_ylim(-0.1, s_max * 1.1)
         else:
             ax_S.set_ylim(-0.1, 1.0)
 
@@ -461,9 +461,9 @@ def validate_sedov_interactive(snapshot_dir):
             ax_cond.set_ylim(-0.1, 10.0)
 
         if np.count_nonzero(~np.isnan(raw_plot)) > 0:
-            ax_raw.set_ylim(-0.1, np.nanmax(raw_plot) * 1.1)
+            ax_raw.set_ylim(0.0, np.nanmax(raw_plot) * 1.1)
         else:
-            ax_raw.set_ylim(-0.1, 10.0)
+            ax_raw.set_ylim(0.0, 10.0)
 
         fig.canvas.draw_idle()
 

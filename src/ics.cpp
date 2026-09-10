@@ -648,7 +648,7 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
     // Standard Sedov-Taylor parameters
     double E_total = 1.0;
     double rho_bg = 1.0;
-    double P_bg = 1e-5;  // Almost zero pressure for the background to create a
+    double P_bg = 1e-6;  // Almost zero pressure for the background to create a
                          // strong shock
     double gamma = config.gamma;
     double u_bg = P_bg / (rho_bg * (gamma - 1.0));
