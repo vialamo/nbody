@@ -121,7 +121,7 @@ class GasParticleSystem {
 
     // Time step calculations
     double get_gravity_timestep(const Config& config) const;
-    double get_cfl_timestep(const Config& config) const;
+    double get_cfl_timestep(double a, const Config& config) const;
     double get_cooling_timestep(double a, const Config& config,
                                 Cooling& cooling) const;
 
@@ -183,10 +183,13 @@ ParticleGradients compute_single_particle_gradients(
     double domain_size);
 
 // The extrapolated states at the exact midpoint between particle i and j
+// Depending on the stage in the pipeline, this container holds either
+// comoving units (from reconstruction) or physical units (for the Riemann
+// solver)
 struct ReconstructedFace {
-    double rho_L, rho_R;       // Left (i) and Right (j) comoving densities
-    double p_L, p_R;           // Left (i) and Right (j) comoving pressures
-    Eigen::Vector3d v_L, v_R;  // Left (i) and Right (j) peculiar velocities
+    double rho_L, rho_R;       // Left (i) and Right (j) densities
+    double p_L, p_R;           // Left (i) and Right (j) pressures
+    Eigen::Vector3d v_L, v_R;  // Left (i) and Right (j) velocities
 
     Eigen::Vector3d
         n;          // Unit normal vector pointing from i to j [Dimensionless]
@@ -209,15 +212,17 @@ ReconstructedFace compute_face_reconstruction(const ParticleState& p_i,
 
 // Output of the Riemann Solver
 struct MFMFaceFlux {
-    Eigen::Vector3d
-        flux_mom;  // Momentum flux density vector (P_star * n) [Pressure Units]
-    double P_star;  // Resolved face pressure [Pressure Units]
-    double S_star;  // Resolved relative contact wave speed [Velocity Units]
+    Eigen::Vector3d flux_mom;  // Momentum flux density vector (P_star * n)
+                               // [PHYSICAL Pressure Units]
+    double P_star;  // Resolved face pressure [PHYSICAL Pressure Units]
+    double S_star;  // Resolved relative contact wave speed [PHYSICAL Velocity
+                    // Units]
 };
 
 // Solves the HLLC Riemann problem at the moving face between particles.
 // INPUT: Reconstructed face states, relative frame velocity (v_frame), and
 // adiabatic index.
 // OUTPUT: The resolved pressure (P_star) and relative wave speed (S_star).
+// Note that it should get and return physical units
 MFMFaceFlux solve_mfm_riemann(const ReconstructedFace& face,
                               const Eigen::Vector3d& v_frame, double gamma);

@@ -46,17 +46,18 @@ TimestepInfo SimulationEngine::get_timestep() const {
     if (config.hydro_method == HydroMethod::Eulerian) {
         ts.dt_hydro = state.gas->get_cfl_timestep();
     } else if (config.hydro_method == HydroMethod::MFM) {
-        ts.dt_hydro = state.mfm_gas->get_cfl_timestep(config);
+        ts.dt_hydro =
+            state.mfm_gas->get_cfl_timestep(state.scale_factor, config);
     } else {
         ts.dt_hydro = std::numeric_limits<double>::infinity();
     }
 
     double dt_grav_dm = state.dm.get_gravity_timestep(config);
-    double dt_grav_sph = std::numeric_limits<double>::infinity();
+    double dt_grav_mfm = std::numeric_limits<double>::infinity();
     if (config.hydro_method == HydroMethod::MFM) {
-        dt_grav_sph = state.mfm_gas->get_gravity_timestep(config);
+        dt_grav_mfm = state.mfm_gas->get_gravity_timestep(config);
     }
-    ts.dt_grav = std::min(dt_grav_dm, dt_grav_sph);
+    ts.dt_grav = std::min(dt_grav_dm, dt_grav_mfm);
 
     // The Macro Step is bounded by the SLOWER of the two primary physics
     double base_macro = std::max(ts.dt_hydro, ts.dt_grav);
@@ -89,12 +90,14 @@ TimestepInfo SimulationEngine::get_timestep() const {
     }
 
     // Determine who subcycles
-    if (ts.dt_hydro < ts.dt_grav && ts.dt_hydro < ts.dt_macro) {
-        ts.subcycle_hydro = true;
-        ts.subcycle_grav = false;
-    } else if (ts.dt_hydro > ts.dt_grav && ts.dt_grav < ts.dt_macro) {
-        ts.subcycle_hydro = false;
-        ts.subcycle_grav = true;
+    if (config.enable_subcycling) {
+        if (ts.dt_hydro < ts.dt_grav && ts.dt_hydro < ts.dt_macro) {
+            ts.subcycle_hydro = true;
+            ts.subcycle_grav = false;
+        } else if (ts.dt_hydro > ts.dt_grav && ts.dt_grav < ts.dt_macro) {
+            ts.subcycle_hydro = false;
+            ts.subcycle_grav = true;
+        }
     }
 
     return ts;

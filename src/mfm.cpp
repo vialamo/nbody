@@ -14,7 +14,7 @@
 // #define THEORETICAL_LIMITER
 
 // Disable limiter completely
-//#define DISABLE_LIMITER
+// #define DISABLE_LIMITER
 
 #ifdef DISABLE_LIMITER
 #define ZEROTH_ORDER_RECONSTRUCTION
@@ -1024,7 +1024,8 @@ inline double mfm_periodic_displacement(double dx, double domain_size) {
     return dx;
 }
 
-double GasParticleSystem::get_cfl_timestep(const Config& config) const {
+double GasParticleSystem::get_cfl_timestep(double a,
+                                           const Config& config) const {
     if (config.hydro_method != HydroMethod::MFM || num_particles == 0) {
         return std::numeric_limits<double>::infinity();
     }
@@ -1033,21 +1034,29 @@ double GasParticleSystem::get_cfl_timestep(const Config& config) const {
     double gamma = config.gamma;
     double domain_size = config.domain_size;
 
-    // Use dynamic scheduling because the number of neighbors varies per
-    // cell
+    // Precompute cosmology conversion factors
+    double a_inv = 1.0 / a;
+    double a_inv3 = a_inv * a_inv * a_inv;
+    double a_inv3_gamma = std::pow(a_inv, 3.0 * config.gamma);
+
 #pragma omp parallel for reduction(min : min_dt) schedule(dynamic, 64)
     for (size_t i = 0; i < num_particles; ++i) {
         double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
-        double v1_x = vel_x[i], v1_y = vel_y[i], v1_z = vel_z[i];
 
-        // Sound speed of particle i
-        double c_i =
-            (rho[i] > 1e-12) ? std::sqrt(gamma * pressure[i] / rho[i]) : 0.0;
+        // Evaluate particle i in strictly PHYSICAL units
+        double rho_phys_i = rho[i] * a_inv3;
+        double p_phys_i = pressure[i] * a_inv3_gamma;
+        double c_phys_i = (rho_phys_i > 1e-12)
+                              ? std::sqrt(gamma * p_phys_i / rho_phys_i)
+                              : 0.0;
+
+        double v1_x_phys = vel_x[i] * a_inv;
+        double v1_y_phys = vel_y[i] * a_inv;
+        double v1_z_phys = vel_z[i] * a_inv;
+
         double h_i = h[i];
+        double v_sig_max_phys = 0.0;
 
-        double v_sig_max = 0.0;
-
-        // Hash grid coordinates for particle i
         int ix = static_cast<int>(p1_x / hash_cell_size) % hash_grid_dim;
         int iy = static_cast<int>(p1_y / hash_cell_size) % hash_grid_dim;
         int iz = static_cast<int>(p1_z / hash_cell_size) % hash_grid_dim;
@@ -1055,12 +1064,10 @@ double GasParticleSystem::get_cfl_timestep(const Config& config) const {
         iy = (iy + hash_grid_dim) % hash_grid_dim;
         iz = (iz + hash_grid_dim) % hash_grid_dim;
 
-        int search_cells = 1;  // Kernel support spans 1 hash cell in radius
-
+        int search_cells = 1;
         int dx_start = std::max(-search_cells, -hash_grid_dim / 2);
         int dx_end = std::min(search_cells, (hash_grid_dim - 1) / 2);
 
-        // Neighbor Search
         for (int dx_c = dx_start; dx_c <= dx_end; ++dx_c) {
             for (int dy_c = dx_start; dy_c <= dx_end; ++dy_c) {
                 for (int dz_c = dx_start; dz_c <= dx_end; ++dz_c) {
@@ -1073,12 +1080,11 @@ double GasParticleSystem::get_cfl_timestep(const Config& config) const {
 
                     int cell_idx = n_iz * hash_grid_dim * hash_grid_dim +
                                    n_iy * hash_grid_dim + n_ix;
-
                     int start = sph_cell_list.cell_start[cell_idx];
                     int end = start + sph_cell_list.cell_count[cell_idx];
 
                     for (int j = start; j < end; ++j) {
-                        if (i == j) continue;  // Skip self
+                        if (i == j) continue;
 
                         double dx = mfm_periodic_displacement(pos_x[j] - p1_x,
                                                               domain_size);
@@ -1088,39 +1094,41 @@ double GasParticleSystem::get_cfl_timestep(const Config& config) const {
                                                               domain_size);
                         double r2 = dx * dx + dy * dy + dz * dz;
 
-                        // Particles interact if they overlap in either
-                        // support radius
                         if (r2 < h_i * h_i || r2 < h[j] * h[j]) {
                             if (r2 > 1e-24) {
                                 double r = std::sqrt(r2);
-                                double c_j =
-                                    (rho[j] > 1e-12)
-                                        ? std::sqrt(gamma * pressure[j] /
-                                                    rho[j])
+
+                                // Evaluate particle j in PHYSICAL units
+                                double rho_phys_j = rho[j] * a_inv3;
+                                double p_phys_j = pressure[j] * a_inv3_gamma;
+                                double c_phys_j =
+                                    (rho_phys_j > 1e-12)
+                                        ? std::sqrt(gamma * p_phys_j /
+                                                    rho_phys_j)
                                         : 0.0;
 
-                                // Relative velocity: (v_j - v_i)
-                                double dvx = vel_x[j] - v1_x;
-                                double dvy = vel_y[j] - v1_y;
-                                double dvz = vel_z[j] - v1_z;
+                                // Physical relative velocity
+                                double dvx_phys =
+                                    (vel_x[j] * a_inv) - v1_x_phys;
+                                double dvy_phys =
+                                    (vel_y[j] * a_inv) - v1_y_phys;
+                                double dvz_phys =
+                                    (vel_z[j] * a_inv) - v1_z_phys;
 
-                                // Dot product: (v_j - v_i) dot (x_j - x_i)
-                                // Note: Mathematically identical to (v_i -
-                                // v_j) dot (x_i - x_j) from Eq. 25
-                                double dv_dot_dx =
-                                    dvx * dx + dvy * dy + dvz * dz;
+                                // Geometric projection (The 'a' factors cancel
+                                // out perfectly in dx/r)
+                                double dv_dot_dx_phys = dvx_phys * dx +
+                                                        dvy_phys * dy +
+                                                        dvz_phys * dz;
 
-                                // Equation 25: c_{s,i} + c_{s,j}
-                                double v_sig_ij = c_i + c_j;
+                                double v_sig_ij_phys = c_phys_i + c_phys_j;
 
-                                // Equation 25: - MIN(0, (dv dot dx) / r)
-                                if (dv_dot_dx < 0.0) {
-                                    v_sig_ij -= dv_dot_dx / r;
+                                if (dv_dot_dx_phys < 0.0) {
+                                    v_sig_ij_phys -= dv_dot_dx_phys / r;
                                 }
 
-                                // Equation 25: MAX_j [...]
-                                if (v_sig_ij > v_sig_max) {
-                                    v_sig_max = v_sig_ij;
+                                if (v_sig_ij_phys > v_sig_max_phys) {
+                                    v_sig_max_phys = v_sig_ij_phys;
                                 }
                             }
                         }
@@ -1129,11 +1137,9 @@ double GasParticleSystem::get_cfl_timestep(const Config& config) const {
             }
         }
 
-        // Equation 24: dt_i = 2 * C_CFL * (h_i / v_sig_max)
-        // We remove the 2 factor so that the CFL factor config is
-        // similar for the eulerian mesh and MFM
-        if (v_sig_max > 1e-9) {
-            double dt_i = h_i / v_sig_max;
+        if (v_sig_max_phys > 1e-9) {
+            // Physical distance (a * h_i) divided by physical signal velocity
+            double dt_i = (a * h_i) / v_sig_max_phys;
             if (dt_i < min_dt) {
                 min_dt = dt_i;
             }
@@ -2026,18 +2032,18 @@ void GasParticleSystem::hydro_step(const Config& config, double a, double H,
     compute_gradients(config);
     compute_hydro_forces(config, a, dt);
 
-   /* // Revert prediction (Back to t^{n+1/2})
-    // So "Kick 2" applies the newly computed forces
-    for (size_t i = 0; i < num_particles; ++i) {
-        vel_x[i] -= (old_ax[i] * inv_a + acc_x[i] / a3) * dt_half;
-        vel_y[i] -= (old_ay[i] * inv_a + acc_y[i] / a3) * dt_half;
-        vel_z[i] -= (old_az[i] * inv_a + acc_z[i] / a3) * dt_half;
-        u[i] =
-            (u[i] - old_dudt[i] * inv_a * dt_half) / (1.0 - expansion_factor);
-    }
+    /* // Revert prediction (Back to t^{n+1/2})
+     // So "Kick 2" applies the newly computed forces
+     for (size_t i = 0; i < num_particles; ++i) {
+         vel_x[i] -= (old_ax[i] * inv_a + acc_x[i] / a3) * dt_half;
+         vel_y[i] -= (old_ay[i] * inv_a + acc_y[i] / a3) * dt_half;
+         vel_z[i] -= (old_az[i] * inv_a + acc_z[i] / a3) * dt_half;
+         u[i] =
+             (u[i] - old_dudt[i] * inv_a * dt_half) / (1.0 - expansion_factor);
+     }
 
-    // Re-sync the pressure back to n+1/2 so the CFL checker is accurate
-    update_primitive_variables(config, a);*/
+     // Re-sync the pressure back to n+1/2 so the CFL checker is accurate
+     update_primitive_variables(config, a);*/
 }
 
 void GasParticleSystem::update_primitive_variables(const Config& config,
@@ -3013,36 +3019,57 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                             // solved along the A_ij axis.
                             face.n = Area_vec / A_mag;
 
-                            // Frame Boosting & Riemann Solver
+                            // Frame Boosting
                             double fraction_i = p_i.h / (p_i.h + p_j.h);
                             double fraction_j = 1.0 - fraction_i;
                             Eigen::Vector3d v_frame =
                                 p_i.vel + fraction_i * (p_j.vel - p_i.vel);
 
-                            // Because face.n is Area_vec.normalized(), vn_L
-                            // and vn_R inside this function will be
-                            // correctly projected onto the true face.
-                            MFMFaceFlux flux_1d =
-                                solve_mfm_riemann(face, v_frame, config.gamma);
+                            // Convert to physical units for Riemann solver
+                            // OpenGadget3 Paper Eq. 20-24
+                            double a_inv = 1.0 / a;
+                            double a_inv3 = a_inv * a_inv * a_inv;
+                            double a_inv3_gamma =
+                                std::pow(a_inv, 3.0 * config.gamma);
 
-                            // Apply Vector Fluxes
-                            Eigen::Vector3d Force_mom =
-                                flux_1d.P_star * Area_vec;
+                            ReconstructedFace face_phys =
+                                face;  // Copy normal vector and validity
+                            face_phys.rho_L = face.rho_L * a_inv3;
+                            face_phys.rho_R = face.rho_R * a_inv3;
+                            face_phys.p_L = face.p_L * a_inv3_gamma;
+                            face_phys.p_R = face.p_R * a_inv3_gamma;
+                            face_phys.v_L = face.v_L * a_inv;
+                            face_phys.v_R = face.v_R * a_inv;
+
+                            Eigen::Vector3d v_frame_phys = v_frame * a_inv;
+
+                            // Solve the Riemann problem in the pure physical
+                            // frame
+                            MFMFaceFlux flux_1d_phys = solve_mfm_riemann(
+                                face_phys, v_frame_phys, config.gamma);
+
+                            // Back to comoving
+                            double a_3gamma = std::pow(a, 3.0 * config.gamma);
+                            double P_star_com = flux_1d_phys.P_star * a_3gamma;
+                            double S_star_com = flux_1d_phys.S_star * a;
+
+                            // Apply fluxes (comoving)
+                            Eigen::Vector3d Force_mom = P_star_com * Area_vec;
                             Eigen::Vector3d v_star_lab =
-                                v_frame + (flux_1d.S_star * face.n);
+                                v_frame + (S_star_com * face.n);
 
                             double work_i =
-                                flux_1d.P_star *
+                                P_star_com *
                                 (v_star_lab - p_i.vel).dot(Area_vec);
                             double work_j =
-                                flux_1d.P_star *
+                                P_star_com *
                                 (v_star_lab - p_j.vel).dot(Area_vec);
 
                             double du_dt_i = -work_i / p_i.mass;
                             double du_dt_j = work_j / p_j.mass;
 
                             double Rate_energy =
-                                flux_1d.P_star * v_star_lab.dot(Area_vec);
+                                P_star_com * v_star_lab.dot(Area_vec);
                             double de_dt_i = -Rate_energy / p_i.mass;
                             double de_dt_j = Rate_energy / p_j.mass;
 

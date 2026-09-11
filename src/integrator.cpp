@@ -637,7 +637,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
             double dt_h = std::min(config.hydro_method == HydroMethod::Eulerian
                                        ? state.gas->get_cfl_timestep()
                                    : config.hydro_method == HydroMethod::MFM
-                                       ? state.mfm_gas->get_cfl_timestep(config)
+                                       ? state.mfm_gas->get_cfl_timestep(state.scale_factor, config)
                                        : ts.dt_macro,
                                    ts.dt_macro - t_sub);
 

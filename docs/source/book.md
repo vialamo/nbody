@@ -2275,15 +2275,13 @@ To resolve this, the MFM implementation employs a dual energy formalism. Rather 
 
 $$\frac{dU}{dt} = \frac{dE}{dt} - \mathbf{v} \cdot \frac{d\mathbf{P}}{dt}$$
 
-where $E$ is the total energy and $\mathbf{P}$ is the momentum. Since MFM doesn't allow inter-particle mass fluxes, this formulation is equivalent to accumulating the $P dV$ work done by the fluxes at the effective faces. By trusting this integrated internal energy to determine the local pressure, the method sacrifices total energy conservation in favor of maintaining accurate temperatures in hypersonic and gravity-dominated flows.
+where $E$ is the total energy and $\mathbf{P}$ is the momentum. Since MFM doesn't allow inter-particle mass fluxes, this is equivalent to accumulating the $P dV$ work done by the fluxes at the effective faces.
 
-#### Extreme Mach Number Fallback
+When trusting this integrated internal energy to determine the local pressure, the method sacrifices total energy conservation in favor of maintaining accurate temperatures in hypersonic and gravity-dominated flows. For these cases, an entropy-based fallback switch is implemented.
 
-To implement the dual energy formalism, an entropy-based fallback switch is implemented.
+At each timestep, the expected thermal energy of a particle is compared against the maximum kinetic energy of its interacting neighbors and the work done by local gravitational forces. If the thermal energy falls below a conservative threshold (typically $\approx 0.1\%$) of these kinetic or gravitational energies, the Riemann solver's internal energy update is bypassed. Instead, the thermal energy is calculated as if the flow were undergoing purely adiabatic expansion, utilizing a passively tracked entropy variable ($S$). 
 
-At each timestep, the expected thermal energy of a particle is compared against the maximum kinetic energy of its interacting neighbors and the work done by local gravitational forces. If the thermal energy falls below a conservative threshold (typically $\approx 0.1\%$) of these kinetic or gravitational energies, the Riemann solver's internal energy update is bypassed. Instead, the thermal energy is calculated as if the flow were undergoing purely adiabatic expansion, utilizing a passively tracked entropy variable. 
-
-In this context, "entropy" refers to the entropic function $S$, which dictates the relationship between pressure and density along an adiabatic fluid streamline via $P = S \rho^\gamma$. It is computed from the specific internal energy $u$ and density $\rho$ using the relation $S = (\gamma - 1) u / \rho^{\gamma - 1}$. When the fallback is triggered, the internal energy is overridden and recalculated from the current density using this stored entropy. Under normal shock conditions, this switch remains inactive, and the passive entropy array simply resynchronizes to the new, shock-heated state calculated by the Riemann solver.
+The entropic function, $S$, dictates the relationship between pressure and density along an adiabatic fluid streamline via $P = S \rho^\gamma$. It is computed from the specific internal energy $u$ and density $\rho$ using the relation $S = (\gamma - 1) u / \rho^{\gamma - 1}$. When the fallback is triggered, the internal energy is overridden and recalculated from the current density using this stored entropy. Under normal shock conditions, this switch remains inactive, and the passive entropy array simply resynchronizes to the new, shock-heated state calculated by the Riemann solver.
 
 ### Adaptive Gravitational Softening
 
@@ -2299,7 +2297,7 @@ Expanding this to leading order (i.e., zeroth order, treating the fluid properti
 
 $$dm_i \approx m_i W(x - x_i, h_i) d^\nu x$$
 
-This way, we treat the fluid cells in the $N$-body solver as standard particles "softened" by the same kernel function used for the hydrodynamics, matching the kernel length $h_i$. On scales larger than $h_i$, the potential and the force match that of a Newtonian point mass. Inside the kernel radius, the gravitational potential $\Phi_i \equiv G m_i \phi_i$ is computed by integrating Poisson's equation over the kernel mass distribution.
+This way, we treat the fluid cells in the $N$-body solver as standard particles "softened" by the same kernel function used for the hydrodynamics, matching the kernel length $h_i$. On scales larger than $h_i$, the potential and the force match that of a Newtonian point mass. Inside the kernel radius, the gravitational potential $\Phi_i \equiv G m_i \phi_i$ (where $\phi_i$ represents the gravitationally softened potential) is computed by integrating Poisson's equation over the kernel mass distribution.
 
 #### Conservative Force Law
 
@@ -2335,7 +2333,7 @@ During the subsequent gravity loop, these pre-computed $\zeta$ values are utiliz
 
 ### Initializing the Meshless Finite Mass (MFM) Gas
 
-The initial conditions for the MFM gas particles are generated using the sane Zel'dovich Approximation displacement field used for the Dark Matter. However, there are some differences.
+The initial conditions for the MFM gas particles are generated using the same Zel'dovich Approximation displacement field used for the Dark Matter. However, there are some differences.
 
 #### The Interleaved Lattice
 

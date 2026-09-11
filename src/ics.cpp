@@ -719,6 +719,8 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
         gas.update_primitive_variables(state.scale_factor);
 
     } else if (config.hydro_method == HydroMethod::MFM) {
+// #define USE_FCC_FOR_SEDOV
+#ifdef USE_FCC_FOR_SEDOV
         // Use a Face-Centered Cubic (FCC) lattice.
         // FCC is close-packed (12 equidistant nearest neighbors) and tiles
         // inside a cubic box.
@@ -781,16 +783,63 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
 
         // Inject energy and initialize particles
         constexpr bool smooth_energy_injection = false;
+        constexpr bool spread_over_N_particles = false;
 
-        // Find the central particle for single-particle injection
-        double min_r = std::numeric_limits<double>::max();
-        size_t central_idx = 0;
+        std::vector<size_t> central_indices;
+
         if (!smooth_energy_injection) {
-            for (size_t i = 0; i < pdata.size(); ++i) {
-                if (pdata[i].r < min_r) {
-                    min_r = pdata[i].r;
-                    central_idx = i;
+            if (spread_over_N_particles) {
+                // Create a list of pairs (radius, index) to find the closest
+                // particles
+                std::vector<std::pair<double, size_t>> r_idx_pairs;
+                r_idx_pairs.reserve(pdata.size());
+                for (size_t i = 0; i < pdata.size(); ++i) {
+                    r_idx_pairs.push_back({pdata[i].r, i});
                 }
+
+                // Sort by distance to the center
+                std::sort(r_idx_pairs.begin(), r_idx_pairs.end(),
+                          [](const std::pair<double, size_t>& a,
+                             const std::pair<double, size_t>& b) {
+                              return a.first < b.first;
+                          });
+
+                // Dynamic shell selection for any lattice
+                double min_r = r_idx_pairs[0].first;
+                double shell_radius = 0.0;
+
+                if (min_r < 1e-6) {
+                    // Center lands on a particle.
+                    // We want this particle (1) + its first shell of nearest
+                    // neighbors (12 for FCC) = 13 total.
+                    shell_radius =
+                        r_idx_pairs[1].first *
+                        1.01;  // 1% tolerance for floating point math
+                } else {
+                    // Center lands in a void.
+                    // Grab all particles that make up the symmetric void (e.g.,
+                    // 6 for octahedral).
+                    shell_radius = min_r * 1.01;
+                }
+
+                // Extract all particles within this symmetric shell
+                for (size_t i = 0; i < r_idx_pairs.size(); ++i) {
+                    if (r_idx_pairs[i].first <= shell_radius) {
+                        central_indices.push_back(r_idx_pairs[i].second);
+                    } else {
+                        break;  // Since the array is sorted, we can stop here
+                    }
+                }
+            } else {
+                double min_r = std::numeric_limits<double>::max();
+                size_t central_idx = 0;
+                for (size_t i = 0; i < pdata.size(); ++i) {
+                    if (pdata[i].r < min_r) {
+                        min_r = pdata[i].r;
+                        central_idx = i;
+                    }
+                }
+                central_indices.push_back(central_idx);
             }
         }
 
@@ -806,8 +855,14 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
                     particle_u += (injected_E / gas_particle_mass);
                 }
             } else {
-                if (i == central_idx) {
-                    particle_u += (E_total / gas_particle_mass);
+                // Check if the current particle is one of the chosen central
+                // particles
+                if (std::find(central_indices.begin(), central_indices.end(),
+                              i) != central_indices.end()) {
+                    // Divide the total energy equally among the central
+                    // particles
+                    double injected_E = E_total / central_indices.size();
+                    particle_u += (injected_E / gas_particle_mass);
                 }
             }
 
@@ -815,6 +870,154 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
                                         gas_particle_mass, particle_u,
                                         initial_h, seed_metallicity);
         }
+#else
+        // Use a Simple Cubic lattice (regular grid),
+        // matching the OpenGadget3 Sedov blastwave setup
+
+        int M = N_res;
+        if (M < 1) M = 1;
+
+        int total_particles = M * M * M;
+        double dx = L / static_cast<double>(M);
+
+        double gas_particle_mass =
+            rho_bg * (L * L * L) / static_cast<double>(total_particles);
+
+        double effective_dx = dx;
+        double initial_h = 2.0 * effective_dx;
+
+        struct PartData {
+            double x, y, z, r, weight;
+        };
+        std::vector<PartData> pdata;
+        pdata.reserve(total_particles);
+
+        double w_sum = 0.0;
+
+        // Lay out Simple Cubic particles and calculate energy weights
+        for (int i = 0; i < M; ++i) {
+            for (int j = 0; j < M; ++j) {
+                for (int k = 0; k < M; ++k) {
+                    // Place particles at cell centers
+                    double p_x = (i + 0.5) * dx;
+                    double p_y = (j + 0.5) * dx;
+                    double p_z = (k + 0.5) * dx;
+
+                    // Periodic wrap (mostly for safety on floating point
+                    // bounds)
+                    p_x = std::fmod(p_x + L, L);
+                    p_y = std::fmod(p_y + L, L);
+                    p_z = std::fmod(p_z + L, L);
+
+                    double r = std::sqrt((p_x - center) * (p_x - center) +
+                                         (p_y - center) * (p_y - center) +
+                                         (p_z - center) * (p_z - center));
+
+                    // Gaussian energy smoothing
+                    double w = 0.0;
+                    if (r < 3.0 * R_inj) {
+                        w = std::exp(-(r * r) / (R_inj * R_inj));
+                    }
+                    w_sum += w;
+
+                    pdata.push_back({p_x, p_y, p_z, r, w});
+                }
+            }
+        }
+
+        // Inject energy and initialize particles
+        constexpr bool smooth_energy_injection = false;
+
+        // Toggle to true to replicate OpenGadget3's 8-particle split
+        constexpr bool spread_over_N_particles = true;
+
+        std::vector<size_t> central_indices;
+
+        if (!smooth_energy_injection) {
+            if (spread_over_N_particles) {
+                // Create a list of pairs (radius, index) to find the closest
+                // particles
+                std::vector<std::pair<double, size_t>> r_idx_pairs;
+                r_idx_pairs.reserve(pdata.size());
+                for (size_t i = 0; i < pdata.size(); ++i) {
+                    r_idx_pairs.push_back({pdata[i].r, i});
+                }
+
+                // Sort by distance to the center
+                std::sort(r_idx_pairs.begin(), r_idx_pairs.end(),
+                          [](const std::pair<double, size_t>& a,
+                             const std::pair<double, size_t>& b) {
+                              return a.first < b.first;
+                          });
+
+                // Dynamic shell selection for any lattice
+                double min_r = r_idx_pairs[0].first;
+                double shell_radius = 0.0;
+
+                if (min_r < 1e-6) {
+                    // Center lands directly on a particle (e.g., odd N_res).
+                    // We want this particle (1) + its first shell of nearest
+                    // neighbors (6 for Simple Cubic) = 7 total.
+                    shell_radius =
+                        r_idx_pairs[1].first *
+                        1.01;  // 1% tolerance for floating point math
+                } else {
+                    // Center lands in a void (e.g., even N_res).
+                    // Grab all particles that make up the symmetric void.
+                    // For an even SC grid, this naturally selects the 8 central
+                    // particles.
+                    shell_radius = min_r * 1.01;
+                }
+
+                // Extract all particles within this symmetric shell
+                for (size_t i = 0; i < r_idx_pairs.size(); ++i) {
+                    if (r_idx_pairs[i].first <= shell_radius) {
+                        central_indices.push_back(r_idx_pairs[i].second);
+                    } else {
+                        break;  // Since the array is sorted, we can stop here
+                    }
+                }
+            } else {
+                double min_r = std::numeric_limits<double>::max();
+                size_t central_idx = 0;
+                for (size_t i = 0; i < pdata.size(); ++i) {
+                    if (pdata[i].r < min_r) {
+                        min_r = pdata[i].r;
+                        central_idx = i;
+                    }
+                }
+                central_indices.push_back(central_idx);
+            }
+        }
+
+        // Inject energy and initialize particles
+        for (size_t i = 0; i < pdata.size(); ++i) {
+            const auto& pd = pdata[i];
+            double particle_u = u_bg;
+
+            if (smooth_energy_injection) {
+                // Distribute E_total based on the gaussian weights
+                if (pd.weight > 0.0 && w_sum > 0.0) {
+                    double injected_E = E_total * (pd.weight / w_sum);
+                    particle_u += (injected_E / gas_particle_mass);
+                }
+            } else {
+                // Check if the current particle is one of the chosen central
+                // particles
+                if (std::find(central_indices.begin(), central_indices.end(),
+                              i) != central_indices.end()) {
+                    // Divide the total energy equally among the central
+                    // particles
+                    double injected_E = E_total / central_indices.size();
+                    particle_u += (injected_E / gas_particle_mass);
+                }
+            }
+
+            state.mfm_gas->add_particle(pd.x, pd.y, pd.z, 0.0, 0.0, 0.0,
+                                        gas_particle_mass, particle_u,
+                                        initial_h, seed_metallicity);
+        }
+#endif
     }
 }
 
