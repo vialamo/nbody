@@ -101,9 +101,15 @@ def validate_sedov_interactive(snapshot_dir):
             times.append(t)
             
             method = f['Config'].attrs.get('hydro_method', b'none').decode('utf-8')
+
+            # Read all accumulated work/energy terms
+            ph_e = f['Gas'].attrs.get('accumulated_photoheating_energy', 0.0)
+            e_rad = f['Gas'].attrs.get('cumulative_radiated_energy', 0.0)
+            w_grav = f['Gas'].attrs.get('cumulative_gravitational_work', 0.0)
+            w_exp = f['Gas'].attrs.get('cumulative_expansion_work', 0.0)
+
             if method == "mfm":
                 sw_e = f['Gas'].attrs.get('cumulative_entropy_switch_energy', 0.0)
-                ph_e = f['Gas'].attrs.get('accumulated_photoheating_energy', 0.0)
                 clamp_h = f['Gas'].attrs.get('clamped_h_cases', 0)
                 
                 mass = f['Gas/mass'][:]
@@ -133,8 +139,10 @@ def validate_sedov_interactive(snapshot_dir):
             if E_initial is None:
                 E_initial = E_tot
                 
-            # Subtract ALL legitimate artificial energy sources from the error calculation
-            err = (E_tot - E_initial - sw_e - ph_e) / E_initial if E_initial != 0 else 0
+            delta_e = E_tot - E_initial
+            absolute_error = delta_e - w_grav + w_exp + e_rad - ph_e
+            
+            err = absolute_error / E_initial if E_initial != 0 else 0
             e_errors.append(err)
 
     times = np.array(times)

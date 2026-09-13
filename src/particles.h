@@ -7,15 +7,24 @@
 class Diagnostics;
 class GasGrid;
 
-// Encapsulates a flat-array for particle binning
-struct CellList {
-    std::vector<int> cell_start;  // Size: num_cells
-    std::vector<int> cell_count;  // Size: num_cells
+struct BoundingBox {
+    double min_x, min_y, min_z;
+    double max_x, max_y, max_z;
+};
 
-    void resize(int num_cells, int num_parts) {
-        cell_start.assign(num_cells, 0);
-        cell_count.assign(num_cells, 0);
-    }
+struct BVHNode {
+    int parent;
+    int left_child;
+    int right_child;
+    int particle_idx;  // Refers to the sorted particle array; -1 if internal
+                       // node
+
+    BoundingBox bbox;  // Used for intersection tests
+    double max_h;      // Maximum smoothing length in this branch
+
+    // Multipole data for Barnes-Hut Gravity
+    double mass;
+    double com_x, com_y, com_z;
 };
 
 class ParticleSystem {
@@ -25,7 +34,10 @@ class ParticleSystem {
     friend struct ParticleTestAccess;
 
    public:
-    CellList cell_list;
+    std::vector<uint64_t> morton_codes;
+    std::vector<int> sorted_indices;
+    std::vector<BVHNode> bvh_nodes;
+
     Grid3D dm_rho;
 
     size_t num_particles = 0;
@@ -51,6 +63,7 @@ class ParticleSystem {
 
     ParticleSystem(const Config& config);
 
+    void build_lbvh(const Config& config);
     void bin_and_assign_mass(const Config& config);
 
     void interpolate_cic_forces(const Grid3D& ax_grid, const Grid3D& ay_grid,
@@ -70,17 +83,10 @@ class ParticleSystem {
                       double vz, double m);
 };
 
-
 void compute_and_add_generic_pp_forces(
-    size_t n_parts,
-    const double* __restrict__ pos_x,
-    const double* __restrict__ pos_y,
-    const double* __restrict__ pos_z,
-    const double* __restrict__ mass,
-    double* __restrict__ acc_x,
-    double* __restrict__ acc_y,
-    double* __restrict__ acc_z,
-    const int* __restrict__ cell_start,
-    const int* __restrict__ cell_count,
-    const Config& config,
+    size_t n_parts, const double* __restrict__ pos_x,
+    const double* __restrict__ pos_y, const double* __restrict__ pos_z,
+    const double* __restrict__ mass, double* __restrict__ acc_x,
+    double* __restrict__ acc_y, double* __restrict__ acc_z,
+    const BVHNode* __restrict__ bvh_nodes, const Config& config,
     Diagnostics& diag);

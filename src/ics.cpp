@@ -1034,6 +1034,7 @@ SimState initialize_state(Config& config) {
 
         // Dark Matter Step
         initialize_dm(state, config, z_field);
+        state.dm.build_lbvh(config);
         state.dm.bin_and_assign_mass(config);
 
         // Gas Step

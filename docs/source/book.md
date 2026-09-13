@@ -2668,6 +2668,185 @@ Almgren, A. S., Bell, J. B., Lijewski, M. J., Lukić, Z., & Van Andel, E. (2013)
 
 Strang, G. (1968). *On the construction and comparison of difference schemes.* SIAM Journal on Numerical Analysis, 5(3), 506-517. Available at [https://www.pas.rochester.edu/astrobear/raw-attachment/blog/shuleli08202013/Strang1968.pdf](https://www.pas.rochester.edu/astrobear/raw-attachment/blog/shuleli08202013/Strang1968.pdf)
 
+
+## Spatial Partitioning and the LBVH
+
+While the Particle-Mesh (PM) method solves the long-range forces, the P³M algorithm still requires direct Particle-Particle (PP) calculations for close neighbors. Furthermore, the Meshless Finite Mass (MFM) hydrodynamics solver requires gas particles to find their nearest neighbors to partition volume, estimate spatial gradients, and compute Riemann fluxes across effective faces. 
+
+To make these local searches computationally viable, we must subdivide the simulation space. The spatial partitioning must dynamically adapt to the clustering of matter, providing high resolution in dense zones and coarse resolution in empty voids.
+
+### The Oct-Tree Concept
+
+An **Oct-Tree** is a hierarchical data structure that divides 3D space recursively. The process begins by treating the entire simulation box as a single cube (the "root" node). If this root cube contains more than one particle, it is sliced in half along the X, Y, and Z axes, creating 8 smaller sub-cubes (octants).
+
+The algorithm then looks at each of these 8 new octants. If an octant is empty, it is ignored. If it contains only one particle, it becomes a "leaf" node. If it contains multiple particles, it is subdivided into 8 even smaller octants. This recursive slicing continues until every particle sits isolated in its own custom-sized bounding box.
+
+This hierarchy drops the computational cost of spatial searches. When an MFM gas particle searches for its neighbors, it checks the Axis-Aligned Bounding Box (AABB) of the tree nodes. If the particle's search sphere does not intersect a node's bounding box, the algorithm ignores that node and all the particles inside it, saving unnecessary distance calculations.
+
+### The Barnes-Hut Algorithm
+
+While hydrodynamics uses the tree to find nearby neighbors, the gravity solver uses the tree to handle the vast distances of the cosmos.
+
+In 1986, Josh Barnes and Piet Hut introduced an algorithm that leveraged this hierarchical tree structure to solve the $O(N^2)$ gravitational bottleneck. Their method, known as the **Barnes-Hut algorithm**, allows us to group distant particles together and approximate their collective gravitational pull.
+
+A Barnes-Hut tree calculates the total mass and the Center of Mass for every internal node (bounding box) in the hierarchy. When calculating the gravitational pull on a specific particle, the algorithm traverses the tree starting from the root.
+
+For each node it encounters, it evaluates a geometric rule known as the **Multipole Acceptance Criterion (MAC)**. This criterion is defined by the ratio between the physical size of the node ($L$) and the distance from the particle to the node's center of mass ($d$). The algorithm compares this ratio against a dimensionless accuracy threshold, $\theta$ (typically set around $\theta \approx 0.5$):
+
+* **If the threshold is exceeded ($L/d \ge \theta$):** The node is considered too close for the multipole approximation to be accurate. The algorithm opens the node and looks at the smaller sub-cubes inside it, repeating the MAC check. If it reaches the bottom of the tree (a leaf node), it performs a direct Particle-Particle (PP) calculation.
+* **If the threshold is not exceeded ($L/d < \theta$):** The node is considered sufficiently distant. The algorithm halts its traversal down that branch and treats the entire node as a single point mass located at its Center of Mass.
+
+By lumping distant structures into single, coarse computations, the Barnes-Hut algorithm prunes the majority of the tree, dropping the computational cost of gravity from $O(N^2)$ to $O(N \log N)$.
+
+### The Multipole Expansion
+
+To justify treating a distant branch as a single point mass, we must look at the Newtonian formula. Suppose we want to calculate the gravitational potential $\Phi$ at a location, defined by the vector $\mathbf{r}$, caused by a distant, irregular blob of $N$ particles.
+
+The potential is the sum of the pulls from every individual particle $i$ (with mass $m_i$ and position vector $\mathbf{r}_i$) inside the blob:
+
+$$\Phi(\mathbf{r}) = -G \sum_{i=1}^{N} \frac{m_i}{\vert{}\mathbf{r} - \mathbf{r}_i\vert{}}$$
+
+Calculating this requires an $O(N)$ loop over every particle in the blob. However, because the MAC guarantees the node is far away, the distance $r$ to the blob is much larger than the distance of any internal particle from the center of the blob ($r \gg r_i$).
+
+When a fraction has a very small variable in the denominator, we can approximate it using a **Taylor series**. By expanding the distance fraction $\frac{1}{\vert{}\mathbf{r} - \mathbf{r}_i\vert{}}$ based on the small ratio $\frac{r_i}{r}$, the equation unfolds into a **multipole expansion**—a sum of decreasing mathematical terms representing increasingly detailed geometric shapes:
+
+$$\Phi(\mathbf{r}) = \Phi_{\text{monopole}} + \Phi_{\text{dipole}} + \Phi_{\text{quadrupole}} + \dots$$
+
+Here is the breakdown of these terms:
+
+**1. The Monopole (0th Order)**
+The first term in the Taylor expansion ignores the internal positions of the particles ($\mathbf{r}_i$):
+
+$$\Phi_{\text{monopole}} = -\frac{G}{r} \sum_{i=1}^{N} m_i = -\frac{GM}{r}$$
+
+This is the equation for a point mass. Its gravitational pull decays as $1/r$.
+
+**2. The Dipole (1st Order)**
+The second term introduces the first power of the internal particle positions, describing how "off-center" the mass distribution is. Its strength decays faster, scaling as $1/r^2$:
+
+$$\Phi_{\text{dipole}} = -\frac{G}{r^3} \mathbf{r} \cdot \left( \sum_{i=1}^{N} m_i \mathbf{r}_i \right)$$
+
+Notice the term in the parentheses: the sum of mass times position. By definition, the Center of Mass (CoM) is the point where $\sum m_i \mathbf{r}_i = 0$. By anchoring our Barnes-Hut tree nodes at their Center of Mass, this term conveniently cancels out to zero.
+
+**3. The Quadrupole (2nd Order)**
+The third term scales as $1/r^3$. It accounts for the squared positions of the particles, tracking how stretched or squished the blob is along different spatial axes (e.g., spherical, cigar-shaped, pancake-shaped):
+
+$$\Phi_{\text{quadrupole}} = -\frac{G}{2r^5} \sum_{i=1}^{N} m_i \left[ 3(\mathbf{r} \cdot \mathbf{r}_i)^2 - r^2 r_i^2 \right]$$
+
+We can factor this equation to separate the external position vector ($\mathbf{r}$) from the internal properties of the mass blob ($\mathbf{r}_i$). This allows us to encapsulate the blob's internal geometry into a single $3 \times 3$ matrix called the **Quadrupole Moment Tensor**:
+
+$$Q_{jk} = \sum_{i=1}^{N} m_i \left( 3 r_{i,j} r_{i,k} - r_i^2 \delta_{jk} \right)$$
+
+Where $j$ and $k$ represent the X, Y, and Z coordinate axes (e.g., $r_{i,1}$ is the x-coordinate of particle $i$), and $\delta_{jk}$ is the Kronecker delta (which equals 1 if $j=k$, and 0 otherwise). This matrix calculates the variance and covariance of the mass along the different spatial axes.
+
+* If the blob is a sphere, the mass variances along the X, Y, and Z axes are identical, and the matrix cancels out to zero.
+* If the blob is shaped like a cigar pointing along the X-axis, the $x^2$ variance will be much larger than $y^2$ or $z^2$.
+
+Once this $3 \times 3$ matrix is pre-calculated and stored for a tree node, the quadrupole contribution to the gravitational potential at any distant point $\mathbf{r} = (r_1, r_2, r_3)$ can be quickly evaluated using matrix multiplication:
+$$\Phi_{\text{quadrupole}} = -\frac{G}{2r^5} \sum_{j=1}^{3} \sum_{k=1}^{3} Q_{jk} r_j r_k$$
+
+**Why Barnes-Hut Stops at the Monopole**
+
+If we wanted an ultra-precise Barnes-Hut tree, we could calculate the Quadrupole Moment Tensor ($3 \times 3$ matrix) for every single node in the tree and store it. When calculating gravity, we would compute the monopole (point mass) and then add the quadrupole correction using matrix multiplication.
+
+However, matrix multiplication is computationally expensive. Because the quadrupole effect decays rapidly as $1/r^3$, its physical influence vanishes over short distances. The Multipole Acceptance Criterion (MAC) ensures we only evaluate nodes where $r$ is so massive that the $1/r^3$ quadrupole fraction shrinks below our acceptable margin of error. Enforcing the MAC allows us to process gravity using fast, simple point masses.
+
+### The Linear Bounding Volume Hierarchy (LBVH)
+
+To leverage the power of a GPU, we must flatten the 3D spatial partitioning of an oct-tree into a continuous, 1D array of data.
+
+This structure is known as a **Linear Bounding Volume Hierarchy (LBVH)**. In an LBVH, the nodes of the tree are packed together in a single array. Instead of a parent node pointing to a memory address, it stores the integer index of its children (e.g., `left_child = 52`). Because arrays are contiguous blocks of memory, the GPU can stream this data into its processors at maximum bandwidth.
+
+To flatten a 3D tree into a 1D array while ensuring that particles that are next to each other in the 3D box sit next to each other in the 1D array we can use a technique developed in the 1960s: **Morton Codes**.
+
+### Morton Codes and the Z-Order Curve
+
+A Morton code is maps multi-dimensional data onto one dimension while preserving spatial locality. It achieves this by interleaving the binary bits of a particle's coordinates.
+
+To do this, we first take a particle's floating-point coordinates $(x, y, z)$ and normalize them to the size of the simulation box. We then scale these coordinates into integers. To fit inside a standard 64-bit integer, we use 21 bits for each dimension (since $21 \times 3 = 63$ bits, leaving one bit for safety).
+
+Let's look at a simplified example. Imagine we have a particle at integer coordinates $X = 5$, $Y = 3$, and $Z = 6$.
+If we write these numbers in binary (using just 3 bits for this example), we get:
+
+* $X = 101_2$
+* $Y = 011_2$
+* $Z = 110_2$
+
+To generate the Morton code, we interleave these bits, taking one bit from $Z$, one from $Y$, and one from $X$, over and over.
+
+* We take the first bits: **1** from Z, **0** from Y, **1** from X $\rightarrow$ `101`
+* We take the second bits: **1** from Z, **1** from Y, **0** from X $\rightarrow$ `110`
+* We take the third bits: **0** from Z, **1** from Y, **1** from X $\rightarrow$ `011`
+
+Stitching them together gives us the final Morton code: `101110011`.
+
+For every particle, we generate a unique 64-bit integer representing its position in 3D space. The Morton codes are then used as sorting keys: we reorder our particle list from the smallest Morton code to the largest to get the flat 1D array. 
+
+To handle collisions, the sorting algorithm utilizes a deterministic tie-breaker. If two Morton codes are identical, the algorithm compares the particles' original, unique ID numbers to decide which one goes first.
+
+If we trace the path created by counting upward through these Morton codes, the path traces a distinct "Z" shape that repeatedly subdivides space, creating a fractal pattern known as the **Z-Order Curve**.
+
+This curve acts like a single, unbroken string folded tightly back and forth to completely fill the 3D simulation box. The convenience of this string is that if two particles are physically close to each other in the 3D box, their Morton codes will (in the majority of cases) be close to each other.
+
+### The Karras Tree Construction
+
+A sorted list of particles based on their Morton codes is not a tree. We still need to build the hierarchy of bounding boxes—the internal nodes—that group these particles together.
+
+In 2012, Tero Karras published an algorithm that allowed to build the tree in parallel. He realized that if the particles are sorted by their Morton codes, the geometric structure of the oct-tree is *already implicitly defined* by the binary numbers themselves.
+
+Because Morton codes interleave spatial coordinates, the **Longest Common Prefix** (the number of identical bits at the beginning of two codes) tells us how close two particles are. If two adjacent particles share a long sequence of identical starting bits, it means they sit deep inside the same sub-region of the simulation box. The first bit where they differ indicates the geometric plane where they split into separate branches.
+
+Here is how we implemented the Karras algorithm in our code:
+
+#### 1. Defining the Topology (Parallel Split)
+
+For $N$ particles (the leaves), a binary tree will have $N-1$ internal branching nodes. In our flat arrays, indices $0$ to $N-2$ are internal nodes, and indices $N-1$ to $2N-2$ are the particle leaves.
+
+Because there are $N-1$ internal nodes, we can launch one GPU thread for every single internal node simultaneously. Each thread looks at its corresponding index in the sorted Morton array and performs three lock-free steps:
+
+1. **Find the Range:** It compares adjacent Morton codes to determine the upper and lower bounds of the specific cluster of particles it is responsible for.
+
+2. **Find the Split:** Using a binary search over the Morton codes, it finds the index where the highest differing bit occurs. This is the spatial plane that divides its cluster into a left half and a right half.
+
+3. **Assign Children:** It assigns the left side to its `left_child` and the right side to its `right_child`.
+
+Because this relies on reading the sorted Morton array, the entire hierarchy can be built in parallel.
+
+#### 2. Bottom-Up Aggregation
+
+Once the topology is wired, the nodes are just empty shells. We must fill them with physical data: the Axis-Aligned Bounding Box (AABB) for hydrodynamics, and the Mass and Center of Mass for gravity.
+
+We launch a thread for every particle leaf. The thread populates its leaf with the particle's mass and coordinates, and then begins "walking" up the tree toward the root.
+
+When a thread arrives at a parent node, it uses a hardware-level **atomic counter** (a specialized flag).
+
+* If it is the *first* thread to arrive from either the left or right child, it increments the flag and terminates. It cannot compute the parent's bounding box because the other child hasn't arrived yet.
+
+* If it is the *second* thread to arrive, it knows both children have finished their calculations. It reads the bounding boxes and masses of both children, merges them together to define the parent, and then continues walking up to the next level of the tree.
+
+This bottom-up cascade aggregates the geometry and mass of the universe up to the root node without any explicit scheduling.
+
+### Stack-Based Traversal
+
+With the LBVH fully constructed as a set of flat, 1D arrays, we are finally ready to compute the physics. To search an oct-tree, we use an **Iterative Stack-Based Traversal**.
+
+At the start of the physics calculation, every thread allocates a tiny, fixed-size array in its local memory. In our code, this is a simple 128-element integer array: `int stack[128]`. Because the depth of our LBVH is bounded, a 128-element stack is enough to traverse the entire universe without overflowing.
+
+The traversal then operates as a simple, flat `while` loop:
+
+1. The thread pushes the root node (index 0) onto the stack: `stack[stack_ptr++] = 0;`.
+
+2. The loop begins. The thread pops a node off the top of the stack.
+
+3. **For Hydrodynamics:** It checks if the node's bounding box overlaps the gas particle's search radius. If it doesn't, the thread issues a `continue` statement, instantly culling the entire branch and moving on to the next node on the stack.
+
+4. **For Gravity:** It calculates the distance to the node's Center of Mass and checks the Multipole Acceptance Criterion (MAC). If the node is far enough away, it applies the bulk gravitational pull of the entire node and issues a `continue` statement.
+
+5. If the node must be opened, the thread simply pushes the `left_child` and `right_child` integers onto its local stack and repeats the loop.
+
+By flattening the 3D space into a Z-order curve, building the hierarchy lock-free with Karras' algorithm, and traversing it with a manual memory stack, we have successfully ported the algorithmic brilliance of the oct-tree to the massively parallel architecture of the GPU.
+
+
 ## Analytical Requirements for Resolution and Volume
 
 Because computational resources are finite, choosing the parameters of the simulation requires a trade-off between the overall size of the simulated box and the size of the individual grid cells and number of particles (the resolution). If we choose poorly, our virtual universe will fail to represent the actual cosmos.

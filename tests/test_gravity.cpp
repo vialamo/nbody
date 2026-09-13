@@ -14,7 +14,8 @@ TEST_CASE("CIC Density Assignment maps particles to grid correctly",
           "[cic][particles]") {
     Config config;
     config.mesh_size = 4;
-    config.compute_derived_data(); // Automatically sets cell_size to 0.25 and volume to 0.015625
+    config.compute_derived_data();  // Automatically sets cell_size to 0.25 and
+                                    // volume to 0.015625
     config.num_dm_particles = 1;
 
     auto get_total_grid_mass = [&](const ParticleSystem& sys) {
@@ -26,12 +27,15 @@ TEST_CASE("CIC Density Assignment maps particles to grid correctly",
         return total_mass;
     };
 
-    SECTION("Particle exactly at a cell center (grid node, 0 fractional part)") {
+    SECTION(
+        "Particle exactly at a cell center (grid node, 0 fractional part)") {
         ParticleSystem sys(config);
 
         // Node is at (i + 0.5) * cell_size
-        // x = 1.5 * 0.25 = 0.375 | y = 2.5 * 0.25 = 0.625 | z = 3.5 * 0.25 = 0.875
+        // x = 1.5 * 0.25 = 0.375 | y = 2.5 * 0.25 = 0.625 | z = 3.5 * 0.25 =
+        // 0.875
         sys.add_particle(0.375, 0.625, 0.875, 0.0, 0.0, 0.0, 16.0);
+        sys.build_lbvh(config);
         sys.bin_and_assign_mass(config);
 
         REQUIRE(get_total_grid_mass(sys) == Catch::Approx(16.0));
@@ -43,9 +47,10 @@ TEST_CASE("CIC Density Assignment maps particles to grid correctly",
     SECTION("Particle on a cell boundary splits perfectly into 8 grid nodes") {
         ParticleSystem sys(config);
 
-        // Boundary intersection of 8 cells is at integer multiples of cell_size 
+        // Boundary intersection of 8 cells is at integer multiples of cell_size
         // e.g., (2 * 0.25) = 0.5
         sys.add_particle(0.5, 0.5, 0.5, 0.0, 0.0, 0.0, 8.0);
+        sys.build_lbvh(config);
         sys.bin_and_assign_mass(config);
 
         REQUIRE(get_total_grid_mass(sys) == Catch::Approx(8.0));
@@ -66,6 +71,7 @@ TEST_CASE("CIC Density Assignment maps particles to grid correctly",
 
         // X=0.0 is the domain boundary. Y and Z are exact nodes (i=0 -> 0.125)
         sys.add_particle(0.0, 0.125, 0.125, 0.0, 0.0, 0.0, 10.0);
+        sys.build_lbvh(config);
         sys.bin_and_assign_mass(config);
 
         REQUIRE(get_total_grid_mass(sys) == Catch::Approx(10.0));
@@ -101,6 +107,7 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
         config.cutoff_radius_squared =
             (config.domain_size / 2.0) * (config.domain_size / 2.0);
 
+        sys.build_lbvh(config);
         sys.bin_and_assign_mass(config);
         sys.compute_and_add_pp_forces(config, dummy_diag);
 
@@ -123,6 +130,7 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
         config.cutoff_radius = 0.15;
         config.cutoff_radius_squared = 0.0225;
 
+        sys.build_lbvh(config);
         sys.bin_and_assign_mass(config);
 
         // Reset accelerations to 0 before computing

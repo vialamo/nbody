@@ -3,7 +3,7 @@
 #include <vector>
 
 #include "config.h"
-#include "particles.h"  // Needed for CellList
+#include "particles.h"  // Needed for BVHNode
 
 class Cooling;
 
@@ -15,8 +15,7 @@ class GasParticleSystem {
     std::vector<double> pos_x;  // Comoving coordinates [Code Length]
     std::vector<double> pos_y;
     std::vector<double> pos_z;
-    std::vector<double>
-        vel_x;  // Peculiar velocity (v = a*x_dot) [Code Velocity]
+    std::vector<double> vel_x;  // Comoving velocity [Code Velocity]
     std::vector<double> vel_y;
     std::vector<double> vel_z;
     std::vector<double>
@@ -87,14 +86,13 @@ class GasParticleSystem {
     std::vector<Eigen::Vector3d> raw_sum_p;
     std::vector<double> n_enc_final;
 
-    // Dynamic Spatial Hashing
-    CellList sph_cell_list;
-    CellList pm_cell_list;
+    // Spatial Hashing
     std::vector<CIC_Data> cic_data;
     double max_h = 0.0;
-    int hash_grid_dim = 0;
-    double hash_cell_size = 0.0;
     double max_accel_sq = 0.0;
+    std::vector<uint64_t> morton_codes;
+    std::vector<int> sorted_indices;
+    std::vector<BVHNode> bvh_nodes;
 
     GasParticleSystem(const Config& config);
 
@@ -137,16 +135,15 @@ class GasParticleSystem {
     // du_dt
     void compute_hydro_forces(const Config& config, double a, double dt);
 
-   private:
-    void build_spatial_hash(double domain_size);
+    void build_lbvh(const Config& config);
 
+   private:
     // Cubic Spline Kernel (Monaghan 1992)
     // Support radius is 1h. Returns W (value) and dWdr (derivative).
     inline void kernel_cubic_spline(double r, double h, double& W,
                                     double& dWdh) const;
 
-    void sort_arrays(const std::vector<int>& cell_start,
-                     const std::vector<int>& particle_cell_idx);
+    void sort_arrays(const std::vector<int>& sorted_indices);
 };
 
 struct ParticleState {

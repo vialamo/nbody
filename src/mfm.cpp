@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <numeric>  // For std::iota
 
 #include "constants.h"
 #include "diagnostics.h"
@@ -69,8 +70,12 @@ GasParticleSystem::GasParticleSystem(const Config& config)
     raw_sum_p.reserve(config.num_gas_particles);
     n_enc_final.reserve(config.num_gas_particles);
 
-    int num_cells = config.mesh_size * config.mesh_size * config.mesh_size;
-    pm_cell_list.resize(num_cells, config.num_gas_particles);
+    size_t num_nodes = 2 * config.num_gas_particles - 1;
+    if (config.num_dm_particles > 0) {
+        morton_codes.reserve(config.num_gas_particles);
+        sorted_indices.reserve(config.num_gas_particles);
+        bvh_nodes.reserve(num_nodes);
+    }
 
     double u_code_K = Cooling::get_internal_energy_from_temp(0.1, 1.0, config);
     pressure_floor = (config.gamma - 1.0) * density_floor * u_code_K;
@@ -127,8 +132,7 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
     num_particles++;
 }
 
-void GasParticleSystem::sort_arrays(const std::vector<int>& cell_start,
-                                    const std::vector<int>& particle_cell_idx) {
+void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     std::vector<double> new_px(num_particles), new_py(num_particles),
         new_pz(num_particles);
     std::vector<double> new_vx(num_particles), new_vy(num_particles),
@@ -158,45 +162,45 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& cell_start,
 
     std::vector<double> new_cond_num(num_particles);
     std::vector<Eigen::Vector3d> new_raw_sum_p(num_particles);
-
-    std::vector<int> write_offset = cell_start;
+    std::vector<double> new_n_enc_final(num_particles);
 
     for (size_t i = 0; i < num_particles; ++i) {
-        int dest = write_offset[particle_cell_idx[i]]++;
-        new_px[dest] = pos_x[i];
-        new_py[dest] = pos_y[i];
-        new_pz[dest] = pos_z[i];
-        new_vx[dest] = vel_x[i];
-        new_vy[dest] = vel_y[i];
-        new_vz[dest] = vel_z[i];
-        new_ax[dest] = acc_x[i];
-        new_ay[dest] = acc_y[i];
-        new_az[dest] = acc_z[i];
-        new_m[dest] = mass[i];
-        new_hax[dest] = hydro_acc_x[i];
-        new_hay[dest] = hydro_acc_y[i];
-        new_haz[dest] = hydro_acc_z[i];
-        new_h[dest] = h[i];
-        new_rho[dest] = rho[i];
-        new_p[dest] = pressure[i];
-        new_total_energy[dest] = total_energy[i];
-        new_u[dest] = u[i];
-        new_dudt[dest] = du_dt[i];
-        new_dedt[dest] = de_dt[i];
-        new_metal[dest] = metal_frac[i];
-        new_cic[dest] = cic_data[i];
-        new_B[dest] = B_matrix[i];
-        new_grad_rho[dest] = grad_rho[i];
-        new_grad_vx[dest] = grad_vx[i];
-        new_grad_vy[dest] = grad_vy[i];
-        new_grad_vz[dest] = grad_vz[i];
-        new_grad_p[dest] = grad_p[i];
-        new_zeta[dest] = zeta[i];
-        new_entropy[dest] = entropy[i];
-        new_max_rel_ke[dest] = max_rel_ke[i];
-        new_delta_E_grav[dest] = delta_E_grav[i];
-        new_cond_num[dest] = cond_num[i];
-        new_raw_sum_p[dest] = raw_sum_p[i];
+        int src = sorted_indices[i];
+        new_px[i] = pos_x[src];
+        new_py[i] = pos_y[src];
+        new_pz[i] = pos_z[src];
+        new_vx[i] = vel_x[src];
+        new_vy[i] = vel_y[src];
+        new_vz[i] = vel_z[src];
+        new_ax[i] = acc_x[src];
+        new_ay[i] = acc_y[src];
+        new_az[i] = acc_z[src];
+        new_m[i] = mass[src];
+        new_hax[i] = hydro_acc_x[src];
+        new_hay[i] = hydro_acc_y[src];
+        new_haz[i] = hydro_acc_z[src];
+        new_h[i] = h[src];
+        new_rho[i] = rho[src];
+        new_p[i] = pressure[src];
+        new_total_energy[i] = total_energy[src];
+        new_u[i] = u[src];
+        new_dudt[i] = du_dt[src];
+        new_dedt[i] = de_dt[src];
+        new_metal[i] = metal_frac[src];
+        new_cic[i] = cic_data[src];
+        new_B[i] = B_matrix[src];
+        new_grad_rho[i] = grad_rho[src];
+        new_grad_vx[i] = grad_vx[src];
+        new_grad_vy[i] = grad_vy[src];
+        new_grad_vz[i] = grad_vz[src];
+        new_grad_p[i] = grad_p[src];
+        new_zeta[i] = zeta[src];
+        new_entropy[i] = entropy[src];
+        new_max_rel_ke[i] = max_rel_ke[src];
+        new_delta_E_grav[i] = delta_E_grav[src];
+        new_cond_num[i] = cond_num[src];
+        new_raw_sum_p[i] = raw_sum_p[src];
+        new_n_enc_final[i] = n_enc_final[src];
     }
 
     pos_x = std::move(new_px);
@@ -233,61 +237,237 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& cell_start,
     delta_E_grav = std::move(new_delta_E_grav);
     raw_sum_p = std::move(new_raw_sum_p);
     cond_num = std::move(new_cond_num);
+    n_enc_final = std::move(new_n_enc_final);
 }
 
-void GasParticleSystem::build_spatial_hash(double domain_size) {
+void GasParticleSystem::build_lbvh(const Config& config) {
     if (num_particles == 0) return;
 
-    // Find the maximum smoothing length
-    max_h = 0.0;
+    morton_codes.resize(num_particles);
+    sorted_indices.resize(num_particles);
+    bvh_nodes.resize(2 * num_particles - 1);
+
+    double inv_domain = 1.0 / config.domain_size;
+    // We use 21 bits per dimension (2^21 = 2097152) to fit in a 64-bit int
+    double bound = 2097152.0;
+
+// Compute Morton codes for all particles
+#pragma omp parallel for schedule(static)
     for (size_t i = 0; i < num_particles; ++i) {
-        if (h[i] > max_h) max_h = h[i];
+        // Normalize coordinates to [0, 1) and scale to the 21-bit integer range
+        uint32_t x = static_cast<uint32_t>(
+            fmod(pos_x[i] * inv_domain + 1.0, 1.0) * bound);
+        uint32_t y = static_cast<uint32_t>(
+            fmod(pos_y[i] * inv_domain + 1.0, 1.0) * bound);
+        uint32_t z = static_cast<uint32_t>(
+            fmod(pos_z[i] * inv_domain + 1.0, 1.0) * bound);
+
+        morton_codes[i] = morton3D(x, y, z);
     }
-    if (max_h <= 0.0)
-        max_h = domain_size / std::cbrt(num_particles > 0 ? num_particles : 1);
 
-    // Define grid
-    hash_cell_size = max_h;
-    hash_grid_dim = static_cast<int>(std::floor(domain_size / hash_cell_size));
+    // Initialize indices and sort them based on the Morton codes
+    std::iota(sorted_indices.begin(), sorted_indices.end(), 0);
+    std::sort(sorted_indices.begin(), sorted_indices.end(),
+              [&](int a, int b) { return morton_codes[a] < morton_codes[b]; });
 
-    if (hash_grid_dim < 1) hash_grid_dim = 1;
-    if (hash_grid_dim > 256) hash_grid_dim = 256;
+    // Rearrange particle arrays to match the new sorted order
 
-    hash_cell_size = domain_size / hash_grid_dim;
-    int num_cells = hash_grid_dim * hash_grid_dim * hash_grid_dim;
+    // Use the helper function to sync arrays
+    sort_arrays(sorted_indices);
 
-    sph_cell_list.resize(num_cells, num_particles);
-    std::fill(sph_cell_list.cell_count.begin(), sph_cell_list.cell_count.end(),
-              0);
-    std::fill(sph_cell_list.cell_start.begin(), sph_cell_list.cell_start.end(),
-              0);
-
-    std::vector<int> particle_cell_idx(num_particles);
-
-    // Count particles per cell
+    // We must also sort the morton_codes array itself, as the
+    // Karras tree topology algorithm relies on them being in order
+    std::vector<uint64_t> new_morton(num_particles);
     for (size_t i = 0; i < num_particles; ++i) {
-        int ix = static_cast<int>(pos_x[i] / hash_cell_size) % hash_grid_dim;
-        int iy = static_cast<int>(pos_y[i] / hash_cell_size) % hash_grid_dim;
-        int iz = static_cast<int>(pos_z[i] / hash_cell_size) % hash_grid_dim;
+        new_morton[i] = morton_codes[sorted_indices[i]];
+    }
+    morton_codes = std::move(new_morton);
 
-        ix = (ix + hash_grid_dim) % hash_grid_dim;
-        iy = (iy + hash_grid_dim) % hash_grid_dim;
-        iz = (iz + hash_grid_dim) % hash_grid_dim;
+    // TREE TOPOLOGY CONSTRUCTION (Karras 2012)
 
-        int cell_index =
-            iz * hash_grid_dim * hash_grid_dim + iy * hash_grid_dim + ix;
-        particle_cell_idx[i] = cell_index;
-        sph_cell_list.cell_count[cell_index]++;
+    // Total nodes = 2N - 1.
+    // Indices [0, N-2] are internal nodes.
+    // Indices [N-1, 2N-2] are leaf nodes.
+
+    // Utility lambda to find the longest common prefix between two Morton codes
+    auto delta = [&](int i, int j) -> int {
+        if (j < 0 || j >= num_particles) return -1;
+        uint64_t code_i = morton_codes[i];
+        uint64_t code_j = morton_codes[j];
+
+        if (code_i == code_j) {
+            // Tie-breaker for identical coordinates using the original index
+            return 64 + __builtin_clzll(static_cast<unsigned long long>(i ^ j));
+        }
+        return __builtin_clzll(code_i ^ code_j);
+    };
+
+// Initialize Leaf Nodes
+#pragma omp parallel for schedule(static)
+    for (int i = 0; i < num_particles; ++i) {
+        int leaf_idx = num_particles - 1 + i;
+        bvh_nodes[leaf_idx].particle_idx = i;
+        bvh_nodes[leaf_idx].left_child = -1;
+        bvh_nodes[leaf_idx].right_child = -1;
+        // The parent will be set by the internal node that points to this leaf
     }
 
-    // Prefix sum for offsets
-    int current_offset = 0;
-    for (int c = 0; c < num_cells; ++c) {
-        sph_cell_list.cell_start[c] = current_offset;
-        current_offset += sph_cell_list.cell_count[c];
+// Construct Internal Nodes in parallel
+#pragma omp parallel for schedule(static)
+    for (int i = 0; i < num_particles - 1; ++i) {
+        // Determine direction of the range (+1 or -1)
+        int d = (delta(i, i + 1) - delta(i, i - 1)) > 0 ? 1 : -1;
+
+        // Compute upper bound for the length of the range
+        int delta_min = delta(i, i - d);
+        int l_max = 2;
+        while (delta(i, i + l_max * d) > delta_min) {
+            l_max *= 2;
+        }
+
+        // Find the other end of the range using binary search
+        int l = 0;
+        for (int t = l_max / 2; t >= 1; t /= 2) {
+            if (delta(i, i + (l + t) * d) > delta_min) {
+                l += t;
+            }
+        }
+        int j = i + l * d;
+
+        // Find the split position using binary search
+        int delta_node = delta(i, j);
+        int s = 0;
+        int t = l;
+        do {
+            t = (t + 1) >> 1;  // ceil(t/2)
+            if (s + t < l && delta(i, i + (s + t) * d) > delta_node) {
+                s += t;
+            }
+        } while (t > 1);
+
+        int split = i + s * d + std::min(d, 0);
+        int min_idx = std::min(i, j);
+        int max_idx = std::max(i, j);
+
+        // Assign children
+        int left_child, right_child;
+
+        if (min_idx == split) {
+            left_child = num_particles - 1 + split;  // Points to leaf
+        } else {
+            left_child = split;  // Points to internal node
+        }
+
+        if (max_idx == split + 1) {
+            right_child = num_particles - 1 + split + 1;  // Points to leaf
+        } else {
+            right_child = split + 1;  // Points to internal node
+        }
+
+        bvh_nodes[i].left_child = left_child;
+        bvh_nodes[i].right_child = right_child;
+        bvh_nodes[i].particle_idx = -1;  // -1 indicates an internal node
+
+        // Assign parent pointers to children
+        bvh_nodes[left_child].parent = i;
+        bvh_nodes[right_child].parent = i;
     }
 
-    sort_arrays(sph_cell_list.cell_start, particle_cell_idx);
+    // Set the root node's parent to itself or -1
+    bvh_nodes[0].parent = -1;
+
+    // BOTTOM-UP AGGREGATION (Bounding Boxes & Center of Mass)
+
+    // Counter for each internal node to track when both children are processed
+    std::vector<int> atomic_flags(num_particles - 1, 0);
+
+// Initialize Leaf Nodes and trigger the walk up
+#pragma omp parallel for schedule(static)
+    for (int i = 0; i < num_particles; ++i) {
+        int leaf_idx = num_particles - 1 + i;
+        double px = pos_x[i], py = pos_y[i], pz = pos_z[i];
+
+        // Expand the AABB by the smoothing length 'h'.
+        double radius = 0.0;
+        if (!h.empty()) {
+            radius = h[i];
+        }
+
+        bvh_nodes[leaf_idx].bbox.min_x = px - radius;
+        bvh_nodes[leaf_idx].bbox.max_x = px + radius;
+        bvh_nodes[leaf_idx].bbox.min_y = py - radius;
+        bvh_nodes[leaf_idx].bbox.max_y = py + radius;
+        bvh_nodes[leaf_idx].bbox.min_z = pz - radius;
+        bvh_nodes[leaf_idx].bbox.max_z = pz + radius;
+
+        bvh_nodes[leaf_idx].max_h = radius;
+
+        bvh_nodes[leaf_idx].mass = mass[i];
+        // Store mass-weighted positions temporarily to make summation easy
+        bvh_nodes[leaf_idx].com_x = px * mass[i];
+        bvh_nodes[leaf_idx].com_y = py * mass[i];
+        bvh_nodes[leaf_idx].com_z = pz * mass[i];
+
+        // Walk up the tree
+        int curr = bvh_nodes[leaf_idx].parent;
+        while (curr != -1) {
+            int old_flag;
+#pragma omp atomic capture
+            {
+                old_flag = atomic_flags[curr];
+                atomic_flags[curr]++;
+            }
+
+            if (old_flag == 0) {
+                // First thread to arrive. The other child isn't ready yet.
+                // Terminate.
+                break;
+            }
+
+            // Second thread to arrive. Both children are ready. Compute parent.
+            int left = bvh_nodes[curr].left_child;
+            int right = bvh_nodes[curr].right_child;
+
+            // Combine Bounding Boxes
+            bvh_nodes[curr].bbox.min_x = std::min(bvh_nodes[left].bbox.min_x,
+                                                  bvh_nodes[right].bbox.min_x);
+            bvh_nodes[curr].bbox.max_x = std::max(bvh_nodes[left].bbox.max_x,
+                                                  bvh_nodes[right].bbox.max_x);
+            bvh_nodes[curr].bbox.min_y = std::min(bvh_nodes[left].bbox.min_y,
+                                                  bvh_nodes[right].bbox.min_y);
+            bvh_nodes[curr].bbox.max_y = std::max(bvh_nodes[left].bbox.max_y,
+                                                  bvh_nodes[right].bbox.max_y);
+            bvh_nodes[curr].bbox.min_z = std::min(bvh_nodes[left].bbox.min_z,
+                                                  bvh_nodes[right].bbox.min_z);
+            bvh_nodes[curr].bbox.max_z = std::max(bvh_nodes[left].bbox.max_z,
+                                                  bvh_nodes[right].bbox.max_z);
+
+            bvh_nodes[curr].max_h =
+                std::max(bvh_nodes[left].max_h, bvh_nodes[right].max_h);
+
+            // Sum Mass and mass-weighted positions
+            bvh_nodes[curr].mass = bvh_nodes[left].mass + bvh_nodes[right].mass;
+            bvh_nodes[curr].com_x =
+                bvh_nodes[left].com_x + bvh_nodes[right].com_x;
+            bvh_nodes[curr].com_y =
+                bvh_nodes[left].com_y + bvh_nodes[right].com_y;
+            bvh_nodes[curr].com_z =
+                bvh_nodes[left].com_z + bvh_nodes[right].com_z;
+
+            // Move up to the next parent
+            curr = bvh_nodes[curr].parent;
+        }
+    }
+
+// Normalize Center of Mass
+#pragma omp parallel for schedule(static)
+    for (int i = 0; i < 2 * num_particles - 1; ++i) {
+        if (bvh_nodes[i].mass > 0.0) {
+            bvh_nodes[i].com_x /= bvh_nodes[i].mass;
+            bvh_nodes[i].com_y /= bvh_nodes[i].mass;
+            bvh_nodes[i].com_z /= bvh_nodes[i].mass;
+        }
+    }
 }
 
 // --------------------------------------------------------------------------------
@@ -373,7 +553,8 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
                                               const ParticleSystem& dm) {
     if (num_particles == 0) return;
 
-    build_spatial_hash(config.domain_size);
+    // Build the Linear Bounding Volume Hierarchy
+    build_lbvh(config);
 
     double domain_size = config.domain_size;
     double target_N = config.mfm_target_neighbors;
@@ -383,26 +564,20 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         domain_size / std::cbrt(num_particles > 0 ? num_particles : 1);
     const double min_h_cap = 0.05 * mean_spacing;
     const double max_h_cap = 0.5 * domain_size;
-
-    // Define the limits for this specific timestep
-    constexpr double MAX_H_GROWTH = 8.0;  // Tunable: max growth factor per step
-    const double grid_physical_limit =
-        ((hash_grid_dim - 1) / 2.0) * hash_cell_size;
+    constexpr double MAX_H_GROWTH = 8.0;
 
     const double r_s = config.PM_smoothing_cells * config.cell_size;
     const bool use_pm = config.use_PM;
+
     size_t num_h_clamped = 0;
 
 #pragma omp parallel for schedule(dynamic, 64) reduction(+ : num_h_clamped)
     for (size_t i = 0; i < num_particles; ++i) {
         double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
-
         double h_low = 0.0;
         double h_high = std::numeric_limits<double>::infinity();
-        double h_guess = h[i];  // Start with current h
-
-        double step_max_h =
-            std::min({max_h_cap, grid_physical_limit, h[i] * MAX_H_GROWTH});
+        double h_guess = h[i];
+        double step_max_h = std::min(max_h_cap, h[i] * MAX_H_GROWTH);
 
         int iter = 0;
         double current_n = 0.0;
@@ -410,60 +585,51 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         bool is_converged = false;
         bool h_clamped = false;
 
-        int ix = static_cast<int>(p1_x / hash_cell_size) % hash_grid_dim;
-        int iy = static_cast<int>(p1_y / hash_cell_size) % hash_grid_dim;
-        int iz = static_cast<int>(p1_z / hash_cell_size) % hash_grid_dim;
-        ix = (ix + hash_grid_dim) % hash_grid_dim;
-        iy = (iy + hash_grid_dim) % hash_grid_dim;
-        iz = (iz + hash_grid_dim) % hash_grid_dim;
-
+        // ITERATIVE SMOOTHING LENGTH (h) SOLVER
         while (iter < max_iter) {
             current_n = 0.0;
             current_dn_dh = 0.0;
+            double search_sq = h_guess * h_guess;
 
-            double search_radius = h_guess;
-            int search_cells =
-                static_cast<int>(std::ceil(search_radius / hash_cell_size));
-            int dx_start = std::max(-search_cells, -hash_grid_dim / 2);
-            int dx_end = std::min(search_cells, (hash_grid_dim - 1) / 2);
+            int stack[128];
+            int stack_ptr = 0;
+            stack[stack_ptr++] = 0;  // Push root of Gas LBVH
 
-            // Gather neighbors
-            for (int dx_c = dx_start; dx_c <= dx_end; ++dx_c) {
-                for (int dy_c = dx_start; dy_c <= dx_end; ++dy_c) {
-                    for (int dz_c = dx_start; dz_c <= dx_end; ++dz_c) {
-                        int n_ix =
-                            (((ix + dx_c) % hash_grid_dim) + hash_grid_dim) %
-                            hash_grid_dim;
-                        int n_iy =
-                            (((iy + dy_c) % hash_grid_dim) + hash_grid_dim) %
-                            hash_grid_dim;
-                        int n_iz =
-                            (((iz + dz_c) % hash_grid_dim) + hash_grid_dim) %
-                            hash_grid_dim;
+            while (stack_ptr > 0) {
+                int node_idx = stack[--stack_ptr];
+                const BVHNode& node = bvh_nodes[node_idx];
 
-                        int cell_idx = n_iz * hash_grid_dim * hash_grid_dim +
-                                       n_iy * hash_grid_dim + n_ix;
-                        int start = sph_cell_list.cell_start[cell_idx];
-                        int end = start + sph_cell_list.cell_count[cell_idx];
+                // AABB Intersection check (prunes entire branches)
+                double dist_sq =
+                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
+                                         domain_size);
 
-                        for (int j = start; j < end; ++j) {
-                            double dx = periodic_displacement(pos_x[j] - p1_x,
-                                                              domain_size);
-                            double dy = periodic_displacement(pos_y[j] - p1_y,
-                                                              domain_size);
-                            double dz = periodic_displacement(pos_z[j] - p1_z,
-                                                              domain_size);
-                            double r2 = dx * dx + dy * dy + dz * dz;
+                if (dist_sq > search_sq) continue;
 
-                            if (r2 < search_radius * search_radius) {
-                                double r = std::sqrt(r2);
-                                double W, dWdh;
-                                kernel_cubic_spline(r, h_guess, W, dWdh);
-                                current_n += W;
-                                current_dn_dh += dWdh;
-                            }
-                        }
+                if (node.particle_idx != -1) {  // Leaf Node
+                    int j = node.particle_idx;
+                    double dx =
+                        periodic_displacement(pos_x[j] - p1_x, domain_size);
+                    double dy =
+                        periodic_displacement(pos_y[j] - p1_y, domain_size);
+                    double dz =
+                        periodic_displacement(pos_z[j] - p1_z, domain_size);
+                    double r2 = dx * dx + dy * dy + dz * dz;
+
+                    if (r2 < search_sq) {
+                        double r = std::sqrt(r2);
+                        double W, dWdh;
+                        kernel_cubic_spline(r, h_guess, W, dWdh);
+                        current_n += W;
+                        current_dn_dh += dWdh;
                     }
+                } else {  // Internal Node
+                    stack[stack_ptr++] = node.left_child;
+                    stack[stack_ptr++] = node.right_child;
                 }
             }
 
@@ -472,7 +638,7 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
             n_enc_final[i] = N_enc;
 
             if (std::abs(N_enc - target_N) < tol) {
-                is_converged = true;  // MARK CONVERGENCE
+                is_converged = true;
                 break;
             }
 
@@ -484,8 +650,8 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
             double dN_enc_dh =
                 (4.0 / 3.0) * M_PI *
                 (3.0 * h_guess * h_guess * current_n + h3 * current_dn_dh);
-
             double h_new = h_guess;
+
             if (dN_enc_dh > 0.0)
                 h_new = h_guess - (N_enc - target_N) / dN_enc_dh;
 
@@ -498,233 +664,179 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
 
             if (h_guess >= step_max_h) {
                 h_guess = step_max_h;
-                // If we hit the physical grid limit or the growth limit before
-                // converging, we must stop and accept the current state. The
-                // grid will resize next step.
                 h_clamped = true;
                 break;
             }
-
             if (h_guess < min_h_cap) {
                 h_guess = min_h_cap;
                 h_clamped = true;
                 break;
             }
-
             iter++;
-            if (iter == max_iter) {
-                std::cout << "Warning: compute_h did not converge" << std::endl;
-            }
         }
 
-        if (h_clamped) {
-            num_h_clamped++;
-        }
+        if (h_clamped) num_h_clamped++;
 
         // Sync: Recompute sums if the loop exited due to a clamp
         if (!is_converged) {
             current_n = 0.0;
             current_dn_dh = 0.0;
-            double search_radius = h_guess;
-            int search_cells =
-                static_cast<int>(std::ceil(search_radius / hash_cell_size));
-            int dx_start = std::max(-search_cells, -hash_grid_dim / 2);
-            int dx_end = std::min(search_cells, (hash_grid_dim - 1) / 2);
+            double search_sq = h_guess * h_guess;
 
-            for (int dx_c = dx_start; dx_c <= dx_end; ++dx_c) {
-                for (int dy_c = dx_start; dy_c <= dx_end; ++dy_c) {
-                    for (int dz_c = dx_start; dz_c <= dx_end; ++dz_c) {
-                        int n_ix =
-                            (((ix + dx_c) % hash_grid_dim) + hash_grid_dim) %
-                            hash_grid_dim;
-                        int n_iy =
-                            (((iy + dy_c) % hash_grid_dim) + hash_grid_dim) %
-                            hash_grid_dim;
-                        int n_iz =
-                            (((iz + dz_c) % hash_grid_dim) + hash_grid_dim) %
-                            hash_grid_dim;
+            int stack[128];
+            int stack_ptr = 0;
+            stack[stack_ptr++] = 0;
 
-                        int cell_idx = n_iz * hash_grid_dim * hash_grid_dim +
-                                       n_iy * hash_grid_dim + n_ix;
-                        int start = sph_cell_list.cell_start[cell_idx];
-                        int end = start + sph_cell_list.cell_count[cell_idx];
+            while (stack_ptr > 0) {
+                int node_idx = stack[--stack_ptr];
+                const BVHNode& node = bvh_nodes[node_idx];
 
-                        for (int j = start; j < end; ++j) {
-                            double dx = periodic_displacement(pos_x[j] - p1_x,
-                                                              domain_size);
-                            double dy = periodic_displacement(pos_y[j] - p1_y,
-                                                              domain_size);
-                            double dz = periodic_displacement(pos_z[j] - p1_z,
-                                                              domain_size);
-                            double r2 = dx * dx + dy * dy + dz * dz;
+                double dist_sq =
+                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
+                                         domain_size);
 
-                            if (r2 < search_radius * search_radius) {
-                                double r = std::sqrt(r2);
-                                double W, dWdh;
-                                kernel_cubic_spline(r, h_guess, W, dWdh);
-                                current_n += W;
-                                current_dn_dh += dWdh;
-                            }
-                        }
+                if (dist_sq > search_sq) continue;
+
+                if (node.particle_idx != -1) {
+                    int j = node.particle_idx;
+                    double dx =
+                        periodic_displacement(pos_x[j] - p1_x, domain_size);
+                    double dy =
+                        periodic_displacement(pos_y[j] - p1_y, domain_size);
+                    double dz =
+                        periodic_displacement(pos_z[j] - p1_z, domain_size);
+                    double r2 = dx * dx + dy * dy + dz * dz;
+
+                    if (r2 < search_sq) {
+                        double r = std::sqrt(r2);
+                        double W, dWdh;
+                        kernel_cubic_spline(r, h_guess, W, dWdh);
+                        current_n += W;
+                        current_dn_dh += dWdh;
                     }
+                } else {
+                    stack[stack_ptr++] = node.left_child;
+                    stack[stack_ptr++] = node.right_child;
                 }
             }
         }
 
         // Commit finalized state
         h[i] = h_guess;
-        double effective_volume = 1.0 / current_n;
-        rho[i] = mass[i] / effective_volume;
+        rho[i] = mass[i] / (1.0 / current_n);
 
-        // Adaptive gravity softening corrections (GIZMO App. H2)
-        // Equation H10: Omega_a = 1 + (h_a / (n_a * nu)) * (dn_a / dh_a)
+        // ADAPTIVE GRAVITY CORRECTIONS (GIZMO App. H2)
+
+        // Equation H10: Omega_a
         double Omega_i = std::max(
             1.0 + (h_guess / (current_n * 3.0)) * current_dn_dh, 1e-12);
-
-        // Final gather loop to calculate zeta_i (Equation H9)
         double zeta_sum = 0.0;
+        double search_sq_zeta = h_guess * h_guess;
 
-        int search_cells =
-            static_cast<int>(std::ceil(h_guess / hash_cell_size));
+        // Gather zeta from Gas particles
+        int stack_zeta_gas[128];
+        int stack_ptr_zeta_gas = 0;
+        stack_zeta_gas[stack_ptr_zeta_gas++] = 0;
 
-        int dx_start_zeta = std::max(-search_cells, -hash_grid_dim / 2);
-        int dx_end_zeta = std::min(search_cells, (hash_grid_dim - 1) / 2);
+        while (stack_ptr_zeta_gas > 0) {
+            int node_idx = stack_zeta_gas[--stack_ptr_zeta_gas];
+            const BVHNode& node = bvh_nodes[node_idx];
 
-        ix = static_cast<int>(p1_x / hash_cell_size) % hash_grid_dim;
-        iy = static_cast<int>(p1_y / hash_cell_size) % hash_grid_dim;
-        iz = static_cast<int>(p1_z / hash_cell_size) % hash_grid_dim;
-        ix = (ix + hash_grid_dim) % hash_grid_dim;
-        iy = (iy + hash_grid_dim) % hash_grid_dim;
-        iz = (iz + hash_grid_dim) % hash_grid_dim;
+            double dist_sq =
+                min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
+                                     domain_size) +
+                min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
+                                     domain_size) +
+                min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
+                                     domain_size);
 
-        for (int dx_c = dx_start_zeta; dx_c <= dx_end_zeta; ++dx_c) {
-            for (int dy_c = dx_start_zeta; dy_c <= dx_end_zeta; ++dy_c) {
-                for (int dz_c = dx_start_zeta; dz_c <= dx_end_zeta; ++dz_c) {
-                    int n_ix = (((ix + dx_c) % hash_grid_dim) + hash_grid_dim) %
-                               hash_grid_dim;
-                    int n_iy = (((iy + dy_c) % hash_grid_dim) + hash_grid_dim) %
-                               hash_grid_dim;
-                    int n_iz = (((iz + dz_c) % hash_grid_dim) + hash_grid_dim) %
-                               hash_grid_dim;
+            if (dist_sq > search_sq_zeta) continue;
 
-                    int cell_idx = n_iz * hash_grid_dim * hash_grid_dim +
-                                   n_iy * hash_grid_dim + n_ix;
-                    int start = sph_cell_list.cell_start[cell_idx];
-                    int end = start + sph_cell_list.cell_count[cell_idx];
+            if (node.particle_idx != -1) {
+                int j = node.particle_idx;
+                double dx = periodic_displacement(pos_x[j] - p1_x, domain_size);
+                double dy = periodic_displacement(pos_y[j] - p1_y, domain_size);
+                double dz = periodic_displacement(pos_z[j] - p1_z, domain_size);
+                double r2 = dx * dx + dy * dy + dz * dz;
 
-                    for (int j = start; j < end; ++j) {
-                        double dx =
-                            periodic_displacement(pos_x[j] - p1_x, domain_size);
-                        double dy =
-                            periodic_displacement(pos_y[j] - p1_y, domain_size);
-                        double dz =
-                            periodic_displacement(pos_z[j] - p1_z, domain_size);
-                        double r2 = dx * dx + dy * dy + dz * dz;
+                if (r2 < search_sq_zeta && r2 > 1e-24) {
+                    double r = std::sqrt(r2);
+                    double dphi_dr, dphi_dh;
+                    compute_gravity_kernel_derivatives(r, h_guess, dphi_dr,
+                                                       dphi_dh);
 
-                        if (r2 < h_guess * h_guess && r2 > 1e-24) {
-                            double r = std::sqrt(r2);
-                            double dphi_dr, dphi_dh;
-                            compute_gravity_kernel_derivatives(
-                                r, h_guess, dphi_dr, dphi_dh);
-
-                            if (use_pm) {
-                                double r_scaled = r / (2.0 * r_s);
-                                double taper =
-                                    std::erfc(r_scaled) +
-                                    (r / (std::sqrt(M_PI) * r_s)) *
-                                        std::exp(-r_scaled * r_scaled);
-                                dphi_dh *= taper;
-                            }
-
-                            // Summing m_b * d(phi)/dh
-                            zeta_sum += mass[j] * dphi_dh;
-                        }
+                    if (use_pm) {
+                        double r_scaled = r / (2.0 * r_s);
+                        double taper = std::erfc(r_scaled) +
+                                       (r / (std::sqrt(M_PI) * r_s)) *
+                                           std::exp(-r_scaled * r_scaled);
+                        dphi_dh *= taper;
                     }
+                    zeta_sum += mass[j] * dphi_dh;
                 }
+            } else {
+                stack_zeta_gas[stack_ptr_zeta_gas++] = node.left_child;
+                stack_zeta_gas[stack_ptr_zeta_gas++] = node.right_child;
             }
         }
 
-        // Accumulate zeta from Dark Matter interactions
-        // DM uses the PM mesh spacing for neighbor finding
-        int dm_dx_start = use_pm ? -static_cast<int>(std::ceil(
-                                       config.cutoff_radius / config.cell_size))
-                                 : 0;
-        int dm_dx_end = use_pm ? static_cast<int>(std::ceil(
-                                     config.cutoff_radius / config.cell_size))
-                               : config.mesh_size - 1;
+        // Gather zeta from Dark Matter interactions
+        if (dm.num_particles > 0 && !dm.bvh_nodes.empty()) {
+            int stack_zeta_dm[128];
+            int stack_ptr_zeta_dm = 0;
+            stack_zeta_dm[stack_ptr_zeta_dm++] = 0;  // Root of DM LBVH
 
-        if (use_pm) {
-            dm_dx_start = std::max(dm_dx_start, -config.mesh_size / 2);
-            dm_dx_end = std::min(dm_dx_end, (config.mesh_size - 1) / 2);
-        }
+            while (stack_ptr_zeta_dm > 0) {
+                int node_idx = stack_zeta_dm[--stack_ptr_zeta_dm];
+                const BVHNode& node = dm.bvh_nodes[node_idx];
 
-        int dm_ix = static_cast<int>(p1_x / config.cell_size);
-        int dm_iy = static_cast<int>(p1_y / config.cell_size);
-        int dm_iz = static_cast<int>(p1_z / config.cell_size);
-        dm_ix = (((dm_ix % config.mesh_size) + config.mesh_size) %
-                 config.mesh_size);
-        dm_iy = (((dm_iy % config.mesh_size) + config.mesh_size) %
-                 config.mesh_size);
-        dm_iz = (((dm_iz % config.mesh_size) + config.mesh_size) %
-                 config.mesh_size);
+                double dist_sq =
+                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
+                                         domain_size);
 
-        for (int dx_cell = dm_dx_start; dx_cell <= dm_dx_end; ++dx_cell) {
-            for (int dy_cell = dm_dx_start; dy_cell <= dm_dx_end; ++dy_cell) {
-                for (int dz_cell = dm_dx_start; dz_cell <= dm_dx_end;
-                     ++dz_cell) {
-                    int n_ix = use_pm
-                                   ? (((dm_ix + dx_cell) % config.mesh_size) +
-                                      config.mesh_size) %
-                                         config.mesh_size
-                                   : dx_cell;
-                    int n_iy = use_pm
-                                   ? (((dm_iy + dy_cell) % config.mesh_size) +
-                                      config.mesh_size) %
-                                         config.mesh_size
-                                   : dy_cell;
-                    int n_iz = use_pm
-                                   ? (((dm_iz + dz_cell) % config.mesh_size) +
-                                      config.mesh_size) %
-                                         config.mesh_size
-                                   : dz_cell;
-                    int cell_idx = n_iz * config.mesh_size * config.mesh_size +
-                                   n_iy * config.mesh_size + n_ix;
+                if (dist_sq > search_sq_zeta) continue;
 
-                    int start = dm.cell_list.cell_start[cell_idx];
-                    int end = start + dm.cell_list.cell_count[cell_idx];
+                if (node.particle_idx != -1) {
+                    int j = node.particle_idx;
+                    double dx =
+                        periodic_displacement(dm.pos_x[j] - p1_x, domain_size);
+                    double dy =
+                        periodic_displacement(dm.pos_y[j] - p1_y, domain_size);
+                    double dz =
+                        periodic_displacement(dm.pos_z[j] - p1_z, domain_size);
+                    double r2 = dx * dx + dy * dy + dz * dz;
 
-                    for (int j = start; j < end; ++j) {
-                        double dx = periodic_displacement(dm.pos_x[j] - p1_x,
-                                                          domain_size);
-                        double dy = periodic_displacement(dm.pos_y[j] - p1_y,
-                                                          domain_size);
-                        double dz = periodic_displacement(dm.pos_z[j] - p1_z,
-                                                          domain_size);
-                        double r2 = dx * dx + dy * dy + dz * dz;
+                    // DM particles only affect gas zeta if they fall inside the
+                    // gas smoothing length
+                    if (r2 < search_sq_zeta && r2 > 1e-24) {
+                        if (use_pm && r2 > config.cutoff_radius_squared)
+                            continue;
 
-                        // DM particles only affect gas zeta if they fall
-                        // inside the gas smoothing length
-                        if (r2 < h_guess * h_guess && r2 > 1e-24) {
-                            if (use_pm && r2 > config.cutoff_radius_squared)
-                                continue;
+                        double r = std::sqrt(r2);
+                        double dphi_dr, dphi_dh;
+                        compute_gravity_kernel_derivatives(r, h_guess, dphi_dr,
+                                                           dphi_dh);
 
-                            double r = std::sqrt(r2);
-                            double dphi_dr, dphi_dh;
-                            compute_gravity_kernel_derivatives(
-                                r, h_guess, dphi_dr, dphi_dh);
-
-                            if (use_pm) {
-                                double r_scaled = r / (2.0 * r_s);
-                                double taper =
-                                    std::erfc(r_scaled) +
-                                    (r / (std::sqrt(M_PI) * r_s)) *
-                                        std::exp(-r_scaled * r_scaled);
-                                dphi_dh *= taper;
-                            }
-
-                            zeta_sum += dm.mass[j] * dphi_dh;
+                        if (use_pm) {
+                            double r_scaled = r / (2.0 * r_s);
+                            double taper = std::erfc(r_scaled) +
+                                           (r / (std::sqrt(M_PI) * r_s)) *
+                                               std::exp(-r_scaled * r_scaled);
+                            dphi_dh *= taper;
                         }
+                        zeta_sum += dm.mass[j] * dphi_dh;
                     }
+                } else {
+                    stack_zeta_dm[stack_ptr_zeta_dm++] = node.left_child;
+                    stack_zeta_dm[stack_ptr_zeta_dm++] = node.right_child;
                 }
             }
         }
@@ -734,10 +846,10 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         zeta[i] = (h_guess / (current_n * 3.0)) * (1.0 / Omega_i) * zeta_sum;
     }
 
+// MFM VOLUME LIMITER
 // #define MFM_VOLUME_LIMITER
 #ifdef MFM_VOLUME_LIMITER
-    // Prevents vacuum particles from artificially borrowing density from
-    // shocks
+    // Prevents vacuum particles from artificially borrowing density from shocks
     std::vector<double> limited_rho = rho;
     constexpr double MAX_VOL_RATIO =
         8.0;  // Tunable: Expected between 2.0 and 8.0
@@ -747,51 +859,40 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
         double my_vol = mass[i] / rho[i];
         double max_neighbor_vol = 0.0;
+        double search_sq_vol = h[i] * h[i];
 
-        int search_cells = static_cast<int>(std::ceil(h[i] / hash_cell_size));
+        int stack_vol[128];
+        int stack_ptr_vol = 0;
+        stack_vol[stack_ptr_vol++] = 0;
 
-        int dx_start = std::max(-search_cells, -hash_grid_dim / 2);
-        int dx_end = std::min(search_cells, (hash_grid_dim - 1) / 2);
+        while (stack_ptr_vol > 0) {
+            int node_idx = stack_vol[--stack_ptr_vol];
+            const BVHNode& node = bvh_nodes[node_idx];
 
-        int ix = static_cast<int>(p1_x / hash_cell_size) % hash_grid_dim;
-        int iy = static_cast<int>(p1_y / hash_cell_size) % hash_grid_dim;
-        int iz = static_cast<int>(p1_z / hash_cell_size) % hash_grid_dim;
-        ix = (ix + hash_grid_dim) % hash_grid_dim;
-        iy = (iy + hash_grid_dim) % hash_grid_dim;
-        iz = (iz + hash_grid_dim) % hash_grid_dim;
+            double dist_sq =
+                min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
+                                     domain_size) +
+                min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
+                                     domain_size) +
+                min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
+                                     domain_size);
 
-        for (int dx_c = dx_start; dx_c <= dx_end; ++dx_c) {
-            for (int dy_c = dx_start; dy_c <= dx_end; ++dy_c) {
-                for (int dz_c = dx_start; dz_c <= dx_end; ++dz_c) {
-                    int n_ix = (((ix + dx_c) % hash_grid_dim) + hash_grid_dim) %
-                               hash_grid_dim;
-                    int n_iy = (((iy + dy_c) % hash_grid_dim) + hash_grid_dim) %
-                               hash_grid_dim;
-                    int n_iz = (((iz + dz_c) % hash_grid_dim) + hash_grid_dim) %
-                               hash_grid_dim;
+            if (dist_sq > search_sq_vol) continue;
 
-                    int cell_idx = n_iz * hash_grid_dim * hash_grid_dim +
-                                   n_iy * hash_grid_dim + n_ix;
+            if (node.particle_idx != -1) {
+                int j = node.particle_idx;
+                double dx = periodic_displacement(pos_x[j] - p1_x, domain_size);
+                double dy = periodic_displacement(pos_y[j] - p1_y, domain_size);
+                double dz = periodic_displacement(pos_z[j] - p1_z, domain_size);
+                double r2 = dx * dx + dy * dy + dz * dz;
 
-                    int start = sph_cell_list.cell_start[cell_idx];
-                    int end = start + sph_cell_list.cell_count[cell_idx];
-
-                    for (int j = start; j < end; ++j) {
-                        double dx =
-                            periodic_displacement(pos_x[j] - p1_x, domain_size);
-                        double dy =
-                            periodic_displacement(pos_y[j] - p1_y, domain_size);
-                        double dz =
-                            periodic_displacement(pos_z[j] - p1_z, domain_size);
-                        double r2 = dx * dx + dy * dy + dz * dz;
-
-                        if (r2 < h[i] * h[i] && r2 > 1e-24) {
-                            double neighbor_vol = mass[j] / rho[j];
-                            max_neighbor_vol =
-                                std::max(max_neighbor_vol, neighbor_vol);
-                        }
-                    }
+                if (r2 < search_sq_vol && r2 > 1e-24) {
+                    double neighbor_vol = mass[j] / rho[j];
+                    max_neighbor_vol = std::max(max_neighbor_vol, neighbor_vol);
                 }
+            } else {
+                stack_vol[stack_ptr_vol++] = node.left_child;
+                stack_vol[stack_ptr_vol++] = node.right_child;
             }
         }
 
@@ -802,13 +903,10 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
             limited_rho[i] = mass[i] / clamped_vol;
         }
     }
-
     rho = std::move(limited_rho);
-
 #endif
 
     clamped_h_cases += num_h_clamped;
-    build_spatial_hash(config.domain_size);
 }
 
 void GasParticleSystem::bin_and_assign_mass(const Config& config) {
@@ -816,30 +914,10 @@ void GasParticleSystem::bin_and_assign_mass(const Config& config) {
     cic_data.assign(num_particles, {});
 
     int N = config.mesh_size;
-    int num_cells = N * N * N;
-
-    pm_cell_list.resize(num_cells, num_particles);
-    std::fill(pm_cell_list.cell_count.begin(), pm_cell_list.cell_count.end(),
-              0);
-    std::fill(pm_cell_list.cell_start.begin(), pm_cell_list.cell_start.end(),
-              0);
-
-    std::vector<int> particle_cell_idx(num_particles);
 
     // Calculate cells & densities
     for (size_t i = 0; i < num_particles; ++i) {
         double px = pos_x[i], py = pos_y[i], pz = pos_z[i];
-
-        // Must use physical coordinates to align with the PP Gravity solver
-        int hash_ix = static_cast<int>(px / config.cell_size) % N;
-        int hash_iy = static_cast<int>(py / config.cell_size) % N;
-        int hash_iz = static_cast<int>(pz / config.cell_size) % N;
-
-        // Protect against negative bounds
-        hash_ix = (hash_ix + N) % N;
-        hash_iy = (hash_iy + N) % N;
-        hash_iz = (hash_iz + N) % N;
-        int cell_index = hash_iz * N * N + hash_iy * N + hash_ix;
 
         // Cell centered PM grid nodes
         double shifted_x = px - 0.5 * config.cell_size;
@@ -884,21 +962,9 @@ void GasParticleSystem::bin_and_assign_mass(const Config& config) {
         gas_rho(ix1, iy0, iz1) += m * w101;
         gas_rho(ix0, iy1, iz1) += m * w011;
         gas_rho(ix1, iy1, iz1) += m * w111;
-
-        particle_cell_idx[i] = cell_index;
-        pm_cell_list.cell_count[cell_index]++;
     }
 
     gas_rho.data /= config.cell_volume;
-
-    // Prefix sum
-    int current_offset = 0;
-    for (int c = 0; c < num_cells; ++c) {
-        pm_cell_list.cell_start[c] = current_offset;
-        current_offset += pm_cell_list.cell_count[c];
-    }
-
-    sort_arrays(pm_cell_list.cell_start, particle_cell_idx);
 }
 
 void GasParticleSystem::interpolate_cic_forces(const Grid3D& ax_grid,
@@ -950,7 +1016,7 @@ void GasParticleSystem::apply_cooling(double dt, double a, const Config& config,
     for (size_t i = 0; i < num_particles; ++i) {
         double local_rho = rho[i];
         if (local_rho > 1e-12) {  // Skip vacuum particles
-            // In MFM, we directly track the metal mass fraction
+            // Track the metal mass fraction
             double local_Z_frac = metal_frac[i];
             double u_current = u[i];
             double u_initial = u_current;
@@ -1013,7 +1079,7 @@ void GasParticleSystem::apply_cooling(double dt, double a, const Config& config,
     this->accumulated_radiated_energy += total_radiated;
     this->accumulated_photoheating_energy += total_photoheated;
 
-    // Resynchronize pressure and dual-energy arrays using the cooled ie
+    // Resynchronize pressure and dual-energy arrays using the ie
     update_primitive_variables(config, a);
 }
 
@@ -1037,108 +1103,93 @@ double GasParticleSystem::get_cfl_timestep(double a,
     // Precompute cosmology conversion factors
     double a_inv = 1.0 / a;
     double a_inv3 = a_inv * a_inv * a_inv;
-    double a_inv3_gamma = std::pow(a_inv, 3.0 * config.gamma);
 
 #pragma omp parallel for reduction(min : min_dt) schedule(dynamic, 64)
     for (size_t i = 0; i < num_particles; ++i) {
         double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
 
-        // Evaluate particle i in strictly PHYSICAL units
+        // Evaluate particle i in PHYSICAL units
         double rho_phys_i = rho[i] * a_inv3;
-        double p_phys_i = pressure[i] * a_inv3_gamma;
+        double p_phys_i = pressure[i] * a_inv;
         double c_phys_i = (rho_phys_i > 1e-12)
                               ? std::sqrt(gamma * p_phys_i / rho_phys_i)
                               : 0.0;
 
-        double v1_x_phys = vel_x[i] * a_inv;
-        double v1_y_phys = vel_y[i] * a_inv;
-        double v1_z_phys = vel_z[i] * a_inv;
+        double v1_x_phys = vel_x[i] * a;
+        double v1_y_phys = vel_y[i] * a;
+        double v1_z_phys = vel_z[i] * a;
 
         double h_i = h[i];
         double v_sig_max_phys = 0.0;
 
-        int ix = static_cast<int>(p1_x / hash_cell_size) % hash_grid_dim;
-        int iy = static_cast<int>(p1_y / hash_cell_size) % hash_grid_dim;
-        int iz = static_cast<int>(p1_z / hash_cell_size) % hash_grid_dim;
-        ix = (ix + hash_grid_dim) % hash_grid_dim;
-        iy = (iy + hash_grid_dim) % hash_grid_dim;
-        iz = (iz + hash_grid_dim) % hash_grid_dim;
+        int stack[128];
+        int stack_ptr = 0;
+        stack[stack_ptr++] = 0;  // Push root
 
-        int search_cells = 1;
-        int dx_start = std::max(-search_cells, -hash_grid_dim / 2);
-        int dx_end = std::min(search_cells, (hash_grid_dim - 1) / 2);
+        while (stack_ptr > 0) {
+            int node_idx = stack[--stack_ptr];
+            const BVHNode& node = bvh_nodes[node_idx];
 
-        for (int dx_c = dx_start; dx_c <= dx_end; ++dx_c) {
-            for (int dy_c = dx_start; dy_c <= dx_end; ++dy_c) {
-                for (int dz_c = dx_start; dz_c <= dx_end; ++dz_c) {
-                    int n_ix = (((ix + dx_c) % hash_grid_dim) + hash_grid_dim) %
-                               hash_grid_dim;
-                    int n_iy = (((iy + dy_c) % hash_grid_dim) + hash_grid_dim) %
-                               hash_grid_dim;
-                    int n_iz = (((iz + dz_c) % hash_grid_dim) + hash_grid_dim) %
-                               hash_grid_dim;
+            double dist_sq =
+                min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
+                                     domain_size) +
+                min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
+                                     domain_size) +
+                min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
+                                     domain_size);
 
-                    int cell_idx = n_iz * hash_grid_dim * hash_grid_dim +
-                                   n_iy * hash_grid_dim + n_ix;
-                    int start = sph_cell_list.cell_start[cell_idx];
-                    int end = start + sph_cell_list.cell_count[cell_idx];
+            double eff_h = std::max(h_i, node.max_h);
+            if (dist_sq > eff_h * eff_h) continue;
 
-                    for (int j = start; j < end; ++j) {
-                        if (i == j) continue;
+            if (node.particle_idx != -1) {
+                int j = node.particle_idx;
+                if (i == j) continue;
 
-                        double dx = mfm_periodic_displacement(pos_x[j] - p1_x,
-                                                              domain_size);
-                        double dy = mfm_periodic_displacement(pos_y[j] - p1_y,
-                                                              domain_size);
-                        double dz = mfm_periodic_displacement(pos_z[j] - p1_z,
-                                                              domain_size);
-                        double r2 = dx * dx + dy * dy + dz * dz;
+                double dx =
+                    mfm_periodic_displacement(pos_x[j] - p1_x, domain_size);
+                double dy =
+                    mfm_periodic_displacement(pos_y[j] - p1_y, domain_size);
+                double dz =
+                    mfm_periodic_displacement(pos_z[j] - p1_z, domain_size);
+                double r2 = dx * dx + dy * dy + dz * dz;
 
-                        if (r2 < h_i * h_i || r2 < h[j] * h[j]) {
-                            if (r2 > 1e-24) {
-                                double r = std::sqrt(r2);
+                if (r2 < h_i * h_i || r2 < h[j] * h[j]) {
+                    if (r2 > 1e-24) {
+                        double r = std::sqrt(r2);
 
-                                // Evaluate particle j in PHYSICAL units
-                                double rho_phys_j = rho[j] * a_inv3;
-                                double p_phys_j = pressure[j] * a_inv3_gamma;
-                                double c_phys_j =
-                                    (rho_phys_j > 1e-12)
-                                        ? std::sqrt(gamma * p_phys_j /
-                                                    rho_phys_j)
-                                        : 0.0;
+                        // Evaluate particle j in PHYSICAL units
+                        double rho_phys_j = rho[j] * a_inv3;
+                        double p_phys_j = pressure[j] * a_inv;
+                        double c_phys_j =
+                            (rho_phys_j > 1e-12)
+                                ? std::sqrt(gamma * p_phys_j / rho_phys_j)
+                                : 0.0;
 
-                                // Physical relative velocity
-                                double dvx_phys =
-                                    (vel_x[j] * a_inv) - v1_x_phys;
-                                double dvy_phys =
-                                    (vel_y[j] * a_inv) - v1_y_phys;
-                                double dvz_phys =
-                                    (vel_z[j] * a_inv) - v1_z_phys;
+                        // Physical relative velocity
+                        double dvx_phys = (vel_x[j] * a) - v1_x_phys;
+                        double dvy_phys = (vel_y[j] * a) - v1_y_phys;
+                        double dvz_phys = (vel_z[j] * a) - v1_z_phys;
 
-                                // Geometric projection (The 'a' factors cancel
-                                // out perfectly in dx/r)
-                                double dv_dot_dx_phys = dvx_phys * dx +
-                                                        dvy_phys * dy +
-                                                        dvz_phys * dz;
+                        double dv_dot_dx_phys =
+                            dvx_phys * dx + dvy_phys * dy + dvz_phys * dz;
+                        double v_sig_ij_phys = c_phys_i + c_phys_j;
 
-                                double v_sig_ij_phys = c_phys_i + c_phys_j;
+                        if (dv_dot_dx_phys < 0.0) {
+                            v_sig_ij_phys -= dv_dot_dx_phys / r;
+                        }
 
-                                if (dv_dot_dx_phys < 0.0) {
-                                    v_sig_ij_phys -= dv_dot_dx_phys / r;
-                                }
-
-                                if (v_sig_ij_phys > v_sig_max_phys) {
-                                    v_sig_max_phys = v_sig_ij_phys;
-                                }
-                            }
+                        if (v_sig_ij_phys > v_sig_max_phys) {
+                            v_sig_max_phys = v_sig_ij_phys;
                         }
                     }
                 }
+            } else {
+                stack[stack_ptr++] = node.left_child;
+                stack[stack_ptr++] = node.right_child;
             }
         }
 
         if (v_sig_max_phys > 1e-9) {
-            // Physical distance (a * h_i) divided by physical signal velocity
             double dt_i = (a * h_i) / v_sig_max_phys;
             if (dt_i < min_dt) {
                 min_dt = dt_i;
@@ -1230,34 +1281,23 @@ inline void compute_adaptive_gravity_terms(double r, double h, double& dphi_dr,
 
 void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
                                                   Diagnostics& diag) {
-    const int N = config.mesh_size;
-    const double cell_size = config.cell_size;
+    if (num_particles == 0) return;
+
     const double domain_size = config.domain_size;
     const double G = config.G;
     const double cutoff_sq = config.cutoff_radius_squared;
-    const double r_s = config.PM_smoothing_cells * cell_size;
+    const double r_s = config.PM_smoothing_cells * config.cell_size;
     const bool use_pm = config.use_PM;
-
     const size_t n_gas = num_particles;
-    int dx_start =
-        use_pm ? -static_cast<int>(std::ceil(config.cutoff_radius / cell_size))
-               : 0;
-    int dx_end =
-        use_pm ? static_cast<int>(std::ceil(config.cutoff_radius / cell_size))
-               : N - 1;
+    const size_t num_nodes = 2 * n_gas - 1;
 
-    // Clamp to prevent gravity double-counting on small meshes
-    if (use_pm) {
-        dx_start = std::max(dx_start, -N / 2);
-        dx_end = std::min(dx_end, (N - 1) / 2);
-    }
-
-    const int num_cells = N * N * N;
+    const double search_sq =
+        use_pm ? cutoff_sq : std::numeric_limits<double>::infinity();
 
 #ifdef USE_GPU
     if (config.enable_GPU) {
         // ========================================================================
-        // GPU IMPLEMENTATION (Sorted Array)
+        // GPU IMPLEMENTATION (Stack-based LBVH Traversal)
         // ========================================================================
         double* d_px = pos_x.data();
         double* d_py = pos_y.data();
@@ -1268,18 +1308,19 @@ void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
         double* d_ax = acc_x.data();
         double* d_ay = acc_y.data();
         double* d_az = acc_z.data();
-        int* d_cell_start = pm_cell_list.cell_start.data();
-        int* d_cell_count = pm_cell_list.cell_count.data();
+        BVHNode* d_bvh_nodes = bvh_nodes.data();
 
         auto start_transfer = std::chrono::high_resolution_clock::now();
-#pragma omp target enter data map(                                    \
-        to : d_px[0 : n_gas], d_py[0 : n_gas], d_pz[0 : n_gas],       \
-            d_m[0 : n_gas], d_h[0 : n_gas], d_zeta[0 : n_gas],        \
-            d_cell_start[0 : num_cells], d_cell_count[0 : num_cells], \
-            d_ax[0 : n_gas], d_ay[0 : n_gas], d_az[0 : n_gas])
-        auto end_transfer = std::chrono::high_resolution_clock::now();
 
+#pragma omp target enter data map(                                        \
+        to : d_px[0 : n_gas], d_py[0 : n_gas], d_pz[0 : n_gas],           \
+            d_m[0 : n_gas], d_h[0 : n_gas], d_zeta[0 : n_gas],            \
+            d_bvh_nodes[0 : num_nodes], d_ax[0 : n_gas], d_ay[0 : n_gas], \
+            d_az[0 : n_gas])
+
+        auto end_transfer = std::chrono::high_resolution_clock::now();
         auto start_compute = std::chrono::high_resolution_clock::now();
+
 #pragma omp target teams distribute parallel for
         for (size_t i = 0; i < n_gas; ++i) {
             double p1_x = d_px[i], p1_y = d_py[i], p1_z = d_pz[i];
@@ -1287,161 +1328,104 @@ void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
             double h_i = d_h[i];
             double zeta_i = d_zeta[i];
 
-            int ix = static_cast<int>(p1_x / cell_size);
-            int iy = static_cast<int>(p1_y / cell_size);
-            int iz = static_cast<int>(p1_z / cell_size);
-            ix = (((ix % N) + N) % N);
-            iy = (((iy % N) + N) % N);
-            iz = (((iz % N) + N) % N);
-
             double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
 
-            for (int dx_cell = dx_start; dx_cell <= dx_end; ++dx_cell) {
-                for (int dy_cell = dx_start; dy_cell <= dx_end; ++dy_cell) {
-                    for (int dz_cell = dx_start; dz_cell <= dx_end; ++dz_cell) {
-                        int neighbor_ix =
-                            use_pm ? (((ix + dx_cell) % N) + N) % N : dx_cell;
-                        int neighbor_iy =
-                            use_pm ? (((iy + dy_cell) % N) + N) % N : dy_cell;
-                        int neighbor_iz =
-                            use_pm ? (((iz + dz_cell) % N) + N) % N : dz_cell;
-                        int cell_idx =
-                            neighbor_iz * N * N + neighbor_iy * N + neighbor_ix;
+            int stack[128];
+            int stack_ptr = 0;
+            stack[stack_ptr++] = 0;  // Push root node
 
-                        int start_idx = d_cell_start[cell_idx];
-                        int end_idx = start_idx + d_cell_count[cell_idx];
+            while (stack_ptr > 0) {
+                int node_idx = stack[--stack_ptr];
+                const BVHNode& node = d_bvh_nodes[node_idx];
 
-                        for (int j = start_idx; j < end_idx; ++j) {
-                            if (i == j) continue;
+                // AABB Culling against cutoff radius
+                double aabb_dist_sq =
+                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
+                                         domain_size);
 
-                            double dx = d_px[j] - p1_x;
-                            if (dx > 0.5 * domain_size)
-                                dx -= domain_size;
-                            else if (dx < -0.5 * domain_size)
-                                dx += domain_size;
+                if (aabb_dist_sq > search_sq) continue;
 
-                            double dy = d_py[j] - p1_y;
-                            if (dy > 0.5 * domain_size)
-                                dy -= domain_size;
-                            else if (dy < -0.5 * domain_size)
-                                dy += domain_size;
+                if (node.particle_idx != -1) {
+                    int j = node.particle_idx;
+                    if (i == static_cast<size_t>(j)) continue;
 
-                            double dz = d_pz[j] - p1_z;
-                            if (dz > 0.5 * domain_size)
-                                dz -= domain_size;
-                            else if (dz < -0.5 * domain_size)
-                                dz += domain_size;
+                    double dx = p1_x - d_px[j];
+                    if (dx > 0.5 * domain_size)
+                        dx -= domain_size;
+                    else if (dx < -0.5 * domain_size)
+                        dx += domain_size;
 
-                            double dist_sq = dx * dx + dy * dy + dz * dz;
+                    double dy = p1_y - d_py[j];
+                    if (dy > 0.5 * domain_size)
+                        dy -= domain_size;
+                    else if (dy < -0.5 * domain_size)
+                        dy += domain_size;
 
-                            if (use_pm && dist_sq > cutoff_sq) continue;
-                            if (dist_sq < 1e-24) continue;
+                    double dz = p1_z - d_pz[j];
+                    if (dz > 0.5 * domain_size)
+                        dz -= domain_size;
+                    else if (dz < -0.5 * domain_size)
+                        dz += domain_size;
 
-                            double r = std::sqrt(dist_sq);
-                            double m_j = d_m[j];
-                            double h_j = d_h[j];
-                            double zeta_j = d_zeta[j];
+                    dx = -dx;
+                    dy = -dy;
+                    dz = -dz;
 
-                            // Inline Kernel Derivs for Particle I
-                            double dphi_dr_i, dW_dr_i;
-                            if (r >= h_i) {
-                                dphi_dr_i = 1.0 / (r * r);
-                                dW_dr_i = 0.0;
-                            } else {
-                                double q = r / h_i;
-                                double q2 = q * q;
-                                double q3 = q2 * q;
-                                double q4 = q3 * q;
-                                double q5 = q4 * q;
-                                double h2 = h_i * h_i;
-                                double h3 = h2 * h_i;
-                                if (q < 0.5) {
-                                    dphi_dr_i = (1.0 / h2) *
-                                                (10.6666666667 * q - 19.2 * q3 +
-                                                 10.6666666667 * q4);
-                                    dW_dr_i = (8.0 / (M_PI * h3)) *
-                                              (-12.0 * q + 18.0 * q2) / h_i;
-                                } else {
-                                    dphi_dr_i = (1.0 / h2) *
-                                                (10.6666666667 * q - 19.2 * q3 +
-                                                 10.6666666667 * q4 -
-                                                 0.0666666667 / q2 + 0.1 * q5 -
-                                                 3.2 * q4 + 10.6666666667 * q3 -
-                                                 16.0 * q2 + 11.2 * q - 3.2);
-                                    double diff = 1.0 - q;
-                                    dW_dr_i = (8.0 / (M_PI * h3)) *
-                                              (-6.0 * diff * diff) / h_i;
-                                }
-                            }
+                    double dist_sq = dx * dx + dy * dy + dz * dz;
 
-                            // Inline Kernel Derivs for Particle J
-                            double dphi_dr_j, dW_dr_j;
-                            if (r >= h_j) {
-                                dphi_dr_j = 1.0 / (r * r);
-                                dW_dr_j = 0.0;
-                            } else {
-                                double q = r / h_j;
-                                double q2 = q * q;
-                                double q3 = q2 * q;
-                                double q4 = q3 * q;
-                                double q5 = q4 * q;
-                                double h2 = h_j * h_j;
-                                double h3 = h2 * h_j;
-                                if (q < 0.5) {
-                                    dphi_dr_j = (1.0 / h2) *
-                                                (10.6666666667 * q - 19.2 * q3 +
-                                                 10.6666666667 * q4);
-                                    dW_dr_j = (8.0 / (M_PI * h3)) *
-                                              (-12.0 * q + 18.0 * q2) / h_j;
-                                } else {
-                                    dphi_dr_j = (1.0 / h2) *
-                                                (10.6666666667 * q - 19.2 * q3 +
-                                                 10.6666666667 * q4 -
-                                                 0.0666666667 / q2 + 0.1 * q5 -
-                                                 3.2 * q4 + 10.6666666667 * q3 -
-                                                 16.0 * q2 + 11.2 * q - 3.2);
-                                    double diff = 1.0 - q;
-                                    dW_dr_j = (8.0 / (M_PI * h3)) *
-                                              (-6.0 * diff * diff) / h_j;
-                                }
-                            }
+                    if (use_pm && dist_sq > cutoff_sq) continue;
+                    if (dist_sq < 1e-24) continue;
 
-                            // Symmetrized H8 Equation
-                            double force_mag_over_r =
-                                (G / 2.0) *
-                                ((dphi_dr_i + dphi_dr_j) +
-                                 (zeta_i * dW_dr_i) / m_i +
-                                 (zeta_j * dW_dr_j) / m_j) /
-                                r;
+                    double r = std::sqrt(dist_sq);
+                    double m_j = d_m[j];
+                    double h_j = d_h[j];
+                    double zeta_j = d_zeta[j];
 
-                            if (use_pm) {
-                                double r_scaled = r / (2.0 * r_s);
-                                double taper =
-                                    std::erfc(r_scaled) +
-                                    (r / (std::sqrt(M_PI) * r_s)) *
-                                        std::exp(-r_scaled * r_scaled);
-                                force_mag_over_r *= taper;
-                            }
+                    double dphi_dr_i, dW_dr_i, dphi_dr_j, dW_dr_j;
+                    compute_adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
+                    compute_adaptive_gravity_terms(r, h_j, dphi_dr_j, dW_dr_j);
 
-                            local_acc_x += force_mag_over_r * m_j * dx;
-                            local_acc_y += force_mag_over_r * m_j * dy;
-                            local_acc_z += force_mag_over_r * m_j * dz;
-                        }
+                    double force_mag_over_r =
+                        (G / 2.0) *
+                        ((dphi_dr_i + dphi_dr_j) + (zeta_i * dW_dr_i) / m_i +
+                         (zeta_j * dW_dr_j) / m_j) /
+                        r;
+
+                    if (use_pm) {
+                        double r_scaled = r / (2.0 * r_s);
+                        double taper = std::erfc(r_scaled) +
+                                       (r / (std::sqrt(M_PI) * r_s)) *
+                                           std::exp(-r_scaled * r_scaled);
+                        force_mag_over_r *= taper;
                     }
+
+                    local_acc_x += force_mag_over_r * m_j * dx;
+                    local_acc_y += force_mag_over_r * m_j * dy;
+                    local_acc_z += force_mag_over_r * m_j * dz;
+                } else {
+                    stack[stack_ptr++] = node.left_child;
+                    stack[stack_ptr++] = node.right_child;
                 }
             }
+
             d_ax[i] += local_acc_x;
             d_ay[i] += local_acc_y;
             d_az[i] += local_acc_z;
         }
-        auto end_compute = std::chrono::high_resolution_clock::now();
 
+        auto end_compute = std::chrono::high_resolution_clock::now();
         auto start_return = std::chrono::high_resolution_clock::now();
+
 #pragma omp target exit data map(from : d_ax[0 : n_gas], d_ay[0 : n_gas], \
                                      d_az[0 : n_gas])                     \
     map(delete : d_px[0 : n_gas], d_py[0 : n_gas], d_pz[0 : n_gas],       \
             d_m[0 : n_gas], d_h[0 : n_gas], d_zeta[0 : n_gas],            \
-            d_cell_start[0 : num_cells], d_cell_count[0 : num_cells])
+            d_bvh_nodes[0 : num_nodes])
+
         auto end_return = std::chrono::high_resolution_clock::now();
 
         double diff_transf =
@@ -1460,11 +1444,12 @@ void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
         diag.add_prof_time(ProfRegion::Transf, diff_transf);
         diag.add_prof_time(ProfRegion::Compute, diff_comput);
         diag.add_prof_time(ProfRegion::Ret, diff_return);
+
     } else
 #endif
     {
         // ========================================================================
-        // CPU IMPLEMENTATION (Sorted Array + Chunked Gather Buffer)
+        // CPU IMPLEMENTATION
         // ========================================================================
 #pragma omp parallel for schedule(dynamic, 64)
         for (size_t i = 0; i < n_gas; ++i) {
@@ -1473,34 +1458,51 @@ void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
             double h_i = h[i];
             double zeta_i = zeta[i];
 
-            int ix = static_cast<int>(p1_x / config.cell_size);
-            int iy = static_cast<int>(p1_y / config.cell_size);
-            int iz = static_cast<int>(p1_z / config.cell_size);
-            ix = (((ix % N) + N) % N);
-            iy = (((iy % N) + N) % N);
-            iz = (((iz % N) + N) % N);
-
-            constexpr int MAX_NEIGHBORS = 1536;
-            double n_x[MAX_NEIGHBORS];
-            double n_y[MAX_NEIGHBORS];
-            double n_z[MAX_NEIGHBORS];
-            double n_m[MAX_NEIGHBORS];
-            double n_h[MAX_NEIGHBORS];
-            double n_zeta[MAX_NEIGHBORS];
-            int num_neighbors = 0;
-
             double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
 
-            // Lambda to execute the SIMD math and flush the buffer
-            auto compute_simd_batch = [&]() {
-#pragma omp simd reduction(+ : local_acc_x, local_acc_y, local_acc_z)
-                for (int k = 0; k < num_neighbors; ++k) {
-                    double dx =
-                        mfm_periodic_displacement(n_x[k] - p1_x, domain_size);
-                    double dy =
-                        mfm_periodic_displacement(n_y[k] - p1_y, domain_size);
-                    double dz =
-                        mfm_periodic_displacement(n_z[k] - p1_z, domain_size);
+            int stack[128];
+            int stack_ptr = 0;
+            stack[stack_ptr++] = 0;
+
+            while (stack_ptr > 0) {
+                int node_idx = stack[--stack_ptr];
+                const BVHNode& node = bvh_nodes[node_idx];
+
+                double aabb_dist_sq =
+                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
+                                         domain_size);
+
+                if (aabb_dist_sq > search_sq) continue;
+
+                if (node.particle_idx != -1) {
+                    int j = node.particle_idx;
+                    if (i == static_cast<size_t>(j)) continue;
+
+                    double dx = p1_x - pos_x[j];
+                    if (dx > 0.5 * domain_size)
+                        dx -= domain_size;
+                    else if (dx < -0.5 * domain_size)
+                        dx += domain_size;
+
+                    double dy = p1_y - pos_y[j];
+                    if (dy > 0.5 * domain_size)
+                        dy -= domain_size;
+                    else if (dy < -0.5 * domain_size)
+                        dy += domain_size;
+
+                    double dz = p1_z - pos_z[j];
+                    if (dz > 0.5 * domain_size)
+                        dz -= domain_size;
+                    else if (dz < -0.5 * domain_size)
+                        dz += domain_size;
+
+                    dx = -dx;
+                    dy = -dy;
+                    dz = -dz;
 
                     double dist_sq = dx * dx + dy * dy + dz * dz;
 
@@ -1508,18 +1510,14 @@ void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
                     if (dist_sq < 1e-24) continue;
 
                     double r = std::sqrt(dist_sq);
-                    double m_j = n_m[k];
-                    double h_j = n_h[k];
-                    double zeta_j = n_zeta[k];
+                    double m_j = mass[j];
+                    double h_j = h[j];
+                    double zeta_j = zeta[j];
 
-                    double dphi_dr_i, dW_dr_i;
+                    double dphi_dr_i, dW_dr_i, dphi_dr_j, dW_dr_j;
                     compute_adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
-
-                    double dphi_dr_j, dW_dr_j;
                     compute_adaptive_gravity_terms(r, h_j, dphi_dr_j, dW_dr_j);
 
-                    // Equation H8: Fully Symmetrized Force (divided by r to
-                    // multiply by distance vector)
                     double force_mag_over_r =
                         (G / 2.0) *
                         ((dphi_dr_i + dphi_dr_j) + (zeta_i * dW_dr_i) / m_i +
@@ -1537,50 +1535,10 @@ void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
                     local_acc_x += force_mag_over_r * m_j * dx;
                     local_acc_y += force_mag_over_r * m_j * dy;
                     local_acc_z += force_mag_over_r * m_j * dz;
+                } else {
+                    stack[stack_ptr++] = node.left_child;
+                    stack[stack_ptr++] = node.right_child;
                 }
-                num_neighbors = 0;  // Reset the buffer counter
-            };
-
-            // Gather: Linearly pull from sorted memory
-            for (int dx_cell = dx_start; dx_cell <= dx_end; ++dx_cell) {
-                for (int dy_cell = dx_start; dy_cell <= dx_end; ++dy_cell) {
-                    for (int dz_cell = dx_start; dz_cell <= dx_end; ++dz_cell) {
-                        int neighbor_ix =
-                            use_pm ? (((ix + dx_cell) % N) + N) % N : dx_cell;
-                        int neighbor_iy =
-                            use_pm ? (((iy + dy_cell) % N) + N) % N : dy_cell;
-                        int neighbor_iz =
-                            use_pm ? (((iz + dz_cell) % N) + N) % N : dz_cell;
-                        int cell_idx =
-                            neighbor_iz * N * N + neighbor_iy * N + neighbor_ix;
-
-                        int start_idx = pm_cell_list.cell_start[cell_idx];
-                        int end_idx =
-                            start_idx + pm_cell_list.cell_count[cell_idx];
-
-                        for (int j = start_idx; j < end_idx; ++j) {
-                            if (i != j) {
-                                n_x[num_neighbors] = pos_x[j];
-                                n_y[num_neighbors] = pos_y[j];
-                                n_z[num_neighbors] = pos_z[j];
-                                n_m[num_neighbors] = mass[j];
-                                n_h[num_neighbors] = h[j];
-                                n_zeta[num_neighbors] = zeta[j];
-                                num_neighbors++;
-
-                                // Flush the buffer if it gets full
-                                if (num_neighbors == MAX_NEIGHBORS) {
-                                    compute_simd_batch();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Process any remaining particles in the buffer
-            if (num_neighbors > 0) {
-                compute_simd_batch();
             }
 
             acc_x[i] += local_acc_x;
@@ -1593,35 +1551,28 @@ void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
 void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
                                                 const Config& config,
                                                 Diagnostics& diag) {
-    const int N = config.mesh_size;
-    const double cell_size = config.cell_size;
+    if (num_particles == 0 || dm.num_particles == 0) return;
+
     const double domain_size = config.domain_size;
     const double G = config.G;
     const double soft_sq = config.softening_squared;
     const double cutoff_sq = config.cutoff_radius_squared;
-    const double r_s = config.PM_smoothing_cells * cell_size;
+    const double r_s = config.PM_smoothing_cells * config.cell_size;
     const bool use_pm = config.use_PM;
-
     const size_t n_gas = num_particles;
     const size_t n_dm = dm.num_particles;
-    const int num_cells = N * N * N;
+    const size_t dm_num_nodes = 2 * n_dm - 1;
 
-    int dx_start =
-        use_pm ? -static_cast<int>(std::ceil(config.cutoff_radius / cell_size))
-               : 0;
-    int dx_end =
-        use_pm ? static_cast<int>(std::ceil(config.cutoff_radius / cell_size))
-               : N - 1;
-
-    if (use_pm) {
-        dx_start = std::max(dx_start, -N / 2);
-        dx_end = std::min(dx_end, (N - 1) / 2);
-    }
+    // Search radius is the PM cutoff. If not using PM, it's infinite (N^2
+    // tree traversal)
+    const double search_sq =
+        use_pm ? cutoff_sq : std::numeric_limits<double>::infinity();
+    const double base_soft = std::sqrt(soft_sq);
 
 #ifdef USE_GPU
     if (config.enable_GPU) {
         // ========================================================================
-        // GPU IMPLEMENTATION (Cross-forces)
+        // GPU IMPLEMENTATION (Cross-forces with Spatial Culling)
         // ========================================================================
         double* d_gas_px = pos_x.data();
         double* d_gas_py = pos_y.data();
@@ -1640,283 +1591,328 @@ void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
         double* d_dm_ax = dm.acc_x.data();
         double* d_dm_ay = dm.acc_y.data();
         double* d_dm_az = dm.acc_z.data();
-        int* d_dm_cell_start = dm.cell_list.cell_start.data();
-        int* d_dm_cell_count = dm.cell_list.cell_count.data();
+
+        BVHNode* d_dm_bvh = dm.bvh_nodes.data();
 
         auto start_transfer = std::chrono::high_resolution_clock::now();
-#pragma omp target enter data map(                                          \
-        to : d_gas_px[0 : n_gas], d_gas_py[0 : n_gas], d_gas_pz[0 : n_gas], \
-            d_gas_m[0 : n_gas], d_gas_h[0 : n_gas], d_gas_zeta[0 : n_gas],  \
-            d_gas_ax[0 : n_gas], d_gas_ay[0 : n_gas], d_gas_az[0 : n_gas],  \
-            d_dm_px[0 : n_dm], d_dm_py[0 : n_dm], d_dm_pz[0 : n_dm],        \
-            d_dm_m[0 : n_dm], d_dm_cell_start[0 : num_cells],               \
-            d_dm_cell_count[0 : num_cells], d_dm_ax[0 : n_dm],              \
-            d_dm_ay[0 : n_dm], d_dm_az[0 : n_dm])
-        auto end_transfer = std::chrono::high_resolution_clock::now();
 
+#pragma omp target enter data map(                                           \
+        to : d_gas_px[0 : n_gas], d_gas_py[0 : n_gas], d_gas_pz[0 : n_gas],  \
+            d_gas_m[0 : n_gas], d_gas_h[0 : n_gas], d_gas_zeta[0 : n_gas],   \
+            d_gas_ax[0 : n_gas], d_gas_ay[0 : n_gas], d_gas_az[0 : n_gas],   \
+            d_dm_px[0 : n_dm], d_dm_py[0 : n_dm], d_dm_pz[0 : n_dm],         \
+            d_dm_m[0 : n_dm], d_dm_bvh[0 : dm_num_nodes], d_dm_ax[0 : n_dm], \
+            d_dm_ay[0 : n_dm], d_dm_az[0 : n_dm])
+
+        auto end_transfer = std::chrono::high_resolution_clock::now();
         auto start_compute = std::chrono::high_resolution_clock::now();
+
 #pragma omp target teams distribute parallel for
         for (size_t i = 0; i < n_gas; ++i) {
             double p1_x = d_gas_px[i], p1_y = d_gas_py[i], p1_z = d_gas_pz[i];
-            int ix = static_cast<int>(p1_x / cell_size);
-            int iy = static_cast<int>(p1_y / cell_size);
-            int iz = static_cast<int>(p1_z / cell_size);
-
-            double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
             double m_gas = d_gas_m[i];
             double h_i = d_gas_h[i];
             double zeta_i = d_gas_zeta[i];
-            double base_soft = std::sqrt(soft_sq);
 
-            for (int dx_cell = dx_start; dx_cell <= dx_end; ++dx_cell) {
-                for (int dy_cell = dx_start; dy_cell <= dx_end; ++dy_cell) {
-                    for (int dz_cell = dx_start; dz_cell <= dx_end; ++dz_cell) {
-                        int neighbor_ix =
-                            use_pm ? (((ix + dx_cell) % N) + N) % N : dx_cell;
-                        int neighbor_iy =
-                            use_pm ? (((iy + dy_cell) % N) + N) % N : dy_cell;
-                        int neighbor_iz =
-                            use_pm ? (((iz + dz_cell) % N) + N) % N : dz_cell;
-                        int cell_idx =
-                            neighbor_iz * N * N + neighbor_iy * N + neighbor_ix;
+            double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
 
-                        int start = d_dm_cell_start[cell_idx];
-                        int end = start + d_dm_cell_count[cell_idx];
+            int stack[128];
+            int stack_ptr = 0;
+            stack[stack_ptr++] = 0;  // Push root of DM tree
 
-                        for (int j = start; j < end; ++j) {
-                            double dx = p1_x - d_dm_px[j];
-                            if (dx > 0.5 * domain_size)
-                                dx -= domain_size;
-                            else if (dx < -0.5 * domain_size)
-                                dx += domain_size;
+            while (stack_ptr > 0) {
+                int node_idx = stack[--stack_ptr];
+                const BVHNode& node = d_dm_bvh[node_idx];
 
-                            double dy = p1_y - d_dm_py[j];
-                            if (dy > 0.5 * domain_size)
-                                dy -= domain_size;
-                            else if (dy < -0.5 * domain_size)
-                                dy += domain_size;
+                // Spatial Culling: Does the search sphere intersect this node's
+                // AABB?
+                double aabb_dist_sq =
+                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
+                                         domain_size);
 
-                            double dz = p1_z - d_dm_pz[j];
-                            if (dz > 0.5 * domain_size)
-                                dz -= domain_size;
-                            else if (dz < -0.5 * domain_size)
-                                dz += domain_size;
+                if (aabb_dist_sq > search_sq)
+                    continue;  // Prune branch completely
 
-                            // Flip dx, dy, dz back to (j - i)
-                            dx = -dx;
-                            dy = -dy;
-                            dz = -dz;
+                if (node.particle_idx != -1) {
+                    // Exact P-P interaction at the leaf
+                    int j = node.particle_idx;
 
-                            double dist_sq = dx * dx + dy * dy + dz * dz;
+                    double dx = p1_x - d_dm_px[j];
+                    if (dx > 0.5 * domain_size)
+                        dx -= domain_size;
+                    else if (dx < -0.5 * domain_size)
+                        dx += domain_size;
 
-                            if (use_pm && dist_sq > cutoff_sq) continue;
+                    double dy = p1_y - d_dm_py[j];
+                    if (dy > 0.5 * domain_size)
+                        dy -= domain_size;
+                    else if (dy < -0.5 * domain_size)
+                        dy += domain_size;
 
-                            double r = std::sqrt(dist_sq + 1e-24);
-                            double m_j = d_dm_m[j];
+                    double dz = p1_z - d_dm_pz[j];
+                    if (dz > 0.5 * domain_size)
+                        dz -= domain_size;
+                    else if (dz < -0.5 * domain_size)
+                        dz += domain_size;
 
-                            // Evaluate kernel derivatives for Gas particle
-                            // (uses h_i)
-                            double dphi_dr_i, dW_dr_i;
-                            if (r >= h_i) {
-                                dphi_dr_i = 1.0 / (r * r);
-                                dW_dr_i = 0.0;
-                            } else {
-                                double q = r / h_i;
-                                double q2 = q * q;
-                                double q3 = q2 * q;
-                                double q4 = q3 * q;
-                                double q5 = q4 * q;
-                                double h2 = h_i * h_i;
-                                double h3 = h2 * h_i;
+                    // Flip back to (j - i) vector direction
+                    dx = -dx;
+                    dy = -dy;
+                    dz = -dz;
 
-                                if (q < 0.5) {
-                                    dphi_dr_i = (1.0 / h2) *
-                                                (10.6666666667 * q - 19.2 * q3 +
-                                                 10.6666666667 * q4);
-                                    dW_dr_i = (8.0 / (M_PI * h3)) *
-                                              (-12.0 * q + 18.0 * q2) / h_i;
-                                } else {
-                                    dphi_dr_i = (1.0 / h2) *
-                                                (10.6666666667 * q - 19.2 * q3 +
-                                                 10.6666666667 * q4 -
-                                                 0.0666666667 / q2 + 0.1 * q5 -
-                                                 3.2 * q4 + 10.6666666667 * q3 -
-                                                 16.0 * q2 + 11.2 * q - 3.2);
-                                    double diff = 1.0 - q;
-                                    dW_dr_i = (8.0 / (M_PI * h3)) *
-                                              (-6.0 * diff * diff) / h_i;
-                                }
-                            }
+                    double dist_sq = dx * dx + dy * dy + dz * dz;
 
-                            // Evaluate kernel derivatives for DM particle
-                            // (uses fixed base_soft)
-                            double dphi_dr_j;
-                            if (r >= base_soft) {
-                                dphi_dr_j = 1.0 / (r * r);
-                            } else {
-                                double q = r / base_soft;
-                                double q2 = q * q;
-                                double q3 = q2 * q;
-                                double q4 = q3 * q;
-                                double q5 = q4 * q;
-                                double h2 = base_soft * base_soft;
+                    if (use_pm && dist_sq > cutoff_sq) continue;
+                    double r = std::sqrt(dist_sq + 1e-24);
 
-                                if (q < 0.5) {
-                                    dphi_dr_j = (1.0 / h2) *
-                                                (10.6666666667 * q - 19.2 * q3 +
-                                                 10.6666666667 * q4);
-                                } else {
-                                    dphi_dr_j = (1.0 / h2) *
-                                                (10.6666666667 * q - 19.2 * q3 +
-                                                 10.6666666667 * q4 -
-                                                 0.0666666667 / q2 + 0.1 * q5 -
-                                                 3.2 * q4 + 10.6666666667 * q3 -
-                                                 16.0 * q2 + 11.2 * q - 3.2);
-                                }
-                            }
+                    double dphi_dr_i, dW_dr_i, dphi_dr_j;
 
-                            // Symmetrized Force Equation (GIZMO App. H8)
-                            double force_mag_over_r =
-                                (G / 2.0) *
-                                ((dphi_dr_i + dphi_dr_j) +
-                                 (zeta_i * dW_dr_i) / m_gas) /
-                                r;
-
-                            if (use_pm) {
-                                double r_scaled = r / (2.0 * r_s);
-                                double taper =
-                                    std::erfc(r_scaled) +
-                                    (r / (std::sqrt(M_PI) * r_s)) *
-                                        std::exp(-r_scaled * r_scaled);
-                                force_mag_over_r *= taper;
-                            }
-
-                            // Pull on MFM Gas
-                            local_acc_x += force_mag_over_r * m_j * dx;
-                            local_acc_y += force_mag_over_r * m_j * dy;
-                            local_acc_z += force_mag_over_r * m_j * dz;
-
-                            // Pull on DM (Equal and opposite)
-                            double a_dm = force_mag_over_r * m_gas;
-                            double dm_ax = -a_dm * dx;
-                            double dm_ay = -a_dm * dy;
-                            double dm_az = -a_dm * dz;
-
-#pragma omp atomic
-                            d_dm_ax[j] += dm_ax;
-#pragma omp atomic
-                            d_dm_ay[j] += dm_ay;
-#pragma omp atomic
-                            d_dm_az[j] += dm_az;
+                    // Gas kernel derivatives
+                    if (r >= h_i) {
+                        dphi_dr_i = 1.0 / (r * r);
+                        dW_dr_i = 0.0;
+                    } else {
+                        double q = r / h_i;
+                        double q2 = q * q;
+                        double q3 = q2 * q;
+                        double q4 = q3 * q;
+                        double q5 = q4 * q;
+                        double h2 = h_i * h_i;
+                        double h3 = h2 * h_i;
+                        if (q < 0.5) {
+                            dphi_dr_i =
+                                (1.0 / h2) * (10.6666666667 * q - 19.2 * q3 +
+                                              10.6666666667 * q4);
+                            dW_dr_i = (8.0 / (M_PI * h3)) *
+                                      (-12.0 * q + 18.0 * q2) / h_i;
+                        } else {
+                            dphi_dr_i =
+                                (1.0 / h2) *
+                                (10.6666666667 * q - 19.2 * q3 +
+                                 10.6666666667 * q4 - 0.0666666667 / q2 +
+                                 0.1 * q5 - 3.2 * q4 + 10.6666666667 * q3 -
+                                 16.0 * q2 + 11.2 * q - 3.2);
+                            double diff = 1.0 - q;
+                            dW_dr_i = (8.0 / (M_PI * h3)) *
+                                      (-6.0 * diff * diff) / h_i;
                         }
                     }
+
+                    // DM kernel derivatives (uses fixed base_soft)
+                    if (r >= base_soft) {
+                        dphi_dr_j = 1.0 / (r * r);
+                    } else {
+                        double q = r / base_soft;
+                        double q2 = q * q;
+                        double q3 = q2 * q;
+                        double q4 = q3 * q;
+                        double q5 = q4 * q;
+                        double h2 = base_soft * base_soft;
+                        if (q < 0.5) {
+                            dphi_dr_j =
+                                (1.0 / h2) * (10.6666666667 * q - 19.2 * q3 +
+                                              10.6666666667 * q4);
+                        } else {
+                            dphi_dr_j =
+                                (1.0 / h2) *
+                                (10.6666666667 * q - 19.2 * q3 +
+                                 10.6666666667 * q4 - 0.0666666667 / q2 +
+                                 0.1 * q5 - 3.2 * q4 + 10.6666666667 * q3 -
+                                 16.0 * q2 + 11.2 * q - 3.2);
+                        }
+                    }
+
+                    // Force magnitude
+                    double m_j = d_dm_m[j];
+                    double force_mag_over_r =
+                        (G / 2.0) *
+                        ((dphi_dr_i + dphi_dr_j) + (zeta_i * dW_dr_i) / m_gas) /
+                        r;
+
+                    if (use_pm) {
+                        double r_scaled = r / (2.0 * r_s);
+                        double taper = std::erfc(r_scaled) +
+                                       (r / (std::sqrt(M_PI) * r_s)) *
+                                           std::exp(-r_scaled * r_scaled);
+                        force_mag_over_r *= taper;
+                    }
+
+                    // Pull on MFM Gas
+                    local_acc_x += force_mag_over_r * m_j * dx;
+                    local_acc_y += force_mag_over_r * m_j * dy;
+                    local_acc_z += force_mag_over_r * m_j * dz;
+
+                    // Pull on DM (Equal and opposite, N3L)
+                    double a_dm = force_mag_over_r * m_gas;
+#pragma omp atomic
+                    d_dm_ax[j] -= a_dm * dx;
+#pragma omp atomic
+                    d_dm_ay[j] -= a_dm * dy;
+#pragma omp atomic
+                    d_dm_az[j] -= a_dm * dz;
+
+                } else {
+                    // Push children
+                    stack[stack_ptr++] = node.left_child;
+                    stack[stack_ptr++] = node.right_child;
                 }
             }
+
             d_gas_ax[i] += local_acc_x;
             d_gas_ay[i] += local_acc_y;
             d_gas_az[i] += local_acc_z;
         }
-        auto end_compute = std::chrono::high_resolution_clock::now();
 
+        auto end_compute = std::chrono::high_resolution_clock::now();
         auto start_return = std::chrono::high_resolution_clock::now();
+
 #pragma omp target exit data map(                                             \
         from : d_gas_ax[0 : n_gas], d_gas_ay[0 : n_gas], d_gas_az[0 : n_gas], \
             d_dm_ax[0 : n_dm], d_dm_ay[0 : n_dm], d_dm_az[0 : n_dm])          \
     map(delete : d_gas_px[0 : n_gas], d_gas_py[0 : n_gas],                    \
             d_gas_pz[0 : n_gas], d_gas_m[0 : n_gas], d_gas_h[0 : n_gas],      \
             d_gas_zeta[0 : n_gas], d_dm_px[0 : n_dm], d_dm_py[0 : n_dm],      \
-            d_dm_pz[0 : n_dm], d_dm_m[0 : n_dm],                              \
-            d_dm_cell_start[0 : num_cells], d_dm_cell_count[0 : num_cells])
+            d_dm_pz[0 : n_dm], d_dm_m[0 : n_dm], d_dm_bvh[0 : dm_num_nodes])
+
         auto end_return = std::chrono::high_resolution_clock::now();
 
-        double diff_transf =
+        diag.add_prof_time(
+            ProfRegion::Transf,
             std::chrono::duration_cast<std::chrono::microseconds>(
                 end_transfer - start_transfer)
-                .count();
-        double diff_comput =
+                .count());
+        diag.add_prof_time(
+            ProfRegion::Compute,
             std::chrono::duration_cast<std::chrono::microseconds>(end_compute -
                                                                   start_compute)
-                .count();
-        double diff_return =
+                .count());
+        diag.add_prof_time(
+            ProfRegion::Ret,
             std::chrono::duration_cast<std::chrono::microseconds>(end_return -
                                                                   start_return)
-                .count();
+                .count());
 
-        diag.add_prof_time(ProfRegion::Transf, diff_transf);
-        diag.add_prof_time(ProfRegion::Compute, diff_comput);
-        diag.add_prof_time(ProfRegion::Ret, diff_return);
     } else
 #endif
     {
         // ========================================================================
-        // CPU IMPLEMENTATION (Sorted Array + Chunked Gather Buffer)
+        // CPU IMPLEMENTATION
         // ========================================================================
 #pragma omp parallel for schedule(dynamic, 64)
         for (size_t i = 0; i < n_gas; ++i) {
             double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
-            int ix = static_cast<int>(p1_x / cell_size);
-            int iy = static_cast<int>(p1_y / cell_size);
-            int iz = static_cast<int>(p1_z / cell_size);
-            ix = (((ix % N) + N) % N);
-            iy = (((iy % N) + N) % N);
-            iz = (((iz % N) + N) % N);
-
-            constexpr int MAX_NEIGHBORS = 1536;
-            double n_x[MAX_NEIGHBORS];
-            double n_y[MAX_NEIGHBORS];
-            double n_z[MAX_NEIGHBORS];
-            double n_m[MAX_NEIGHBORS];
-            int n_j[MAX_NEIGHBORS];  // Track original DM particle index for
-                                     // atomic return force
-            int num_neighbors = 0;
-
-            double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
             double m_gas = mass[i];
             double h_i = h[i];
             double zeta_i = zeta[i];
 
-            // Lambda to execute SIMD math and flush the buffer
-            auto compute_simd_batch = [&]() {
-                double temp_dm_ax[MAX_NEIGHBORS];
-                double temp_dm_ay[MAX_NEIGHBORS];
-                double temp_dm_az[MAX_NEIGHBORS];
+            double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
 
-                double base_soft = std::sqrt(soft_sq);
+            int stack[128];
+            int stack_ptr = 0;
+            stack[stack_ptr++] = 0;
 
-#pragma omp simd reduction(+ : local_acc_x, local_acc_y, local_acc_z)
-                for (int k = 0; k < num_neighbors; ++k) {
-                    double dx =
-                        mfm_periodic_displacement(n_x[k] - p1_x, domain_size);
-                    double dy =
-                        mfm_periodic_displacement(n_y[k] - p1_y, domain_size);
-                    double dz =
-                        mfm_periodic_displacement(n_z[k] - p1_z, domain_size);
+            while (stack_ptr > 0) {
+                int node_idx = stack[--stack_ptr];
+                const BVHNode& node = dm.bvh_nodes[node_idx];
+
+                double aabb_dist_sq =
+                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
+                                         domain_size);
+
+                if (aabb_dist_sq > search_sq) continue;
+
+                if (node.particle_idx != -1) {
+                    int j = node.particle_idx;
+
+                    double dx = p1_x - dm.pos_x[j];
+                    if (dx > 0.5 * domain_size)
+                        dx -= domain_size;
+                    else if (dx < -0.5 * domain_size)
+                        dx += domain_size;
+
+                    double dy = p1_y - dm.pos_y[j];
+                    if (dy > 0.5 * domain_size)
+                        dy -= domain_size;
+                    else if (dy < -0.5 * domain_size)
+                        dy += domain_size;
+
+                    double dz = p1_z - dm.pos_z[j];
+                    if (dz > 0.5 * domain_size)
+                        dz -= domain_size;
+                    else if (dz < -0.5 * domain_size)
+                        dz += domain_size;
+
+                    dx = -dx;
+                    dy = -dy;
+                    dz = -dz;
+
                     double dist_sq = dx * dx + dy * dy + dz * dz;
 
-                    if (use_pm && dist_sq > cutoff_sq) {
-                        temp_dm_ax[k] = 0.0;
-                        temp_dm_ay[k] = 0.0;
-                        temp_dm_az[k] = 0.0;
-                        continue;
-                    }
-
+                    if (use_pm && dist_sq > cutoff_sq) continue;
                     double r = std::sqrt(dist_sq + 1e-24);
 
-                    // Evaluate kernel derivatives for Gas particle (uses
-                    // h_i)
-                    double dphi_dr_i, dW_dr_i;
-                    compute_adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
+                    double dphi_dr_i, dW_dr_i, dphi_dr_j;
 
-                    // Evaluate kernel derivatives for DM particle (uses
-                    // fixed base_soft)
-                    double dphi_dr_j, dW_dr_j_dummy;
-                    compute_adaptive_gravity_terms(r, base_soft, dphi_dr_j,
-                                                   dW_dr_j_dummy);
+                    if (r >= h_i) {
+                        dphi_dr_i = 1.0 / (r * r);
+                        dW_dr_i = 0.0;
+                    } else {
+                        double q = r / h_i;
+                        double q2 = q * q;
+                        double q3 = q2 * q;
+                        double q4 = q3 * q;
+                        double q5 = q4 * q;
+                        double h2 = h_i * h_i;
+                        double h3 = h2 * h_i;
+                        if (q < 0.5) {
+                            dphi_dr_i =
+                                (1.0 / h2) * (10.6666666667 * q - 19.2 * q3 +
+                                              10.6666666667 * q4);
+                            dW_dr_i = (8.0 / (M_PI * h3)) *
+                                      (-12.0 * q + 18.0 * q2) / h_i;
+                        } else {
+                            dphi_dr_i =
+                                (1.0 / h2) *
+                                (10.6666666667 * q - 19.2 * q3 +
+                                 10.6666666667 * q4 - 0.0666666667 / q2 +
+                                 0.1 * q5 - 3.2 * q4 + 10.6666666667 * q3 -
+                                 16.0 * q2 + 11.2 * q - 3.2);
+                            dW_dr_i = (8.0 / (M_PI * h3)) *
+                                      (-6.0 * (1.0 - q) * (1.0 - q)) / h_i;
+                        }
+                    }
 
-                    double m_j = n_m[k];
+                    if (r >= base_soft) {
+                        dphi_dr_j = 1.0 / (r * r);
+                    } else {
+                        double q = r / base_soft;
+                        double q2 = q * q;
+                        double q3 = q2 * q;
+                        double q4 = q3 * q;
+                        double q5 = q4 * q;
+                        double h2 = base_soft * base_soft;
+                        if (q < 0.5)
+                            dphi_dr_j =
+                                (1.0 / h2) * (10.6666666667 * q - 19.2 * q3 +
+                                              10.6666666667 * q4);
+                        else
+                            dphi_dr_j =
+                                (1.0 / h2) *
+                                (10.6666666667 * q - 19.2 * q3 +
+                                 10.6666666667 * q4 - 0.0666666667 / q2 +
+                                 0.1 * q5 - 3.2 * q4 + 10.6666666667 * q3 -
+                                 16.0 * q2 + 11.2 * q - 3.2);
+                    }
 
-                    // Symmetrized Force Equation (GIZMO App. H8)
-                    // Treat DM as a fluid particle with zeta_j = 0
+                    double m_j = dm.mass[j];
                     double force_mag_over_r =
                         (G / 2.0) *
                         ((dphi_dr_i + dphi_dr_j) + (zeta_i * dW_dr_i) / m_gas) /
@@ -1935,65 +1931,17 @@ void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
                     local_acc_z += force_mag_over_r * m_j * dz;
 
                     double a_dm = force_mag_over_r * m_gas;
-                    temp_dm_ax[k] = -a_dm * dx;
-                    temp_dm_ay[k] = -a_dm * dy;
-                    temp_dm_az[k] = -a_dm * dz;
-                }
-
-                // Apply atomics OUTSIDE the SIMD loop to protect
-                // vectorization
-                for (int k = 0; k < num_neighbors; ++k) {
-                    if (temp_dm_ax[k] != 0.0 || temp_dm_ay[k] != 0.0 ||
-                        temp_dm_az[k] != 0.0) {
-                        int j_orig = n_j[k];
 #pragma omp atomic
-                        dm.acc_x[j_orig] += temp_dm_ax[k];
+                    dm.acc_x[j] -= a_dm * dx;
 #pragma omp atomic
-                        dm.acc_y[j_orig] += temp_dm_ay[k];
+                    dm.acc_y[j] -= a_dm * dy;
 #pragma omp atomic
-                        dm.acc_z[j_orig] += temp_dm_az[k];
-                    }
+                    dm.acc_z[j] -= a_dm * dz;
+
+                } else {
+                    stack[stack_ptr++] = node.left_child;
+                    stack[stack_ptr++] = node.right_child;
                 }
-
-                num_neighbors = 0;  // Reset the buffer counter
-            };
-
-            for (int dx_cell = dx_start; dx_cell <= dx_end; ++dx_cell) {
-                for (int dy_cell = dx_start; dy_cell <= dx_end; ++dy_cell) {
-                    for (int dz_cell = dx_start; dz_cell <= dx_end; ++dz_cell) {
-                        int neighbor_ix =
-                            use_pm ? (((ix + dx_cell) % N) + N) % N : dx_cell;
-                        int neighbor_iy =
-                            use_pm ? (((iy + dy_cell) % N) + N) % N : dy_cell;
-                        int neighbor_iz =
-                            use_pm ? (((iz + dz_cell) % N) + N) % N : dz_cell;
-                        int cell_idx =
-                            neighbor_iz * N * N + neighbor_iy * N + neighbor_ix;
-
-                        int start = dm.cell_list.cell_start[cell_idx];
-                        int end = start + dm.cell_list.cell_count[cell_idx];
-
-                        for (int j = start; j < end; ++j) {
-                            n_x[num_neighbors] = dm.pos_x[j];
-                            n_y[num_neighbors] = dm.pos_y[j];
-                            n_z[num_neighbors] = dm.pos_z[j];
-                            n_m[num_neighbors] = dm.mass[j];
-                            n_j[num_neighbors] =
-                                j;  // Cache the target DM index
-                            num_neighbors++;
-
-                            // Flush the buffer if it gets full
-                            if (num_neighbors == MAX_NEIGHBORS) {
-                                compute_simd_batch();
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Process any remaining particles in the buffer
-            if (num_neighbors > 0) {
-                compute_simd_batch();
             }
 
             acc_x[i] += local_acc_x;
@@ -2321,8 +2269,7 @@ ParticleGradients compute_single_particle_gradients(
         true;  // Assume ill-conditioned until proven otherwise
     out.condition_number = -1.0;
 
-    // We still need a tiny guard so E.inverse() doesn't crash on pure
-    // zeroes
+    // Tiny guard so E.inverse() doesn't crash on pure zeroes
     if (std::abs(det) > 1e-30) {
         Eigen::Matrix3d temp_B = E.inverse();
 
@@ -2567,7 +2514,6 @@ ParticleGradients compute_single_particle_gradients(
 void GasParticleSystem::compute_gradients(const Config& config) {
     if (num_particles == 0) return;
     double domain_size = config.domain_size;
-
     size_t step_ill_conditioned = 0;
 
 #pragma omp parallel for reduction(+ : step_ill_conditioned) \
@@ -2583,70 +2529,59 @@ void GasParticleSystem::compute_gradients(const Config& config) {
         p_i.h = h[i];
 
         double local_max_rel_ke = 0.0;
-
-        // Gather neighbors into a standard vector
         std::vector<ParticleState> neighbors;
 
-        int search_cells = 1;
-        int dx_start = std::max(-search_cells, -hash_grid_dim / 2);
-        int dx_end = std::min(search_cells, (hash_grid_dim - 1) / 2);
+        int stack[128];
+        int stack_ptr = 0;
+        stack[stack_ptr++] = 0;  // Push root
 
-        int ix = static_cast<int>(p_i.pos.x() / hash_cell_size) % hash_grid_dim;
-        int iy = static_cast<int>(p_i.pos.y() / hash_cell_size) % hash_grid_dim;
-        int iz = static_cast<int>(p_i.pos.z() / hash_cell_size) % hash_grid_dim;
-        ix = (ix + hash_grid_dim) % hash_grid_dim;
-        iy = (iy + hash_grid_dim) % hash_grid_dim;
-        iz = (iz + hash_grid_dim) % hash_grid_dim;
+        while (stack_ptr > 0) {
+            int node_idx = stack[--stack_ptr];
+            const BVHNode& node = bvh_nodes[node_idx];
 
-        for (int dx_c = dx_start; dx_c <= dx_end; ++dx_c) {
-            for (int dy_c = dx_start; dy_c <= dx_end; ++dy_c) {
-                for (int dz_c = dx_start; dz_c <= dx_end; ++dz_c) {
-                    int n_ix = (((ix + dx_c) % hash_grid_dim) + hash_grid_dim) %
-                               hash_grid_dim;
-                    int n_iy = (((iy + dy_c) % hash_grid_dim) + hash_grid_dim) %
-                               hash_grid_dim;
-                    int n_iz = (((iz + dz_c) % hash_grid_dim) + hash_grid_dim) %
-                               hash_grid_dim;
+            double dist_sq =
+                min_periodic_dist_sq(p_i.pos.x(), node.bbox.min_x,
+                                     node.bbox.max_x, domain_size) +
+                min_periodic_dist_sq(p_i.pos.y(), node.bbox.min_y,
+                                     node.bbox.max_y, domain_size) +
+                min_periodic_dist_sq(p_i.pos.z(), node.bbox.min_z,
+                                     node.bbox.max_z, domain_size);
 
-                    int cell_idx = n_iz * hash_grid_dim * hash_grid_dim +
-                                   n_iy * hash_grid_dim + n_ix;
-                    int start = sph_cell_list.cell_start[cell_idx];
-                    int end = start + sph_cell_list.cell_count[cell_idx];
+            double eff_h = std::max(p_i.h, node.max_h);
+            if (dist_sq > eff_h * eff_h) continue;
 
-                    for (int j = start; j < end; ++j) {
-                        ParticleState nj;
-                        nj.pos = Eigen::Vector3d(pos_x[j], pos_y[j], pos_z[j]);
-                        nj.vel = Eigen::Vector3d(vel_x[j], vel_y[j], vel_z[j]);
-                        nj.mass = mass[j];
-                        nj.rho = rho[j];
-                        nj.pressure = pressure[j];
-                        nj.h = h[j];
-                        neighbors.push_back(nj);
+            if (node.particle_idx != -1) {
+                int j = node.particle_idx;
 
-                        // Calculate periodic distance
-                        double dx = mfm_periodic_displacement(
-                            pos_x[j] - p_i.pos.x(), domain_size);
-                        double dy = mfm_periodic_displacement(
-                            pos_y[j] - p_i.pos.y(), domain_size);
-                        double dz = mfm_periodic_displacement(
-                            pos_z[j] - p_i.pos.z(), domain_size);
-                        double r2 = dx * dx + dy * dy + dz * dz;
+                double dx = mfm_periodic_displacement(pos_x[j] - p_i.pos.x(),
+                                                      domain_size);
+                double dy = mfm_periodic_displacement(pos_y[j] - p_i.pos.y(),
+                                                      domain_size);
+                double dz = mfm_periodic_displacement(pos_z[j] - p_i.pos.z(),
+                                                      domain_size);
+                double r2 = dx * dx + dy * dy + dz * dz;
 
-                        // evaluate if they are actually interacting
-                        // neighbors
-                        if ((r2 < p_i.h * p_i.h || r2 < h[j] * h[j]) &&
-                            r2 > 1e-24) {
-                            double rel_vx = vel_x[j] - p_i.vel.x();
-                            double rel_vy = vel_y[j] - p_i.vel.y();
-                            double rel_vz = vel_z[j] - p_i.vel.z();
-                            double rel_v2 = rel_vx * rel_vx + rel_vy * rel_vy +
-                                            rel_vz * rel_vz;
+                if ((r2 < p_i.h * p_i.h || r2 < h[j] * h[j]) && r2 > 1e-24) {
+                    ParticleState nj;
+                    nj.pos = Eigen::Vector3d(pos_x[j], pos_y[j], pos_z[j]);
+                    nj.vel = Eigen::Vector3d(vel_x[j], vel_y[j], vel_z[j]);
+                    nj.mass = mass[j];
+                    nj.rho = rho[j];
+                    nj.pressure = pressure[j];
+                    nj.h = h[j];
+                    neighbors.push_back(nj);
 
-                            local_max_rel_ke =
-                                std::max(local_max_rel_ke, 0.5 * rel_v2);
-                        }
-                    }
+                    double rel_vx = vel_x[j] - p_i.vel.x();
+                    double rel_vy = vel_y[j] - p_i.vel.y();
+                    double rel_vz = vel_z[j] - p_i.vel.z();
+                    double rel_v2 =
+                        rel_vx * rel_vx + rel_vy * rel_vy + rel_vz * rel_vz;
+
+                    local_max_rel_ke = std::max(local_max_rel_ke, 0.5 * rel_v2);
                 }
+            } else {
+                stack[stack_ptr++] = node.left_child;
+                stack[stack_ptr++] = node.right_child;
             }
         }
 
@@ -2898,7 +2833,6 @@ Eigen::Vector3d compute_mfm_face_area_vector(const ParticleState& p_i,
 void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                                              double dt) {
     if (num_particles == 0) return;
-
     double domain_size = config.domain_size;
 
     // Reset accumulators
@@ -2907,12 +2841,6 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
     std::fill(hydro_acc_z.begin(), hydro_acc_z.end(), 0.0);
     std::fill(du_dt.begin(), du_dt.end(), 0.0);
     std::fill(de_dt.begin(), de_dt.end(), 0.0);
-
-    // Search radius is 1 cell (max_h) to catch all pairwise
-    // interactions
-    int search_cells = 1;
-    int dx_start = std::max(-search_cells, -hash_grid_dim / 2);
-    int dx_end = std::min(search_cells, (hash_grid_dim - 1) / 2);
 
 #pragma omp parallel for schedule(dynamic, 64)
     for (size_t i = 0; i < num_particles; ++i) {
@@ -2933,174 +2861,143 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
         grad_i.grad_vy = grad_vy[i];
         grad_i.grad_vz = grad_vz[i];
 
-        int ix = static_cast<int>(p_i.pos.x() / hash_cell_size) % hash_grid_dim;
-        int iy = static_cast<int>(p_i.pos.y() / hash_cell_size) % hash_grid_dim;
-        int iz = static_cast<int>(p_i.pos.z() / hash_cell_size) % hash_grid_dim;
-        ix = (ix + hash_grid_dim) % hash_grid_dim;
-        iy = (iy + hash_grid_dim) % hash_grid_dim;
-        iz = (iz + hash_grid_dim) % hash_grid_dim;
+        int stack[128];
+        int stack_ptr = 0;
+        stack[stack_ptr++] = 0;  // Push root
 
-        for (int dx_c = dx_start; dx_c <= dx_end; ++dx_c) {
-            for (int dy_c = dx_start; dy_c <= dx_end; ++dy_c) {
-                for (int dz_c = dx_start; dz_c <= dx_end; ++dz_c) {
-                    int n_ix = (((ix + dx_c) % hash_grid_dim) + hash_grid_dim) %
-                               hash_grid_dim;
-                    int n_iy = (((iy + dy_c) % hash_grid_dim) + hash_grid_dim) %
-                               hash_grid_dim;
-                    int n_iz = (((iz + dz_c) % hash_grid_dim) + hash_grid_dim) %
-                               hash_grid_dim;
+        while (stack_ptr > 0) {
+            int node_idx = stack[--stack_ptr];
+            const BVHNode& node = bvh_nodes[node_idx];
 
-                    int cell_idx = n_iz * hash_grid_dim * hash_grid_dim +
-                                   n_iy * hash_grid_dim + n_ix;
-                    int start = sph_cell_list.cell_start[cell_idx];
-                    int end = start + sph_cell_list.cell_count[cell_idx];
+            double dist_sq =
+                min_periodic_dist_sq(p_i.pos.x(), node.bbox.min_x,
+                                     node.bbox.max_x, domain_size) +
+                min_periodic_dist_sq(p_i.pos.y(), node.bbox.min_y,
+                                     node.bbox.max_y, domain_size) +
+                min_periodic_dist_sq(p_i.pos.z(), node.bbox.min_z,
+                                     node.bbox.max_z, domain_size);
 
-                    for (int j = start; j < end; ++j) {
-                        // Process each pair just once
-                        if (j <= i) continue;
+            double eff_h = std::max(p_i.h, node.max_h);
+            if (dist_sq > eff_h * eff_h) continue;
 
-                        double dx = mfm_periodic_displacement(
-                            pos_x[j] - p_i.pos.x(), domain_size);
-                        double dy = mfm_periodic_displacement(
-                            pos_y[j] - p_i.pos.y(), domain_size);
-                        double dz = mfm_periodic_displacement(
-                            pos_z[j] - p_i.pos.z(), domain_size);
+            if (node.particle_idx != -1) {
+                int j = node.particle_idx;
 
-                        double r2 = dx * dx + dy * dy + dz * dz;
-                        double hj = h[j];
+                // Process each pair just once to maintain N3L conservation
+                if (j <= static_cast<int>(i)) continue;
 
-                        // Skip overlaps to prevent division by zero
-                        if (r2 < 1e-24) continue;
+                double dx = mfm_periodic_displacement(pos_x[j] - p_i.pos.x(),
+                                                      domain_size);
+                double dy = mfm_periodic_displacement(pos_y[j] - p_i.pos.y(),
+                                                      domain_size);
+                double dz = mfm_periodic_displacement(pos_z[j] - p_i.pos.z(),
+                                                      domain_size);
+                double r2 = dx * dx + dy * dy + dz * dz;
 
-                        // Particles interact if they fall within either
-                        // smoothing length
-                        if (r2 < p_i.h * p_i.h || r2 < hj * hj) {
-                            // Build the isolated state proxy for particle j
-                            ParticleState p_j;
-                            p_j.pos =
-                                Eigen::Vector3d(pos_x[j], pos_y[j], pos_z[j]);
-                            p_j.vel =
-                                Eigen::Vector3d(vel_x[j], vel_y[j], vel_z[j]);
-                            p_j.mass = mass[j];
-                            p_j.rho = rho[j];
-                            p_j.pressure = pressure[j];
-                            p_j.h = hj;
+                if (r2 < 1e-24) continue;
 
-                            ParticleGradients grad_j;
-                            grad_j.B_matrix = B_matrix[j];
-                            grad_j.grad_rho = grad_rho[j];
-                            grad_j.grad_p = grad_p[j];
-                            grad_j.grad_vx = grad_vx[j];
-                            grad_j.grad_vy = grad_vy[j];
-                            grad_j.grad_vz = grad_vz[j];
+                double hj = h[j];
 
-                            // SOLVER PIPELINE
+                // Particles interact if they fall within either smoothing
+                // length
+                if (r2 < p_i.h * p_i.h || r2 < hj * hj) {
+                    ParticleState p_j;
+                    p_j.pos = Eigen::Vector3d(pos_x[j], pos_y[j], pos_z[j]);
+                    p_j.vel = Eigen::Vector3d(vel_x[j], vel_y[j], vel_z[j]);
+                    p_j.mass = mass[j];
+                    p_j.rho = rho[j];
+                    p_j.pressure = pressure[j];
+                    p_j.h = hj;
 
-                            // Face Reconstruction (Extrapolates states to
-                            // the midpoint)
-                            ReconstructedFace face =
-                                compute_face_reconstruction(
-                                    p_i, grad_i, p_j, grad_j, domain_size);
-                            if (!face.is_valid) continue;
+                    ParticleGradients grad_j;
+                    grad_j.B_matrix = B_matrix[j];
+                    grad_j.grad_rho = grad_rho[j];
+                    grad_j.grad_p = grad_p[j];
+                    grad_j.grad_vx = grad_vx[j];
+                    grad_j.grad_vy = grad_vy[j];
+                    grad_j.grad_vz = grad_vz[j];
 
-                            // Compute the Area Vector
-                            Eigen::Vector3d Area_vec =
-                                compute_mfm_face_area_vector(
-                                    p_i, grad_i.B_matrix, p_j, grad_j.B_matrix,
-                                    face);
+                    // SOLVER PIPELINE
+                    ReconstructedFace face = compute_face_reconstruction(
+                        p_i, grad_i, p_j, grad_j, domain_size);
+                    if (!face.is_valid) continue;
 
-                            // Check if the area is zero to prevent division
-                            // by zero
-                            double A_mag = Area_vec.norm();
-                            if (A_mag < 1e-20) continue;
+                    Eigen::Vector3d Area_vec = compute_mfm_face_area_vector(
+                        p_i, grad_i.B_matrix, p_j, grad_j.B_matrix, face);
+                    double A_mag = Area_vec.norm();
+                    if (A_mag < 1e-20) continue;
 
-                            // Re-align the face normal to
-                            // the Area Vector. The Riemann problem MUST be
-                            // solved along the A_ij axis.
-                            face.n = Area_vec / A_mag;
+                    face.n = Area_vec / A_mag;
 
-                            // Frame Boosting
-                            double fraction_i = p_i.h / (p_i.h + p_j.h);
-                            double fraction_j = 1.0 - fraction_i;
-                            Eigen::Vector3d v_frame =
-                                p_i.vel + fraction_i * (p_j.vel - p_i.vel);
+                    double fraction_i = p_i.h / (p_i.h + p_j.h);
+                    double fraction_j = 1.0 - fraction_i;
+                    Eigen::Vector3d v_frame =
+                        p_i.vel + fraction_i * (p_j.vel - p_i.vel);
 
-                            // Convert to physical units for Riemann solver
-                            // OpenGadget3 Paper Eq. 20-24
-                            double a_inv = 1.0 / a;
-                            double a_inv3 = a_inv * a_inv * a_inv;
-                            double a_inv3_gamma =
-                                std::pow(a_inv, 3.0 * config.gamma);
+                    // Convert to physical units
+                    double a_inv = 1.0 / a;
+                    double a_inv3 = a_inv * a_inv * a_inv;
 
-                            ReconstructedFace face_phys =
-                                face;  // Copy normal vector and validity
-                            face_phys.rho_L = face.rho_L * a_inv3;
-                            face_phys.rho_R = face.rho_R * a_inv3;
-                            face_phys.p_L = face.p_L * a_inv3_gamma;
-                            face_phys.p_R = face.p_R * a_inv3_gamma;
-                            face_phys.v_L = face.v_L * a_inv;
-                            face_phys.v_R = face.v_R * a_inv;
+                    ReconstructedFace face_phys = face;
+                    face_phys.rho_L = face.rho_L * a_inv3;
+                    face_phys.rho_R = face.rho_R * a_inv3;
+                    face_phys.p_L = face.p_L * a_inv;
+                    face_phys.p_R = face.p_R * a_inv;
+                    face_phys.v_L = face.v_L * a;
+                    face_phys.v_R = face.v_R * a;
 
-                            Eigen::Vector3d v_frame_phys = v_frame * a_inv;
+                    Eigen::Vector3d v_frame_phys = v_frame * a;
 
-                            // Solve the Riemann problem in the pure physical
-                            // frame
-                            MFMFaceFlux flux_1d_phys = solve_mfm_riemann(
-                                face_phys, v_frame_phys, config.gamma);
+                    MFMFaceFlux flux_1d_phys = solve_mfm_riemann(
+                        face_phys, v_frame_phys, config.gamma);
 
-                            // Back to comoving
-                            double a_3gamma = std::pow(a, 3.0 * config.gamma);
-                            double P_star_com = flux_1d_phys.P_star * a_3gamma;
-                            double S_star_com = flux_1d_phys.S_star * a;
+                    // Back to code units
+                    double P_star_com = flux_1d_phys.P_star * a;
+                    double S_star_com = flux_1d_phys.S_star * a_inv;
 
-                            // Apply fluxes (comoving)
-                            Eigen::Vector3d Force_mom = P_star_com * Area_vec;
-                            Eigen::Vector3d v_star_lab =
-                                v_frame + (S_star_com * face.n);
+                    Eigen::Vector3d Force_mom = P_star_com * Area_vec;
+                    Eigen::Vector3d v_star_lab =
+                        v_frame + (S_star_com * face.n);
 
-                            double work_i =
-                                P_star_com *
-                                (v_star_lab - p_i.vel).dot(Area_vec);
-                            double work_j =
-                                P_star_com *
-                                (v_star_lab - p_j.vel).dot(Area_vec);
+                    double work_i =
+                        P_star_com * (v_star_lab - p_i.vel).dot(Area_vec);
+                    double work_j =
+                        P_star_com * (v_star_lab - p_j.vel).dot(Area_vec);
 
-                            double du_dt_i = -work_i / p_i.mass;
-                            double du_dt_j = work_j / p_j.mass;
+                    double du_dt_i = -work_i / p_i.mass;
+                    double du_dt_j = work_j / p_j.mass;
 
-                            double Rate_energy =
-                                P_star_com * v_star_lab.dot(Area_vec);
-                            double de_dt_i = -Rate_energy / p_i.mass;
-                            double de_dt_j = Rate_energy / p_j.mass;
+                    double Rate_energy = P_star_com * v_star_lab.dot(Area_vec);
+                    double de_dt_i = -Rate_energy / p_i.mass;
+                    double de_dt_j = Rate_energy / p_j.mass;
 
-                            if (config.disable_hydro_forces) {
-                                continue;
-                            }
+                    if (config.disable_hydro_forces) continue;
 
 #pragma omp atomic
-                            hydro_acc_x[i] -= Force_mom.x() / p_i.mass;
+                    hydro_acc_x[i] -= Force_mom.x() / p_i.mass;
 #pragma omp atomic
-                            hydro_acc_y[i] -= Force_mom.y() / p_i.mass;
+                    hydro_acc_y[i] -= Force_mom.y() / p_i.mass;
 #pragma omp atomic
-                            hydro_acc_z[i] -= Force_mom.z() / p_i.mass;
+                    hydro_acc_z[i] -= Force_mom.z() / p_i.mass;
 #pragma omp atomic
-                            du_dt[i] += du_dt_i;
+                    du_dt[i] += du_dt_i;
 #pragma omp atomic
-                            de_dt[i] += de_dt_i;
+                    de_dt[i] += de_dt_i;
 
 #pragma omp atomic
-                            hydro_acc_x[j] += Force_mom.x() / p_j.mass;
+                    hydro_acc_x[j] += Force_mom.x() / p_j.mass;
 #pragma omp atomic
-                            hydro_acc_y[j] += Force_mom.y() / p_j.mass;
+                    hydro_acc_y[j] += Force_mom.y() / p_j.mass;
 #pragma omp atomic
-                            hydro_acc_z[j] += Force_mom.z() / p_j.mass;
+                    hydro_acc_z[j] += Force_mom.z() / p_j.mass;
 #pragma omp atomic
-                            du_dt[j] += du_dt_j;
+                    du_dt[j] += du_dt_j;
 #pragma omp atomic
-                            de_dt[j] += de_dt_j;
-                        }
-                    }
+                    de_dt[j] += de_dt_j;
                 }
+            } else {
+                stack[stack_ptr++] = node.left_child;
+                stack[stack_ptr++] = node.right_child;
             }
         }
     }

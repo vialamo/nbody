@@ -410,40 +410,64 @@ static void apply_gas_particle_gravity_kick(GasParticleSystem& gas, double dt,
 
 static void apply_gas_particle_hydro_kick(GasParticleSystem& gas, double dt,
                                           double a, const Config& config) {
-    double a3 = a * a * a;
-    double a2 = a * a;
     double inv_a = 1.0 / a;
+    double inv_a2 = inv_a * inv_a;
     const size_t n = gas.num_particles;
     double gamma_minus_1 = config.gamma - 1.0;
     constexpr double min_energy = 1e-20;
 
-#pragma omp parallel for schedule(static)
-    for (size_t i = 0; i < n; i++) {
-        // Pure Hydro Acceleration
-        double hx = gas.hydro_acc_x[i] * inv_a;
-        double hy = gas.hydro_acc_y[i] * inv_a;
-        double hz = gas.hydro_acc_z[i] * inv_a;
+    double step_hydro_exp_work = 0.0;
 
-        // Update velocity
+#pragma omp parallel for reduction(+ : step_hydro_exp_work) schedule(static)
+    for (size_t i = 0; i < n; i++) {
+        double m = gas.mass[i];
+        double vx_old = gas.vel_x[i];
+        double vy_old = gas.vel_y[i];
+        double vz_old = gas.vel_z[i];
+        double ke_old =
+            0.5 * m * (vx_old * vx_old + vy_old * vy_old + vz_old * vz_old);
+
+        // Hydro Acceleration (Force / m)
+        // Apply the 1/a^2 comoving factor
+        double hx = gas.hydro_acc_x[i] * inv_a2;
+        double hy = gas.hydro_acc_y[i] * inv_a2;
+        double hz = gas.hydro_acc_z[i] * inv_a2;
+
         gas.vel_x[i] += hx * dt;
         gas.vel_y[i] += hy * dt;
         gas.vel_z[i] += hz * dt;
 
-        // Update internal energy with hydro work (PdV heating/cooling)
-        gas.u[i] += gas.du_dt[i] * dt * inv_a;
-        gas.total_energy[i] += gas.de_dt[i] * dt * inv_a;
+        double ke_new =
+            0.5 * m *
+            (gas.vel_x[i] * gas.vel_x[i] + gas.vel_y[i] * gas.vel_y[i] +
+             gas.vel_z[i] * gas.vel_z[i]);
+        double delta_ke = ke_new - ke_old;
+
+        // Update internal energy. du_dt is d(u_com)/dt.
+        double delta_u = gas.du_dt[i] * dt;
+        gas.u[i] += delta_u;
+
+        // Track the "Hydro Expansion Work" for the diagnostics
+        // The expected KE change if a=1 is (de_dt - du_dt) * dt * m
+        double expected_delta_ke = (gas.de_dt[i] - gas.du_dt[i]) * dt * m;
+
+        // The difference is PdV work done against the comoving frame
+        step_hydro_exp_work += (delta_ke - expected_delta_ke);
+
+        // total_energy[i] tracks passively for diagnostics
+        gas.total_energy[i] += gas.de_dt[i] * dt;
 
         if (gas.u[i] < min_energy) gas.u[i] = min_energy;
         if (gas.total_energy[i] < min_energy) gas.total_energy[i] = min_energy;
 
-        // Keep comoving entropy synchronized with the shock-heated internal
-        // energy
+        // Keep primitive variables strictly synchronized
         gas.entropy[i] =
             gamma_minus_1 * gas.u[i] / std::pow(gas.rho[i], gamma_minus_1);
-
-        // Keep pressure in sync
         gas.pressure[i] = gamma_minus_1 * gas.rho[i] * gas.u[i];
     }
+
+    // Offset the cosmological expansion work tracked in diagnostics
+    gas.accumulated_expansion_work -= step_hydro_exp_work;
 }
 
 static void apply_gravity_kick(SimState& state, double dt, double a, double H,
@@ -526,9 +550,12 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
     // PM GRAVITY
     {
         ScopedTimer pm_timer(diag, TimerRegion::PM);
+
+        state.dm.build_lbvh(config);
         state.dm.bin_and_assign_mass(config);  // Sorts DM arrays into PM grid
 
         if (config.hydro_method == HydroMethod::MFM) {
+            state.mfm_gas->build_lbvh(config);
             state.mfm_gas->bin_and_assign_mass(config);
             state.total_rho.data =
                 state.dm.get_rho().data + state.mfm_gas->get_rho().data;
@@ -637,7 +664,8 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
             double dt_h = std::min(config.hydro_method == HydroMethod::Eulerian
                                        ? state.gas->get_cfl_timestep()
                                    : config.hydro_method == HydroMethod::MFM
-                                       ? state.mfm_gas->get_cfl_timestep(state.scale_factor, config)
+                                       ? state.mfm_gas->get_cfl_timestep(
+                                             state.scale_factor, config)
                                        : ts.dt_macro,
                                    ts.dt_macro - t_sub);
 
