@@ -72,7 +72,9 @@ def assign_cic_grid(p_x, p_y, p_z, p_mass, domain_size, mesh_size):
     """Helper function to perform 3D Cloud-In-Cell (CIC) mass assignment."""
     N = mesh_size
     grid = np.zeros((N, N, N), dtype=np.float64)
-    
+    if len(p_x) == 0:
+        return grid
+        
     x = (p_x / domain_size) * N
     y = (p_y / domain_size) * N
     z = (p_z / domain_size) * N
@@ -94,16 +96,18 @@ def assign_cic_grid(p_x, p_y, p_z, p_mass, domain_size, mesh_size):
 
 def compute_cic_variance(p_x, p_y, p_z, p_mass, domain_size, mesh_size):
     """Calculates density variance using Cloud-In-Cell (CIC) mass assignment."""
+    if len(p_x) == 0:
+        return 0.0
     grid = assign_cic_grid(p_x, p_y, p_z, p_mass, domain_size, mesh_size)
-    return np.var(grid / np.mean(grid))
+    mean_grid = np.mean(grid)
+    return np.var(grid / mean_grid) if mean_grid > 0 else 0.0
 
 def compute_power_spectrum(p_x, p_y, p_z, p_mass, domain_size, mesh_size, part_mesh_size, gas_rho=None):
     """Calculates the 1D total matter power spectrum from particle and gas data."""
     N = mesh_size
     grid = assign_cic_grid(p_x, p_y, p_z, p_mass, domain_size, mesh_size)
 
-    # If the grid is oversampled, apply a Gaussian blur to the DM particles
-    if mesh_size > part_mesh_size:
+    if part_mesh_size > 0 and mesh_size > part_mesh_size:
         from scipy.ndimage import gaussian_filter
         sigma = mesh_size / (2.0 * part_mesh_size)
         grid = gaussian_filter(grid, sigma=sigma, mode='wrap')
@@ -112,7 +116,6 @@ def compute_power_spectrum(p_x, p_y, p_z, p_mass, domain_size, mesh_size, part_m
         cell_vol = (domain_size / N)**3
         grid += gas_rho * cell_vol
     
-    # Create overdensity field (delta)
     mean_rho = np.mean(grid)
     delta = (grid - mean_rho) / mean_rho if mean_rho > 0 else grid
     
@@ -146,9 +149,10 @@ def compute_power_spectrum(p_x, p_y, p_z, p_mass, domain_size, mesh_size, part_m
 
 def compute_max_kdtree_density(p_x, p_y, p_z, p_mass, box_size, k=32):
     """Calculates the maximum comoving density of particles using a KD-Tree nearest-neighbor search."""
+    if len(p_x) == 0:
+        return 0.0
     points = np.vstack((p_x, p_y, p_z)).T
     tree = cKDTree(points, boxsize=box_size)
-    
     k_nn = min(k, len(p_x))
     dists, _ = tree.query(points, k=k_nn, workers=-1)
     
@@ -158,18 +162,19 @@ def compute_max_kdtree_density(p_x, p_y, p_z, p_mass, box_size, k=32):
     
     return np.max(rho_comoving)
 
-def get_linear_growth(a, omega_m_0, omega_l_0):
-    """Calculates the linear growth factor D(a) using the Carroll, Press & Turner (1992) approximation."""
-    if a == 0: return 0.0
-    a3 = a**3
-    omega_k_0 = 1.0 - omega_m_0 - omega_l_0
+def compute_kdtree_density_array(p_x, p_y, p_z, p_mass, box_size, k=32):
+    """Calculates the comoving density of all particles using a KD-Tree nearest-neighbor search."""
+    if len(p_x) == 0:
+        return np.array([])
+    points = np.vstack((p_x, p_y, p_z)).T
+    tree = cKDTree(points, boxsize=box_size)
+    k_nn = min(k, len(p_x))
+    dists, _ = tree.query(points, k=k_nn, workers=-1)
     
-    E2 = omega_m_0 / a3 + omega_k_0 / (a**2) + omega_l_0
-    Om_a = (omega_m_0 / a3) / E2
-    Ol_a = omega_l_0 / E2
-    
-    g_a = (2.5 * Om_a) / (Om_a**(4.0/7.0) - Ol_a + (1.0 + Om_a / 2.0) * (1.0 + Ol_a / 70.0))
-    return a * g_a
+    r_comoving = np.maximum(dists[:, -1], 1e-6)
+    vol_comoving = (4.0 / 3.0) * np.pi * (r_comoving**3)
+    rho_comoving = (k_nn * p_mass[0]) / vol_comoving
+    return rho_comoving
 
 def get_temperature(f):
     """Extracts or calculates temperature in Kelvin."""
@@ -185,7 +190,7 @@ def get_temperature(f):
     u_code = pressure / (density * (gamma - 1.0))
     return u_code * factor_u_to_t * (a**2)
 
-def generate_dashboard(snapshot_dir):
+def generate_dashboard(snapshot_dir, pair_dir=None):
     files = sorted(glob.glob(os.path.join(snapshot_dir, "snapshot_*.hdf5")))
     if not files:
         print(f"Error: No HDF5 snapshots found in {snapshot_dir}")
@@ -193,14 +198,18 @@ def generate_dashboard(snapshot_dir):
 
     print(f"Processing {len(files)} snapshots for diagnostics...")
 
-    with h5py.File(files[0], 'r') as f:
+    # Pre-calculate Global Simulation Config & Units (from the last snapshot)
+    with h5py.File(files[-1], 'r') as f:
         config = f['Config'].attrs
         units = f['Units'].attrs
         
         domain_size = config.get('domain_size', 1.0)
         mesh_size = config.get('mesh_size_1d', 32)
-        has_hydro = bool(config.get('use_hydro', 0))
-        hubble = config.get('Hubble_h', 0.7)
+        method = config.get('hydro_method', b"none").decode('utf-8')
+        has_eulerian_hydro = bool(method == "eulerian")
+        has_particle_hydro = bool(method == "mfm")
+        has_hydro = has_eulerian_hydro or has_particle_hydro
+        hubble = config.get('Hubble_h', 70.0)
         h_val = hubble / 100.0 if hubble > 10.0 else hubble
         box_size_mpc = config.get('box_size_mpc', 1.0)
         box_h_mpc = box_size_mpc * h_val
@@ -212,23 +221,47 @@ def generate_dashboard(snapshot_dir):
         mu = config.get('primordial_mu', 0.6)
         prim_index = config.get('spectral_index', 0.96)
         sigma_8 = float(config.get('sigma_8', 0.81))
-        # T_floor = float(config.get('cooling_cutoff_k', 1000.0))
-        floor_k = config.get('temp_floor_k', 10.0)
         
         u_density_cgs = units.get('unit_density_in_cgs', 1.0)
         u_energy_cgs = units.get('unit_velocity_in_cgs', 1.0)**2 * (units.get('unit_mass_in_msun', 1.0) * 1.98847e33)
         u_time_gyr = units.get('unit_time_in_gyr', 1.0)
-        
         cell_vol_code = (domain_size / mesh_size)**3
 
+        if has_eulerian_hydro:
+            rho = f['Gas/density'][:]
+            flat_index = np.argmax(rho)
+            target_coords = np.unravel_index(flat_index, rho.shape)
+            Z, Y, X = np.indices(rho.shape)
+            radius_cells = 0
+            dz = np.minimum(np.abs(Z - target_coords[0]), mesh_size - np.abs(Z - target_coords[0]))
+            dy = np.minimum(np.abs(Y - target_coords[1]), mesh_size - np.abs(Y - target_coords[1]))
+            dx = np.minimum(np.abs(X - target_coords[2]), mesh_size - np.abs(X - target_coords[2]))
+            dist_sq = dx**2 + dy**2 + dz**2
+        elif has_particle_hydro:
+            rho = f['Gas/density'][:]
+            max_idx = np.argmax(rho)
+            target_pos = np.array([f['Gas/position_x'][max_idx], 
+                                   f['Gas/position_y'][max_idx], 
+                                   f['Gas/position_z'][max_idx]])
+
+    # Time series lists
     scale_factors, times_gyr, dm_variances, dm_scale_factors = [], [], [], []
     p999_gas_densities, max_gas_densities, max_dm_densities = [], [], []
     p999_temperatures, max_temperatures = [], []
-    kin_energies, therm_energies, rad_energies, heat_energies, cold_gas_fracs, fractional_errors = [], [], [], [], [], []
+    rho_densest_cell, gas_temp_densest_cell, thermal_timescale_densest = [], [], []
+    dt_hydro = []
+    
+    # Energy Arrays
+    kin_energies, therm_energies, rad_energies, heat_energies, switch_energies = [], [], [], [], []
+    fractional_errors = []
+    ke_dm_list, fractional_errors_dm = [], []
+    cold_gas_fracs, max_metallicity = [], []
 
     pdf_data, pk_data = {}, {}
     target_indices = [0, len(files)//2, len(files)-1]
     initial_e_code = None
+    initial_e_dm = None
+    num_dm_particles_total = 0
 
     for i, f_path in enumerate(files):
         sys.stdout.write(f"\rProcessing snapshot {i+1}/{len(files)} [{(i + 1) / len(files) * 100:.1f}%]")
@@ -236,86 +269,220 @@ def generate_dashboard(snapshot_dir):
 
         with h5py.File(f_path, 'r') as f:
             header = f['Header'].attrs
-            a = header['scale_factor']
-            
+            a = header['scale_factor']          
             scale_factors.append(a)
             times_gyr.append(header.get('simulation_time', 0.0) * u_time_gyr)
+            dt_hydro.append(header['dt_hydro'])
+            
+            energy_conv = u_energy_cgs * (a**2)
 
+            # DM Particles
             p_x = f['Particles/position_x'][:] * box_h_mpc
             p_y = f['Particles/position_y'][:] * box_h_mpc
             p_z = f['Particles/position_z'][:] * box_h_mpc
             p_mass = f['Particles/mass'][:]
+            num_dm_particles = len(p_mass)
+            num_dm_particles_total = num_dm_particles
             
-            num_particles = len(p_mass)
-            part_mesh_size = int(np.round(num_particles**(1.0/3.0)))
-            
-            dm_variances.append(compute_cic_variance(p_x, p_y, p_z, p_mass, box_h_mpc, part_mesh_size))
+            if num_dm_particles > 0:
+                p_vx = f['Particles/velocity_x'][:]
+                p_vy = f['Particles/velocity_y'][:]
+                p_vz = f['Particles/velocity_z'][:]
+                
+                ke_dm_code = np.sum(0.5 * p_mass * (p_vx**2 + p_vy**2 + p_vz**2))
+                ke_dm_list.append(ke_dm_code * energy_conv)
 
-            if i%8 == 0:
-                max_rho_comoving = compute_max_kdtree_density(p_x, p_y, p_z, p_mass, box_h_mpc, k=32)
-                dm_phys_conv = (u_density_cgs / a**3) / M_P_CGS
-                max_dm_densities.append(max_rho_comoving * dm_phys_conv)
-                dm_scale_factors.append(a)
+                w_grav_dm = f['Particles'].attrs.get('cumulative_gravitational_work', 0.0)
+                w_exp_dm = f['Particles'].attrs.get('cumulative_expansion_work', 0.0)
 
-            rho = f['Gas/density'][:] if has_hydro else None
+                if initial_e_dm is None:
+                    initial_e_dm = ke_dm_code
+                
+                delta_e_dm = ke_dm_code - initial_e_dm
+                abs_err_dm = delta_e_dm - w_grav_dm + w_exp_dm
+                fractional_errors_dm.append(abs_err_dm / abs(initial_e_dm) if initial_e_dm != 0 else 0.0)
+
+                dm_part_mesh_size = int(np.round(num_dm_particles**(1.0/3.0)))
+                dm_variances.append(compute_cic_variance(p_x, p_y, p_z, p_mass, box_h_mpc, dm_part_mesh_size))
+
+                if i % 8 == 0:
+                    max_rho_comoving = compute_max_kdtree_density(p_x, p_y, p_z, p_mass, box_h_mpc, k=32)
+                    dm_phys_conv = (u_density_cgs / a**3) / M_P_CGS
+                    max_dm_densities.append(max_rho_comoving * dm_phys_conv)
+                    dm_scale_factors.append(a)
+
+            # Total Power Spectrum (DM + Gas)
+            tot_px, tot_py, tot_pz, tot_pmass = p_x, p_y, p_z, p_mass
+            if has_particle_hydro:
+                gx = f['Gas/position_x'][:] * box_h_mpc
+                gy = f['Gas/position_y'][:] * box_h_mpc
+                gz = f['Gas/position_z'][:] * box_h_mpc
+                gm = f['Gas/mass'][:]
+                tot_px = np.concatenate([p_x, gx]) if len(p_x) > 0 else gx
+                tot_py = np.concatenate([p_y, gy]) if len(p_y) > 0 else gy
+                tot_pz = np.concatenate([p_z, gz]) if len(p_z) > 0 else gz
+                tot_pmass = np.concatenate([p_mass, gm]) if len(p_mass) > 0 else gm
+                
+            tot_particles = len(tot_pmass)
+            tot_part_mesh_size = int(np.round(tot_particles**(1.0/3.0))) if tot_particles > 0 else 0
+            rho_grid = f['Gas/density'][:] if has_eulerian_hydro else None
 
             if i in target_indices:
-                k_bins, pk = compute_power_spectrum(p_x, p_y, p_z, p_mass, box_h_mpc, mesh_size, part_mesh_size, gas_rho=rho)
+                k_bins, pk = compute_power_spectrum(tot_px, tot_py, tot_pz, tot_pmass, box_h_mpc, mesh_size, tot_part_mesh_size, gas_rho=rho_grid)
                 pk_data[a] = (k_bins, pk)
-            
-            if has_hydro:
-                px, py, pz = f['Gas/momentum_x'][:], f['Gas/momentum_y'][:], f['Gas/momentum_z'][:]
-                e_tot = f['Gas/energy'][:]
-                temp = get_temperature(f)
-                
-                p999_rho, max_rho = np.percentile(rho, 99.9), np.max(rho)
-                n_H_conv = (u_density_cgs / a**3 * X_H) / M_P_CGS
-                p999_gas_densities.append(p999_rho * n_H_conv)
-                max_gas_densities.append(max_rho * n_H_conv)
 
+                if not has_hydro and num_dm_particles > 0:
+                    dm_densities = compute_kdtree_density_array(p_x, p_y, p_z, p_mass, box_h_mpc, k=32)
+                    mean_dm_density = np.sum(p_mass) / (box_h_mpc**3)
+                    if mean_dm_density > 0:
+                        dm_overdensity = dm_densities / mean_dm_density
+                        safe_od = np.maximum(dm_overdensity, 1e-10)
+                        hist, edges = np.histogram(np.log10(np.maximum(dm_overdensity, 1e-5)), bins=100, range=(-2, 5))
+                        pdf_data[a] = (hist / np.sum(hist), edges, np.var(safe_od))
+            
+            # Gas Stats
+            num_gas_particles = 0
+            if has_hydro:
+                rho = f['Gas/density'][:]
+                temp = get_temperature(f)
+                n_H_conv = (u_density_cgs / a**3 * X_H) / M_P_CGS
+
+                if has_eulerian_hydro:
+                    px_g, py_g, pz_g = f['Gas/momentum_x'][:], f['Gas/momentum_y'][:], f['Gas/momentum_z'][:]
+                    e_tot = f['Gas/energy'][:]
+                    metal_density = f['Gas/metal_density'][:]
+                    metallicity = metal_density / rho
+                    gas_mass = rho * cell_vol_code
+                    
+                    safe_rho = np.maximum(rho, 1e-10)
+                    ke_grid = (px_g**2 + py_g**2 + pz_g**2) / (2.0 * safe_rho)
+                    
+                    kin_energies.append(np.sum(ke_grid) * energy_conv * cell_vol_code)
+                    therm_energies.append((np.sum(e_tot) - np.sum(ke_grid)) * energy_conv * cell_vol_code)
+                    current_e_code = np.sum(e_tot) * cell_vol_code
+                    
+                    local_rho = np.where(dist_sq <= radius_cells**2, rho, -1.0)
+                    local_max_coords = np.unravel_index(np.argmax(local_rho), rho.shape)
+                    rho_densest_cell.append(rho[local_max_coords] * n_H_conv)
+                    gas_temp_densest_cell.append(temp[local_max_coords])
+                    thermal_timescale_densest.append(f['Gas/thermal_timescale'][local_max_coords])
+                    mean_rho = np.mean(rho)
+
+                    switch_energy_code = f['Gas'].attrs.get('cumulative_dual_energy_switch_energy', 0.0)
+                    switch_energies.append(switch_energy_code)
+
+                elif has_particle_hydro:
+                    vx, vy, vz = f['Gas/velocity_x'][:], f['Gas/velocity_y'][:], f['Gas/velocity_z'][:]
+                    u_int = f['Gas/internal_energy'][:]
+                    gas_mass = f['Gas/mass'][:]
+                    metallicity = f['Gas/metal_fraction'][:]
+                    num_gas_particles = len(gas_mass)
+                    
+                    ke_array = 0.5 * gas_mass * (vx**2 + vy**2 + vz**2)
+                    
+                    kin_energies.append(np.sum(ke_array) * energy_conv)
+                    therm_energies.append(np.sum(gas_mass * u_int) * energy_conv)
+                    current_e_code = np.sum(ke_array) + np.sum(gas_mass * u_int)
+                    
+                    gx_g, gy_g, gz_g = f['Gas/position_x'][:], f['Gas/position_y'][:], f['Gas/position_z'][:]
+                    d2 = (gx_g - target_pos[0])**2 + (gy_g - target_pos[1])**2 + (gz_g - target_pos[2])**2
+                    closest_idx = np.argmin(d2)
+                    rho_densest_cell.append(rho[closest_idx] * n_H_conv)
+                    gas_temp_densest_cell.append(temp[closest_idx])
+                    thermal_timescale_densest.append(np.nan) 
+                    mean_rho = np.sum(gas_mass) / domain_size**3
+
+                    switch_energy_code = f['Gas'].attrs.get('cumulative_entropy_switch_energy', 0.0)
+                    switch_energies.append(switch_energy_code)
+
+                p999_gas_densities.append(np.percentile(rho, 99.9) * n_H_conv)
+                max_gas_densities.append(np.max(rho) * n_H_conv)
                 p999_temperatures.append(np.percentile(temp, 99.9))
                 max_temperatures.append(np.max(temp))
-                
-                safe_rho = np.maximum(rho, 1e-10)
-                ke_grid = (px**2 + py**2 + pz**2) / (2.0 * safe_rho)
-                
-                energy_conv = cell_vol_code * u_energy_cgs * (a**2)
-                kin_energies.append(np.sum(ke_grid) * energy_conv)
-                therm_energies.append((np.sum(e_tot) - np.sum(ke_grid)) * energy_conv)
+                max_metallicity.append(np.max(metallicity))
 
                 rad_energy_code = f['Gas'].attrs.get('cumulative_radiated_energy', 0.0)
-                rad_energies.append(rad_energy_code * u_energy_cgs * (a**2))
+                rad_energies.append(rad_energy_code * energy_conv)
                 heat_energy_code = f['Gas'].attrs.get('cumulative_photoheating_energy', 0.0)
-                heat_energies.append(heat_energy_code * u_energy_cgs * (a**2))
+                heat_energies.append(heat_energy_code * energy_conv)
 
-                current_e_code = np.sum(e_tot) * cell_vol_code
                 if initial_e_code is None:
                     initial_e_code = current_e_code
 
                 w_grav_code = f['Gas'].attrs.get('cumulative_gravitational_work', 0.0)
                 w_exp_code = f['Gas'].attrs.get('cumulative_expansion_work', 0.0)
-
+                
                 delta_e_code = current_e_code - initial_e_code
                 absolute_error_code = delta_e_code - w_grav_code + w_exp_code + rad_energy_code - heat_energy_code
                 fractional_errors.append(absolute_error_code / abs(initial_e_code) if initial_e_code != 0 else 0.0)
-                
-                mean_rho = np.mean(rho)
+
                 overdensity = rho / mean_rho
                 cold_dense_mask = (temp < 10000.0) & (overdensity > 100.0)
-                cold_gas_fracs.append(np.sum(rho[cold_dense_mask]) / np.sum(rho))
+                cold_gas_fracs.append(np.sum(gas_mass[cold_dense_mask]) / np.sum(gas_mass))
                 
                 if i in target_indices:
                     safe_od = np.maximum(overdensity, 1e-10)
                     hist, edges = np.histogram(np.log10(np.maximum(overdensity, 1e-5)), bins=100, range=(-2, 5))
                     pdf_data[a] = (hist / np.sum(hist), edges, np.var(safe_od))
+                    
+    # Process Paired Simulation P(k) if provided
+    if pair_dir:
+        print(f"\nExtracting paired P(k) from {pair_dir} for variance suppression...")
+        pair_files = sorted(glob.glob(os.path.join(pair_dir, "snapshot_*.hdf5")))
+        if pair_files:
+            pair_target_indices = [0, len(pair_files)//2, len(pair_files)-1]
+            pk_data_pair = {}
+            for i in pair_target_indices:
+                with h5py.File(pair_files[i], 'r') as f:
+                    a_pair = f['Header'].attrs['scale_factor']
+                    
+                    p_x = f['Particles/position_x'][:] * box_h_mpc
+                    p_y = f['Particles/position_y'][:] * box_h_mpc
+                    p_z = f['Particles/position_z'][:] * box_h_mpc
+                    p_mass = f['Particles/mass'][:]
+                    
+                    tot_px, tot_py, tot_pz, tot_pmass = p_x, p_y, p_z, p_mass
+                    if has_particle_hydro:
+                        gx = f['Gas/position_x'][:] * box_h_mpc
+                        gy = f['Gas/position_y'][:] * box_h_mpc
+                        gz = f['Gas/position_z'][:] * box_h_mpc
+                        gm = f['Gas/mass'][:]
+                        tot_px = np.concatenate([p_x, gx]) if len(p_x) > 0 else gx
+                        tot_py = np.concatenate([p_y, gy]) if len(p_y) > 0 else gy
+                        tot_pz = np.concatenate([p_z, gz]) if len(p_z) > 0 else gz
+                        tot_pmass = np.concatenate([p_mass, gm]) if len(p_mass) > 0 else gm
+
+                    tot_particles = len(tot_pmass)
+                    tot_part_mesh_size = int(np.round(tot_particles**(1.0/3.0))) if tot_particles > 0 else 0
+                    rho_grid = f['Gas/density'][:] if has_eulerian_hydro else None
+                    
+                    k_bins_p, pk_p = compute_power_spectrum(tot_px, tot_py, tot_pz, tot_pmass, box_h_mpc, mesh_size, tot_part_mesh_size, gas_rho=rho_grid)
+                    pk_data_pair[a_pair] = (k_bins_p, pk_p)
+            
+            for a_val in list(pk_data.keys()):
+                closest_a = min(pk_data_pair.keys(), key=lambda x: abs(x - a_val))
+                if abs(closest_a - a_val) < 0.05:
+                    k_bins_primary, pk_primary = pk_data[a_val]
+                    _, pk_paired = pk_data_pair[closest_a]
+                    pk_data[a_val] = (k_bins_primary, (pk_primary + pk_paired) / 2.0)
 
     print("\nData extraction complete. Generating Plotly dashboard...")
 
+    # Last snapshot phase data
     if has_hydro:
         with h5py.File(files[-1], 'r') as f:
             final_rho = f['Gas/density'][:]
             final_temp = get_temperature(f)
-            x_data = (final_rho / np.mean(final_rho)).flatten()
+            
+            if has_eulerian_hydro:
+                mean_rho = np.mean(final_rho)
+                weights = (final_rho * cell_vol_code).flatten()
+            else:
+                final_mass = f['Gas/mass'][:]
+                mean_rho = np.sum(final_mass) / domain_size**3
+                weights = final_mass.flatten()
+                
+            x_data = (final_rho / mean_rho).flatten()
             y_data = final_temp.flatten()
 
     # Grid setup
@@ -323,27 +490,29 @@ def generate_dashboard(snapshot_dir):
     bg_paper = pio.templates[USE_THEME].layout.paper_bgcolor
     bg_plot = pio.templates[USE_THEME].layout.plot_bgcolor
     
+    title_pk = "Matter Power Spectrum (Variance Suppressed)" if pair_dir else "Matter Power Spectrum"
+    
     fig = make_subplots(
         rows=3, cols=3,
         subplot_titles=(
-            "Matter Power Spectrum",
+            title_pk,
             "1-Point Volume-Weighted Density PDF",
-            "Structure Growth",
+            "Cosmic Expansion History",
             "Energy Inventory & Conservation",
             "Extreme States (Gas vs DM)",
-            "Cosmic Expansion History",
+            "Densest cell (z=0) evolution",
             "Phase Diagram (Final Snapshot)",
             "Cold Dense Gas Fraction",
             "" # Info card space
         ),
         specs=[
-            [{"secondary_y": False}, {"secondary_y": False}, {"secondary_y": False}],
-            [{"secondary_y": True},  {"secondary_y": True},  {"secondary_y": False}],
+            [{"secondary_y": False}, {"secondary_y": False}, {"secondary_y": True}],
+            [{"secondary_y": True},  {"secondary_y": True},  {"secondary_y": True}],
             [{"secondary_y": False}, {"secondary_y": False}, {"secondary_y": False}]
         ]
     )
 
-    # Matter Power Spectrum
+    # (1,1) Matter Power Spectrum
     if pk_data:
         try:
             ns = float(prim_index) if isinstance(prim_index, (float, int)) else 0.96
@@ -356,7 +525,8 @@ def generate_dashboard(snapshot_dir):
 
         for idx, (a_val, (k_bins, pk)) in enumerate(pk_data.items()):
             c = theme_colors[idx % len(theme_colors)]
-            fig.add_trace(go.Scatter(x=k_bins, y=pk, mode='lines', name=f'Sim a={a_val:.2f}', line=dict(color=c, width=2), legend="legend"), row=1, col=1)
+            label_prefix = "Paired Avg" if pair_dir else "Sim"
+            fig.add_trace(go.Scatter(x=k_bins, y=pk, mode='lines', name=f'{label_prefix} a={a_val:.2f}', line=dict(color=c, width=2), legend="legend"), row=1, col=1)
             if camb_theory and a_val in camb_theory:
                 theory_k, theory_pk = camb_theory[a_val]
                 fig.add_trace(go.Scatter(x=theory_k, y=theory_pk, mode='lines', name=f'Theory a={a_val:.2f}', line=dict(color=c, dash='dash', width=1), legend="legend"), row=1, col=1)
@@ -364,105 +534,127 @@ def generate_dashboard(snapshot_dir):
         fig.update_xaxes(type='log', title_text="k [h Mpc^-1]", row=1, col=1)
         fig.update_yaxes(type='log', title_text="P(k) [(h^-1 Mpc)^3]", row=1, col=1)
 
-    # 1-Point Volume-Weighted Density PDF
+    # (1,2) 1-Point Volume-Weighted Density PDF
     if pdf_data:
         for idx, (a_val, (hist, edges, sigma2)) in enumerate(pdf_data.items()):
             c = theme_colors[idx % len(theme_colors)]
             centers = (edges[:-1] + edges[1:]) / 2
-            dx = centers[1] - centers[0]
             
             base_mask = hist > 1e-5
             mask_hist = base_mask.copy()
             mask_hist[:-1] |= base_mask[1:]
             mask_hist[1:] |= base_mask[:-1]
-            fig.add_trace(go.Scatter(x=centers[mask_hist], y=hist[mask_hist], mode='lines', name=f'PDF a={a_val:.2f}', line=dict(color=c, width=2), legend="legend2"), row=1, col=2)
+            fig.add_trace(go.Scatter(x=centers[mask_hist], y=hist[mask_hist], mode='lines', name=f'Sim a={a_val:.2f}', line=dict(color=c, width=2), legend="legend2"), row=1, col=2)
 
-            if np.any(mask_hist):
-                x_min, x_max = centers[mask_hist][0], centers[mask_hist][-1]
-            else:
-                x_min, x_max = centers[0], centers[-1]      
-            domain_mask = (centers >= x_min) & (centers <= x_max)
-
-            Delta = 10**centers
-            if idx == 0:
-                p_delta = (1.0 / np.sqrt(2.0 * np.pi * sigma2)) * np.exp(-0.5 * (Delta - 1.0)**2 / sigma2)
-                y_gauss = p_delta * Delta * np.log(10) * dx
-                mask_gauss = (y_gauss > 1e-5) & domain_mask
-                fig.add_trace(go.Scatter(x=centers[mask_gauss], y=y_gauss[mask_gauss], mode='lines', name='Gaussian Model', line=dict(color=c, dash='dot', width=1), legend="legend2"), row=1, col=2)
-            
-            elif idx == len(pdf_data) - 1:
-                sigma2_A, mu_A = np.log(1.0 + sigma2), -np.log(1.0 + sigma2) / 2.0
-                p_A = (1.0 / np.sqrt(2.0 * np.pi * sigma2_A)) * np.exp(-0.5 * (centers * np.log(10) - mu_A)**2 / sigma2_A)
-                y_lognorm = p_A * np.log(10) * dx
-                mask_lognorm = (y_lognorm > 1e-5) & domain_mask
-                fig.add_trace(go.Scatter(x=centers[mask_lognorm], y=y_lognorm[mask_lognorm], mode='lines', name='Lognormal Model', line=dict(color=c, dash='dash', width=1), legend="legend2"), row=1, col=2)
-
+        x_label = "log10 Gas Overdensity (rho/bar_rho)" if has_hydro else "log10 DM Overdensity (rho/bar_rho)"
         fig.update_yaxes(type='log', range=[-5, 0.176], title_text="Volume Fraction", row=1, col=2) # 10^0.176 is ~1.5
-        fig.update_xaxes(title_text="log10 Gas Overdensity (rho/bar_rho)", row=1, col=2)
+        fig.update_xaxes(title_text=x_label, row=1, col=2)
 
-    # Structure Growth
-    fig.add_trace(go.Scatter(x=scale_factors, y=dm_variances, mode='lines', name='Simulated Variance', legend="legend3"), row=1, col=3)
-    D_a = np.array([get_linear_growth(a, float(omega_m), float(omega_l)) for a in scale_factors])
-    fig.add_trace(go.Scatter(x=scale_factors, y=dm_variances[0] * (D_a / D_a[0])**2, mode='lines', name='LCDM Linear Theory', line=dict(dash='dash'), legend="legend3"), row=1, col=3)
-    fig.update_yaxes(type='log', title_text="DM Variance (sigma^2)", row=1, col=3)
-    fig.update_xaxes(title_text="Scale Factor (a)", row=1, col=3)
+    # (1,3) Cosmic Expansion History
+    fig.add_trace(go.Scatter(x=times_gyr, y=scale_factors, mode='lines', name='Scale factor', line=dict(color='purple', width=2), legend="legend3"), row=1, col=3, secondary_y=False)
+    if has_hydro and max_metallicity:
+        fig.add_trace(go.Scatter(x=times_gyr, y=max_metallicity, mode='lines', name='Max Metallicity', line=dict(color='red', width=2), legend="legend3"), row=1, col=3, secondary_y=True)
+        fig.update_yaxes(title_text="Max Metallicity", range=[0.0, 1.0], row=1, col=3, secondary_y=True)
+    fig.update_yaxes(range=[0, max(scale_factors)*1.1], title_text="Scale Factor (a)", row=1, col=3, secondary_y=False)
+    fig.update_xaxes(title_text="Simulation Time [Gyr]", row=1, col=3)
 
-    # Energy Inventory
-    if kin_energies:
-        fig.add_trace(go.Scatter(x=scale_factors, y=kin_energies, name='Kinetic', line=dict(width=2), legend="legend4"), row=2, col=1, secondary_y=False)
-        fig.add_trace(go.Scatter(x=scale_factors, y=therm_energies, name='Thermal', line=dict(width=2), legend="legend4"), row=2, col=1, secondary_y=False)
-        fig.add_trace(go.Scatter(x=scale_factors, y=rad_energies, name='Radiated', line=dict(dash='dot', width=2), legend="legend4"), row=2, col=1, secondary_y=False)
-        fig.add_trace(go.Scatter(x=scale_factors, y=heat_energies, name='Heated', line=dict(dash='dot', width=2), legend="legend4"), row=2, col=1, secondary_y=False)
+    # (2,1) Energy Inventory
+    if kin_energies or ke_dm_list:
+        if kin_energies:
+            fig.add_trace(go.Scatter(x=scale_factors, y=kin_energies, name='Gas Kinetic', line=dict(color='green', width=2), legend="legend4"), row=2, col=1, secondary_y=False)
+            fig.add_trace(go.Scatter(x=scale_factors, y=therm_energies, name='Gas Thermal', line=dict(color='orange', width=2), legend="legend4"), row=2, col=1, secondary_y=False)
+            fig.add_trace(go.Scatter(x=scale_factors, y=rad_energies, name='Gas Radiated', line=dict(color='blue', dash='dot', width=2), legend="legend4"), row=2, col=1, secondary_y=False)
+            fig.add_trace(go.Scatter(x=scale_factors, y=heat_energies, name='Gas Heated', line=dict(color='red', dash='dot', width=2), legend="legend4"), row=2, col=1, secondary_y=False)
         
-        fig.add_trace(go.Scatter(x=scale_factors, y=fractional_errors, name='Fractional Error', line=dict(dash='dash', width=1.5), legend="legend4"), row=2, col=1, secondary_y=True)
+        if ke_dm_list:
+            fig.add_trace(go.Scatter(x=scale_factors, y=ke_dm_list, name='DM Kinetic', line=dict(color='darkblue', width=2), legend="legend4"), row=2, col=1, secondary_y=False)
+
+        if fractional_errors:
+            fig.add_trace(go.Scatter(x=scale_factors, y=fractional_errors, name='Gas Frac Error', line=dict(color='gray', dash='dash', width=1.5), legend="legend4"), row=2, col=1, secondary_y=True)
+        if fractional_errors_dm:
+            fig.add_trace(go.Scatter(x=scale_factors, y=fractional_errors_dm, name='DM Frac Error', line=dict(color='purple', dash='dash', width=1.5), legend="legend4"), row=2, col=1, secondary_y=True)
         
+        if switch_energies:
+            switch_arr = np.array(switch_energies)
+            switch_frac = switch_arr / abs(initial_e_code) if initial_e_code != 0 else np.zeros_like(switch_arr)
+            fig.add_trace(go.Scatter(x=scale_factors, y=switch_frac, name='Energy Switch Drift', line=dict(color='magenta', dash='dot', width=1.5), legend="legend4"), row=2, col=1, secondary_y=True)
+            
         fig.update_yaxes(type='log', title_text="Energy Components [Ergs]", row=2, col=1, secondary_y=False)
-        max_err = max(1e-4, np.max(np.abs(fractional_errors)) * 1.5)
-        fig.update_yaxes(range=[-max_err, max_err], title_text="Fractional Error", row=2, col=1, secondary_y=True)
+        all_errs = fractional_errors + fractional_errors_dm + (list(switch_frac) if switch_energies else [])
+        if all_errs:
+            max_err = max(1e-4, np.max(np.abs(all_errs)) * 1.5)
+            fig.update_yaxes(range=[-max_err, max_err], title_text="Fractional Error", row=2, col=1, secondary_y=True)
         fig.update_xaxes(title_text="Scale Factor (a)", row=2, col=1)
-        fig.add_hline(y=0, line_width=1, line_dash="solid", row=2, col=1, secondary_y=True)
+        fig.add_hline(y=0, line_width=1, line_dash="solid", line_color="gray", row=2, col=1, secondary_y=True)
+    else:
+        fig.add_annotation(text="No Energy Data", x=0.5, y=0.5, showarrow=False, font=dict(size=20), row=2, col=1)
 
-    # Extreme States
-    if p999_gas_densities:
+    # (2,2) Extreme States
+    if p999_gas_densities or max_dm_densities:
         c_gas = theme_colors[0]
         c_dm = theme_colors[1]
         c_temp = theme_colors[2]
         
-        # Fill envelope for Gas Density
-        fig.add_trace(go.Scatter(x=scale_factors, y=max_gas_densities, line=dict(width=0), showlegend=False, hoverinfo='skip'), row=2, col=2, secondary_y=False)
-        fig.add_trace(go.Scatter(x=scale_factors, y=p999_gas_densities, fill='tonexty', fillcolor=hex_to_rgba(c_gas, 0.2), line=dict(color=c_gas, width=2), legend="legend5", name='99.9% Gas Dens'), row=2, col=2, secondary_y=False)
+        if p999_gas_densities:
+            fig.add_trace(go.Scatter(x=scale_factors, y=max_gas_densities, line=dict(width=0), showlegend=False, hoverinfo='skip'), row=2, col=2, secondary_y=False)
+            fig.add_trace(go.Scatter(x=scale_factors, y=p999_gas_densities, fill='tonexty', fillcolor=hex_to_rgba(c_gas, 0.2), line=dict(color=c_gas, width=2), legend="legend5", name='99.9% Gas Dens'), row=2, col=2, secondary_y=False)
         
-        # Max DM
-        fig.add_trace(go.Scatter(x=dm_scale_factors, y=max_dm_densities, line=dict(color=c_dm, dash='dash', width=1.5), legend="legend5", name='Max DM Dens'), row=2, col=2, secondary_y=False)
+        if len(max_dm_densities) > 0:
+            fig.add_trace(go.Scatter(x=dm_scale_factors, y=max_dm_densities, line=dict(color=c_dm, dash='dash', width=1.5), legend="legend5", name='Max DM Dens'), row=2, col=2, secondary_y=False)
         
-        # Fill envelope for Temp (Secondary Y)
-        fig.add_trace(go.Scatter(x=scale_factors, y=max_temperatures, line=dict(width=0), showlegend=False, hoverinfo='skip'), row=2, col=2, secondary_y=True)
-        fig.add_trace(go.Scatter(x=scale_factors, y=p999_temperatures, fill='tonexty', fillcolor=hex_to_rgba(c_temp, 0.2), line=dict(color=c_temp, width=2), legend="legend5", name='99.9% Temp'), row=2, col=2, secondary_y=True)
+        if p999_temperatures:
+            fig.add_trace(go.Scatter(x=scale_factors, y=max_temperatures, line=dict(width=0), showlegend=False, hoverinfo='skip'), row=2, col=2, secondary_y=True)
+            fig.add_trace(go.Scatter(x=scale_factors, y=p999_temperatures, fill='tonexty', fillcolor=hex_to_rgba(c_temp, 0.2), line=dict(color=c_temp, width=2), legend="legend5", name='99.9% Temp'), row=2, col=2, secondary_y=True)
 
         fig.update_yaxes(type='log', title_text="Physical Density [m_p cm^-3]", row=2, col=2, secondary_y=False)
         fig.update_yaxes(type='log', title_text="Temperature [K]", row=2, col=2, secondary_y=True)
         fig.update_xaxes(title_text="Scale Factor (a)", row=2, col=2)
+    else:
+        fig.add_annotation(text="No Extreme States Data", x=0.5, y=0.5, showarrow=False, font=dict(size=20), row=2, col=2)
 
-    # Cosmic Expansion
-    fig.add_trace(go.Scatter(x=times_gyr, y=scale_factors, line=dict(width=2), name='Simulation', showlegend=False), row=2, col=3)
-    fig.update_yaxes(range=[0, max(scale_factors)*1.1], title_text="Scale Factor (a)", row=2, col=3)
-    fig.update_xaxes(title_text="Simulation Time [Gyr]", row=2, col=3)
+    # (2,3) Densest Cell Evolution
+    if has_hydro and has_eulerian_hydro:
+        fig.add_trace(go.Scatter(x=scale_factors, y=rho_densest_cell, mode='lines', name='Density', line=dict(color='blue', width=2), legend="legend6"), row=2, col=3, secondary_y=False)
+        fig.add_trace(go.Scatter(x=scale_factors, y=gas_temp_densest_cell, mode='lines', name='Temp', line=dict(color='red', width=2), legend="legend6"), row=2, col=3, secondary_y=True)
+        
+        t_therm = np.array(thermal_timescale_densest)
+        t_heating = np.where(t_therm > 0, t_therm, np.nan)
+        t_cooling = np.where(t_therm < 0, np.abs(t_therm), np.nan)
+        
+        fig.add_trace(go.Scatter(x=scale_factors, y=t_heating, mode='lines', name='+t_therm (Heating)', line=dict(color='green', width=2), legend="legend6"), row=2, col=3, secondary_y=True)
+        fig.add_trace(go.Scatter(x=scale_factors, y=t_cooling, mode='lines', name='-t_therm (Cooling)', line=dict(color='green', dash='dash', width=2), legend="legend6"), row=2, col=3, secondary_y=True)
+        
+        fig.update_yaxes(type='log', title_text="Physical Density [m_p cm^-3]", row=2, col=3, secondary_y=False)
+        fig.update_yaxes(type='log', title_text="Temp [K] / Time [Code]", row=2, col=3, secondary_y=True)
+        fig.update_xaxes(title_text="Scale Factor (a)", row=2, col=3)
+    else:
+        fig.add_annotation(text="Graph Disabled", x=0.5, y=0.5, showarrow=False, font=dict(size=20), row=2, col=3)
 
-    # Phase Diagram
+    # (3,1) Phase Diagram
     if has_hydro and 'x_data' in locals():
         x_bins = np.logspace(-2, np.log10(np.max(x_data)), 100)
         y_bins = np.logspace(1, np.log10(np.max(y_data)), 100)
         
-        # Calculate 2D histogram manually to support LogNorm coloring
-        H, xedges, yedges = np.histogram2d(x_data, y_data, bins=[x_bins, y_bins], weights=final_rho.flatten())
-        H_log = np.log10(np.where(H > 0, H, 1e-10))
+        H, xedges, yedges = np.histogram2d(x_data, y_data, bins=[x_bins, y_bins], weights=weights)
+        
+        valid_counts = H[H > 0]
+        if len(valid_counts) > 0:
+            c_min, c_max = np.min(valid_counts), np.max(valid_counts)
+            if c_min == c_max:
+                c_min = c_max * 0.1
+        else:
+            c_min, c_max = 1e-10, 1.0
+            
+        H_log = np.log10(np.where(H > 0, H, c_min))
         
         fig.add_trace(go.Heatmap(
             z=H_log.T, 
             x=xedges[:-1] + np.diff(xedges)/2, 
             y=yedges[:-1] + np.diff(yedges)/2,
             colorscale='Plasma',
-            colorbar=dict(title="Log10 Total Gas Mass", x=0.22, y=0.12, len=0.25),
+            zmin=np.log10(c_min),
+            zmax=np.log10(c_max),
+            colorbar=dict(title="Log10 Total Gas Mass", x=0.28, y=0.12, len=0.25),
             showscale=True,
             showlegend=False
         ), row=3, col=1)
@@ -472,18 +664,25 @@ def generate_dashboard(snapshot_dir):
     else:
         fig.add_annotation(text="Hydro Disabled", x=0.5, y=0.5, showarrow=False, font=dict(size=20), row=3, col=1)
 
-    # Cold Dense Gas Fraction
+    # (3,2) Cold Dense Gas Fraction
     if cold_gas_fracs:
-        fig.add_trace(go.Scatter(x=scale_factors, y=cold_gas_fracs, line=dict(width=2), name='Cold Gas Fraction', showlegend=False), row=3, col=2)
+        fig.add_trace(go.Scatter(x=scale_factors, y=cold_gas_fracs, line=dict(color='teal', width=2), name='Cold Gas Fraction', showlegend=False), row=3, col=2)
         fig.update_xaxes(title_text="Scale Factor (a)", row=3, col=2)
         fig.update_yaxes(title_text="Mass Fraction", row=3, col=2)
+    else:
+        fig.add_annotation(text="Hydro Disabled", x=0.5, y=0.5, showarrow=False, font=dict(size=20), row=3, col=2)
 
-    # Info Card
+    # (3,3) Info Card
+    n_dm_1d = str(int(np.cbrt(num_dm_particles_total))) + '³' if num_dm_particles_total > 0 else '0³'
+    n_gas_1d = str(int(np.cbrt(num_gas_particles))) + '³' if num_gas_particles > 0 else '0³'
+
     info_html = (
         f"<b>SIMULATION:</b> {os.path.basename(os.path.normpath(snapshot_dir))}<br><br>"
         f"<b>Box Size:</b> {box_size_mpc} Mpc<br>"
         f"<b>Grid:</b> {mesh_size}³<br>"
-        f"<b>Particles:</b> {f'{int(np.cbrt(num_particles))}³ ({num_particles})' if num_particles != 'N/A' else 'N/A'}<br><br>"
+        f"<b>Particles:</b> {n_dm_1d} ({num_dm_particles_total})<br>"
+        f"<b>Gas particles:</b> {n_gas_1d} ({num_gas_particles})<br>"
+        f"<b>Hydro method:</b> {method}<br><br>"
         f"<b>Cosmology & Physics:</b><br>"
         f"Ω_m: {omega_m:<6} | Hubble (h): {h_val:.2f}<br>"
         f"Ω_b: {omega_b:<6} | Gamma (γ): {gamma:.3f}<br>"
@@ -503,10 +702,10 @@ def generate_dashboard(snapshot_dir):
     fig.update_yaxes(visible=False, row=3, col=3)
     
     legend_style = dict(
-        bgcolor='rgba(0,0,0,0)', # Transparent background
-        font=dict(size=10),      # Smaller font so it fits inside the subplot
+        bgcolor='rgba(0,0,0,0)', 
+        font=dict(size=10),      
         yanchor="top",
-        xanchor="right"          # Anchoring to the right keeps them out of the y-axis
+        xanchor="right"          
     )
 
     # Global Layout
@@ -515,17 +714,13 @@ def generate_dashboard(snapshot_dir):
         hovermode="x unified",
         showlegend=True,
         
-        # Manually placing a legend box inside the domain of each subplot
-        legend=dict( x=0.3, y=0.99, **legend_style),   # (1,1) P(k)
+        legend=dict( x=0.3, y=0.99, **legend_style),    # (1,1) P(k)
         legend2=dict(x=0.63, y=0.99, **legend_style),   # (1,2) PDF
-        legend3=dict(x=0.99, y=0.99, **legend_style),   # (1,3) Structure Growth
+        legend3=dict(x=0.99, y=0.99, **legend_style),   # (1,3) Cosmic Expansion History
         legend4=dict(x=0.33, y=0.62, **legend_style),   # (2,1) Energy
-        legend5=dict(x=0.63, y=0.62, **legend_style)   # (2,2) Extreme States
+        legend5=dict(x=0.63, y=0.62, **legend_style),   # (2,2) Extreme States
+        legend6=dict(x=0.99, y=0.62, **legend_style)    # (2,3) Densest Cell Evolution
     )
-    
-    # Add subtle gridlines across all subplots
-    #fig.update_xaxes(showgrid=True)
-    #fig.update_yaxes(showgrid=True)
     
     raw_html = fig.to_html(full_html=True)
 
@@ -557,21 +752,25 @@ if __name__ == "__main__":
     )
     
     parser.add_argument(
+        "-p", "--pair", 
+        type=str, 
+        default=None, 
+        help="Path to a paired simulation directory"
+    )
+
+    parser.add_argument(
         "-l", "--latest", 
         action="store_true", 
         help="Automatically find and load the most recent 'run_*' directory inside the provided path"
     )
 
-    # Show help if no arguments are provided at all
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(1)
 
-    # Parse the arguments
     args = parser.parse_args()
     target_dir = args.path
 
-    # Handle the --latest flag
     if args.latest:
         search_pattern = os.path.join(target_dir, "run_*")
         runs = sorted(glob.glob(search_pattern))
@@ -583,5 +782,4 @@ if __name__ == "__main__":
             print(f"Error: No run directories found in '{args.path}'")
             sys.exit(1)
 
-    # Run the dashboard
-    generate_dashboard(target_dir)
+    generate_dashboard(target_dir, pair_dir=args.pair)

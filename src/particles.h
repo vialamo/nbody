@@ -82,11 +82,3 @@ class ParticleSystem {
     void add_particle(double px, double py, double pz, double vx, double vy,
                       double vz, double m);
 };
-
-void compute_and_add_generic_pp_forces(
-    size_t n_parts, const double* __restrict__ pos_x,
-    const double* __restrict__ pos_y, const double* __restrict__ pos_z,
-    const double* __restrict__ mass, double* __restrict__ acc_x,
-    double* __restrict__ acc_y, double* __restrict__ acc_z,
-    const BVHNode* __restrict__ bvh_nodes, const Config& config,
-    Diagnostics& diag);

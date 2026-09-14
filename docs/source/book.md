@@ -2481,27 +2481,6 @@ Because the background pressure is effectively zero compared to the blast, the e
 
 Inside the blast wave ($r < R_s$), the fluid variables follow smooth, self-similar curves: the density plunges rapidly toward zero near the origin, while the specific internal energy spikes, creating a nearly empty, hot cavity surrounded by a cold, dense, and fast-moving shell.
 
-When utilizing the Meshless Finite Mass (MFM) method for the Sedov-Taylor blast wave, initializing particles on a standard Cartesian (cubic) lattice is discouraged. A Cartesian grid possesses rigid planes of symmetry and collinear particle arrangements, which cause the moment matrices used in gradient estimation to become ill-conditioned. Furthermore, the distance to diagonal neighbors is longer than to axial neighbors, causing the Riemann solver to propagate the shock artificially faster along the principal axes. This results in a pathological "boxy" or cross-shaped artifact rather than a sphere.
-
-To achieve isotropic shock propagation and maintain spherical symmetry, we typically use other distributions:
-
-* **Face-Centered Cubic (FCC) Lattice:** A Face-Centered Cubic lattice is a maximally close-packed structure that increases the number of equidistant nearest neighbors from 6 to 12. This breaks collinear alignments and provides isotropic interaction paths, largely eliminating Cartesian "cross" artifacts and producing a smoothly rounded shock front. The macroscopic unit cell of an FCC lattice is a perfect cube, meaning it tiles flawlessly inside cubic domains with periodic boundary conditions.
-To generate an FCC lattice in a cubic domain of length $L$, the space is divided into a grid of $N_{\text{cell}} \times N_{\text{cell}} \times N_{\text{cell}}$ cubic unit cells, where the side length of each unit cell is $L_c = L / N_{\text{cell}}$. Every unit cell contains 4 particles defined by the following fractional basis vectors:
-$$\mathbf{b}_0 = (0.0, 0.0, 0.0)$$
-
-$$\mathbf{b}_1 = (0.5, 0.5, 0.0)$$
-
-$$\mathbf{b}_2 = (0.5, 0.0, 0.5)$$
-
-$$\mathbf{b}_3 = (0.0, 0.5, 0.5)$$
-
-By iterating through the unit cell indices $(i, j, k) \in [0, N_{\text{cell}}-1]$, the coordinates for the 4 particles within each cell are calculated as:
-$$\mathbf{x}_{i,j,k,m} = L_c \left( i + b_{m,x}, \ j + b_{m,y}, \ k + b_{m,z} \right)$$
-
-where $m \in \{0, 1, 2, 3\}$. This yields a balanced simulation containing $4 N_{\text{cell}}^3$ total particles.
-
-* **Glass Distribution:** For higher precision and spherical symmetry, an amorphous "glass" distribution is preferred. A glass has no repeating geometric structure or planes of symmetry, yet it maintains a uniform macroscopic density. Generating a glass typically requires a dedicated precursor simulation: particles are placed randomly in a periodic box and subjected to repulsive forces (such as reversed gravity) along with artificial velocity damping. The simulation is advanced until the particles relax into an equilibrium state, producing an isotropic medium that preserves the spherical geometry of a blast wave.
-
 ### The Kelvin-Helmholtz Instability
 
 This test measures the code's ability to model fluid mixing and the growth of instabilities.
@@ -2693,8 +2672,9 @@ A Barnes-Hut tree calculates the total mass and the Center of Mass for every int
 
 For each node it encounters, it evaluates a geometric rule known as the **Multipole Acceptance Criterion (MAC)**. This criterion is defined by the ratio between the physical size of the node ($L$) and the distance from the particle to the node's center of mass ($d$). The algorithm compares this ratio against a dimensionless accuracy threshold, $\theta$ (typically set around $\theta \approx 0.5$):
 
-* **If the threshold is exceeded ($L/d \ge \theta$):** The node is considered too close for the multipole approximation to be accurate. The algorithm opens the node and looks at the smaller sub-cubes inside it, repeating the MAC check. If it reaches the bottom of the tree (a leaf node), it performs a direct Particle-Particle (PP) calculation.
-* **If the threshold is not exceeded ($L/d < \theta$):** The node is considered sufficiently distant. The algorithm halts its traversal down that branch and treats the entire node as a single point mass located at its Center of Mass.
+* **If the threshold is not exceeded ($L/d < \theta$):** The node is considered sufficiently distant for an approximation. The algorithm halts its traversal down that branch and treats the entire node as a single point mass located at its Center of Mass.
+
+* **If the threshold is exceeded ($L/d \ge \theta$):** The node is considered too close for the previous approximation to be accurate. The algorithm opens the node and looks at the smaller sub-cubes inside it, repeating the MAC check. If it reaches the bottom of the tree (a leaf node), it performs a direct Particle-Particle (PP) calculation.
 
 By lumping distant structures into single, coarse computations, the Barnes-Hut algorithm prunes the majority of the tree, dropping the computational cost of gravity from $O(N^2)$ to $O(N \log N)$.
 
@@ -2742,7 +2722,7 @@ Where $j$ and $k$ represent the X, Y, and Z coordinate axes (e.g., $r_{i,1}$ is 
 * If the blob is a sphere, the mass variances along the X, Y, and Z axes are identical, and the matrix cancels out to zero.
 * If the blob is shaped like a cigar pointing along the X-axis, the $x^2$ variance will be much larger than $y^2$ or $z^2$.
 
-Once this $3 \times 3$ matrix is pre-calculated and stored for a tree node, the quadrupole contribution to the gravitational potential at any distant point $\mathbf{r} = (r_1, r_2, r_3)$ can be quickly evaluated using matrix multiplication:
+Once this $3 \times 3$ matrix is pre-calculated and stored for a tree node, the quadrupole contribution to the gravitational potential at any distant point $\mathbf{r} = (r_1, r_2, r_3)$ can be evaluated using matrix multiplication:
 $$\Phi_{\text{quadrupole}} = -\frac{G}{2r^5} \sum_{j=1}^{3} \sum_{k=1}^{3} Q_{jk} r_j r_k$$
 
 **Why Barnes-Hut Stops at the Monopole**
@@ -2755,18 +2735,17 @@ However, matrix multiplication is computationally expensive. Because the quadrup
 
 To leverage the power of a GPU, we must flatten the 3D spatial partitioning of an oct-tree into a continuous, 1D array of data.
 
-This structure is known as a **Linear Bounding Volume Hierarchy (LBVH)**. In an LBVH, the nodes of the tree are packed together in a single array. Instead of a parent node pointing to a memory address, it stores the integer index of its children (e.g., `left_child = 52`). Because arrays are contiguous blocks of memory, the GPU can stream this data into its processors at maximum bandwidth.
+This structure is known as a **Linear Bounding Volume Hierarchy (LBVH)**. In an LBVH, the nodes of the tree are packed together in a single array. A parent node stores the integer index of its children (e.g., `left_child = 52`). Because arrays are contiguous blocks of memory, the GPU can stream this data into its processors at maximum bandwidth.
 
 To flatten a 3D tree into a 1D array while ensuring that particles that are next to each other in the 3D box sit next to each other in the 1D array we can use a technique developed in the 1960s: **Morton Codes**.
 
 ### Morton Codes and the Z-Order Curve
 
-A Morton code is maps multi-dimensional data onto one dimension while preserving spatial locality. It achieves this by interleaving the binary bits of a particle's coordinates.
+A Morton code maps multi-dimensional data onto one dimension while preserving spatial locality. It achieves this by interleaving the binary bits of a particle's coordinates.
 
-To do this, we first take a particle's floating-point coordinates $(x, y, z)$ and normalize them to the size of the simulation box. We then scale these coordinates into integers. To fit inside a standard 64-bit integer, we use 21 bits for each dimension (since $21 \times 3 = 63$ bits, leaving one bit for safety).
+To do this, we first take a particle's floating-point coordinates $(x, y, z)$ and normalize them to the size of the simulation box. We then scale these coordinates into integers according to the number of bits that will be used per dimension. To fit inside a standard 64-bit integer, we use 21 bits for each dimension (since $21 \times 3 = 63$ bits, leaving one bit unused).
 
-Let's look at a simplified example. Imagine we have a particle at integer coordinates $X = 5$, $Y = 3$, and $Z = 6$.
-If we write these numbers in binary (using just 3 bits for this example), we get:
+Let's look at an example. Imagine we have a particle at integer coordinates $X = 5$, $Y = 3$, and $Z = 6$. If we write these numbers in binary (using just 3 bits for this example), we get:
 
 * $X = 101_2$
 * $Y = 011_2$
@@ -2802,7 +2781,7 @@ Here is how we implemented the Karras algorithm in our code:
 
 For $N$ particles (the leaves), a binary tree will have $N-1$ internal branching nodes. In our flat arrays, indices $0$ to $N-2$ are internal nodes, and indices $N-1$ to $2N-2$ are the particle leaves.
 
-Because there are $N-1$ internal nodes, we can launch one GPU thread for every single internal node simultaneously. Each thread looks at its corresponding index in the sorted Morton array and performs three lock-free steps:
+Because there are $N-1$ internal nodes, we can launch one GPU thread for every internal node simultaneously. Each thread looks at its corresponding index in the sorted Morton array and performs three lock-free steps:
 
 1. **Find the Range:** It compares adjacent Morton codes to determine the upper and lower bounds of the specific cluster of particles it is responsible for.
 
@@ -2846,6 +2825,32 @@ The traversal then operates as a simple, flat `while` loop:
 
 By flattening the 3D space into a Z-order curve, building the hierarchy lock-free with Karras' algorithm, and traversing it with a manual memory stack, we have successfully ported the algorithmic brilliance of the oct-tree to the massively parallel architecture of the GPU.
 
+Here is the text for the new subsection. It ties together the concepts you have already explained and formally introduces the TreePM architecture, while keeping the tone consistent with your book.
+
+### The TreePM Architecture
+
+Combining the Particle-Mesh (PM) grid and the Linear Bounding Volume Hierarchy (LBVH) gives us the **TreePM** (Tree-Particle-Mesh) architecture.
+
+In the TreePM framework, the gravitational potential is split into short-range and long-range contributions. This allows us to assign the strengths of each algorithm to the scales where they excel:
+
+* Long-range forces are calculated using a particle mesh. The PM solver handles the macroscopic universe using Fast Fourier Transforms to efficiently bypass the $O(N^2)$ bottleneck.
+
+* Short-range forces are calculated following the oct-tree algorithm. The LBVH takes over at the sub-grid level, traversing the bounding boxes to resolve the gravitational dynamics of collapsing halos.
+
+To ensure gravity is not double-counted where these two regimes overlap, the forces must be seamlessly blended together. To achieve this, the simulation applies a continuous spatial filter to the gravitational equations. When traversing the LBVH for short-range interactions, the Newtonian force is multiplied by a mathematical taper (a complementary error function, or `erfc`). This taper smoothly scales the tree's gravitational pull down to zero at the cutoff radius where the PM grid's macroscopic forces take over.
+
+*Key Literature & Further Reading*  
+**For the Barnes-Hut Algorithm:**  
+Barnes, J., & Hut, P. (1986). *A hierarchical O(N log N) force-calculation algorithm*. Nature, 324(6096), 446-449. Available at [https://www.nature.com/articles/324446a0](https://www.nature.com/articles/324446a0)
+
+**For Morton Codes (Z-Order Curve):**  
+Morton, G. M. (1966). *A computer oriented geodetic data base; and a 7 1/4 transverse Mercator projection*. IBM Research Report.
+
+**For the Karras Tree & LBVH Construction:**  
+Karras, T. (2012). *Maximizing parallelism in the construction of BVHs, octrees, and k-d trees*. Proceedings of the Fourth ACM SIGGRAPH / Eurographics conference on High-Performance Graphics, 33-37. Available at [https://research.nvidia.com/sites/default/files/pubs/2012-06_Maximizing-Parallelism-in/karras2012hpg_paper.pdf](https://research.nvidia.com/sites/default/files/pubs/2012-06_Maximizing-Parallelism-in/karras2012hpg_paper.pdf)
+
+**For the Integration of LBVH/Oct-Trees in GPU N-Body Solvers:**  
+Bédorf, J., Gaburov, E., & Portegies Zwart, S. (2012). *A sparse octree gravitational N-body code that runs entirely on the GPU processor*. Journal of Computational Physics, 231(7), 2825-2839. Available at [https://arxiv.org/pdf/1106.1900](https://arxiv.org/pdf/1106.1900)
 
 ## Analytical Requirements for Resolution and Volume
 
@@ -3380,3 +3385,25 @@ $$\text{Fractional Error} = \frac{E(t_n) - E(t_0) + W_{exp}(t_n)}{|E(t_0)|}$$
 Plotting this fractional error across the lifespan of a simulation acts as the ultimate diagnostic of numerical integrity. Because N-body codes generally rely on symplectic integrators (like the Leapfrog method), the fractional error should not exhibit long-term secular growth. Instead, it should hover near zero.
 
 If the error curve remains flat and bounded (e.g., within $0.1\%$), it proves that the Hamiltonian of the system is preserved and the equations of motion are accurately resolving the deepest density collapses. Conversely, a rapidly growing fractional error immediately flags numerical artifacts, such as inadequate force softening, timestep violations, or non-physical force discontinuities at periodic boundaries.
+
+
+## Appendix
+### Cosmological Unit Conversion Cheatsheet
+
+| Physical Concept | Dimensions | Factor from comoving to physical |
+| --- | --- | --- |
+| **Mass** | $M$ | No change |
+| **Position / Length** | $L$ | $a$ |
+| **Volume** | $L^3$ | $a^3$ |
+| **Peculiar Velocity** | $L / T$ | $a$ |
+| **Acceleration** | $L / T^2$ | $a$ |
+| **Force** | $M \cdot L / T^2$ | $a$ |
+| **Density** | $M / L^3$ | $a^{-3}$ |
+| **Pressure** | $M / (L \cdot T^2)$ | $a^{-1}$ |
+| **Specific Internal Energy** *(MFM)* | $L^2 / T^2$ | $a^2$ |
+| **Specific Kinetic Energy** *(MFM)* | $L^2 / T^2$ | $a^2$ |
+| **Volumetric Energy Density** *(Eulerian)* | $M / (L \cdot T^2)$ | $a^{-1}$ |
+| **Volumetric Momentum Density** *(Eulerian)* | $M / (L^2 \cdot T)$ | $a^{-2}$ |
+| **Entropic Function** ($S = P / \rho^\gamma$) | $M^{1-\gamma} \cdot L^{3\gamma - 1} / T^2$ | $a^{3\gamma - 1}$ |
+| **Time** | $T$ | No change (tracked physically) |
+| **Temperature** | $\Theta$ | No change (converted internally) |

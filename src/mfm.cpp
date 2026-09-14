@@ -413,10 +413,7 @@ void GasParticleSystem::build_lbvh(const Config& config) {
         while (curr != -1) {
             int old_flag;
 #pragma omp atomic capture
-            {
-                old_flag = atomic_flags[curr];
-                atomic_flags[curr]++;
-            }
+            old_flag = atomic_flags[curr]++;
 
             if (old_flag == 0) {
                 // First thread to arrive. The other child isn't ready yet.
@@ -585,7 +582,7 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         bool is_converged = false;
         bool h_clamped = false;
 
-        // ITERATIVE SMOOTHING LENGTH (h) SOLVER
+        // Iterative smoothing length (h) solver
         while (iter < max_iter) {
             current_n = 0.0;
             current_dn_dh = 0.0;
@@ -729,7 +726,7 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         h[i] = h_guess;
         rho[i] = mass[i] / (1.0 / current_n);
 
-        // ADAPTIVE GRAVITY CORRECTIONS (GIZMO App. H2)
+        // Adaptive gravity corrections (GIZMO App. H2)
 
         // Equation H10: Omega_a
         double Omega_i = std::max(
@@ -845,66 +842,6 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         // SUM(m_b * dphi/dh)
         zeta[i] = (h_guess / (current_n * 3.0)) * (1.0 / Omega_i) * zeta_sum;
     }
-
-// MFM VOLUME LIMITER
-// #define MFM_VOLUME_LIMITER
-#ifdef MFM_VOLUME_LIMITER
-    // Prevents vacuum particles from artificially borrowing density from shocks
-    std::vector<double> limited_rho = rho;
-    constexpr double MAX_VOL_RATIO =
-        8.0;  // Tunable: Expected between 2.0 and 8.0
-
-#pragma omp parallel for schedule(dynamic, 64)
-    for (size_t i = 0; i < num_particles; ++i) {
-        double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
-        double my_vol = mass[i] / rho[i];
-        double max_neighbor_vol = 0.0;
-        double search_sq_vol = h[i] * h[i];
-
-        int stack_vol[128];
-        int stack_ptr_vol = 0;
-        stack_vol[stack_ptr_vol++] = 0;
-
-        while (stack_ptr_vol > 0) {
-            int node_idx = stack_vol[--stack_ptr_vol];
-            const BVHNode& node = bvh_nodes[node_idx];
-
-            double dist_sq =
-                min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
-                                     domain_size) +
-                min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
-                                     domain_size) +
-                min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
-                                     domain_size);
-
-            if (dist_sq > search_sq_vol) continue;
-
-            if (node.particle_idx != -1) {
-                int j = node.particle_idx;
-                double dx = periodic_displacement(pos_x[j] - p1_x, domain_size);
-                double dy = periodic_displacement(pos_y[j] - p1_y, domain_size);
-                double dz = periodic_displacement(pos_z[j] - p1_z, domain_size);
-                double r2 = dx * dx + dy * dy + dz * dz;
-
-                if (r2 < search_sq_vol && r2 > 1e-24) {
-                    double neighbor_vol = mass[j] / rho[j];
-                    max_neighbor_vol = std::max(max_neighbor_vol, neighbor_vol);
-                }
-            } else {
-                stack_vol[stack_ptr_vol++] = node.left_child;
-                stack_vol[stack_ptr_vol++] = node.right_child;
-            }
-        }
-
-        // Enforce the volume limit
-        if (max_neighbor_vol > 0.0 &&
-            my_vol > MAX_VOL_RATIO * max_neighbor_vol) {
-            double clamped_vol = MAX_VOL_RATIO * max_neighbor_vol;
-            limited_rho[i] = mass[i] / clamped_vol;
-        }
-    }
-    rho = std::move(limited_rho);
-#endif
 
     clamped_h_cases += num_h_clamped;
 }
@@ -1028,9 +965,16 @@ void GasParticleSystem::apply_cooling(double dt, double a, const Config& config,
                 double du_dt = cooling.compute_du_dt(u_current, local_rho,
                                                      local_Z_frac, a, config);
 
-                double dt_cell = (std::abs(du_dt) > 0.0)
+               double dt_cell;
+                if (u_current <= u_rad_floor && du_dt < 0.0) {
+                    // The particle is at the temperature floor and trying to cool.
+                    // It is in thermal equilibrium. Consume the rest of the step.
+                    dt_cell = dt - t_evolved;
+                } else {
+                    dt_cell = (std::abs(du_dt) > 0.0)
                                      ? 0.1 * (u_current / std::abs(du_dt))
                                      : dt;
+                }
 
                 dt_cell = std::min(dt_cell, dt - t_evolved);
 

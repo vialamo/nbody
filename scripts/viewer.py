@@ -2,6 +2,7 @@ import sys
 import os
 import glob
 import h5py
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -88,7 +89,8 @@ class True3DViewer:
                                 KB, M_H = 1.380649e-16, 1.6726219e-24
                                 MU = f['Config'].attrs.get('primordial_mu', 1.22)
                                 v_unit = f['Units'].attrs.get('unit_velocity_in_cgs', 1.0)
-                                temp = (pressure / density) * (v_unit**2) * (MU * M_H / KB)
+                                a = f['Header'].attrs.get('scale_factor', 1.0)
+                                temp = (pressure / density) * (v_unit**2) * (MU * M_H / KB) * (a**2)
                         elif self.use_particle_hydro:
                             if 'Gas/temperature' in f:
                                 temp = f['Gas/temperature'][:]
@@ -325,7 +327,7 @@ class True3DViewer:
                         MU = config_attr.get('primordial_mu', 1.22)
                         v_unit_cgs = units_attr.get('unit_velocity_in_cgs', 1.0)
                         specific_energy_cgs = (pressure / density) * (v_unit_cgs**2)
-                        temperature = specific_energy_cgs * (MU * M_H / KB)
+                        temperature = specific_energy_cgs * (MU * M_H / KB) * (a**2)
 
                     t_max = np.max(temperature)
                     safe_temp = np.clip(temperature, 10.0, None) 
@@ -500,10 +502,27 @@ class True3DViewer:
     def run(self):
         app.run()
 
-if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("Usage: python viewer_vispy.py <path_to_run_directory>")
+if __name__ == '__main__':   
+    parser = argparse.ArgumentParser(description="Interactive 3D Cosmological Simulation Viewer.")
+    parser.add_argument("path", type=str, help="Path to snapshot directory.")
+    parser.add_argument("-l", "--latest", action="store_true", help="Automatically load the latest 'run_*' directory inside the path")
+    
+    if len(sys.argv) == 1:
+        parser.print_help()
         sys.exit(1)
         
-    viewer = True3DViewer(sys.argv[1])
+    args = parser.parse_args()
+    target_dir = args.path
+    
+    if args.latest:
+        search_pattern = os.path.join(target_dir, "run_*")
+        runs = sorted(glob.glob(search_pattern))
+        if runs:
+            target_dir = runs[-1]
+            print(f"Auto-selected latest run: {target_dir}")
+        else:
+            print(f"Error: No run directories found in '{args.path}'")
+            sys.exit(1)
+            
+    viewer = True3DViewer(target_dir)
     viewer.run()

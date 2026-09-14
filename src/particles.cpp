@@ -310,10 +310,7 @@ void ParticleSystem::build_lbvh(const Config& config) {
         while (curr != -1) {
             int old_flag;
 #pragma omp atomic capture
-            {
-                old_flag = atomic_flags[curr];
-                atomic_flags[curr]++;
-            }
+            old_flag = atomic_flags[curr]++;
 
             if (old_flag == 0) {
                 // First thread to arrive. The other child isn't ready yet.
@@ -402,10 +399,228 @@ void ParticleSystem::compute_and_add_pp_forces(const Config& config,
                                                Diagnostics& diag) {
     if (num_particles == 0) return;
 
-    compute_and_add_generic_pp_forces(num_particles, pos_x.data(), pos_y.data(),
-                                      pos_z.data(), mass.data(), acc_x.data(),
-                                      acc_y.data(), acc_z.data(),
-                                      bvh_nodes.data(), config, diag);
+    const size_t n_parts = num_particles;
+    const double domain_size = config.domain_size;
+    const double G = config.G;
+    const double soft_sq = config.softening_squared;
+    const double cutoff_sq = config.cutoff_radius_squared;
+    const double r_s = config.PM_smoothing_cells * config.cell_size;
+    const bool use_pm = config.use_PM;
+    const size_t num_nodes = 2 * n_parts - 1;
+
+    const double search_sq =
+        use_pm ? cutoff_sq : std::numeric_limits<double>::infinity();
+
+    // Extract pointers for OpenMP GPU map clauses
+    double* d_px = pos_x.data();
+    double* d_py = pos_y.data();
+    double* d_pz = pos_z.data();
+    double* d_m = mass.data();
+    double* d_ax = acc_x.data();
+    double* d_ay = acc_y.data();
+    double* d_az = acc_z.data();
+    const BVHNode* d_bvh_nodes = bvh_nodes.data();
+
+#ifdef USE_GPU
+    if (config.enable_GPU) {
+        auto start_transfer = std::chrono::high_resolution_clock::now();
+
+#pragma omp target enter data map(                                           \
+        to : d_px[0 : n_parts], d_py[0 : n_parts], d_pz[0 : n_parts],        \
+            d_m[0 : n_parts], d_bvh_nodes[0 : num_nodes], d_ax[0 : n_parts], \
+            d_ay[0 : n_parts], d_az[0 : n_parts])
+
+        auto end_transfer = std::chrono::high_resolution_clock::now();
+        auto start_compute = std::chrono::high_resolution_clock::now();
+
+#pragma omp target teams distribute parallel for
+        for (size_t i = 0; i < n_parts; ++i) {
+            double p1_x = d_px[i], p1_y = d_py[i], p1_z = d_pz[i];
+            double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
+
+            int stack[128];
+            int stack_ptr = 0;
+            stack[stack_ptr++] = 0;
+
+            while (stack_ptr > 0) {
+                int node_idx = stack[--stack_ptr];
+                const BVHNode& node = d_bvh_nodes[node_idx];
+
+                double aabb_dist_sq =
+                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
+                                         domain_size);
+
+                if (aabb_dist_sq > search_sq) continue;
+
+                if (node.particle_idx != -1) {
+                    int j = node.particle_idx;
+                    if (static_cast<size_t>(j) == i) continue;
+
+                    double dx = p1_x - d_px[j];
+                    if (dx > 0.5 * domain_size)
+                        dx -= domain_size;
+                    else if (dx < -0.5 * domain_size)
+                        dx += domain_size;
+
+                    double dy = p1_y - d_py[j];
+                    if (dy > 0.5 * domain_size)
+                        dy -= domain_size;
+                    else if (dy < -0.5 * domain_size)
+                        dy += domain_size;
+
+                    double dz = p1_z - d_pz[j];
+                    if (dz > 0.5 * domain_size)
+                        dz -= domain_size;
+                    else if (dz < -0.5 * domain_size)
+                        dz += domain_size;
+
+                    dx = -dx;
+                    dy = -dy;
+                    dz = -dz;
+
+                    double dist_sq = dx * dx + dy * dy + dz * dz;
+
+                    if (use_pm && dist_sq > cutoff_sq) continue;
+
+                    double pp_dist_sq = dist_sq + soft_sq;
+                    double pp_dist = std::sqrt(pp_dist_sq);
+                    double a_pp = G * node.mass / pp_dist_sq;
+
+                    if (use_pm) {
+                        double r_scaled = pp_dist / (2.0 * r_s);
+                        a_pp *= (std::erfc(r_scaled) +
+                                 (pp_dist / (std::sqrt(M_PI) * r_s)) *
+                                     std::exp(-r_scaled * r_scaled));
+                    }
+
+                    local_acc_x += a_pp * dx / pp_dist;
+                    local_acc_y += a_pp * dy / pp_dist;
+                    local_acc_z += a_pp * dz / pp_dist;
+                } else {
+                    stack[stack_ptr++] = node.left_child;
+                    stack[stack_ptr++] = node.right_child;
+                }
+            }
+
+            d_ax[i] += local_acc_x;
+            d_ay[i] += local_acc_y;
+            d_az[i] += local_acc_z;
+        }
+
+        auto end_compute = std::chrono::high_resolution_clock::now();
+        auto start_return = std::chrono::high_resolution_clock::now();
+
+#pragma omp target exit data map(from : d_ax[0 : n_parts], d_ay[0 : n_parts], \
+                                     d_az[0 : n_parts])                       \
+    map(delete : d_px[0 : n_parts], d_py[0 : n_parts], d_pz[0 : n_parts],     \
+            d_m[0 : n_parts], d_bvh_nodes[0 : num_nodes])
+
+        auto end_return = std::chrono::high_resolution_clock::now();
+
+        diag.add_prof_time(
+            ProfRegion::Transf,
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                end_transfer - start_transfer)
+                .count());
+        diag.add_prof_time(
+            ProfRegion::Compute,
+            std::chrono::duration_cast<std::chrono::microseconds>(end_compute -
+                                                                  start_compute)
+                .count());
+        diag.add_prof_time(
+            ProfRegion::Ret,
+            std::chrono::duration_cast<std::chrono::microseconds>(end_return -
+                                                                  start_return)
+                .count());
+
+    } else
+#endif
+    {
+        // ========================================================================
+        // CPU IMPLEMENTATION
+        // ========================================================================
+#pragma omp parallel for schedule(dynamic, 64)
+        for (size_t i = 0; i < n_parts; ++i) {
+            double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
+            double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
+
+            int stack[128];
+            int stack_ptr = 0;
+            stack[stack_ptr++] = 0;
+
+            while (stack_ptr > 0) {
+                int node_idx = stack[--stack_ptr];
+                const BVHNode& node = bvh_nodes[node_idx];
+
+                double aabb_dist_sq =
+                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
+                                         domain_size);
+
+                if (aabb_dist_sq > search_sq) continue;
+
+                if (node.particle_idx != -1) {
+                    int j = node.particle_idx;
+                    if (static_cast<size_t>(j) == i) continue;
+
+                    double dx = p1_x - pos_x[j];
+                    if (dx > 0.5 * domain_size)
+                        dx -= domain_size;
+                    else if (dx < -0.5 * domain_size)
+                        dx += domain_size;
+
+                    double dy = p1_y - pos_y[j];
+                    if (dy > 0.5 * domain_size)
+                        dy -= domain_size;
+                    else if (dy < -0.5 * domain_size)
+                        dy += domain_size;
+
+                    double dz = p1_z - pos_z[j];
+                    if (dz > 0.5 * domain_size)
+                        dz -= domain_size;
+                    else if (dz < -0.5 * domain_size)
+                        dz += domain_size;
+
+                    dx = -dx;
+                    dy = -dy;
+                    dz = -dz;
+
+                    double dist_sq = dx * dx + dy * dy + dz * dz;
+
+                    if (use_pm && dist_sq > cutoff_sq) continue;
+
+                    double pp_dist_sq = dist_sq + soft_sq;
+                    double pp_dist = std::sqrt(pp_dist_sq);
+                    double a_pp = G * node.mass / pp_dist_sq;
+
+                    if (use_pm) {
+                        double r_scaled = pp_dist / (2.0 * r_s);
+                        a_pp *= (std::erfc(r_scaled) +
+                                 (pp_dist / (std::sqrt(M_PI) * r_s)) *
+                                     std::exp(-r_scaled * r_scaled));
+                    }
+
+                    local_acc_x += a_pp * dx / pp_dist;
+                    local_acc_y += a_pp * dy / pp_dist;
+                    local_acc_z += a_pp * dz / pp_dist;
+                } else {
+                    stack[stack_ptr++] = node.left_child;
+                    stack[stack_ptr++] = node.right_child;
+                }
+            }
+
+            acc_x[i] += local_acc_x;
+            acc_y[i] += local_acc_y;
+            acc_z[i] += local_acc_z;
+        }
+    }
 }
 
 void ParticleSystem::compute_gas_dm_pp_forces(const GasGrid& gas,
@@ -688,226 +903,4 @@ double ParticleSystem::get_gravity_timestep(const Config& config) const {
     double dt_grav = std::sqrt(epsilon / a_max);
 
     return dt_grav * config.gravity_accuracy_eta;
-}
-
-void compute_and_add_generic_pp_forces(
-    size_t n_parts, const double* __restrict__ pos_x,
-    const double* __restrict__ pos_y, const double* __restrict__ pos_z,
-    const double* __restrict__ mass, double* __restrict__ acc_x,
-    double* __restrict__ acc_y, double* __restrict__ acc_z,
-    const BVHNode* __restrict__ bvh_nodes, const Config& config,
-    Diagnostics& diag) {
-    if (n_parts == 0) return;
-
-    const double domain_size = config.domain_size;
-    const double G = config.G;
-    const double soft_sq = config.softening_squared;
-    const double cutoff_sq = config.cutoff_radius_squared;
-    const double r_s = config.PM_smoothing_cells * config.cell_size;
-    const bool use_pm = config.use_PM;
-    const size_t num_nodes = 2 * n_parts - 1;
-
-    const double search_sq =
-        use_pm ? cutoff_sq : std::numeric_limits<double>::infinity();
-
-#ifdef USE_GPU
-    if (config.enable_GPU) {
-        auto start_transfer = std::chrono::high_resolution_clock::now();
-
-#pragma omp target enter data map(                                           \
-        to : pos_x[0 : n_parts], pos_y[0 : n_parts], pos_z[0 : n_parts],     \
-            mass[0 : n_parts], bvh_nodes[0 : num_nodes], acc_x[0 : n_parts], \
-            acc_y[0 : n_parts], acc_z[0 : n_parts])
-
-        auto end_transfer = std::chrono::high_resolution_clock::now();
-        auto start_compute = std::chrono::high_resolution_clock::now();
-
-#pragma omp target teams distribute parallel for
-        for (size_t i = 0; i < n_parts; ++i) {
-            double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
-            double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
-
-            int stack[128];
-            int stack_ptr = 0;
-            stack[stack_ptr++] = 0;
-
-            while (stack_ptr > 0) {
-                int node_idx = stack[--stack_ptr];
-                const BVHNode& node = bvh_nodes[node_idx];
-
-                double aabb_dist_sq =
-                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
-                                         domain_size) +
-                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
-                                         domain_size) +
-                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
-                                         domain_size);
-
-                if (aabb_dist_sq > search_sq) continue;
-
-                if (node.particle_idx != -1) {
-                    int j = node.particle_idx;
-                    if (static_cast<size_t>(j) == i) continue;
-
-                    double dx = p1_x - pos_x[j];
-                    if (dx > 0.5 * domain_size)
-                        dx -= domain_size;
-                    else if (dx < -0.5 * domain_size)
-                        dx += domain_size;
-
-                    double dy = p1_y - pos_y[j];
-                    if (dy > 0.5 * domain_size)
-                        dy -= domain_size;
-                    else if (dy < -0.5 * domain_size)
-                        dy += domain_size;
-
-                    double dz = p1_z - pos_z[j];
-                    if (dz > 0.5 * domain_size)
-                        dz -= domain_size;
-                    else if (dz < -0.5 * domain_size)
-                        dz += domain_size;
-
-                    dx = -dx;
-                    dy = -dy;
-                    dz = -dz;
-
-                    double dist_sq = dx * dx + dy * dy + dz * dz;
-
-                    if (use_pm && dist_sq > cutoff_sq) continue;
-
-                    double pp_dist_sq = dist_sq + soft_sq;
-                    double pp_dist = std::sqrt(pp_dist_sq);
-                    double a_pp = G * node.mass / pp_dist_sq;
-
-                    if (use_pm) {
-                        double r_scaled = pp_dist / (2.0 * r_s);
-                        a_pp *= (std::erfc(r_scaled) +
-                                 (pp_dist / (std::sqrt(M_PI) * r_s)) *
-                                     std::exp(-r_scaled * r_scaled));
-                    }
-
-                    local_acc_x += a_pp * dx / pp_dist;
-                    local_acc_y += a_pp * dy / pp_dist;
-                    local_acc_z += a_pp * dz / pp_dist;
-                } else {
-                    stack[stack_ptr++] = node.left_child;
-                    stack[stack_ptr++] = node.right_child;
-                }
-            }
-
-            acc_x[i] += local_acc_x;
-            acc_y[i] += local_acc_y;
-            acc_z[i] += local_acc_z;
-        }
-
-        auto end_compute = std::chrono::high_resolution_clock::now();
-        auto start_return = std::chrono::high_resolution_clock::now();
-
-#pragma omp target exit data map(from : acc_x[0 : n_parts],                  \
-                                     acc_y[0 : n_parts], acc_z[0 : n_parts]) \
-    map(delete : pos_x[0 : n_parts], pos_y[0 : n_parts], pos_z[0 : n_parts], \
-            mass[0 : n_parts], bvh_nodes[0 : num_nodes])
-
-        auto end_return = std::chrono::high_resolution_clock::now();
-
-        diag.add_prof_time(
-            ProfRegion::Transf,
-            std::chrono::duration_cast<std::chrono::microseconds>(
-                end_transfer - start_transfer)
-                .count());
-        diag.add_prof_time(
-            ProfRegion::Compute,
-            std::chrono::duration_cast<std::chrono::microseconds>(end_compute -
-                                                                  start_compute)
-                .count());
-        diag.add_prof_time(
-            ProfRegion::Ret,
-            std::chrono::duration_cast<std::chrono::microseconds>(end_return -
-                                                                  start_return)
-                .count());
-
-    } else
-#endif
-    {
-        // ========================================================================
-        // CPU IMPLEMENTATION
-        // ========================================================================
-#pragma omp parallel for schedule(dynamic, 64)
-        for (size_t i = 0; i < n_parts; ++i) {
-            double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
-            double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
-
-            int stack[128];
-            int stack_ptr = 0;
-            stack[stack_ptr++] = 0;
-
-            while (stack_ptr > 0) {
-                int node_idx = stack[--stack_ptr];
-                const BVHNode& node = bvh_nodes[node_idx];
-
-                double aabb_dist_sq =
-                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
-                                         domain_size) +
-                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
-                                         domain_size) +
-                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
-                                         domain_size);
-
-                if (aabb_dist_sq > search_sq) continue;
-
-                if (node.particle_idx != -1) {
-                    int j = node.particle_idx;
-                    if (static_cast<size_t>(j) == i) continue;
-
-                    double dx = p1_x - pos_x[j];
-                    if (dx > 0.5 * domain_size)
-                        dx -= domain_size;
-                    else if (dx < -0.5 * domain_size)
-                        dx += domain_size;
-
-                    double dy = p1_y - pos_y[j];
-                    if (dy > 0.5 * domain_size)
-                        dy -= domain_size;
-                    else if (dy < -0.5 * domain_size)
-                        dy += domain_size;
-
-                    double dz = p1_z - pos_z[j];
-                    if (dz > 0.5 * domain_size)
-                        dz -= domain_size;
-                    else if (dz < -0.5 * domain_size)
-                        dz += domain_size;
-
-                    dx = -dx;
-                    dy = -dy;
-                    dz = -dz;
-
-                    double dist_sq = dx * dx + dy * dy + dz * dz;
-
-                    if (use_pm && dist_sq > cutoff_sq) continue;
-
-                    double pp_dist_sq = dist_sq + soft_sq;
-                    double pp_dist = std::sqrt(pp_dist_sq);
-                    double a_pp = G * node.mass / pp_dist_sq;
-
-                    if (use_pm) {
-                        double r_scaled = pp_dist / (2.0 * r_s);
-                        a_pp *= (std::erfc(r_scaled) +
-                                 (pp_dist / (std::sqrt(M_PI) * r_s)) *
-                                     std::exp(-r_scaled * r_scaled));
-                    }
-
-                    local_acc_x += a_pp * dx / pp_dist;
-                    local_acc_y += a_pp * dy / pp_dist;
-                    local_acc_z += a_pp * dz / pp_dist;
-                } else {
-                    stack[stack_ptr++] = node.left_child;
-                    stack[stack_ptr++] = node.right_child;
-                }
-            }
-
-            acc_x[i] += local_acc_x;
-            acc_y[i] += local_acc_y;
-            acc_z[i] += local_acc_z;
-        }
-    }
 }
