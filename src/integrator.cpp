@@ -428,10 +428,9 @@ static void apply_gas_particle_hydro_kick(GasParticleSystem& gas, double dt,
             0.5 * m * (vx_old * vx_old + vy_old * vy_old + vz_old * vz_old);
 
         // Hydro Acceleration (Force / m)
-        // Apply the 1/a^2 comoving factor
-        double hx = gas.hydro_acc_x[i];// * inv_a2;
-        double hy = gas.hydro_acc_y[i];// * inv_a2;
-        double hz = gas.hydro_acc_z[i];// * inv_a2;
+        double hx = gas.hydro_acc_x[i];
+        double hy = gas.hydro_acc_y[i];
+        double hz = gas.hydro_acc_z[i];
 
         gas.vel_x[i] += hx * dt;
         gas.vel_y[i] += hy * dt;

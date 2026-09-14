@@ -518,24 +518,23 @@ inline void compute_gravity_kernel_derivatives(double r, double h,
     double q5 = q3 * q2;
 
     double h2 = h * h;
-    double h3 = h2 * h;
 
     if (q < 0.5) {
         // d(phi)/dr : Modified 1/r^2 force
-        dphi_dr = (1.0 / h2) *
-                  ((10.6666666667) * q - (19.2) * q3 + (10.6666666667) * q4);
+        dphi_dr = (1.0 / h2) * (10.6666666667 * q - 38.4 * q3 + 32.0 * q4);
+
         // d(phi)/dh : Softening variation correction
-        dphi_dh = (1.0 / h2) * (2.8 - (5.3333333333) * q2 + (11.52) * q4 -
-                                (7.1111111111) * q5);
+        dphi_dh = (1.0 / h2) * (2.8 - 16.0 * q2 + 48.0 * q4 - 38.4 * q5);
+
     } else if (q < 1.0) {
         // d(phi)/dr : Modified 1/r^2 force
-        dphi_dr = (1.0 / h2) *
-                  ((10.6666666667) * q - (19.2) * q3 + (10.6666666667) * q4 -
-                   (0.0666666667) / q2 + 0.1 * q5 - (3.2) * q4 +
-                   10.6666666667 * q3 - 16.0 * q2 + 11.2 * q - 3.2);
+        dphi_dr = (1.0 / h2) * (-(1.0 / 15.0) / q2 + (64.0 / 3.0) * q -
+                                48.0 * q2 + 38.4 * q3 - (32.0 / 3.0) * q4);
+
         // d(phi)/dh : Softening variation correction
-        dphi_dh = (1.0 / h2) * (3.2 - (10.6666666667) * q + (19.2) * q2 -
-                                (11.52) * q3 + (1.0666666667) * q4 - 0.08 / q);
+        dphi_dh =
+            (1.0 / h2) * (3.2 - 32.0 * q2 + 64.0 * q3 - 48.0 * q4 + 12.8 * q5);
+
     } else {
         // Pure Newtonian Point Mass outside the softening radius
         dphi_dr = 1.0 / (r * r);
@@ -965,15 +964,16 @@ void GasParticleSystem::apply_cooling(double dt, double a, const Config& config,
                 double du_dt = cooling.compute_du_dt(u_current, local_rho,
                                                      local_Z_frac, a, config);
 
-               double dt_cell;
+                double dt_cell;
                 if (u_current <= u_rad_floor && du_dt < 0.0) {
-                    // The particle is at the temperature floor and trying to cool.
-                    // It is in thermal equilibrium. Consume the rest of the step.
+                    // The particle is at the temperature floor and trying to
+                    // cool. It is in thermal equilibrium. Consume the rest of
+                    // the step.
                     dt_cell = dt - t_evolved;
                 } else {
                     dt_cell = (std::abs(du_dt) > 0.0)
-                                     ? 0.1 * (u_current / std::abs(du_dt))
-                                     : dt;
+                                  ? 0.1 * (u_current / std::abs(du_dt))
+                                  : dt;
                 }
 
                 dt_cell = std::min(dt_cell, dt - t_evolved);
@@ -1184,8 +1184,8 @@ double GasParticleSystem::get_gravity_timestep(const Config& config) const {
 
 // --------------------------------------------------------------------------------
 // Adaptive Gravitational Softening Kernel (GIZMO App. H2 / Price & Monaghan
-// 2007) Returns the exact d(phi)/dr potential derivative and d(W)/dr
-// smoothing derivative.
+// 2007) Returns the d(phi)/dr potential derivative and d(W)/dr smoothing
+// derivative
 // --------------------------------------------------------------------------------
 inline void compute_adaptive_gravity_terms(double r, double h, double& dphi_dr,
                                            double& dW_dr) {
@@ -1199,21 +1199,18 @@ inline void compute_adaptive_gravity_terms(double r, double h, double& dphi_dr,
     double q2 = q * q;
     double q3 = q2 * q;
     double q4 = q3 * q;
-    double q5 = q4 * q;
 
     double h2 = h * h;
     double h3 = h2 * h;
 
     if (q < 0.5) {
-        dphi_dr =
-            (1.0 / h2) * (10.6666666667 * q - 19.2 * q3 + 10.6666666667 * q4);
+        dphi_dr = (1.0 / h2) * (10.6666666667 * q - 38.4 * q3 + 32.0 * q4);
     } else {
-        dphi_dr =
-            (1.0 / h2) * (10.6666666667 * q - 19.2 * q3 + 10.6666666667 * q4 -
-                          0.0666666667 / q2 + 0.1 * q5 - 3.2 * q4 +
-                          10.6666666667 * q3 - 16.0 * q2 + 11.2 * q - 3.2);
+        dphi_dr = (1.0 / h2) * (-(1.0 / 15.0) / q2 + (64.0 / 3.0) * q -
+                                48.0 * q2 + 38.4 * q3 - (32.0 / 3.0) * q4);
     }
 
+    // Derivative of the density kernel
     double norm = 8.0 / (M_PI * h3);
     if (q < 0.5) {
         dW_dr = norm * (-12.0 * q + 18.0 * q2) / h;

@@ -664,10 +664,12 @@ void ParticleSystem::compute_gas_dm_pp_forces(const GasGrid& gas,
         double* d_grav_y = grav_y.data.data();
         double* d_grav_z = grav_z.data.data();
 
-#pragma omp target enter data map(to : d_px[0 : n_parts], d_py[0 : n_parts], \
-                                      d_pz[0 : n_parts], d_m[0 : n_parts],   \
-                                      d_ax[0 : n_parts], d_ay[0 : n_parts],  \
-                                      d_az[0 : n_parts])
+#pragma omp target enter data map(                                    \
+        to : d_px[0 : n_parts], d_py[0 : n_parts], d_pz[0 : n_parts], \
+            d_m[0 : n_parts], d_ax[0 : n_parts], d_ay[0 : n_parts],   \
+            d_az[0 : n_parts], d_gas_rho[0 : N * N * N],              \
+            d_grav_x[0 : N * N * N], d_grav_y[0 : N * N * N],         \
+            d_grav_z[0 : N * N * N])
 
 #pragma omp target teams distribute parallel for
         for (size_t i = 0; i < n_parts; ++i) {
