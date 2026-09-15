@@ -327,7 +327,7 @@ double GasParticleSystem::compute_zeta_contribution(
             double dz = periodic_displacement(target_z[j] - p1_z, domain_size);
             double r2 = dx * dx + dy * dy + dz * dz;
 
-            if (r2 < search_sq_zeta && r2 > 1e-24) {
+            if (r2 < search_sq_zeta) {
                 if (use_pm && r2 > config.cutoff_radius_squared) continue;
 
                 double r = std::sqrt(r2);
@@ -435,16 +435,22 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
 
         if (h_clamped) {
             num_h_clamped++;
-            if (!is_converged) {
-                // Sync the properties using the finalized, clamped h_guess
-                evaluate_density_sum(i, h_guess, domain_size, current_n,
-                                     current_dn_dh);
-            }
+        }
+        
+        // IMPORTANT: If we exited the loop due to max_iter OR clamping, 
+        // h_guess has been updated but current_n and current_dn_dh are stale.
+        // We must re-evaluate
+        if (!is_converged) {
+            // Sync the properties using the finalized, clamped h_guess
+            evaluate_density_sum(i, h_guess, domain_size, current_n,
+                                    current_dn_dh);
+            double h3 = h_guess * h_guess * h_guess;
+            n_enc_final[i] = (4.0 / 3.0) * M_PI * h3 * current_n;
         }
 
         // Commit finalized state
         h[i] = h_guess;
-        rho[i] = mass[i] / (1.0 / current_n);
+        rho[i] = mass[i] * current_n;
 
         // Adaptive gravity correction (Zeta)
         double Omega_i = std::max(

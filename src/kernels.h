@@ -82,6 +82,23 @@ inline void gravity_derivatives(double r, double h, double& dphi_dr,
         dphi_dr = 1.0 / (r * r);
         dphi_dh = 0.0;
     }
+    // OLD BUGGY POLYNOMIAL
+    /*if (q < 0.5) {
+        dphi_dr =
+            (1.0 / h2) * (10.6666666667 * q - 19.2 * q3 + 10.6666666667 * q4);
+        dphi_dh = (1.0 / h2) * (2.8 - (5.3333333333) * q2 + (11.52) * q4 -
+                                (7.1111111111) * q5);
+    } else if (q < 1.0) {
+        dphi_dr =
+            (1.0 / h2) * (10.6666666667 * q - 19.2 * q3 + 10.6666666667 * q4 -
+                          0.0666666667 / q2 + 0.1 * q5 - 3.2 * q4 +
+                          10.6666666667 * q3 - 16.0 * q2 + 11.2 * q - 3.2);
+        dphi_dh = (1.0 / h2) * (3.2 - (10.6666666667) * q + (19.2) * q2 -
+                                (11.52) * q3 + (1.0666666667) * q4 - 0.08 / q);
+    } else {
+        dphi_dr = 1.0 / (r * r);
+        dphi_dh = 0.0;
+    }*/
 }
 
 // --------------------------------------------------------------------------------
@@ -100,6 +117,7 @@ inline void adaptive_gravity_terms(double r, double h, double& dphi_dr,
     double q2 = q * q;
     double q3 = q2 * q;
     double q4 = q3 * q;
+    double q5 = q4 * q;  // the buggy polynomial needs it
 
     double h2 = h * h;
     double h3 = h2 * h;
@@ -110,6 +128,16 @@ inline void adaptive_gravity_terms(double r, double h, double& dphi_dr,
         dphi_dr = (1.0 / h2) * (-(1.0 / 15.0) / q2 + (64.0 / 3.0) * q -
                                 48.0 * q2 + 38.4 * q3 - (32.0 / 3.0) * q4);
     }
+    // OLD BUGGY POLYNOMIAL
+    /*if (q < 0.5) {
+        dphi_dr =
+            (1.0 / h2) * (10.6666666667 * q - 19.2 * q3 + 10.6666666667 * q4);
+    } else {
+        dphi_dr =
+            (1.0 / h2) * (10.6666666667 * q - 19.2 * q3 + 10.6666666667 * q4 -
+                          0.0666666667 / q2 + 0.1 * q5 - 3.2 * q4 +
+                          10.6666666667 * q3 - 16.0 * q2 + 11.2 * q - 3.2);
+    }*/
 
     double norm = 8.0 / (M_PI * h3);
     if (q < 0.5) {
