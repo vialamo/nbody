@@ -76,8 +76,8 @@ void Config::compute_derived_data() {
         omega_lambda = 0.0;
         omega_m = 1.0;
         omega_baryon = 1.0;
-        gamma = 1.4;// 5.0 / 3.0;
-        total_mass = 0.625;
+        gamma = 1.4;
+        total_mass = 0.5625;
         a_end = 0.15;
     } else if (initial_setup == InitialSetup::AdiabaticExpansion) {
         enable_subcycling = false;

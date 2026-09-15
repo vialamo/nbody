@@ -1,25 +1,11 @@
 #include "mfm.h"
 
-#include <algorithm>
 #include <chrono>
-#include <cmath>
-#include <iostream>
-#include <numeric>  // For std::iota
 
-#include "constants.h"
+#include "cic.h"
 #include "diagnostics.h"
+#include "kernels.h"
 #include "math_utils.h"
-
-// Enable to use the limiter explained in the Gizmo paper.
-// Disable to use the limiter used in the Gizmo code.
-// #define THEORETICAL_LIMITER
-
-// Disable limiter completely
-// #define DISABLE_LIMITER
-
-#ifdef DISABLE_LIMITER
-#define ZEROTH_ORDER_RECONSTRUCTION
-#endif
 
 constexpr double density_floor = 1e-12;
 double g_pressure_floor = 0.0;
@@ -243,303 +229,126 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
 void GasParticleSystem::build_lbvh(const Config& config) {
     if (num_particles == 0) return;
 
-    morton_codes.resize(num_particles);
-    sorted_indices.resize(num_particles);
-    bvh_nodes.resize(2 * num_particles - 1);
+    // Generate the Morton codes and the index map
+    LBVH::compute_morton_and_sort_indices(num_particles, config.domain_size,
+                                          pos_x, pos_y, pos_z, morton_codes,
+                                          sorted_indices);
 
-    double inv_domain = 1.0 / config.domain_size;
-    // We use 21 bits per dimension (2^21 = 2097152) to fit in a 64-bit int
-    double bound = 2097152.0;
-
-// Compute Morton codes for all particles
-#pragma omp parallel for schedule(static)
-    for (size_t i = 0; i < num_particles; ++i) {
-        // Normalize coordinates to [0, 1) and scale to the 21-bit integer range
-        uint32_t x = static_cast<uint32_t>(
-            fmod(pos_x[i] * inv_domain + 1.0, 1.0) * bound);
-        uint32_t y = static_cast<uint32_t>(
-            fmod(pos_y[i] * inv_domain + 1.0, 1.0) * bound);
-        uint32_t z = static_cast<uint32_t>(
-            fmod(pos_z[i] * inv_domain + 1.0, 1.0) * bound);
-
-        morton_codes[i] = morton3D(x, y, z);
-    }
-
-    // Initialize indices and sort them based on the Morton codes
-    std::iota(sorted_indices.begin(), sorted_indices.end(), 0);
-    std::sort(sorted_indices.begin(), sorted_indices.end(),
-              [&](int a, int b) { return morton_codes[a] < morton_codes[b]; });
-
-    // Rearrange particle arrays to match the new sorted order
-
-    // Use the helper function to sync arrays
+    // Shuffle arrays
     sort_arrays(sorted_indices);
 
-    // We must also sort the morton_codes array itself, as the
-    // Karras tree topology algorithm relies on them being in order
-    std::vector<uint64_t> new_morton(num_particles);
-    for (size_t i = 0; i < num_particles; ++i) {
-        new_morton[i] = morton_codes[sorted_indices[i]];
-    }
-    morton_codes = std::move(new_morton);
+    // Build the tree topology and compute Centers of Mass / Bounding Boxes
+    LBVH::build_topology_and_aggregate(num_particles, pos_x, pos_y, pos_z, mass,
+                                       &h, morton_codes, bvh_nodes);
+}
 
-    // TREE TOPOLOGY CONSTRUCTION (Karras 2012)
+void GasParticleSystem::evaluate_density_sum(size_t particle_idx,
+                                             double h_guess, double domain_size,
+                                             double& out_n,
+                                             double& out_dn_dh) const {
+    out_n = 0.0;
+    out_dn_dh = 0.0;
+    double search_sq = h_guess * h_guess;
+    double p1_x = pos_x[particle_idx];
+    double p1_y = pos_y[particle_idx];
+    double p1_z = pos_z[particle_idx];
 
-    // Total nodes = 2N - 1.
-    // Indices [0, N-2] are internal nodes.
-    // Indices [N-1, 2N-2] are leaf nodes.
+    int stack[128];
+    int stack_ptr = 0;
+    stack[stack_ptr++] = 0;
 
-    // Utility lambda to find the longest common prefix between two Morton codes
-    auto delta = [&](int i, int j) -> int {
-        if (j < 0 || j >= num_particles) return -1;
-        uint64_t code_i = morton_codes[i];
-        uint64_t code_j = morton_codes[j];
+    while (stack_ptr > 0) {
+        int node_idx = stack[--stack_ptr];
+        const BVHNode& node = bvh_nodes[node_idx];
 
-        if (code_i == code_j) {
-            // Tie-breaker for identical coordinates using the original index
-            return 64 + __builtin_clzll(static_cast<unsigned long long>(i ^ j));
-        }
-        return __builtin_clzll(code_i ^ code_j);
-    };
+        double dist_sq = min_periodic_dist_sq(p1_x, node.bbox.min_x,
+                                              node.bbox.max_x, domain_size) +
+                         min_periodic_dist_sq(p1_y, node.bbox.min_y,
+                                              node.bbox.max_y, domain_size) +
+                         min_periodic_dist_sq(p1_z, node.bbox.min_z,
+                                              node.bbox.max_z, domain_size);
 
-// Initialize Leaf Nodes
-#pragma omp parallel for schedule(static)
-    for (int i = 0; i < num_particles; ++i) {
-        int leaf_idx = num_particles - 1 + i;
-        bvh_nodes[leaf_idx].particle_idx = i;
-        bvh_nodes[leaf_idx].left_child = -1;
-        bvh_nodes[leaf_idx].right_child = -1;
-        // The parent will be set by the internal node that points to this leaf
-    }
+        if (dist_sq > search_sq) continue;
 
-// Construct Internal Nodes in parallel
-#pragma omp parallel for schedule(static)
-    for (int i = 0; i < num_particles - 1; ++i) {
-        // Determine direction of the range (+1 or -1)
-        int d = (delta(i, i + 1) - delta(i, i - 1)) > 0 ? 1 : -1;
+        if (node.particle_idx != -1) {
+            int j = node.particle_idx;
+            double dx = periodic_displacement(pos_x[j] - p1_x, domain_size);
+            double dy = periodic_displacement(pos_y[j] - p1_y, domain_size);
+            double dz = periodic_displacement(pos_z[j] - p1_z, domain_size);
+            double r2 = dx * dx + dy * dy + dz * dz;
 
-        // Compute upper bound for the length of the range
-        int delta_min = delta(i, i - d);
-        int l_max = 2;
-        while (delta(i, i + l_max * d) > delta_min) {
-            l_max *= 2;
-        }
-
-        // Find the other end of the range using binary search
-        int l = 0;
-        for (int t = l_max / 2; t >= 1; t /= 2) {
-            if (delta(i, i + (l + t) * d) > delta_min) {
-                l += t;
+            if (r2 < search_sq) {
+                double r = std::sqrt(r2);
+                double W, dWdh;
+                Kernels::cubic_spline(r, h_guess, W, dWdh);
+                out_n += W;
+                out_dn_dh += dWdh;
             }
-        }
-        int j = i + l * d;
-
-        // Find the split position using binary search
-        int delta_node = delta(i, j);
-        int s = 0;
-        int t = l;
-        do {
-            t = (t + 1) >> 1;  // ceil(t/2)
-            if (s + t < l && delta(i, i + (s + t) * d) > delta_node) {
-                s += t;
-            }
-        } while (t > 1);
-
-        int split = i + s * d + std::min(d, 0);
-        int min_idx = std::min(i, j);
-        int max_idx = std::max(i, j);
-
-        // Assign children
-        int left_child, right_child;
-
-        if (min_idx == split) {
-            left_child = num_particles - 1 + split;  // Points to leaf
         } else {
-            left_child = split;  // Points to internal node
-        }
-
-        if (max_idx == split + 1) {
-            right_child = num_particles - 1 + split + 1;  // Points to leaf
-        } else {
-            right_child = split + 1;  // Points to internal node
-        }
-
-        bvh_nodes[i].left_child = left_child;
-        bvh_nodes[i].right_child = right_child;
-        bvh_nodes[i].particle_idx = -1;  // -1 indicates an internal node
-
-        // Assign parent pointers to children
-        bvh_nodes[left_child].parent = i;
-        bvh_nodes[right_child].parent = i;
-    }
-
-    // Set the root node's parent to itself or -1
-    bvh_nodes[0].parent = -1;
-
-    // BOTTOM-UP AGGREGATION (Bounding Boxes & Center of Mass)
-
-    // Counter for each internal node to track when both children are processed
-    std::vector<int> atomic_flags(num_particles - 1, 0);
-
-// Initialize Leaf Nodes and trigger the walk up
-#pragma omp parallel for schedule(static)
-    for (int i = 0; i < num_particles; ++i) {
-        int leaf_idx = num_particles - 1 + i;
-        double px = pos_x[i], py = pos_y[i], pz = pos_z[i];
-
-        // Expand the AABB by the smoothing length 'h'.
-        double radius = 0.0;
-        if (!h.empty()) {
-            radius = h[i];
-        }
-
-        bvh_nodes[leaf_idx].bbox.min_x = px - radius;
-        bvh_nodes[leaf_idx].bbox.max_x = px + radius;
-        bvh_nodes[leaf_idx].bbox.min_y = py - radius;
-        bvh_nodes[leaf_idx].bbox.max_y = py + radius;
-        bvh_nodes[leaf_idx].bbox.min_z = pz - radius;
-        bvh_nodes[leaf_idx].bbox.max_z = pz + radius;
-
-        bvh_nodes[leaf_idx].max_h = radius;
-
-        bvh_nodes[leaf_idx].mass = mass[i];
-        // Store mass-weighted positions temporarily to make summation easy
-        bvh_nodes[leaf_idx].com_x = px * mass[i];
-        bvh_nodes[leaf_idx].com_y = py * mass[i];
-        bvh_nodes[leaf_idx].com_z = pz * mass[i];
-
-        // Walk up the tree
-        int curr = bvh_nodes[leaf_idx].parent;
-        while (curr != -1) {
-            int old_flag;
-#pragma omp atomic capture
-            old_flag = atomic_flags[curr]++;
-
-            if (old_flag == 0) {
-                // First thread to arrive. The other child isn't ready yet.
-                // Terminate.
-                break;
-            }
-
-            // Second thread to arrive. Both children are ready. Compute parent.
-            int left = bvh_nodes[curr].left_child;
-            int right = bvh_nodes[curr].right_child;
-
-            // Combine Bounding Boxes
-            bvh_nodes[curr].bbox.min_x = std::min(bvh_nodes[left].bbox.min_x,
-                                                  bvh_nodes[right].bbox.min_x);
-            bvh_nodes[curr].bbox.max_x = std::max(bvh_nodes[left].bbox.max_x,
-                                                  bvh_nodes[right].bbox.max_x);
-            bvh_nodes[curr].bbox.min_y = std::min(bvh_nodes[left].bbox.min_y,
-                                                  bvh_nodes[right].bbox.min_y);
-            bvh_nodes[curr].bbox.max_y = std::max(bvh_nodes[left].bbox.max_y,
-                                                  bvh_nodes[right].bbox.max_y);
-            bvh_nodes[curr].bbox.min_z = std::min(bvh_nodes[left].bbox.min_z,
-                                                  bvh_nodes[right].bbox.min_z);
-            bvh_nodes[curr].bbox.max_z = std::max(bvh_nodes[left].bbox.max_z,
-                                                  bvh_nodes[right].bbox.max_z);
-
-            bvh_nodes[curr].max_h =
-                std::max(bvh_nodes[left].max_h, bvh_nodes[right].max_h);
-
-            // Sum Mass and mass-weighted positions
-            bvh_nodes[curr].mass = bvh_nodes[left].mass + bvh_nodes[right].mass;
-            bvh_nodes[curr].com_x =
-                bvh_nodes[left].com_x + bvh_nodes[right].com_x;
-            bvh_nodes[curr].com_y =
-                bvh_nodes[left].com_y + bvh_nodes[right].com_y;
-            bvh_nodes[curr].com_z =
-                bvh_nodes[left].com_z + bvh_nodes[right].com_z;
-
-            // Move up to the next parent
-            curr = bvh_nodes[curr].parent;
-        }
-    }
-
-// Normalize Center of Mass
-#pragma omp parallel for schedule(static)
-    for (int i = 0; i < 2 * num_particles - 1; ++i) {
-        if (bvh_nodes[i].mass > 0.0) {
-            bvh_nodes[i].com_x /= bvh_nodes[i].mass;
-            bvh_nodes[i].com_y /= bvh_nodes[i].mass;
-            bvh_nodes[i].com_z /= bvh_nodes[i].mass;
+            stack[stack_ptr++] = node.left_child;
+            stack[stack_ptr++] = node.right_child;
         }
     }
 }
 
-// --------------------------------------------------------------------------------
-// Cubic Spline Kernel
-// Support radius is 1h. Returns W (value) and dWdh.
-// --------------------------------------------------------------------------------
-inline void GasParticleSystem::kernel_cubic_spline(double r, double h,
-                                                   double& W,
-                                                   double& dWdh) const {
-    double q = r / h;
-    double h3 = h * h * h;
-    double norm = 8.0 / (M_PI * h3);  // 3D normalization for 1h support radius
-    double dWdr = 0.0;
+double GasParticleSystem::compute_zeta_contribution(
+    double p1_x, double p1_y, double p1_z, double h_i,
+    const std::vector<double>& target_x, const std::vector<double>& target_y,
+    const std::vector<double>& target_z, const std::vector<double>& target_mass,
+    const std::vector<BVHNode>& target_bvh, const Config& config) const {
+    double zeta_sum = 0.0;
+    double search_sq_zeta = h_i * h_i;
+    double domain_size = config.domain_size;
 
-    if (q < 0.5) {
-        // 1 + 6q^2(q - 1) = 1 - 6q^2 + 6q^3
-        W = norm * (1.0 - 6.0 * q * q + 6.0 * q * q * q);
-        if (r > 1e-12) {
-            // Derivative w.r.t r (using chain rule: dW/dq * dq/dr, where dq/dr
-            // = 1/h)
-            dWdr = norm * (-12.0 * q + 18.0 * q * q) / h;
+    bool use_pm = config.use_PM;
+    double r_s = config.PM_smoothing_cells * config.cell_size;
+
+    int stack[128];
+    int stack_ptr = 0;
+    stack[stack_ptr++] = 0;
+
+    while (stack_ptr > 0) {
+        int node_idx = stack[--stack_ptr];
+        const BVHNode& node = target_bvh[node_idx];
+
+        double dist_sq = min_periodic_dist_sq(p1_x, node.bbox.min_x,
+                                              node.bbox.max_x, domain_size) +
+                         min_periodic_dist_sq(p1_y, node.bbox.min_y,
+                                              node.bbox.max_y, domain_size) +
+                         min_periodic_dist_sq(p1_z, node.bbox.min_z,
+                                              node.bbox.max_z, domain_size);
+
+        if (dist_sq > search_sq_zeta) continue;
+
+        if (node.particle_idx != -1) {
+            int j = node.particle_idx;
+            double dx = periodic_displacement(target_x[j] - p1_x, domain_size);
+            double dy = periodic_displacement(target_y[j] - p1_y, domain_size);
+            double dz = periodic_displacement(target_z[j] - p1_z, domain_size);
+            double r2 = dx * dx + dy * dy + dz * dz;
+
+            if (r2 < search_sq_zeta && r2 > 1e-24) {
+                if (use_pm && r2 > config.cutoff_radius_squared) continue;
+
+                double r = std::sqrt(r2);
+                double dphi_dr, dphi_dh;
+                Kernels::gravity_derivatives(r, h_i, dphi_dr, dphi_dh);
+
+                if (use_pm) {
+                    double r_scaled = r / (2.0 * r_s);
+                    double taper = std::erfc(r_scaled) +
+                                   (r / (std::sqrt(M_PI) * r_s)) *
+                                       std::exp(-r_scaled * r_scaled);
+                    dphi_dh *= taper;
+                }
+                zeta_sum += target_mass[j] * dphi_dh;
+            }
         } else {
-            dWdr = 0.0;
+            stack[stack_ptr++] = node.left_child;
+            stack[stack_ptr++] = node.right_child;
         }
-    } else if (q < 1.0) {
-        // 2(1 - q)^3
-        double diff = 1.0 - q;
-        W = norm * 2.0 * diff * diff * diff;
-        // Derivative w.r.t r
-        dWdr = norm * -6.0 * diff * diff / h;
-    } else {
-        // Outside the support radius
-        W = 0.0;
-        dWdr = 0.0;
     }
-
-    dWdh = -(3.0 / h) * W - q * dWdr;
-}
-
-// --------------------------------------------------------------------------------
-// Adaptive Gravitational Softening Kernel (GIZMO / Price & Monaghan 2007)
-// Returns the modified 1/r^2 force factor and the d(phi)/dh term.
-// --------------------------------------------------------------------------------
-inline void compute_gravity_kernel_derivatives(double r, double h,
-                                               double& dphi_dr,
-                                               double& dphi_dh) {
-    double q = r / h;
-    double q2 = q * q;
-    double q3 = q2 * q;
-    double q4 = q2 * q2;
-    double q5 = q3 * q2;
-
-    double h2 = h * h;
-
-    if (q < 0.5) {
-        // d(phi)/dr : Modified 1/r^2 force
-        dphi_dr = (1.0 / h2) * (10.6666666667 * q - 38.4 * q3 + 32.0 * q4);
-
-        // d(phi)/dh : Softening variation correction
-        dphi_dh = (1.0 / h2) * (2.8 - 16.0 * q2 + 48.0 * q4 - 38.4 * q5);
-
-    } else if (q < 1.0) {
-        // d(phi)/dr : Modified 1/r^2 force
-        dphi_dr = (1.0 / h2) * (-(1.0 / 15.0) / q2 + (64.0 / 3.0) * q -
-                                48.0 * q2 + 38.4 * q3 - (32.0 / 3.0) * q4);
-
-        // d(phi)/dh : Softening variation correction
-        dphi_dh =
-            (1.0 / h2) * (3.2 - 32.0 * q2 + 64.0 * q3 - 48.0 * q4 + 12.8 * q5);
-
-    } else {
-        // Pure Newtonian Point Mass outside the softening radius
-        dphi_dr = 1.0 / (r * r);
-        dphi_dh = 0.0;
-    }
+    return zeta_sum;
 }
 
 // --------------------------------------------------------------------------------
@@ -549,7 +358,6 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
                                               const ParticleSystem& dm) {
     if (num_particles == 0) return;
 
-    // Build the Linear Bounding Volume Hierarchy
     build_lbvh(config);
 
     double domain_size = config.domain_size;
@@ -561,9 +369,6 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
     const double min_h_cap = 0.05 * mean_spacing;
     const double max_h_cap = 0.5 * domain_size;
     constexpr double MAX_H_GROWTH = 8.0;
-
-    const double r_s = config.PM_smoothing_cells * config.cell_size;
-    const bool use_pm = config.use_PM;
 
     size_t num_h_clamped = 0;
 
@@ -581,53 +386,10 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         bool is_converged = false;
         bool h_clamped = false;
 
-        // Iterative smoothing length (h) solver
+        // Newton-Raphson Solver for h_i
         while (iter < max_iter) {
-            current_n = 0.0;
-            current_dn_dh = 0.0;
-            double search_sq = h_guess * h_guess;
-
-            int stack[128];
-            int stack_ptr = 0;
-            stack[stack_ptr++] = 0;  // Push root of Gas LBVH
-
-            while (stack_ptr > 0) {
-                int node_idx = stack[--stack_ptr];
-                const BVHNode& node = bvh_nodes[node_idx];
-
-                // AABB Intersection check (prunes entire branches)
-                double dist_sq =
-                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
-                                         domain_size) +
-                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
-                                         domain_size) +
-                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
-                                         domain_size);
-
-                if (dist_sq > search_sq) continue;
-
-                if (node.particle_idx != -1) {  // Leaf Node
-                    int j = node.particle_idx;
-                    double dx =
-                        periodic_displacement(pos_x[j] - p1_x, domain_size);
-                    double dy =
-                        periodic_displacement(pos_y[j] - p1_y, domain_size);
-                    double dz =
-                        periodic_displacement(pos_z[j] - p1_z, domain_size);
-                    double r2 = dx * dx + dy * dy + dz * dz;
-
-                    if (r2 < search_sq) {
-                        double r = std::sqrt(r2);
-                        double W, dWdh;
-                        kernel_cubic_spline(r, h_guess, W, dWdh);
-                        current_n += W;
-                        current_dn_dh += dWdh;
-                    }
-                } else {  // Internal Node
-                    stack[stack_ptr++] = node.left_child;
-                    stack[stack_ptr++] = node.right_child;
-                }
-            }
+            evaluate_density_sum(i, h_guess, domain_size, current_n,
+                                 current_dn_dh);
 
             double h3 = h_guess * h_guess * h_guess;
             double N_enc = (4.0 / 3.0) * M_PI * h3 * current_n;
@@ -671,53 +433,12 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
             iter++;
         }
 
-        if (h_clamped) num_h_clamped++;
-
-        // Sync: Recompute sums if the loop exited due to a clamp
-        if (!is_converged) {
-            current_n = 0.0;
-            current_dn_dh = 0.0;
-            double search_sq = h_guess * h_guess;
-
-            int stack[128];
-            int stack_ptr = 0;
-            stack[stack_ptr++] = 0;
-
-            while (stack_ptr > 0) {
-                int node_idx = stack[--stack_ptr];
-                const BVHNode& node = bvh_nodes[node_idx];
-
-                double dist_sq =
-                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
-                                         domain_size) +
-                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
-                                         domain_size) +
-                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
-                                         domain_size);
-
-                if (dist_sq > search_sq) continue;
-
-                if (node.particle_idx != -1) {
-                    int j = node.particle_idx;
-                    double dx =
-                        periodic_displacement(pos_x[j] - p1_x, domain_size);
-                    double dy =
-                        periodic_displacement(pos_y[j] - p1_y, domain_size);
-                    double dz =
-                        periodic_displacement(pos_z[j] - p1_z, domain_size);
-                    double r2 = dx * dx + dy * dy + dz * dz;
-
-                    if (r2 < search_sq) {
-                        double r = std::sqrt(r2);
-                        double W, dWdh;
-                        kernel_cubic_spline(r, h_guess, W, dWdh);
-                        current_n += W;
-                        current_dn_dh += dWdh;
-                    }
-                } else {
-                    stack[stack_ptr++] = node.left_child;
-                    stack[stack_ptr++] = node.right_child;
-                }
+        if (h_clamped) {
+            num_h_clamped++;
+            if (!is_converged) {
+                // Sync the properties using the finalized, clamped h_guess
+                evaluate_density_sum(i, h_guess, domain_size, current_n,
+                                     current_dn_dh);
             }
         }
 
@@ -725,120 +446,22 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         h[i] = h_guess;
         rho[i] = mass[i] / (1.0 / current_n);
 
-        // Adaptive gravity corrections (GIZMO App. H2)
-
-        // Equation H10: Omega_a
+        // Adaptive gravity correction (Zeta)
         double Omega_i = std::max(
             1.0 + (h_guess / (current_n * 3.0)) * current_dn_dh, 1e-12);
-        double zeta_sum = 0.0;
-        double search_sq_zeta = h_guess * h_guess;
 
-        // Gather zeta from Gas particles
-        int stack_zeta_gas[128];
-        int stack_ptr_zeta_gas = 0;
-        stack_zeta_gas[stack_ptr_zeta_gas++] = 0;
+        // Sum Gas contribution
+        double zeta_sum =
+            compute_zeta_contribution(p1_x, p1_y, p1_z, h_guess, pos_x, pos_y,
+                                      pos_z, mass, bvh_nodes, config);
 
-        while (stack_ptr_zeta_gas > 0) {
-            int node_idx = stack_zeta_gas[--stack_ptr_zeta_gas];
-            const BVHNode& node = bvh_nodes[node_idx];
-
-            double dist_sq =
-                min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
-                                     domain_size) +
-                min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
-                                     domain_size) +
-                min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
-                                     domain_size);
-
-            if (dist_sq > search_sq_zeta) continue;
-
-            if (node.particle_idx != -1) {
-                int j = node.particle_idx;
-                double dx = periodic_displacement(pos_x[j] - p1_x, domain_size);
-                double dy = periodic_displacement(pos_y[j] - p1_y, domain_size);
-                double dz = periodic_displacement(pos_z[j] - p1_z, domain_size);
-                double r2 = dx * dx + dy * dy + dz * dz;
-
-                if (r2 < search_sq_zeta && r2 > 1e-24) {
-                    double r = std::sqrt(r2);
-                    double dphi_dr, dphi_dh;
-                    compute_gravity_kernel_derivatives(r, h_guess, dphi_dr,
-                                                       dphi_dh);
-
-                    if (use_pm) {
-                        double r_scaled = r / (2.0 * r_s);
-                        double taper = std::erfc(r_scaled) +
-                                       (r / (std::sqrt(M_PI) * r_s)) *
-                                           std::exp(-r_scaled * r_scaled);
-                        dphi_dh *= taper;
-                    }
-                    zeta_sum += mass[j] * dphi_dh;
-                }
-            } else {
-                stack_zeta_gas[stack_ptr_zeta_gas++] = node.left_child;
-                stack_zeta_gas[stack_ptr_zeta_gas++] = node.right_child;
-            }
-        }
-
-        // Gather zeta from Dark Matter interactions
+        // Sum DM contribution
         if (dm.num_particles > 0 && !dm.bvh_nodes.empty()) {
-            int stack_zeta_dm[128];
-            int stack_ptr_zeta_dm = 0;
-            stack_zeta_dm[stack_ptr_zeta_dm++] = 0;  // Root of DM LBVH
-
-            while (stack_ptr_zeta_dm > 0) {
-                int node_idx = stack_zeta_dm[--stack_ptr_zeta_dm];
-                const BVHNode& node = dm.bvh_nodes[node_idx];
-
-                double dist_sq =
-                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
-                                         domain_size) +
-                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
-                                         domain_size) +
-                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
-                                         domain_size);
-
-                if (dist_sq > search_sq_zeta) continue;
-
-                if (node.particle_idx != -1) {
-                    int j = node.particle_idx;
-                    double dx =
-                        periodic_displacement(dm.pos_x[j] - p1_x, domain_size);
-                    double dy =
-                        periodic_displacement(dm.pos_y[j] - p1_y, domain_size);
-                    double dz =
-                        periodic_displacement(dm.pos_z[j] - p1_z, domain_size);
-                    double r2 = dx * dx + dy * dy + dz * dz;
-
-                    // DM particles only affect gas zeta if they fall inside the
-                    // gas smoothing length
-                    if (r2 < search_sq_zeta && r2 > 1e-24) {
-                        if (use_pm && r2 > config.cutoff_radius_squared)
-                            continue;
-
-                        double r = std::sqrt(r2);
-                        double dphi_dr, dphi_dh;
-                        compute_gravity_kernel_derivatives(r, h_guess, dphi_dr,
-                                                           dphi_dh);
-
-                        if (use_pm) {
-                            double r_scaled = r / (2.0 * r_s);
-                            double taper = std::erfc(r_scaled) +
-                                           (r / (std::sqrt(M_PI) * r_s)) *
-                                               std::exp(-r_scaled * r_scaled);
-                            dphi_dh *= taper;
-                        }
-                        zeta_sum += dm.mass[j] * dphi_dh;
-                    }
-                } else {
-                    stack_zeta_dm[stack_ptr_zeta_dm++] = node.left_child;
-                    stack_zeta_dm[stack_ptr_zeta_dm++] = node.right_child;
-                }
-            }
+            zeta_sum += compute_zeta_contribution(
+                p1_x, p1_y, p1_z, h_guess, dm.pos_x, dm.pos_y, dm.pos_z,
+                dm.mass, dm.bvh_nodes, config);
         }
 
-        // Equation H9: zeta_a = m_a * (h_a / (n_a * nu)) * (1 / Omega_a) *
-        // SUM(m_b * dphi/dh)
         zeta[i] = (h_guess / (current_n * 3.0)) * (1.0 / Omega_i) * zeta_sum;
     }
 
@@ -846,92 +469,16 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
 }
 
 void GasParticleSystem::bin_and_assign_mass(const Config& config) {
-    gas_rho.setZero();
-    cic_data.assign(num_particles, {});
-
-    int N = config.mesh_size;
-
-    // Calculate cells & densities
-    for (size_t i = 0; i < num_particles; ++i) {
-        double px = pos_x[i], py = pos_y[i], pz = pos_z[i];
-
-        // Cell centered PM grid nodes
-        double shifted_x = px - 0.5 * config.cell_size;
-        double shifted_y = py - 0.5 * config.cell_size;
-        double shifted_z = pz - 0.5 * config.cell_size;
-
-        // Ensure periodic wrap-around bounds
-        shifted_x = fmod(shifted_x + config.domain_size, config.domain_size);
-        shifted_y = fmod(shifted_y + config.domain_size, config.domain_size);
-        shifted_z = fmod(shifted_z + config.domain_size, config.domain_size);
-
-        int ix = static_cast<int>(shifted_x / config.cell_size);
-        int iy = static_cast<int>(shifted_y / config.cell_size);
-        int iz = static_cast<int>(shifted_z / config.cell_size);
-
-        double frac_x = (shifted_x / config.cell_size) - ix;
-        double frac_y = (shifted_y / config.cell_size) - iy;
-        double frac_z = (shifted_z / config.cell_size) - iz;
-
-        double w000 = (1 - frac_x) * (1 - frac_y) * (1 - frac_z);
-        double w100 = frac_x * (1 - frac_y) * (1 - frac_z);
-        double w010 = (1 - frac_x) * frac_y * (1 - frac_z);
-        double w110 = frac_x * frac_y * (1 - frac_z);
-        double w001 = (1 - frac_x) * (1 - frac_y) * frac_z;
-        double w101 = frac_x * (1 - frac_y) * frac_z;
-        double w011 = (1 - frac_x) * frac_y * frac_z;
-        double w111 = frac_x * frac_y * frac_z;
-
-        cic_data[i] = {ix,   iy,   iz,   w000, w100, w010,
-                       w110, w001, w101, w011, w111};
-
-        int ix0 = (ix + N) % N, ix1 = (ix + 1 + N) % N;
-        int iy0 = (iy + N) % N, iy1 = (iy + 1 + N) % N;
-        int iz0 = (iz + N) % N, iz1 = (iz + 1 + N) % N;
-
-        double m = mass[i];
-        gas_rho(ix0, iy0, iz0) += m * w000;
-        gas_rho(ix1, iy0, iz0) += m * w100;
-        gas_rho(ix0, iy1, iz0) += m * w010;
-        gas_rho(ix1, iy1, iz0) += m * w110;
-        gas_rho(ix0, iy0, iz1) += m * w001;
-        gas_rho(ix1, iy0, iz1) += m * w101;
-        gas_rho(ix0, iy1, iz1) += m * w011;
-        gas_rho(ix1, iy1, iz1) += m * w111;
-    }
-
-    gas_rho.data /= config.cell_volume;
+    CIC::bin_and_assign_mass(config, num_particles, pos_x, pos_y, pos_z, mass,
+                             cic_data, gas_rho);
 }
 
 void GasParticleSystem::interpolate_cic_forces(const Grid3D& ax_grid,
                                                const Grid3D& ay_grid,
                                                const Grid3D& az_grid,
                                                const Config& config) {
-    const int N = config.mesh_size;
-
-#pragma omp parallel for schedule(static)
-    for (size_t i = 0; i < num_particles; ++i) {
-        const auto& cd = cic_data[i];
-
-        int ix0 = (cd.ix + N) % N, ix1 = (cd.ix + 1 + N) % N;
-        int iy0 = (cd.iy + N) % N, iy1 = (cd.iy + 1 + N) % N;
-        int iz0 = (cd.iz + N) % N, iz1 = (cd.iz + 1 + N) % N;
-
-        auto interp = [&](const Grid3D& grid) {
-            return grid(ix0, iy0, iz0) * cd.w000 +
-                   grid(ix1, iy0, iz0) * cd.w100 +
-                   grid(ix0, iy1, iz0) * cd.w010 +
-                   grid(ix1, iy1, iz0) * cd.w110 +
-                   grid(ix0, iy0, iz1) * cd.w001 +
-                   grid(ix1, iy0, iz1) * cd.w101 +
-                   grid(ix0, iy1, iz1) * cd.w011 +
-                   grid(ix1, iy1, iz1) * cd.w111;
-        };
-
-        acc_x[i] = interp(ax_grid);
-        acc_y[i] = interp(ay_grid);
-        acc_z[i] = interp(az_grid);
-    }
+    CIC::interpolate_forces(config, num_particles, cic_data, ax_grid, ay_grid,
+                            az_grid, acc_x, acc_y, acc_z);
 }
 
 void GasParticleSystem::apply_cooling(double dt, double a, const Config& config,
@@ -1027,13 +574,6 @@ void GasParticleSystem::apply_cooling(double dt, double a, const Config& config,
     update_primitive_variables(config, a);
 }
 
-// Periodic displacement
-inline double mfm_periodic_displacement(double dx, double domain_size) {
-    if (dx > 0.5 * domain_size) return dx - domain_size;
-    if (dx < -0.5 * domain_size) return dx + domain_size;
-    return dx;
-}
-
 double GasParticleSystem::get_cfl_timestep(double a,
                                            const Config& config) const {
     if (config.hydro_method != HydroMethod::MFM || num_particles == 0) {
@@ -1089,12 +629,9 @@ double GasParticleSystem::get_cfl_timestep(double a,
                 int j = node.particle_idx;
                 if (i == j) continue;
 
-                double dx =
-                    mfm_periodic_displacement(pos_x[j] - p1_x, domain_size);
-                double dy =
-                    mfm_periodic_displacement(pos_y[j] - p1_y, domain_size);
-                double dz =
-                    mfm_periodic_displacement(pos_z[j] - p1_z, domain_size);
+                double dx = periodic_displacement(pos_x[j] - p1_x, domain_size);
+                double dy = periodic_displacement(pos_y[j] - p1_y, domain_size);
+                double dz = periodic_displacement(pos_z[j] - p1_z, domain_size);
                 double r2 = dx * dx + dy * dy + dz * dz;
 
                 if (r2 < h_i * h_i || r2 < h[j] * h[j]) {
@@ -1180,44 +717,6 @@ double GasParticleSystem::get_gravity_timestep(const Config& config) const {
     double a_max = std::sqrt(max_accel_sq);
     double dt_grav = std::sqrt(epsilon / a_max);
     return dt_grav * config.gravity_accuracy_eta;
-}
-
-// --------------------------------------------------------------------------------
-// Adaptive Gravitational Softening Kernel (GIZMO App. H2 / Price & Monaghan
-// 2007) Returns the d(phi)/dr potential derivative and d(W)/dr smoothing
-// derivative
-// --------------------------------------------------------------------------------
-inline void compute_adaptive_gravity_terms(double r, double h, double& dphi_dr,
-                                           double& dW_dr) {
-    if (r >= h) {
-        dphi_dr = 1.0 / (r * r);  // Pure Newtonian point-mass outside h
-        dW_dr = 0.0;              // W(r) is zero outside h
-        return;
-    }
-
-    double q = r / h;
-    double q2 = q * q;
-    double q3 = q2 * q;
-    double q4 = q3 * q;
-
-    double h2 = h * h;
-    double h3 = h2 * h;
-
-    if (q < 0.5) {
-        dphi_dr = (1.0 / h2) * (10.6666666667 * q - 38.4 * q3 + 32.0 * q4);
-    } else {
-        dphi_dr = (1.0 / h2) * (-(1.0 / 15.0) / q2 + (64.0 / 3.0) * q -
-                                48.0 * q2 + 38.4 * q3 - (32.0 / 3.0) * q4);
-    }
-
-    // Derivative of the density kernel
-    double norm = 8.0 / (M_PI * h3);
-    if (q < 0.5) {
-        dW_dr = norm * (-12.0 * q + 18.0 * q2) / h;
-    } else {
-        double diff = 1.0 - q;
-        dW_dr = norm * (-6.0 * diff * diff) / h;
-    }
 }
 
 void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
@@ -1327,8 +826,8 @@ void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
                     double zeta_j = d_zeta[j];
 
                     double dphi_dr_i, dW_dr_i, dphi_dr_j, dW_dr_j;
-                    compute_adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
-                    compute_adaptive_gravity_terms(r, h_j, dphi_dr_j, dW_dr_j);
+                    Kernels::adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
+                    Kernels::adaptive_gravity_terms(r, h_j, dphi_dr_j, dW_dr_j);
 
                     double force_mag_over_r =
                         (G / 2.0) *
@@ -1456,8 +955,8 @@ void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
                     double zeta_j = zeta[j];
 
                     double dphi_dr_i, dW_dr_i, dphi_dr_j, dW_dr_j;
-                    compute_adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
-                    compute_adaptive_gravity_terms(r, h_j, dphi_dr_j, dW_dr_j);
+                    Kernels::adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
+                    Kernels::adaptive_gravity_terms(r, h_j, dphi_dr_j, dW_dr_j);
 
                     double force_mag_over_r =
                         (G / 2.0) *
@@ -1610,62 +1109,13 @@ void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
                     if (use_pm && dist_sq > cutoff_sq) continue;
                     double r = std::sqrt(dist_sq + 1e-24);
 
-                    double dphi_dr_i, dW_dr_i, dphi_dr_j;
-
                     // Gas kernel derivatives
-                    if (r >= h_i) {
-                        dphi_dr_i = 1.0 / (r * r);
-                        dW_dr_i = 0.0;
-                    } else {
-                        double q = r / h_i;
-                        double q2 = q * q;
-                        double q3 = q2 * q;
-                        double q4 = q3 * q;
-                        double q5 = q4 * q;
-                        double h2 = h_i * h_i;
-                        double h3 = h2 * h_i;
-                        if (q < 0.5) {
-                            dphi_dr_i =
-                                (1.0 / h2) * (10.6666666667 * q - 19.2 * q3 +
-                                              10.6666666667 * q4);
-                            dW_dr_i = (8.0 / (M_PI * h3)) *
-                                      (-12.0 * q + 18.0 * q2) / h_i;
-                        } else {
-                            dphi_dr_i =
-                                (1.0 / h2) *
-                                (10.6666666667 * q - 19.2 * q3 +
-                                 10.6666666667 * q4 - 0.0666666667 / q2 +
-                                 0.1 * q5 - 3.2 * q4 + 10.6666666667 * q3 -
-                                 16.0 * q2 + 11.2 * q - 3.2);
-                            double diff = 1.0 - q;
-                            dW_dr_i = (8.0 / (M_PI * h3)) *
-                                      (-6.0 * diff * diff) / h_i;
-                        }
-                    }
+                    double dphi_dr_i, dW_dr_i, dphi_dr_j, dummy_dphi_dh;
+                    Kernels::adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
 
                     // DM kernel derivatives (uses fixed base_soft)
-                    if (r >= base_soft) {
-                        dphi_dr_j = 1.0 / (r * r);
-                    } else {
-                        double q = r / base_soft;
-                        double q2 = q * q;
-                        double q3 = q2 * q;
-                        double q4 = q3 * q;
-                        double q5 = q4 * q;
-                        double h2 = base_soft * base_soft;
-                        if (q < 0.5) {
-                            dphi_dr_j =
-                                (1.0 / h2) * (10.6666666667 * q - 19.2 * q3 +
-                                              10.6666666667 * q4);
-                        } else {
-                            dphi_dr_j =
-                                (1.0 / h2) *
-                                (10.6666666667 * q - 19.2 * q3 +
-                                 10.6666666667 * q4 - 0.0666666667 / q2 +
-                                 0.1 * q5 - 3.2 * q4 + 10.6666666667 * q3 -
-                                 16.0 * q2 + 11.2 * q - 3.2);
-                        }
-                    }
+                    Kernels::gravity_derivatives(r, base_soft, dphi_dr_j,
+                                                 dummy_dphi_dh);
 
                     // Force magnitude
                     double m_j = d_dm_m[j];
@@ -1800,58 +1250,13 @@ void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
                     if (use_pm && dist_sq > cutoff_sq) continue;
                     double r = std::sqrt(dist_sq + 1e-24);
 
-                    double dphi_dr_i, dW_dr_i, dphi_dr_j;
+                    // Gas kernel derivatives
+                    double dphi_dr_i, dW_dr_i, dphi_dr_j, dummy_dphi_dh;
+                    Kernels::adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
 
-                    if (r >= h_i) {
-                        dphi_dr_i = 1.0 / (r * r);
-                        dW_dr_i = 0.0;
-                    } else {
-                        double q = r / h_i;
-                        double q2 = q * q;
-                        double q3 = q2 * q;
-                        double q4 = q3 * q;
-                        double q5 = q4 * q;
-                        double h2 = h_i * h_i;
-                        double h3 = h2 * h_i;
-                        if (q < 0.5) {
-                            dphi_dr_i =
-                                (1.0 / h2) * (10.6666666667 * q - 19.2 * q3 +
-                                              10.6666666667 * q4);
-                            dW_dr_i = (8.0 / (M_PI * h3)) *
-                                      (-12.0 * q + 18.0 * q2) / h_i;
-                        } else {
-                            dphi_dr_i =
-                                (1.0 / h2) *
-                                (10.6666666667 * q - 19.2 * q3 +
-                                 10.6666666667 * q4 - 0.0666666667 / q2 +
-                                 0.1 * q5 - 3.2 * q4 + 10.6666666667 * q3 -
-                                 16.0 * q2 + 11.2 * q - 3.2);
-                            dW_dr_i = (8.0 / (M_PI * h3)) *
-                                      (-6.0 * (1.0 - q) * (1.0 - q)) / h_i;
-                        }
-                    }
-
-                    if (r >= base_soft) {
-                        dphi_dr_j = 1.0 / (r * r);
-                    } else {
-                        double q = r / base_soft;
-                        double q2 = q * q;
-                        double q3 = q2 * q;
-                        double q4 = q3 * q;
-                        double q5 = q4 * q;
-                        double h2 = base_soft * base_soft;
-                        if (q < 0.5)
-                            dphi_dr_j =
-                                (1.0 / h2) * (10.6666666667 * q - 19.2 * q3 +
-                                              10.6666666667 * q4);
-                        else
-                            dphi_dr_j =
-                                (1.0 / h2) *
-                                (10.6666666667 * q - 19.2 * q3 +
-                                 10.6666666667 * q4 - 0.0666666667 / q2 +
-                                 0.1 * q5 - 3.2 * q4 + 10.6666666667 * q3 -
-                                 16.0 * q2 + 11.2 * q - 3.2);
-                    }
+                    // DM kernel derivatives (uses fixed base_soft)
+                    Kernels::gravity_derivatives(r, base_soft, dphi_dr_j,
+                                                 dummy_dphi_dh);
 
                     double m_j = dm.mass[j];
                     double force_mag_over_r =
@@ -2009,449 +1414,6 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
     accumulated_entropy_switch_energy += step_entropy_switch;
 }
 
-// Cubic spline kernel
-inline void compute_kernel(double r, double h, double& W) {
-    double q = r / h;
-    double norm = 8.0 / (M_PI * h * h * h);
-    if (q < 0.5) {
-        W = norm * (1.0 - 6.0 * q * q + 6.0 * q * q * q);
-    } else if (q < 1.0) {
-        double diff = 1.0 - q;
-        W = norm * 2.0 * diff * diff * diff;
-    } else {
-        W = 0.0;
-    }
-}
-
-#ifdef THEORETICAL_LIMITER
-// Helper for the Pairwise Limiter signs
-inline int math_sign(double x) { return (x > 0.0) ? 1 : ((x < 0.0) ? -1 : 0); }
-
-// Compute the alpha scaling factor for the Scalar Gradient Limiter
-// (Eq. B1 & B2)
-inline double compute_gradient_alpha(double d_phi_max, double d_phi_min,
-                                     double d_mid_max, double d_mid_min,
-                                     double beta) {
-    double alpha = 1.0;
-
-    // Check positive deviations
-    if (d_mid_max > 0.0) {
-        if (d_phi_max <= 0.0)
-            alpha = 0.0;
-        else
-            alpha = std::min(alpha, beta * d_phi_max / d_mid_max);
-    }
-
-    // Check negative deviations
-    if (d_mid_min < 0.0) {
-        if (d_phi_min >= 0.0)
-            alpha = 0.0;
-        else
-            alpha = std::min(alpha, beta * d_phi_min / d_mid_min);
-    }
-    return alpha;
-}
-
-// The Pairwise TVD Limiter applied directly at the face (Eq. B4)
-double apply_pairwise_limiter(double phi_L_center, double phi_R_center,
-                              double phi_mid_0, double phi_bar) {
-    // Tunable constants from the paper
-    double psi_1 = 0.5;
-    double psi_2 = 0.25;
-
-    double d_phi = std::abs(phi_L_center - phi_R_center);
-    if (d_phi < 1e-14) return phi_L_center;
-
-    double phi_min = std::min(phi_L_center, phi_R_center);
-    double phi_max = std::max(phi_L_center, phi_R_center);
-
-    double delta_1 = psi_1 * d_phi;
-    double delta_2 = psi_2 * d_phi;
-
-    // Calculate bounding limits (phi_minus and phi_plus)
-    double phi_minus;
-    if (math_sign(phi_min - delta_1) == math_sign(phi_min) || phi_min == 0.0) {
-        phi_minus = phi_min - delta_1;
-    } else {
-        phi_minus =
-            phi_min /
-            (1.0 + delta_1 / std::abs(phi_min));  // Positivity preserving
-    }
-
-    double phi_plus;
-    if (math_sign(phi_max + delta_1) == math_sign(phi_max) || phi_max == 0.0) {
-        phi_plus = phi_max + delta_1;
-    } else {
-        phi_plus = phi_max / (1.0 + delta_1 / std::abs(phi_max));
-    }
-
-    // Apply the min/max bounds based on the gradient direction
-    if (phi_L_center < phi_R_center) {
-        return std::max(phi_minus, std::min(phi_bar + delta_2, phi_mid_0));
-    } else {
-        return std::min(phi_plus, std::max(phi_bar - delta_2, phi_mid_0));
-    }
-}
-
-#else
-// Scalar Gradient Vector Limiter (Translated from GIZMO's
-// local_slopelimiter)
-inline void scalar_limiter(Eigen::Vector3d& grad, double valmax, double valmin,
-                           double alim, double h, double shoot_tol,
-                           bool pos_preserve, double d_max, double val_cen) {
-    double d_abs = grad.norm();
-    if (d_abs > 0.0) {
-        // Inverse change over distance for limiter
-        double cfac = 1.0 / (alim * h * d_abs);
-
-        double abs_max = std::abs(valmax);
-        double abs_min = std::abs(valmin);
-
-        // Get largest positive/negative deviations, determine smaller in
-        // absolute value
-        if (abs_max < abs_min) {
-            std::swap(abs_max, abs_min);
-        }
-
-        // = abs_min for shoot_tol = 0; don't let gradient deviate by more
-        // than this in size, slightly larger if 'shoot_tol' allows some
-        // overshoot tolerance
-        double f_corr_overshoot =
-            std::min(abs_min + shoot_tol * abs_max, abs_max);
-
-        // Multiply by the correction factor of interest
-        cfac *= f_corr_overshoot;
-
-        // Demand that the limited slope be strictly positivity-preserving
-        // over the maximal range to any neighbors
-        if (pos_preserve) {
-            constexpr double MIN_REAL_NUMBER = 1e-30;
-
-            // Minimum value: smaller of overshoot target or half
-            // positive-definite value, but cannot go negative in larger
-            // range
-            double fmin = std::min(
-                val_cen,
-                std::max(0.0, std::max(MIN_REAL_NUMBER * val_cen,
-                                       std::min(0.5 * (val_cen + valmin),
-                                                val_cen - f_corr_overshoot))));
-
-            // Use more conservative limiter, of cfac above or this,
-            // over longer range d_max, to restrict here
-            cfac = std::min((((val_cen - fmin) / d_max) / d_abs), cfac);
-        }
-
-        // Scalar gradient correction
-        if (cfac < 1.0) {
-            grad *= cfac;
-        }
-    }
-}
-#endif
-
-inline double compute_condition_number(const Eigen::Matrix3d& E,
-                                       const Eigen::Matrix3d& B) {
-    // Eq. C2: The sum of the squared elements of the matrices
-    double norm_E_sq = E.squaredNorm();
-    double norm_B_sq = B.squaredNorm();
-
-    // Eq. C1: N_cond = (1 / v) * sqrt(||E^-1|| * ||E||) where v = 3
-    return (1.0 / 3.0) * std::sqrt(norm_E_sq * norm_B_sq);
-}
-
-// MFM Gradient Estimator
-ParticleGradients compute_single_particle_gradients(
-    const ParticleState& p_i, const std::vector<ParticleState>& neighbors,
-    double domain_size) {
-    ParticleGradients out;
-    out.B_matrix = Eigen::Matrix3d::Zero();
-    out.grad_rho = Eigen::Vector3d::Zero();
-    out.grad_p = Eigen::Vector3d::Zero();
-    out.grad_vx = Eigen::Vector3d::Zero();
-    out.grad_vy = Eigen::Vector3d::Zero();
-    out.grad_vz = Eigen::Vector3d::Zero();
-    out.ill_conditioned = false;
-
-    Eigen::Matrix3d E = Eigen::Matrix3d::Zero();
-
-    // Build the E Matrix
-    for (const auto& nj : neighbors) {
-        double dx =
-            mfm_periodic_displacement(nj.pos.x() - p_i.pos.x(), domain_size);
-        double dy =
-            mfm_periodic_displacement(nj.pos.y() - p_i.pos.y(), domain_size);
-        double dz =
-            mfm_periodic_displacement(nj.pos.z() - p_i.pos.z(), domain_size);
-
-        double r2 = dx * dx + dy * dy + dz * dz;
-        if (r2 < p_i.h * p_i.h && r2 > 1e-24) {
-            double r = std::sqrt(r2);
-            double W;
-            compute_kernel(r, p_i.h, W);
-
-            double V_j = nj.mass / nj.rho;
-            double weight = W * V_j;
-
-            E(0, 0) += dx * dx * weight;
-            E(0, 1) += dx * dy * weight;
-            E(0, 2) += dx * dz * weight;
-            E(1, 1) += dy * dy * weight;
-            E(1, 2) += dy * dz * weight;
-            E(2, 2) += dz * dz * weight;
-        }
-    }
-
-    E(1, 0) = E(0, 1);
-    E(2, 0) = E(0, 2);
-    E(2, 1) = E(1, 2);
-
-    double det = E.determinant();
-    out.ill_conditioned =
-        true;  // Assume ill-conditioned until proven otherwise
-    out.condition_number = -1.0;
-
-    // Tiny guard so E.inverse() doesn't crash on pure zeroes
-    if (std::abs(det) > 1e-30) {
-        Eigen::Matrix3d temp_B = E.inverse();
-
-        // Calculate the condition number
-        double N_cond = compute_condition_number(E, temp_B);
-        out.condition_number = N_cond;
-
-        // Threshold (Hopkins recommends 100 - 1000)
-        constexpr double N_cond_crit = 1000.0;
-
-        if (N_cond <= N_cond_crit) {
-            out.B_matrix = temp_B;
-            out.ill_conditioned = false;
-        }
-    }
-
-    if (!out.ill_conditioned) {
-        out.B_matrix = E.inverse();
-        Eigen::Vector3d sum_rho = Eigen::Vector3d::Zero();
-        Eigen::Vector3d sum_p = Eigen::Vector3d::Zero();
-        Eigen::Vector3d sum_vx = Eigen::Vector3d::Zero();
-        Eigen::Vector3d sum_vy = Eigen::Vector3d::Zero();
-        Eigen::Vector3d sum_vz = Eigen::Vector3d::Zero();
-
-        // Track the min/max differences for the face-extrapolated limiter
-        double d_rho_max = 0.0, d_rho_min = 0.0;
-        double d_p_max = 0.0, d_p_min = 0.0;
-        double d_vx_max = 0.0, d_vx_min = 0.0;
-        double d_vy_max = 0.0, d_vy_min = 0.0;
-        double d_vz_max = 0.0, d_vz_min = 0.0;
-
-        double r_max = 1e-12;
-
-        // Calculate sums and record extrema
-        for (const auto& nj : neighbors) {
-            double dx = mfm_periodic_displacement(nj.pos.x() - p_i.pos.x(),
-                                                  domain_size);
-            double dy = mfm_periodic_displacement(nj.pos.y() - p_i.pos.y(),
-                                                  domain_size);
-            double dz = mfm_periodic_displacement(nj.pos.z() - p_i.pos.z(),
-                                                  domain_size);
-
-            double r2 = dx * dx + dy * dy + dz * dz;
-            // Limiter bounds: Record extrema
-            if ((r2 < p_i.h * p_i.h || r2 < nj.h * nj.h) && r2 > 1e-24) {
-                double r = std::sqrt(r2);
-                r_max = std::max(r_max, r);
-
-                // Update min/max neighbor differences
-                double d_rho = nj.rho - p_i.rho;
-                d_rho_max = std::max(d_rho_max, d_rho);
-                d_rho_min = std::min(d_rho_min, d_rho);
-
-                double d_p = nj.pressure - p_i.pressure;
-                d_p_max = std::max(d_p_max, d_p);
-                d_p_min = std::min(d_p_min, d_p);
-
-                double d_vx = nj.vel.x() - p_i.vel.x();
-                d_vx_max = std::max(d_vx_max, d_vx);
-                d_vx_min = std::min(d_vx_min, d_vx);
-
-                double d_vy = nj.vel.y() - p_i.vel.y();
-                d_vy_max = std::max(d_vy_max, d_vy);
-                d_vy_min = std::min(d_vy_min, d_vy);
-
-                double d_vz = nj.vel.z() - p_i.vel.z();
-                d_vz_max = std::max(d_vz_max, d_vz);
-                d_vz_min = std::min(d_vz_min, d_vz);
-            }
-
-            // Gradient sums
-            if (r2 < p_i.h * p_i.h && r2 > 1e-24) {
-                double r = std::sqrt(r2);
-                double W;
-                compute_kernel(r, p_i.h, W);
-
-                double V_j = nj.mass / nj.rho;
-                double weight = W * V_j;
-                Eigen::Vector3d dx_vec(dx, dy, dz);
-
-                sum_rho += (nj.rho - p_i.rho) * dx_vec * weight;
-                sum_p += (nj.pressure - p_i.pressure) * dx_vec * weight;
-                sum_vx += (nj.vel.x() - p_i.vel.x()) * dx_vec * weight;
-                sum_vy += (nj.vel.y() - p_i.vel.y()) * dx_vec * weight;
-                sum_vz += (nj.vel.z() - p_i.vel.z()) * dx_vec * weight;
-            }
-        }
-
-        // Apply the B Matrix
-        out.grad_rho = out.B_matrix * sum_rho;
-        out.grad_p = out.B_matrix * sum_p;
-        out.grad_vx = out.B_matrix * sum_vx;
-        out.grad_vy = out.B_matrix * sum_vy;
-        out.grad_vz = out.B_matrix * sum_vz;
-        out.raw_sum_p = sum_p;
-
-#ifndef DISABLE_LIMITER
-#ifdef THEORETICAL_LIMITER
-        // Scalar Gradient Limiter
-        double phi_mid_max_rho = 0.0, phi_mid_min_rho = 0.0;
-        double phi_mid_max_p = 0.0, phi_mid_min_p = 0.0;
-        double phi_mid_max_vx = 0.0, phi_mid_min_vx = 0.0;
-        double phi_mid_max_vy = 0.0, phi_mid_min_vy = 0.0;
-        double phi_mid_max_vz = 0.0, phi_mid_min_vz = 0.0;
-
-        // Second pass: Find the extrapolated mid-point extrema
-        for (const auto& nj : neighbors) {
-            double dx = mfm_periodic_displacement(nj.pos.x() - p_i.pos.x(),
-                                                  domain_size);
-            double dy = mfm_periodic_displacement(nj.pos.y() - p_i.pos.y(),
-                                                  domain_size);
-            double dz = mfm_periodic_displacement(nj.pos.z() - p_i.pos.z(),
-                                                  domain_size);
-
-            double r2 = dx * dx + dy * dy + dz * dz;
-            if ((r2 < p_i.h * p_i.h || r2 < nj.h * nj.h) && r2 > 1e-24) {
-                // Find where the face actually is
-                double fraction_i = p_i.h / (p_i.h + nj.h);
-                Eigen::Vector3d dx_face_i =
-                    fraction_i * Eigen::Vector3d(dx, dy, dz);
-
-                // Extrapolated deltas (phi_mid - phi_i)
-                double d_mid_rho = out.grad_rho.dot(dx_face_i);
-                phi_mid_max_rho = std::max(phi_mid_max_rho, d_mid_rho);
-                phi_mid_min_rho = std::min(phi_mid_min_rho, d_mid_rho);
-
-                double d_mid_p = out.grad_p.dot(dx_face_i);
-                phi_mid_max_p = std::max(phi_mid_max_p, d_mid_p);
-                phi_mid_min_p = std::min(phi_mid_min_p, d_mid_p);
-
-                double d_mid_vx = out.grad_vx.dot(dx_face_i);
-                phi_mid_max_vx = std::max(phi_mid_max_vx, d_mid_vx);
-                phi_mid_min_vx = std::min(phi_mid_min_vx, d_mid_vx);
-
-                double d_mid_vy = out.grad_vy.dot(dx_face_i);
-                phi_mid_max_vy = std::max(phi_mid_max_vy, d_mid_vy);
-                phi_mid_min_vy = std::min(phi_mid_min_vy, d_mid_vy);
-
-                double d_mid_vz = out.grad_vz.dot(dx_face_i);
-                phi_mid_max_vz = std::max(phi_mid_max_vz, d_mid_vz);
-                phi_mid_min_vz = std::min(phi_mid_min_vz, d_mid_vz);
-            }
-        }
-
-        // Tunable aggressiveness parameter beta (between 1.0 and 2.0)
-        double beta = 1.5;
-
-        // Compute alpha scalars and apply them to the gradients
-        out.grad_rho *= compute_gradient_alpha(
-            d_rho_max, d_rho_min, phi_mid_max_rho, phi_mid_min_rho, beta);
-        out.grad_p *= compute_gradient_alpha(d_p_max, d_p_min, phi_mid_max_p,
-                                             phi_mid_min_p, beta);
-        out.grad_vx *= compute_gradient_alpha(
-            d_vx_max, d_vx_min, phi_mid_max_vx, phi_mid_min_vx, beta);
-        out.grad_vy *= compute_gradient_alpha(
-            d_vy_max, d_vy_min, phi_mid_max_vy, phi_mid_min_vy, beta);
-        out.grad_vz *= compute_gradient_alpha(
-            d_vz_max, d_vz_min, phi_mid_max_vz, phi_mid_min_vz, beta);
-#else
-        // Apply the Scalar Limiter
-        double alim = 0.5;  // 0.5 is standard for aggressive limiting
-        double h_lim = std::max(p_i.h, r_max);
-        double d_max = h_lim;
-        double stol = 0.1;  // overshoot tolerance for pressure/velocity
-
-        // Density: no overshoot tolerance (0.0), positivity preserving
-        // (true)
-        scalar_limiter(out.grad_rho, d_rho_max, d_rho_min, alim, h_lim, 0.0,
-                       true, d_max, p_i.rho);
-
-        // Pressure: standard overshoot tolerance (stol), positivity
-        // preserving (true)
-        scalar_limiter(out.grad_p, d_p_max, d_p_min, alim, h_lim, stol, true,
-                       d_max, p_i.pressure);
-
-        // Velocity: standard overshoot tolerance (stol), NOT positivity
-        // preserving (false)
-        scalar_limiter(out.grad_vx, d_vx_max, d_vx_min, alim, h_lim, stol,
-                       false, d_max, p_i.vel.x());
-        scalar_limiter(out.grad_vy, d_vy_max, d_vy_min, alim, h_lim, stol,
-                       false, d_max, p_i.vel.y());
-        scalar_limiter(out.grad_vz, d_vz_max, d_vz_min, alim, h_lim, stol,
-                       false, d_max, p_i.vel.z());
-#endif
-#endif
-    } else {
-        // Matrix is ill-conditioned (pathological alignment).
-        // Fall back to standard SPH gradient estimator (Hopkins 2015, Eq.
-        // C4).
-        out.B_matrix = Eigen::Matrix3d::Identity();  // Dummy valid matrix
-        out.ill_conditioned = true;
-
-        // Use a dimensionally correct isotropic average for the dummy
-        // B-matrix to prevent Face Area explosions in the Riemann solver
-        double trace_E = E(0, 0) + E(1, 1) + E(2, 2);
-        if (trace_E > 1e-24) {
-            out.B_matrix = (3.0 / trace_E) * Eigen::Matrix3d::Identity();
-        } else {
-            // Absolute fallback if particle is completely isolated
-            double h2 = p_i.h * p_i.h;
-            out.B_matrix = (1.0 / h2) * Eigen::Matrix3d::Identity();
-        }
-
-        for (const auto& nj : neighbors) {
-            double dx = mfm_periodic_displacement(nj.pos.x() - p_i.pos.x(),
-                                                  domain_size);
-            double dy = mfm_periodic_displacement(nj.pos.y() - p_i.pos.y(),
-                                                  domain_size);
-            double dz = mfm_periodic_displacement(nj.pos.z() - p_i.pos.z(),
-                                                  domain_size);
-            double r2 = dx * dx + dy * dy + dz * dz;
-
-            // SPH gradient sums
-            if (r2 < p_i.h * p_i.h && r2 > 1e-24) {
-                double r = std::sqrt(r2);
-
-                // Fetch the derivative of the kernel respect to 'r' using
-                // the existing gravity helper
-                double dphi_dr_dummy, dW_dr;
-                compute_adaptive_gravity_terms(r, p_i.h, dphi_dr_dummy, dW_dr);
-
-                double V_j = nj.mass / nj.rho;
-
-                // grad_i W = - (dW/dr) * (x_j - x_i) / r
-                Eigen::Vector3d dx_vec(dx, dy, dz);
-                Eigen::Vector3d grad_W_i = -dW_dr * dx_vec / r;
-
-                // SPH gradient estimator: grad f_i = sum_j V_j (f_j - f_i)
-                // grad_i W_ij
-                out.grad_rho += V_j * (nj.rho - p_i.rho) * grad_W_i;
-                out.grad_p += V_j * (nj.pressure - p_i.pressure) * grad_W_i;
-                out.grad_vx += V_j * (nj.vel.x() - p_i.vel.x()) * grad_W_i;
-                out.grad_vy += V_j * (nj.vel.y() - p_i.vel.y()) * grad_W_i;
-                out.grad_vz += V_j * (nj.vel.z() - p_i.vel.z()) * grad_W_i;
-            }
-        }
-    }
-
-    return out;
-}
-
 void GasParticleSystem::compute_gradients(const Config& config) {
     if (num_particles == 0) return;
     double domain_size = config.domain_size;
@@ -2461,7 +1423,7 @@ void GasParticleSystem::compute_gradients(const Config& config) {
     schedule(dynamic, 64)
     for (size_t i = 0; i < num_particles; ++i) {
         // Construct the isolated state for particle i
-        ParticleState p_i;
+        Reconstruction::ParticleState p_i;
         p_i.pos = Eigen::Vector3d(pos_x[i], pos_y[i], pos_z[i]);
         p_i.vel = Eigen::Vector3d(vel_x[i], vel_y[i], vel_z[i]);
         p_i.mass = mass[i];
@@ -2470,7 +1432,7 @@ void GasParticleSystem::compute_gradients(const Config& config) {
         p_i.h = h[i];
 
         double local_max_rel_ke = 0.0;
-        std::vector<ParticleState> neighbors;
+        std::vector<Reconstruction::ParticleState> neighbors;
 
         int stack[128];
         int stack_ptr = 0;
@@ -2494,16 +1456,16 @@ void GasParticleSystem::compute_gradients(const Config& config) {
             if (node.particle_idx != -1) {
                 int j = node.particle_idx;
 
-                double dx = mfm_periodic_displacement(pos_x[j] - p_i.pos.x(),
-                                                      domain_size);
-                double dy = mfm_periodic_displacement(pos_y[j] - p_i.pos.y(),
-                                                      domain_size);
-                double dz = mfm_periodic_displacement(pos_z[j] - p_i.pos.z(),
-                                                      domain_size);
+                double dx =
+                    periodic_displacement(pos_x[j] - p_i.pos.x(), domain_size);
+                double dy =
+                    periodic_displacement(pos_y[j] - p_i.pos.y(), domain_size);
+                double dz =
+                    periodic_displacement(pos_z[j] - p_i.pos.z(), domain_size);
                 double r2 = dx * dx + dy * dy + dz * dz;
 
                 if ((r2 < p_i.h * p_i.h || r2 < h[j] * h[j]) && r2 > 1e-24) {
-                    ParticleState nj;
+                    Reconstruction::ParticleState nj;
                     nj.pos = Eigen::Vector3d(pos_x[j], pos_y[j], pos_z[j]);
                     nj.vel = Eigen::Vector3d(vel_x[j], vel_y[j], vel_z[j]);
                     nj.mass = mass[j];
@@ -2533,7 +1495,7 @@ void GasParticleSystem::compute_gradients(const Config& config) {
             acc_x[i] * acc_x[i] + acc_y[i] * acc_y[i] + acc_z[i] * acc_z[i]);
         delta_E_grav[i] = a_grav_mag * p_i.h;
 
-        ParticleGradients grads =
+        Reconstruction::ParticleGradients grads =
             compute_single_particle_gradients(p_i, neighbors, domain_size);
 
         // Map results back to SOA
@@ -2554,150 +1516,8 @@ void GasParticleSystem::compute_gradients(const Config& config) {
     ill_conditioned_cases += step_ill_conditioned;
 }
 
-// MFM Face Reconstruction
-ReconstructedFace compute_face_reconstruction(const ParticleState& p_i,
-                                              const ParticleGradients& grad_i,
-                                              const ParticleState& p_j,
-                                              const ParticleGradients& grad_j,
-                                              double domain_size) {
-    ReconstructedFace face;
-    face.is_valid = false;
-
-    double dx =
-        mfm_periodic_displacement(p_j.pos.x() - p_i.pos.x(), domain_size);
-    double dy =
-        mfm_periodic_displacement(p_j.pos.y() - p_i.pos.y(), domain_size);
-    double dz =
-        mfm_periodic_displacement(p_j.pos.z() - p_i.pos.z(), domain_size);
-
-    double r2 = dx * dx + dy * dy + dz * dz;
-    if (r2 < 1e-24) return face;
-
-    face.r = std::sqrt(r2);
-    Eigen::Vector3d dx_vec(dx, dy, dz);
-    face.n = dx_vec / face.r;
-
-    // Volume-weighted quadrature fraction
-    double fraction_i = p_i.h / (p_i.h + p_j.h);
-    double fraction_j = 1.0 - fraction_i;
-
-    Eigen::Vector3d dx_face_i = fraction_i * dx_vec;
-    Eigen::Vector3d dx_face_j = -fraction_j * dx_vec;
-
-#ifndef DISABLE_LIMITER
-#ifdef THEORETICAL_LIMITER
-    // Linearly interpolated "bar" values at the face
-    double rho_bar = p_i.rho + fraction_i * (p_j.rho - p_i.rho);
-    double p_bar = p_i.pressure + fraction_i * (p_j.pressure - p_i.pressure);
-    double vx_bar = p_i.vel.x() + fraction_i * (p_j.vel.x() - p_i.vel.x());
-    double vy_bar = p_i.vel.y() + fraction_i * (p_j.vel.y() - p_i.vel.y());
-    double vz_bar = p_i.vel.z() + fraction_i * (p_j.vel.z() - p_i.vel.z());
-
-    // Pairwise TVD Limiter Applied to the Reconstructed States
-    face.rho_L = apply_pairwise_limiter(
-        p_i.rho, p_j.rho, p_i.rho + grad_i.grad_rho.dot(dx_face_i), rho_bar);
-    face.rho_R = apply_pairwise_limiter(
-        p_j.rho, p_i.rho, p_j.rho + grad_j.grad_rho.dot(dx_face_j), rho_bar);
-
-    face.p_L = apply_pairwise_limiter(
-        p_i.pressure, p_j.pressure, p_i.pressure + grad_i.grad_p.dot(dx_face_i),
-        p_bar);
-    face.p_R = apply_pairwise_limiter(
-        p_j.pressure, p_i.pressure, p_j.pressure + grad_j.grad_p.dot(dx_face_j),
-        p_bar);
-
-    face.v_L.x() = apply_pairwise_limiter(
-        p_i.vel.x(), p_j.vel.x(), p_i.vel.x() + grad_i.grad_vx.dot(dx_face_i),
-        vx_bar);
-    face.v_R.x() = apply_pairwise_limiter(
-        p_j.vel.x(), p_i.vel.x(), p_j.vel.x() + grad_j.grad_vx.dot(dx_face_j),
-        vx_bar);
-
-    face.v_L.y() = apply_pairwise_limiter(
-        p_i.vel.y(), p_j.vel.y(), p_i.vel.y() + grad_i.grad_vy.dot(dx_face_i),
-        vy_bar);
-    face.v_R.y() = apply_pairwise_limiter(
-        p_j.vel.y(), p_i.vel.y(), p_j.vel.y() + grad_j.grad_vy.dot(dx_face_j),
-        vy_bar);
-
-    face.v_L.z() = apply_pairwise_limiter(
-        p_i.vel.z(), p_j.vel.z(), p_i.vel.z() + grad_i.grad_vz.dot(dx_face_i),
-        vz_bar);
-    face.v_R.z() = apply_pairwise_limiter(
-        p_j.vel.z(), p_i.vel.z(), p_j.vel.z() + grad_j.grad_vz.dot(dx_face_j),
-        vz_bar);
-
-    // Enforce thermodynamic floors after the limiter
-    face.rho_L = std::max(face.rho_L, density_floor);
-    face.rho_R = std::max(face.rho_R, density_floor);
-    face.p_L = std::max(face.p_L, g_pressure_floor);
-    face.p_R = std::max(face.p_R, g_pressure_floor);
-
-#else
-    // 2nd-order reconstruction using the scalar-limited gradients
-    face.rho_L =
-        std::max(p_i.rho + grad_i.grad_rho.dot(dx_face_i), density_floor);
-    face.rho_R =
-        std::max(p_j.rho + grad_j.grad_rho.dot(dx_face_j), density_floor);
-
-    face.p_L =
-        std::max(p_i.pressure + grad_i.grad_p.dot(dx_face_i), g_pressure_floor);
-    face.p_R =
-        std::max(p_j.pressure + grad_j.grad_p.dot(dx_face_j), g_pressure_floor);
-
-    face.v_L.x() = p_i.vel.x() + grad_i.grad_vx.dot(dx_face_i);
-    face.v_L.y() = p_i.vel.y() + grad_i.grad_vy.dot(dx_face_i);
-    face.v_L.z() = p_i.vel.z() + grad_i.grad_vz.dot(dx_face_i);
-
-    face.v_R.x() = p_j.vel.x() + grad_j.grad_vx.dot(dx_face_j);
-    face.v_R.y() = p_j.vel.y() + grad_j.grad_vy.dot(dx_face_j);
-    face.v_R.z() = p_j.vel.z() + grad_j.grad_vz.dot(dx_face_j);
-#endif
-#else
-#ifdef ZEROTH_ORDER_RECONSTRUCTION
-    // Zeroth-order reconstruction (piecewise constant)
-    // Extremely diffusive, but perfectly stable without limiters.
-    face.rho_L = p_i.rho;
-    face.rho_R = p_j.rho;
-
-    face.p_L = p_i.pressure;
-    face.p_R = p_j.pressure;
-
-    face.v_L = p_i.vel;
-    face.v_R = p_j.vel;
-
-#else
-    // TEMPORARY DIAGNOSTIC: 2nd-order reconstruction (no limiters)
-
-    // Use a 1% relative floor instead of absolute vacuum.
-    // Prevents infinite sound speed (c_s = sqrt(P/rho)) singularities.
-    face.rho_L =
-        std::max(p_i.rho + grad_i.grad_rho.dot(dx_face_i), 0.01 * p_i.rho);
-    face.rho_R =
-        std::max(p_j.rho + grad_j.grad_rho.dot(dx_face_j), 0.01 * p_j.rho);
-
-    face.p_L = std::max(p_i.pressure + grad_i.grad_p.dot(dx_face_i),
-                        0.01 * p_i.pressure);
-    face.p_R = std::max(p_j.pressure + grad_j.grad_p.dot(dx_face_j),
-                        0.01 * p_j.pressure);
-
-    // Velocity (unbounded)
-    face.v_L.x() = p_i.vel.x() + grad_i.grad_vx.dot(dx_face_i);
-    face.v_L.y() = p_i.vel.y() + grad_i.grad_vy.dot(dx_face_i);
-    face.v_L.z() = p_i.vel.z() + grad_i.grad_vz.dot(dx_face_i);
-
-    face.v_R.x() = p_j.vel.x() + grad_j.grad_vx.dot(dx_face_j);
-    face.v_R.y() = p_j.vel.y() + grad_j.grad_vy.dot(dx_face_j);
-    face.v_R.z() = p_j.vel.z() + grad_j.grad_vz.dot(dx_face_j);
-#endif
-#endif
-
-    face.is_valid = true;
-    return face;
-}
-
 // MFM Riemann Solver (Frame Boosted)
-MFMFaceFlux solve_mfm_riemann(const ReconstructedFace& face,
+MFMFaceFlux solve_mfm_riemann(const Reconstruction::ReconstructedFace& face,
                               const Eigen::Vector3d& v_frame, double gamma) {
     // Boost and Project Left & Right States to the face frame
     double vn_L = (face.v_L - v_frame).dot(face.n);
@@ -2752,17 +1572,16 @@ MFMFaceFlux solve_mfm_riemann(const ReconstructedFace& face,
     return out;
 }
 
-Eigen::Vector3d compute_mfm_face_area_vector(const ParticleState& p_i,
-                                             const Eigen::Matrix3d& B_i,
-                                             const ParticleState& p_j,
-                                             const Eigen::Matrix3d& B_j,
-                                             const ReconstructedFace& face) {
+Eigen::Vector3d compute_mfm_face_area_vector(
+    const Reconstruction::ParticleState& p_i, const Eigen::Matrix3d& B_i,
+    const Reconstruction::ParticleState& p_j, const Eigen::Matrix3d& B_j,
+    const Reconstruction::ReconstructedFace& face) {
     double V_i = p_i.mass / p_i.rho;
     double V_j = p_j.mass / p_j.rho;
 
     double W_i, W_j;
-    compute_kernel(face.r, p_i.h, W_i);
-    compute_kernel(face.r, p_j.h, W_j);
+    Kernels::cubic_spline_value(face.r, p_i.h, W_i);
+    Kernels::cubic_spline_value(face.r, p_j.h, W_j);
 
     Eigen::Vector3d dx_vec = face.n * face.r;
     Eigen::Vector3d Area_vec =
@@ -2786,7 +1605,7 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
 #pragma omp parallel for schedule(dynamic, 64)
     for (size_t i = 0; i < num_particles; ++i) {
         // Build the isolated state proxy for particle i
-        ParticleState p_i;
+        Reconstruction::ParticleState p_i;
         p_i.pos = Eigen::Vector3d(pos_x[i], pos_y[i], pos_z[i]);
         p_i.vel = Eigen::Vector3d(vel_x[i], vel_y[i], vel_z[i]);
         p_i.mass = mass[i];
@@ -2794,7 +1613,7 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
         p_i.pressure = pressure[i];
         p_i.h = h[i];
 
-        ParticleGradients grad_i;
+        Reconstruction::ParticleGradients grad_i;
         grad_i.B_matrix = B_matrix[i];
         grad_i.grad_rho = grad_rho[i];
         grad_i.grad_p = grad_p[i];
@@ -2827,12 +1646,12 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                 // Process each pair just once to maintain N3L conservation
                 if (j <= static_cast<int>(i)) continue;
 
-                double dx = mfm_periodic_displacement(pos_x[j] - p_i.pos.x(),
-                                                      domain_size);
-                double dy = mfm_periodic_displacement(pos_y[j] - p_i.pos.y(),
-                                                      domain_size);
-                double dz = mfm_periodic_displacement(pos_z[j] - p_i.pos.z(),
-                                                      domain_size);
+                double dx =
+                    periodic_displacement(pos_x[j] - p_i.pos.x(), domain_size);
+                double dy =
+                    periodic_displacement(pos_y[j] - p_i.pos.y(), domain_size);
+                double dz =
+                    periodic_displacement(pos_z[j] - p_i.pos.z(), domain_size);
                 double r2 = dx * dx + dy * dy + dz * dz;
 
                 if (r2 < 1e-24) continue;
@@ -2842,7 +1661,7 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                 // Particles interact if they fall within either smoothing
                 // length
                 if (r2 < p_i.h * p_i.h || r2 < hj * hj) {
-                    ParticleState p_j;
+                    Reconstruction::ParticleState p_j;
                     p_j.pos = Eigen::Vector3d(pos_x[j], pos_y[j], pos_z[j]);
                     p_j.vel = Eigen::Vector3d(vel_x[j], vel_y[j], vel_z[j]);
                     p_j.mass = mass[j];
@@ -2850,7 +1669,7 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                     p_j.pressure = pressure[j];
                     p_j.h = hj;
 
-                    ParticleGradients grad_j;
+                    Reconstruction::ParticleGradients grad_j;
                     grad_j.B_matrix = B_matrix[j];
                     grad_j.grad_rho = grad_rho[j];
                     grad_j.grad_p = grad_p[j];
@@ -2859,8 +1678,10 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                     grad_j.grad_vz = grad_vz[j];
 
                     // SOLVER PIPELINE
-                    ReconstructedFace face = compute_face_reconstruction(
-                        p_i, grad_i, p_j, grad_j, domain_size);
+                    Reconstruction::ReconstructedFace face =
+                        compute_face_reconstruction(p_i, grad_i, p_j, grad_j,
+                                                    domain_size, 1e-12,
+                                                    this->pressure_floor);
                     if (!face.is_valid) continue;
 
                     Eigen::Vector3d Area_vec = compute_mfm_face_area_vector(
@@ -2879,7 +1700,7 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                     double a_inv = 1.0 / a;
                     double a_inv3 = a_inv * a_inv * a_inv;
 
-                    ReconstructedFace face_phys = face;
+                    Reconstruction::ReconstructedFace face_phys = face;
                     face_phys.rho_L = face.rho_L * a_inv3;
                     face_phys.rho_R = face.rho_R * a_inv3;
                     face_phys.p_L = face.p_L * a_inv;

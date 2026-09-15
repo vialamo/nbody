@@ -2688,7 +2688,7 @@ $$\Phi(\mathbf{r}) = -G \sum_{i=1}^{N} \frac{m_i}{\vert{}\mathbf{r} - \mathbf{r}
 
 Calculating this requires an $O(N)$ loop over every particle in the blob. However, because the MAC guarantees the node is far away, the distance $r$ to the blob is much larger than the distance of any internal particle from the center of the blob ($r \gg r_i$).
 
-When a fraction has a very small variable in the denominator, we can approximate it using a **Taylor series**. By expanding the distance fraction $\frac{1}{\vert{}\mathbf{r} - \mathbf{r}_i\vert{}}$ based on the small ratio $\frac{r_i}{r}$, the equation unfolds into a **multipole expansion**—a sum of decreasing mathematical terms representing increasingly detailed geometric shapes:
+Because the ratio $\frac{r_i}{r}$ is much smaller than 1, we can factor the massive distance $r$ out of the denominator and approximate the remaining fraction using a **Taylor series**. By expanding the distance fraction $\frac{1}{\vert{}\mathbf{r} - \mathbf{r}_i\vert{}}$ based on the small ratio $\frac{r_i}{r}$, the equation unfolds into a **multipole expansion**—a sum of decreasing mathematical terms representing increasingly detailed geometric shapes:
 
 $$\Phi(\mathbf{r}) = \Phi_{\text{monopole}} + \Phi_{\text{dipole}} + \Phi_{\text{quadrupole}} + \dots$$
 
@@ -2771,7 +2771,7 @@ This curve acts like a single, unbroken string folded tightly back and forth to 
 
 A sorted list of particles based on their Morton codes is not a tree. We still need to build the hierarchy of bounding boxes—the internal nodes—that group these particles together.
 
-In 2012, Tero Karras published an algorithm that allowed to build the tree in parallel. He realized that if the particles are sorted by their Morton codes, the geometric structure of the oct-tree is *already implicitly defined* by the binary numbers themselves.
+In 2012, Tero Karras published an algorithm that allowed to build a **Binary Radix Tree** (a tree where every node has two children, sequentially providing the 8 divisions of an oct-tree node) in parallel. He realized that if the particles are sorted by their Morton codes, the geometric structure of the oct-tree is *already implicitly defined* by the binary numbers themselves.
 
 Because Morton codes interleave spatial coordinates, the **Longest Common Prefix** (the number of identical bits at the beginning of two codes) tells us how close two particles are. If two adjacent particles share a long sequence of identical starting bits, it means they sit deep inside the same sub-region of the simulation box. The first bit where they differ indicates the geometric plane where they split into separate branches.
 
@@ -2785,7 +2785,7 @@ Because there are $N-1$ internal nodes, we can launch one GPU thread for every i
 
 1. **Find the Range:** It compares adjacent Morton codes to determine the upper and lower bounds of the specific cluster of particles it is responsible for.
 
-2. **Find the Split:** Using a binary search over the Morton codes, it finds the index where the highest differing bit occurs. This is the spatial plane that divides its cluster into a left half and a right half.
+2. **Find the Split:** Using a binary search algorithm over the Morton codes, it finds the index where the highest differing bit occurs. This is the spatial plane that divides its cluster into a left half and a right half.
 
 3. **Assign Children:** It assigns the left side to its `left_child` and the right side to its `right_child`.
 
@@ -2803,41 +2803,39 @@ When a thread arrives at a parent node, it uses a hardware-level **atomic counte
 
 * If it is the *second* thread to arrive, it knows both children have finished their calculations. It reads the bounding boxes and masses of both children, merges them together to define the parent, and then continues walking up to the next level of the tree.
 
-This bottom-up cascade aggregates the geometry and mass of the universe up to the root node without any explicit scheduling.
+This bottom-up cascade aggregates the geometry and mass of the universe up to the root node.
 
 ### Stack-Based Traversal
 
-With the LBVH fully constructed as a set of flat, 1D arrays, we are finally ready to compute the physics. To search an oct-tree, we use an **Iterative Stack-Based Traversal**.
+With the LBVH fully constructed as a flat 1D array of nodes, we are ready to compute the physics. To search this binary tree, we use an **Iterative Stack-Based Traversal**.
 
-At the start of the physics calculation, every thread allocates a tiny, fixed-size array in its local memory. In our code, this is a simple 128-element integer array: `int stack[128]`. Because the depth of our LBVH is bounded, a 128-element stack is enough to traverse the entire universe without overflowing.
+At the start of the physics calculation, every thread allocates a tiny, fixed-size array in its local memory. In our code, this is a 128-element integer array: `int stack[128]`. Because the depth of our LBVH is bounded by the number of bits used to generate the Morton codes, a 128-element stack (63 Morton code + 64 index tie breaker) is enough to traverse the entire universe without overflowing.
 
-The traversal then operates as a simple, flat `while` loop:
+The traversal then operates as a flat `while` loop:
 
 1. The thread pushes the root node (index 0) onto the stack: `stack[stack_ptr++] = 0;`.
 
 2. The loop begins. The thread pops a node off the top of the stack.
 
-3. **For Hydrodynamics:** It checks if the node's bounding box overlaps the gas particle's search radius. If it doesn't, the thread issues a `continue` statement, instantly culling the entire branch and moving on to the next node on the stack.
+3. **For Hydrodynamics:** It checks if the node's bounding box overlaps the gas particle's search radius. If it doesn't, the thread issues a `continue` statement, culling the entire branch and moving on to the next node on the stack.
 
 4. **For Gravity:** It calculates the distance to the node's Center of Mass and checks the Multipole Acceptance Criterion (MAC). If the node is far enough away, it applies the bulk gravitational pull of the entire node and issues a `continue` statement.
 
-5. If the node must be opened, the thread simply pushes the `left_child` and `right_child` integers onto its local stack and repeats the loop.
+5. If the node must be opened, the thread pushes the `left_child` and `right_child` integers onto its local stack and repeats the loop.
 
-By flattening the 3D space into a Z-order curve, building the hierarchy lock-free with Karras' algorithm, and traversing it with a manual memory stack, we have successfully ported the algorithmic brilliance of the oct-tree to the massively parallel architecture of the GPU.
-
-Here is the text for the new subsection. It ties together the concepts you have already explained and formally introduces the TreePM architecture, while keeping the tone consistent with your book.
+By flattening the 3D space into a Z-order curve, building the hierarchy lock-free with Karras' algorithm, and traversing it with a manual memory stack, we have ported the oct-tree to the parallel architecture of the GPU.
 
 ### The TreePM Architecture
 
-Combining the Particle-Mesh (PM) grid and the Linear Bounding Volume Hierarchy (LBVH) gives us the **TreePM** (Tree-Particle-Mesh) architecture.
+Combining the Particle-Mesh (PM) grid and the Linear Bounding Volume Hierarchy (LBVH) results in the **TreePM** (Tree-Particle-Mesh) architecture.
 
 In the TreePM framework, the gravitational potential is split into short-range and long-range contributions. This allows us to assign the strengths of each algorithm to the scales where they excel:
 
-* Long-range forces are calculated using a particle mesh. The PM solver handles the macroscopic universe using Fast Fourier Transforms to efficiently bypass the $O(N^2)$ bottleneck.
+* Long-range forces are calculated using a particle mesh. The PM solver handles these forces using Fast Fourier Transforms to efficiently bypass the $O(N^2)$ bottleneck.
 
 * Short-range forces are calculated following the oct-tree algorithm. The LBVH takes over at the sub-grid level, traversing the bounding boxes to resolve the gravitational dynamics of collapsing halos.
 
-To ensure gravity is not double-counted where these two regimes overlap, the forces must be seamlessly blended together. To achieve this, the simulation applies a continuous spatial filter to the gravitational equations. When traversing the LBVH for short-range interactions, the Newtonian force is multiplied by a mathematical taper (a complementary error function, or `erfc`). This taper smoothly scales the tree's gravitational pull down to zero at the cutoff radius where the PM grid's macroscopic forces take over.
+To ensure gravity is not double-counted where these two regimes overlap, the forces must be seamlessly blended together. To achieve this, the simulation applies a continuous spatial filter to the gravitational equations. When traversing the LBVH for short-range interactions, the Newtonian force is multiplied by a complementary error function, or `erfc`. This smoothly scales the tree's gravitational pull down to zero at the cutoff radius where the PM grid's forces take over.
 
 *Key Literature & Further Reading*  
 **For the Barnes-Hut Algorithm:**  

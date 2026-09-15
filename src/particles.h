@@ -3,29 +3,10 @@
 
 #include "config.h"
 #include "types.h"
+#include "lbvh.h"
 
 class Diagnostics;
 class GasGrid;
-
-struct BoundingBox {
-    double min_x, min_y, min_z;
-    double max_x, max_y, max_z;
-};
-
-struct BVHNode {
-    int parent;
-    int left_child;
-    int right_child;
-    int particle_idx;  // Refers to the sorted particle array; -1 if internal
-                       // node
-
-    BoundingBox bbox;  // Used for intersection tests
-    double max_h;      // Maximum smoothing length in this branch
-
-    // Multipole data for Barnes-Hut Gravity
-    double mass;
-    double com_x, com_y, com_z;
-};
 
 class ParticleSystem {
    private:
@@ -81,4 +62,7 @@ class ParticleSystem {
 
     void add_particle(double px, double py, double pz, double vx, double vy,
                       double vz, double m);
+
+   private:
+    void sort_arrays(const std::vector<int>& sorted_indices);
 };

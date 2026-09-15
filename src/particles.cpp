@@ -2,11 +2,7 @@
 
 #include <omp.h>
 
-#include <algorithm>  // For std::sort
-#include <cmath>
-#include <limits>
-#include <numeric>  // For std::iota
-
+#include "cic.h"
 #include "diagnostics.h"
 #include "gas.h"
 #include "math_utils.h"
@@ -53,94 +49,21 @@ void ParticleSystem::add_particle(double px, double py, double pz, double vx,
 }
 
 void ParticleSystem::bin_and_assign_mass(const Config& config) {
-    dm_rho.setZero();
-    cic_data.assign(num_particles, {});
-
-    int N = config.mesh_size;
-
-    // Calculate cells & densities for PM grid
-    for (size_t i = 0; i < num_particles; ++i) {
-        double px = pos_x[i], py = pos_y[i], pz = pos_z[i];
-
-        // Cell centered PM grid nodes
-        double shifted_x = px - 0.5 * config.cell_size;
-        double shifted_y = py - 0.5 * config.cell_size;
-        double shifted_z = pz - 0.5 * config.cell_size;
-
-        // Ensure periodic wrap-around bounds
-        shifted_x = fmod(shifted_x + config.domain_size, config.domain_size);
-        shifted_y = fmod(shifted_y + config.domain_size, config.domain_size);
-        shifted_z = fmod(shifted_z + config.domain_size, config.domain_size);
-
-        int ix = static_cast<int>(shifted_x / config.cell_size);
-        int iy = static_cast<int>(shifted_y / config.cell_size);
-        int iz = static_cast<int>(shifted_z / config.cell_size);
-
-        double frac_x = (shifted_x / config.cell_size) - ix;
-        double frac_y = (shifted_y / config.cell_size) - iy;
-        double frac_z = (shifted_z / config.cell_size) - iz;
-
-        double w000 = (1 - frac_x) * (1 - frac_y) * (1 - frac_z);
-        double w100 = frac_x * (1 - frac_y) * (1 - frac_z);
-        double w010 = (1 - frac_x) * frac_y * (1 - frac_z);
-        double w110 = frac_x * frac_y * (1 - frac_z);
-        double w001 = (1 - frac_x) * (1 - frac_y) * frac_z;
-        double w101 = frac_x * (1 - frac_y) * frac_z;
-        double w011 = (1 - frac_x) * frac_y * frac_z;
-        double w111 = frac_x * frac_y * frac_z;
-
-        cic_data[i] = {ix,   iy,   iz,   w000, w100, w010,
-                       w110, w001, w101, w011, w111};
-
-        int ix0 = (ix + N) % N, ix1 = (ix + 1 + N) % N;
-        int iy0 = (iy + N) % N, iy1 = (iy + 1 + N) % N;
-        int iz0 = (iz + N) % N, iz1 = (iz + 1 + N) % N;
-
-        double m = mass[i];
-        dm_rho(ix0, iy0, iz0) += m * w000;
-        dm_rho(ix1, iy0, iz0) += m * w100;
-        dm_rho(ix0, iy1, iz0) += m * w010;
-        dm_rho(ix1, iy1, iz0) += m * w110;
-        dm_rho(ix0, iy0, iz1) += m * w001;
-        dm_rho(ix1, iy0, iz1) += m * w101;
-        dm_rho(ix0, iy1, iz1) += m * w011;
-        dm_rho(ix1, iy1, iz1) += m * w111;
-    }
-
-    dm_rho.data /= config.cell_volume;
+    CIC::bin_and_assign_mass(config, num_particles, pos_x, pos_y, pos_z, mass,
+                             cic_data, dm_rho);
 }
 
-void ParticleSystem::build_lbvh(const Config& config) {
+void ParticleSystem::interpolate_cic_forces(const Grid3D& ax_grid,
+                                            const Grid3D& ay_grid,
+                                            const Grid3D& az_grid,
+                                            const Config& config) {
+    CIC::interpolate_forces(config, num_particles, cic_data, ax_grid, ay_grid,
+                            az_grid, acc_x, acc_y, acc_z);
+}
+
+void ParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     if (num_particles == 0) return;
 
-    morton_codes.resize(num_particles);
-    sorted_indices.resize(num_particles);
-    bvh_nodes.resize(2 * num_particles - 1);
-
-    double inv_domain = 1.0 / config.domain_size;
-    // We use 21 bits per dimension (2^21 = 2097152) to fit in a 64-bit int
-    double bound = 2097152.0;
-
-    // Compute Morton codes for all particles
-#pragma omp parallel for schedule(static)
-    for (size_t i = 0; i < num_particles; ++i) {
-        // Normalize coordinates to [0, 1) and scale to the 21-bit integer range
-        uint32_t x = static_cast<uint32_t>(
-            fmod(pos_x[i] * inv_domain + 1.0, 1.0) * bound);
-        uint32_t y = static_cast<uint32_t>(
-            fmod(pos_y[i] * inv_domain + 1.0, 1.0) * bound);
-        uint32_t z = static_cast<uint32_t>(
-            fmod(pos_z[i] * inv_domain + 1.0, 1.0) * bound);
-
-        morton_codes[i] = morton3D(x, y, z);
-    }
-
-    // Initialize indices and sort them based on the Morton codes
-    std::iota(sorted_indices.begin(), sorted_indices.end(), 0);
-    std::sort(sorted_indices.begin(), sorted_indices.end(),
-              [&](int a, int b) { return morton_codes[a] < morton_codes[b]; });
-
-    // Rearrange particle arrays to match the new sorted order
     std::vector<double> new_px(num_particles), new_py(num_particles),
         new_pz(num_particles);
     std::vector<double> new_vx(num_particles), new_vy(num_particles),
@@ -148,251 +71,66 @@ void ParticleSystem::build_lbvh(const Config& config) {
     std::vector<double> new_ax(num_particles), new_ay(num_particles),
         new_az(num_particles);
     std::vector<double> new_m(num_particles);
-    // CIC_Data is only needed if for PM gravity
-    // We sort it here just in case
-    std::vector<CIC_Data> new_cic(num_particles);
-    std::vector<uint64_t> new_morton(num_particles);
+
+    // CIC_Data is only needed for PM gravity.
+    std::vector<CIC_Data> new_cic;
+    bool has_cic = !cic_data.empty();
+    if (has_cic) {
+        new_cic.resize(num_particles);
+    }
 
     for (size_t i = 0; i < num_particles; ++i) {
         int src = sorted_indices[i];
+
         new_px[i] = pos_x[src];
         new_py[i] = pos_y[src];
         new_pz[i] = pos_z[src];
+
         new_vx[i] = vel_x[src];
         new_vy[i] = vel_y[src];
         new_vz[i] = vel_z[src];
+
         new_ax[i] = acc_x[src];
         new_ay[i] = acc_y[src];
         new_az[i] = acc_z[src];
+
         new_m[i] = mass[src];
 
-        if (!cic_data.empty()) new_cic[i] = cic_data[src];
-        new_morton[i] = morton_codes[src];
+        if (has_cic) new_cic[i] = cic_data[src];
     }
 
     // Move sorted data back
     pos_x = std::move(new_px);
     pos_y = std::move(new_py);
     pos_z = std::move(new_pz);
+
     vel_x = std::move(new_vx);
     vel_y = std::move(new_vy);
     vel_z = std::move(new_vz);
+
     acc_x = std::move(new_ax);
     acc_y = std::move(new_ay);
     acc_z = std::move(new_az);
+
     mass = std::move(new_m);
-    if (!cic_data.empty()) cic_data = std::move(new_cic);
-    morton_codes = std::move(new_morton);
 
-    // TREE TOPOLOGY CONSTRUCTION (Karras 2012)
-
-    // Total nodes = 2N - 1.
-    // Indices [0, N-2] are internal nodes.
-    // Indices [N-1, 2N-2] are leaf nodes.
-
-    // Utility lambda to find the longest common prefix between two Morton codes
-    auto delta = [&](int i, int j) -> int {
-        if (j < 0 || j >= num_particles) return -1;
-        uint64_t code_i = morton_codes[i];
-        uint64_t code_j = morton_codes[j];
-
-        if (code_i == code_j) {
-            // Tie-breaker for identical coordinates using the original index
-            return 64 + __builtin_clzll(static_cast<unsigned long long>(i ^ j));
-        }
-        return __builtin_clzll(code_i ^ code_j);
-    };
-
-// Initialize Leaf Nodes
-#pragma omp parallel for schedule(static)
-    for (int i = 0; i < num_particles; ++i) {
-        int leaf_idx = num_particles - 1 + i;
-        bvh_nodes[leaf_idx].particle_idx = i;
-        bvh_nodes[leaf_idx].left_child = -1;
-        bvh_nodes[leaf_idx].right_child = -1;
-        // The parent will be set by the internal node that points to this leaf
-    }
-
-// Construct Internal Nodes in parallel
-#pragma omp parallel for schedule(static)
-    for (int i = 0; i < num_particles - 1; ++i) {
-        // Determine direction of the range (+1 or -1)
-        int d = (delta(i, i + 1) - delta(i, i - 1)) > 0 ? 1 : -1;
-
-        // Compute upper bound for the length of the range
-        int delta_min = delta(i, i - d);
-        int l_max = 2;
-        while (delta(i, i + l_max * d) > delta_min) {
-            l_max *= 2;
-        }
-
-        // Find the other end of the range using binary search
-        int l = 0;
-        for (int t = l_max / 2; t >= 1; t /= 2) {
-            if (delta(i, i + (l + t) * d) > delta_min) {
-                l += t;
-            }
-        }
-        int j = i + l * d;
-
-        // Find the split position using binary search
-        int delta_node = delta(i, j);
-        int s = 0;
-        int t = l;
-        do {
-            t = (t + 1) >> 1;  // ceil(t/2)
-            if (s + t < l && delta(i, i + (s + t) * d) > delta_node) {
-                s += t;
-            }
-        } while (t > 1);
-
-        int split = i + s * d + std::min(d, 0);
-        int min_idx = std::min(i, j);
-        int max_idx = std::max(i, j);
-
-        // Assign children
-        int left_child, right_child;
-
-        if (min_idx == split) {
-            left_child = num_particles - 1 + split;  // Points to leaf
-        } else {
-            left_child = split;  // Points to internal node
-        }
-
-        if (max_idx == split + 1) {
-            right_child = num_particles - 1 + split + 1;  // Points to leaf
-        } else {
-            right_child = split + 1;  // Points to internal node
-        }
-
-        bvh_nodes[i].left_child = left_child;
-        bvh_nodes[i].right_child = right_child;
-        bvh_nodes[i].particle_idx = -1;  // -1 indicates an internal node
-
-        // Assign parent pointers to children
-        bvh_nodes[left_child].parent = i;
-        bvh_nodes[right_child].parent = i;
-    }
-
-    // Set the root node's parent to itself or -1
-    bvh_nodes[0].parent = -1;
-
-    // BOTTOM-UP AGGREGATION (Bounding Boxes & Center of Mass)
-
-    // Counter for each internal node to track when both children are processed
-    std::vector<int> atomic_flags(num_particles - 1, 0);
-
-// Initialize Leaf Nodes and trigger the walk up
-#pragma omp parallel for schedule(static)
-    for (int i = 0; i < num_particles; ++i) {
-        int leaf_idx = num_particles - 1 + i;
-        double px = pos_x[i], py = pos_y[i], pz = pos_z[i];
-
-        double radius = 0.0;
-
-        bvh_nodes[leaf_idx].bbox.min_x = px - radius;
-        bvh_nodes[leaf_idx].bbox.max_x = px + radius;
-        bvh_nodes[leaf_idx].bbox.min_y = py - radius;
-        bvh_nodes[leaf_idx].bbox.max_y = py + radius;
-        bvh_nodes[leaf_idx].bbox.min_z = pz - radius;
-        bvh_nodes[leaf_idx].bbox.max_z = pz + radius;
-
-        bvh_nodes[leaf_idx].max_h = radius;
-
-        bvh_nodes[leaf_idx].mass = mass[i];
-        // Store mass-weighted positions temporarily to make summation easy
-        bvh_nodes[leaf_idx].com_x = px * mass[i];
-        bvh_nodes[leaf_idx].com_y = py * mass[i];
-        bvh_nodes[leaf_idx].com_z = pz * mass[i];
-
-        // Walk up the tree
-        int curr = bvh_nodes[leaf_idx].parent;
-        while (curr != -1) {
-            int old_flag;
-#pragma omp atomic capture
-            old_flag = atomic_flags[curr]++;
-
-            if (old_flag == 0) {
-                // First thread to arrive. The other child isn't ready yet.
-                // Terminate.
-                break;
-            }
-
-            // Second thread to arrive. Both children are ready. Compute parent.
-            int left = bvh_nodes[curr].left_child;
-            int right = bvh_nodes[curr].right_child;
-
-            // Combine Bounding Boxes
-            bvh_nodes[curr].bbox.min_x = std::min(bvh_nodes[left].bbox.min_x,
-                                                  bvh_nodes[right].bbox.min_x);
-            bvh_nodes[curr].bbox.max_x = std::max(bvh_nodes[left].bbox.max_x,
-                                                  bvh_nodes[right].bbox.max_x);
-            bvh_nodes[curr].bbox.min_y = std::min(bvh_nodes[left].bbox.min_y,
-                                                  bvh_nodes[right].bbox.min_y);
-            bvh_nodes[curr].bbox.max_y = std::max(bvh_nodes[left].bbox.max_y,
-                                                  bvh_nodes[right].bbox.max_y);
-            bvh_nodes[curr].bbox.min_z = std::min(bvh_nodes[left].bbox.min_z,
-                                                  bvh_nodes[right].bbox.min_z);
-            bvh_nodes[curr].bbox.max_z = std::max(bvh_nodes[left].bbox.max_z,
-                                                  bvh_nodes[right].bbox.max_z);
-
-            bvh_nodes[curr].max_h =
-                std::max(bvh_nodes[left].max_h, bvh_nodes[right].max_h);
-
-            // Sum Mass and mass-weighted positions
-            bvh_nodes[curr].mass = bvh_nodes[left].mass + bvh_nodes[right].mass;
-            bvh_nodes[curr].com_x =
-                bvh_nodes[left].com_x + bvh_nodes[right].com_x;
-            bvh_nodes[curr].com_y =
-                bvh_nodes[left].com_y + bvh_nodes[right].com_y;
-            bvh_nodes[curr].com_z =
-                bvh_nodes[left].com_z + bvh_nodes[right].com_z;
-
-            // Move up to the next parent
-            curr = bvh_nodes[curr].parent;
-        }
-    }
-
-// Normalize Center of Mass
-#pragma omp parallel for schedule(static)
-    for (int i = 0; i < 2 * num_particles - 1; ++i) {
-        if (bvh_nodes[i].mass > 0.0) {
-            bvh_nodes[i].com_x /= bvh_nodes[i].mass;
-            bvh_nodes[i].com_y /= bvh_nodes[i].mass;
-            bvh_nodes[i].com_z /= bvh_nodes[i].mass;
-        }
-    }
+    if (has_cic) cic_data = std::move(new_cic);
 }
 
-void ParticleSystem::interpolate_cic_forces(const Grid3D& ax_grid,
-                                            const Grid3D& ay_grid,
-                                            const Grid3D& az_grid,
-                                            const Config& config) {
-    const int N = config.mesh_size;
+void ParticleSystem::build_lbvh(const Config& config) {
+    if (num_particles == 0) return;
 
-#pragma omp parallel for schedule(static)
-    for (size_t i = 0; i < num_particles; ++i) {
-        const auto& cd = cic_data[i];
+    // Generate Morton codes
+    LBVH::compute_morton_and_sort_indices(num_particles, config.domain_size,
+                                          pos_x, pos_y, pos_z, morton_codes,
+                                          sorted_indices);
 
-        int ix0 = (cd.ix + N) % N, ix1 = (cd.ix + 1 + N) % N;
-        int iy0 = (cd.iy + N) % N, iy1 = (cd.iy + 1 + N) % N;
-        int iz0 = (cd.iz + N) % N, iz1 = (cd.iz + 1 + N) % N;
+    // Shuffle the DM arrays
+    sort_arrays(sorted_indices);
 
-        auto interp = [&](const Grid3D& grid) {
-            return grid(ix0, iy0, iz0) * cd.w000 +
-                   grid(ix1, iy0, iz0) * cd.w100 +
-                   grid(ix0, iy1, iz0) * cd.w010 +
-                   grid(ix1, iy1, iz0) * cd.w110 +
-                   grid(ix0, iy0, iz1) * cd.w001 +
-                   grid(ix1, iy0, iz1) * cd.w101 +
-                   grid(ix0, iy1, iz1) * cd.w011 +
-                   grid(ix1, iy1, iz1) * cd.w111;
-        };
-
-        acc_x[i] = interp(ax_grid);
-        acc_y[i] = interp(ay_grid);
-        acc_z[i] = interp(az_grid);
-    }
+    // Build topology (Passing nullptr for 'h' since DM doesn't use it)
+    LBVH::build_topology_and_aggregate(num_particles, pos_x, pos_y, pos_z, mass,
+                                       nullptr, morton_codes, bvh_nodes);
 }
 
 void ParticleSystem::compute_and_add_pp_forces(const Config& config,

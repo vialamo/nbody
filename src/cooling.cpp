@@ -155,10 +155,16 @@ Cooling::Cooling(const Config& config) {
     mean_rho_code =
         config.gas_total_mass /
         (config.domain_size * config.domain_size * config.domain_size);
+
     double resolution = config.box_size_mpc / config.mesh_size;
+    double default_clumping_A =
+        std::max(0.0, (use_table ? 0.12 : 1.0) * A_curve.evaluate(resolution));
+    if (config.hydro_method == HydroMethod::MFM) {
+        //default_clumping_A *= 0.2;
+    }
+
     subgrid_clumping_A = config.subgrid_clumping_amplitude < 0
-                             ? std::max(0.0, (use_table ? 0.12 : 1.0) *
-                                                 A_curve.evaluate(resolution))
+                             ? default_clumping_A
                              : config.subgrid_clumping_amplitude;
 }
 

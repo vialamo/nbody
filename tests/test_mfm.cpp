@@ -4,6 +4,8 @@
 
 #include "mfm.h"
 
+constexpr double density_floor = 1e-12;
+
 TEST_CASE("MFM Gradient Estimator", "[hydro][mfm_gradients]") {
     // Grid Setup
     double spacing = 0.4;
@@ -11,7 +13,7 @@ TEST_CASE("MFM Gradient Estimator", "[hydro][mfm_gradients]") {
     double domain_size = 10.0;
 
     // Setup Central Particle
-    ParticleState p_i;
+    Reconstruction::ParticleState p_i;
     p_i.pos = Eigen::Vector3d(5.0, 5.0, 5.0);
     p_i.h = 0.7;
 
@@ -26,14 +28,14 @@ TEST_CASE("MFM Gradient Estimator", "[hydro][mfm_gradients]") {
     p_i.mass = p_i.rho * cell_volume;
 
     SECTION("Exact linear field recovery in a uniform 3D distribution") {
-        std::vector<ParticleState> neighbors;
+        std::vector<Reconstruction::ParticleState> neighbors;
 
         for (int i = -1; i <= 1; ++i) {
             for (int j = -1; j <= 1; ++j) {
                 for (int k = -1; k <= 1; ++k) {
                     if (i == 0 && j == 0 && k == 0) continue;  // Skip self
 
-                    ParticleState nj;
+                    Reconstruction::ParticleState nj;
                     nj.pos = p_i.pos + Eigen::Vector3d(i * spacing, j * spacing,
                                                        k * spacing);
                     nj.h = 1.0;
@@ -53,7 +55,7 @@ TEST_CASE("MFM Gradient Estimator", "[hydro][mfm_gradients]") {
             }
         }
 
-        ParticleGradients grads =
+        Reconstruction::ParticleGradients grads =
             compute_single_particle_gradients(p_i, neighbors, domain_size);
 
         // E matrix should be successfully inverted
@@ -76,21 +78,21 @@ TEST_CASE("MFM Gradient Estimator", "[hydro][mfm_gradients]") {
     }
 
     SECTION("Safely falls back to SPH gradients for pathological geometries") {
-        std::vector<ParticleState> neighbors;
+        std::vector<Reconstruction::ParticleState> neighbors;
 
         extern double g_pressure_floor;
         g_pressure_floor = 1e-16;
 
         // Only insert neighbors aligned on the X-axis (1D line)
         for (int i = -1; i <= 1; i += 2) {
-            ParticleState nj = p_i;  // Copy base state
+            Reconstruction::ParticleState nj = p_i;  // Copy base state
             nj.pos.x() += i * spacing;
             nj.rho = 10.0 + 2.0 * nj.pos.x();  // Still linear
             nj.mass = nj.rho * cell_volume;
             neighbors.push_back(nj);
         }
 
-        ParticleGradients grads =
+        Reconstruction::ParticleGradients grads =
             compute_single_particle_gradients(p_i, neighbors, domain_size);
 
         // B matrix fallback
@@ -122,14 +124,14 @@ TEST_CASE("MFM Face Reconstruction and Limiting",
     double domain_size = 10.0;
 
     // Setup Particle i (Left)
-    ParticleState p_i;
+    Reconstruction::ParticleState p_i;
     p_i.pos = Eigen::Vector3d(1.0, 0.0, 0.0);
     p_i.rho = 1.0;
     p_i.pressure = 2.0;
     p_i.vel = Eigen::Vector3d::Zero();
     p_i.h = 0.5;
 
-    ParticleGradients grad_i;
+    Reconstruction::ParticleGradients grad_i;
     grad_i.grad_rho = Eigen::Vector3d::Zero();
     grad_i.grad_p = Eigen::Vector3d::Zero();
     grad_i.grad_vx = Eigen::Vector3d::Zero();
@@ -137,20 +139,21 @@ TEST_CASE("MFM Face Reconstruction and Limiting",
     grad_i.grad_vz = Eigen::Vector3d::Zero();
 
     // Setup Particle j (Right)
-    ParticleState p_j;
+    Reconstruction::ParticleState p_j;
     p_j.pos = Eigen::Vector3d(3.0, 0.0, 0.0);  // Distance of 2.0
     p_j.rho = 2.0;
     p_j.pressure = 4.0;
     p_j.vel = Eigen::Vector3d::Zero();
     p_j.h = 0.5;
 
-    ParticleGradients grad_j = grad_i;  // Copy zeros
+    Reconstruction::ParticleGradients grad_j = grad_i;  // Copy zeros
 
     SECTION("First-order fallback (Zero Gradients)") {
         // With zero gradients, the extrapolated face states should simply equal
         // the base particle states
-        ReconstructedFace face =
-            compute_face_reconstruction(p_i, grad_i, p_j, grad_j, domain_size);
+        Reconstruction::ReconstructedFace face =
+            compute_face_reconstruction(p_i, grad_i, p_j, grad_j, domain_size,
+                                        density_floor - 12, g_pressure_floor);
 
         REQUIRE(face.is_valid == true);
         REQUIRE(face.r == Catch::Approx(2.0));
@@ -168,8 +171,9 @@ TEST_CASE("MFM Face Reconstruction and Limiting",
         grad_j.grad_rho.x() =
             0.5;  // Will extrapolate j's density by -0.5 to 1.5
 
-        ReconstructedFace face =
-            compute_face_reconstruction(p_i, grad_i, p_j, grad_j, domain_size);
+        Reconstruction::ReconstructedFace face =
+            compute_face_reconstruction(p_i, grad_i, p_j, grad_j, domain_size,
+                                        density_floor - 12, g_pressure_floor);
 
         // They should meet in the middle
         REQUIRE(face.rho_L == Catch::Approx(1.5));
@@ -180,8 +184,9 @@ TEST_CASE("MFM Face Reconstruction and Limiting",
         // Set negative pressure
         p_i.pressure = -5.0;
 
-        ReconstructedFace face =
-            compute_face_reconstruction(p_i, grad_i, p_j, grad_j, domain_size);
+        Reconstruction::ReconstructedFace face =
+            compute_face_reconstruction(p_i, grad_i, p_j, grad_j, domain_size,
+                                        density_floor - 12, g_pressure_floor);
 
         // Should catch the negative pressure and clamp it to 1e-16
         REQUIRE(face.p_L == Catch::Approx(1e-16));
@@ -191,7 +196,7 @@ TEST_CASE("MFM Face Reconstruction and Limiting",
 TEST_CASE("MFM Riemann Solver", "[hydro][mfm_riemann]") {
     double gamma = 5.0 / 3.0;
 
-    ReconstructedFace face;
+    Reconstruction::ReconstructedFace face;
     face.n = Eigen::Vector3d(1.0, 0.0, 0.0);
     face.is_valid = true;
 

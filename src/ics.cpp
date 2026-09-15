@@ -180,7 +180,25 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
                 double code_k2 =
                     code_kx * code_kx + code_ky * code_ky + code_kz * code_kz;
 
+                // CIC Deconvolution
+                auto sinc = [](double freq, int mesh_size) {
+                    if (freq == 0.0) return 1.0;
+                    double arg = M_PI * freq / mesh_size;
+                    return std::sin(arg) / arg;
+                };
+
+                // The CIC interpolation window in Fourier space is sinc^2 per
+                // dimension
+                double sinc_x = sinc(kx_freq, M);
+                double sinc_y = sinc(ky_freq, M);
+                double sinc_z = sinc(kz_freq, M);
+                double cic_filter =
+                    (sinc_x * sinc_x) * (sinc_y * sinc_y) * (sinc_z * sinc_z);
+
                 std::complex<double> phi_k = -delta_k / code_k2;
+
+                // Divide the potential by the CIC filter
+                phi_k /= cic_filter;
 
                 // Calculate the Zel'dovich displacement by taking the negative
                 // gradient of the potential (-nabla Phi). In Fourier space,

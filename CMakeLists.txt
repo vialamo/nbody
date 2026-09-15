@@ -28,6 +28,7 @@ find_package(OpenMP REQUIRED)
 # CORE LIBRARY (OBJECT TARGET)
 # ==============================================================================
 set(CORE_SOURCES
+    src/cic.cpp
     src/config.cpp
     src/cooling.cpp
     src/diagnostics.cpp
@@ -36,10 +37,12 @@ set(CORE_SOURCES
     src/hdf5_writer.cpp
     src/ics.cpp
     src/integrator.cpp
+    src/lbvh.cpp
     src/logger.cpp
     src/math_utils.cpp
-    src/particles.cpp
     src/mfm.cpp
+    src/particles.cpp
+    src/reconstruction.cpp
     src/types.cpp
     src/utils.cpp
 )

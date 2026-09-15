@@ -3,7 +3,9 @@
 #include <vector>
 
 #include "config.h"
-#include "particles.h"  // Needed for BVHNode
+#include "lbvh.h"
+#include "particles.h"
+#include "reconstruction.h"
 
 class Cooling;
 
@@ -138,74 +140,25 @@ class GasParticleSystem {
     void build_lbvh(const Config& config);
 
    private:
-    // Cubic Spline Kernel (Monaghan 1992)
-    // Support radius is 1h. Returns W (value) and dWdr (derivative).
-    inline void kernel_cubic_spline(double r, double h, double& W,
-                                    double& dWdh) const;
-
     void sort_arrays(const std::vector<int>& sorted_indices);
+
+    // Walks a tree to compute the smoothed particle number density and its
+    // derivative
+    void evaluate_density_sum(size_t particle_idx, double h_guess,
+                              double domain_size, double& out_n,
+                              double& out_dn_dh) const;
+
+    // A tree-walker that computes the zeta gravity correction from a target
+    // tree
+    double compute_zeta_contribution(double p1_x, double p1_y, double p1_z,
+                                     double h_i,
+                                     const std::vector<double>& target_x,
+                                     const std::vector<double>& target_y,
+                                     const std::vector<double>& target_z,
+                                     const std::vector<double>& target_mass,
+                                     const std::vector<BVHNode>& target_bvh,
+                                     const Config& config) const;
 };
-
-struct ParticleState {
-    Eigen::Vector3d pos;  // Comoving position
-    Eigen::Vector3d vel;  // Peculiar velocity
-    double mass;
-    double rho;       // Comoving density
-    double pressure;  // Comoving pressure
-    double h;         // Comoving smoothing length
-};
-
-// Represents the comoving spatial gradients for a single particle
-struct ParticleGradients {
-    Eigen::Matrix3d B_matrix;
-    Eigen::Vector3d grad_rho;
-    Eigen::Vector3d grad_p;
-    Eigen::Vector3d grad_vx;
-    Eigen::Vector3d grad_vy;
-    Eigen::Vector3d grad_vz;
-    bool ill_conditioned;
-
-    // Debugging
-    double condition_number;
-    Eigen::Vector3d raw_sum_p;
-};
-
-// Computes spatial gradients using least-squares matrix inversion.
-// INPUT: Central particle state, vector of neighbor states, comoving domain
-// size.
-// OUTPUT: Populated ParticleGradients struct containing the B_matrix and
-// local slopes.
-ParticleGradients compute_single_particle_gradients(
-    const ParticleState& p_i, const std::vector<ParticleState>& neighbors,
-    double domain_size);
-
-// The extrapolated states at the exact midpoint between particle i and j
-// Depending on the stage in the pipeline, this container holds either
-// comoving units (from reconstruction) or physical units (for the Riemann
-// solver)
-struct ReconstructedFace {
-    double rho_L, rho_R;       // Left (i) and Right (j) densities
-    double p_L, p_R;           // Left (i) and Right (j) pressures
-    Eigen::Vector3d v_L, v_R;  // Left (i) and Right (j) velocities
-
-    Eigen::Vector3d
-        n;          // Unit normal vector pointing from i to j [Dimensionless]
-    double r;       // Comoving distance between particles [Code Length]
-    bool is_valid;  // False if particles perfectly overlap (r2 < 1e-24)
-};
-
-// Limits the reconstructed face value between phi_i and phi_j
-double pairwise_slope_limiter(double phi_i, double dphi, double phi_j);
-
-// Extrapolates particle states to the face midpoint using spatial gradients.
-// INPUT: Base states and gradients for i and j.
-// OUTPUT: Reconstructed left/right states at the face, limited to prevent
-// overshoots.
-ReconstructedFace compute_face_reconstruction(const ParticleState& p_i,
-                                              const ParticleGradients& grad_i,
-                                              const ParticleState& p_j,
-                                              const ParticleGradients& grad_j,
-                                              double domain_size);
 
 // Output of the Riemann Solver
 struct MFMFaceFlux {
@@ -221,5 +174,5 @@ struct MFMFaceFlux {
 // adiabatic index.
 // OUTPUT: The resolved pressure (P_star) and relative wave speed (S_star).
 // Note that it should get and return physical units
-MFMFaceFlux solve_mfm_riemann(const ReconstructedFace& face,
+MFMFaceFlux solve_mfm_riemann(const Reconstruction::ReconstructedFace& face,
                               const Eigen::Vector3d& v_frame, double gamma);

@@ -85,7 +85,7 @@ int main(int argc, char* argv[]) {
 
     // Copy the config file into the run directory for reproducibility
     std::filesystem::copy_file(
-        "simulation.ini", run_dir + "/simulation.ini",
+        config_filename, run_dir + "/simulation.ini",
         std::filesystem::copy_options::overwrite_existing);
 
     HDF5Writer h5_writer(run_dir, config);
