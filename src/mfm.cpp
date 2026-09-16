@@ -3,11 +3,12 @@
 #include <chrono>
 
 #include "cic.h"
+#include "constants.h"
 #include "diagnostics.h"
 #include "kernels.h"
 #include "math_utils.h"
 
-//#define UNCORRECTED_GRAVITY
+// #define UNCORRECTED_GRAVITY
 
 constexpr double density_floor = 1e-12;
 double g_pressure_floor = 0.0;
@@ -845,11 +846,12 @@ void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
                 // Pure Plummer Softening (Matches DM exactly, bypasses Kernels)
                 double pp_dist_sq = dist_sq + soft_sq;
                 double pp_dist = std::sqrt(pp_dist_sq);
-                
-                // We define force_mag_over_r so that when it is later multiplied 
-                // by (m_j * dx), it equals the DM equation: (G * m_j * dx) / (pp_dist^3)
+
+                // We define force_mag_over_r so that when it is later
+                // multiplied by (m_j * dx), it equals the DM equation: (G * m_j
+                // * dx) / (pp_dist^3)
                 double force_mag_over_r = G / (pp_dist_sq * pp_dist);
-                
+
                 // Override 'r' to match the DM's PM taper behavior perfectly
                 r = pp_dist;
 #else
@@ -1044,11 +1046,12 @@ void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
                 // Pure Plummer Softening (Matches DM exactly, bypasses Kernels)
                 double pp_dist_sq = dist_sq + soft_sq;
                 double pp_dist = std::sqrt(pp_dist_sq);
-                
-                // We define force_mag_over_r so that when it is later multiplied 
-                // by (m_j * dx), it equals the DM equation: (G * m_j * dx) / (pp_dist^3)
+
+                // We define force_mag_over_r so that when it is later
+                // multiplied by (m_j * dx), it equals the DM equation: (G * m_j
+                // * dx) / (pp_dist^3)
                 double force_mag_over_r = G / (pp_dist_sq * pp_dist);
-                
+
                 // Override 'r' to match the DM's PM taper behavior perfectly
                 r = pp_dist;
 #else
@@ -1132,45 +1135,9 @@ void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
 
 void GasParticleSystem::hydro_step(const Config& config, double a, double H,
                                    double dt) {
-    /*double inv_a = 1.0 / a;
-    double dt_half = dt / 2.0;
-
-    // Cosmological adiabatic expansion cooling factor: (3*gamma - 1) * H *
-    // dt_half
-    double expansion_factor = (3.0 * config.gamma - 1.0) * H * dt_half;
-    double a3 = a * a * a;  // Comoving gravity scaling
-
-    // Cache old forces
-    std::vector<double> old_ax = hydro_acc_x;
-    std::vector<double> old_ay = hydro_acc_y;
-    std::vector<double> old_az = hydro_acc_z;
-    std::vector<double> old_dudt = du_dt;
-
-    // Temporal prediction (Extrapolate v and u to t^{n+1})
-    // This centers the thermodynamic state with the drifted geometry
-    for (size_t i = 0; i < num_particles; ++i) {
-        vel_x[i] += (old_ax[i] * inv_a + acc_x[i] / a3) * dt_half;
-        vel_y[i] += (old_ay[i] * inv_a + acc_y[i] / a3) * dt_half;
-        vel_z[i] += (old_az[i] * inv_a + acc_z[i] / a3) * dt_half;
-        u[i] += (old_dudt[i] * inv_a * dt_half) - (u[i] * expansion_factor);
-    }*/
-
     update_primitive_variables(config, a);
     compute_gradients(config);
     compute_hydro_forces(config, a, dt);
-
-    /* // Revert prediction (Back to t^{n+1/2})
-     // So "Kick 2" applies the newly computed forces
-     for (size_t i = 0; i < num_particles; ++i) {
-         vel_x[i] -= (old_ax[i] * inv_a + acc_x[i] / a3) * dt_half;
-         vel_y[i] -= (old_ay[i] * inv_a + acc_y[i] / a3) * dt_half;
-         vel_z[i] -= (old_az[i] * inv_a + acc_z[i] / a3) * dt_half;
-         u[i] =
-             (u[i] - old_dudt[i] * inv_a * dt_half) / (1.0 - expansion_factor);
-     }
-
-     // Re-sync the pressure back to n+1/2 so the CFL checker is accurate
-     update_primitive_variables(config, a);*/
 }
 
 void GasParticleSystem::update_primitive_variables(const Config& config,
@@ -1235,8 +1202,51 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
         // Calculate pressure based on 'u'
         pressure[i] = gamma_minus_1 * rho[i] * u[i];
 
+        // Artificial Jeans Pressure Floor (Bate & Burkert 1997 Mass Criterion)
+        {
+            // Convert to physical code units
+            double a_inv3 = 1.0 / (a * a * a);
+            double rho_phys = rho[i] * a_inv3;
+
+            // Calculate physical hydrogen number density
+            double rho_cgs = rho_phys * config.unit_density_cgs;
+            double nH_cgs =
+                (rho_cgs * constants::X_MASS_FRAC) / constants::M_P_CGS;
+
+            // ONLY apply the Jeans floor to collapsed, dense gas
+            if (nH_cgs > 0.01) {
+                // Calculate the Mass Resolution Limit (Kernel Mass)
+                double M_kernel = config.mfm_target_neighbors * mass[i];
+
+                // Bate & Burkert Criterion: M_Jeans >= N_safety * M_kernel
+                // N_safety = 1.0 to 2.0 is the standard for Lagrangian codes?
+                constexpr double N_safety = 1.5;
+                double M_jeans_min = N_safety * M_kernel;
+
+                // Invert the Jeans Mass equation to find the minimum
+                // Pressure P_Jeans = (G / (\gamma * \pi)) * (6 * M_J /
+                // \pi)^(2/3) * \rho^(4/3)
+                double mass_factor =
+                    std::pow(6.0 * M_jeans_min / M_PI, 2.0 / 3.0);
+                double P_jeans_phys = (config.G / (config.gamma * M_PI)) *
+                                      mass_factor *
+                                      std::pow(rho_phys, 4.0 / 3.0);
+
+                // Convert back to code pressure units (P_code = P_phys * a)
+                double P_jeans_code = P_jeans_phys * a;
+
+                if (pressure[i] < P_jeans_code) {
+                    pressure[i] = P_jeans_code;
+
+                    // Thermodynamically sync internal energy and entropy
+                    u[i] = pressure[i] / (gamma_minus_1 * rho[i]);
+                    entropy[i] =
+                        gamma_minus_1 * u[i] / std::pow(rho[i], gamma_minus_1);
+                }
+            }
+        }
+
         // Passively sync total energy for diagnostic conservation tracking
-        // Total energy no longer drives the hydrodynamics
         total_energy[i] = u[i] + ke;
 
         metal_frac[i] = std::max(0.0, std::min(metal_frac[i], 1.0));
