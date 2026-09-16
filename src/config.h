@@ -1,34 +1,34 @@
 #pragma once
 #include <algorithm>
-#include <string>
 #include <cctype>
+#include <string>
 
 namespace EnumUtils {
-    template <typename E>
-    struct Traits;
+template <typename E>
+struct Traits;
 
-    template <typename E>
-    std::string to_string(E value) {
-        size_t idx = static_cast<size_t>(value);
-        if (idx < static_cast<size_t>(E::Count)) {
-            return Traits<E>::names[idx];
-        }
-        return Traits<E>::names[static_cast<size_t>(Traits<E>::default_value)];
+template <typename E>
+std::string to_string(E value) {
+    size_t idx = static_cast<size_t>(value);
+    if (idx < static_cast<size_t>(E::Count)) {
+        return Traits<E>::names[idx];
     }
-
-    template <typename E>
-    E from_string(std::string str) {
-        std::transform(str.begin(), str.end(), str.begin(),
-                       [](unsigned char c) { return std::tolower(c); });
-
-        for (size_t i = 0; i < static_cast<size_t>(E::Count); ++i) {
-            if (str == Traits<E>::names[i]) {
-                return static_cast<E>(i);
-            }
-        }
-        return Traits<E>::default_value;
-    }
+    return Traits<E>::names[static_cast<size_t>(Traits<E>::default_value)];
 }
+
+template <typename E>
+E from_string(std::string str) {
+    std::transform(str.begin(), str.end(), str.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+
+    for (size_t i = 0; i < static_cast<size_t>(E::Count); ++i) {
+        if (str == Traits<E>::names[i]) {
+            return static_cast<E>(i);
+        }
+    }
+    return Traits<E>::default_value;
+}
+}  // namespace EnumUtils
 
 enum class HydroMethod { None, Eulerian, MFM, Count };
 
@@ -48,39 +48,39 @@ struct EnumUtils::Traits<HydroMethod> {
 
 template <>
 struct EnumUtils::Traits<InitialSetup> {
-    static constexpr const char* names[] = {
-        "cosmological", "sod_shock_tube", "adiabatic_expansion", "sedov_blastwave"
-    };
+    static constexpr const char* names[] = {"cosmological", "sod_shock_tube",
+                                            "adiabatic_expansion",
+                                            "sedov_blastwave"};
     static constexpr InitialSetup default_value = InitialSetup::Cosmological;
 };
 
 namespace HydroConfig {
-    inline std::string to_string(HydroMethod method) {
-        return EnumUtils::to_string(method);
-    }
-    
-    // Wrapper allows calling without <HydroMethod> template brackets
-    inline HydroMethod from_string(std::string str) {
-        return EnumUtils::from_string<HydroMethod>(std::move(str));
-    }
+inline std::string to_string(HydroMethod method) {
+    return EnumUtils::to_string(method);
 }
+
+// Wrapper allows calling without <HydroMethod> template brackets
+inline HydroMethod from_string(std::string str) {
+    return EnumUtils::from_string<HydroMethod>(std::move(str));
+}
+}  // namespace HydroConfig
 
 namespace InitialConfig {
-    inline std::string to_string(InitialSetup setup) {
-        return EnumUtils::to_string(setup);
-    }
-
-    inline InitialSetup from_string(std::string str) {
-        return EnumUtils::from_string<InitialSetup>(std::move(str));
-    }
+inline std::string to_string(InitialSetup setup) {
+    return EnumUtils::to_string(setup);
 }
+
+inline InitialSetup from_string(std::string str) {
+    return EnumUtils::from_string<InitialSetup>(std::move(str));
+}
+}  // namespace InitialConfig
 
 struct Config {
     // Domain
-    int mesh_size = 32;
-    int num_particles_1d = 32;
-    int num_gas_particles_1d = 32;
-    double box_size_mpc = 16.0;
+    int mesh_size = 64;
+    int num_particles_1d = 64;
+    int num_gas_particles_1d = 64;
+    double box_size_mpc = 96.0;
 
     // Cosmology
     double omega_baryon = 0.045;
@@ -115,13 +115,12 @@ struct Config {
     std::string cooling_table_path = "";
 
     // MFM
-    double mfm_target_neighbors = 64.0;
-    double mfm_neighbor_tolerance = 0.1;
+    double mfm_target_neighbors = 32.0;
+    double mfm_neighbor_tolerance = 0.01;
     int mfm_max_iterations = 50;
     bool disable_hydro_forces = false;
 
     // Subgrid
-    bool enable_subgrid_gas_gravity = false;
     bool enable_subgrid_clumping = true;
     double subgrid_clumping_amplitude = 10.0;
 
@@ -147,7 +146,6 @@ struct Config {
 
     // HPC
     int num_threads = 0;
-    bool enable_GPU = true;
 
     // Derived Parameters
     double G = 0.0;
@@ -179,6 +177,11 @@ struct Config {
     // Constant Parameters
     double total_mass = 1;
     static constexpr double domain_size = 1.0;
+#ifdef USE_GPU
+    static constexpr bool using_GPU = true;
+#else
+    static constexpr bool using_GPU = false;
+#endif
 
     Config();
     void load(const std::string& filename);

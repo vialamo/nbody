@@ -74,7 +74,10 @@ void build_topology_and_aggregate(size_t num_particles,
         uint64_t code_j = morton_codes[j];
 
         if (code_i == code_j) {
-            // Tie-breaker for identical coordinates using the original index
+            // Tie-breaker for identical coordinates using the original index.
+            // __builtin_clzll(unsigned long long) returns the number of leading
+            // 0-bits starting at the most significant bit position. 
+            // If arg == 0 the result is undefined
             return 64 + __builtin_clzll(static_cast<unsigned long long>(i ^ j));
         }
         return __builtin_clzll(code_i ^ code_j);
@@ -164,7 +167,7 @@ void build_topology_and_aggregate(size_t num_particles,
         int leaf_idx = n - 1 + i;
         double px = sorted_pos_x[i], py = sorted_pos_y[i], pz = sorted_pos_z[i];
 
-        // Safely extract the smoothing length if the pointer is valid
+        // Extract the smoothing length if the pointer is valid
         double radius = 0.0;
         if (sorted_h != nullptr) {
             radius = (*sorted_h)[i];
@@ -180,7 +183,7 @@ void build_topology_and_aggregate(size_t num_particles,
         bvh_nodes[leaf_idx].max_h = radius;
 
         bvh_nodes[leaf_idx].mass = sorted_mass[i];
-        
+
         // Store mass-weighted positions temporarily to make summation easy
         bvh_nodes[leaf_idx].com_x = px * sorted_mass[i];
         bvh_nodes[leaf_idx].com_y = py * sorted_mass[i];
@@ -194,11 +197,12 @@ void build_topology_and_aggregate(size_t num_particles,
             old_flag = atomic_flags[curr]++;
 
             if (old_flag == 0) {
-                // First thread to arrive. The other child isn't ready yet. Terminate.
+                // First thread to arrive. The other child isn't ready yet.
+                // Terminate
                 break;
             }
 
-            // Second thread to arrive. Both children are ready. Compute parent.
+            // Second thread to arrive. Both children are ready. Compute parent
             int left = bvh_nodes[curr].left_child;
             int right = bvh_nodes[curr].right_child;
 

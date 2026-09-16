@@ -239,8 +239,6 @@ void Config::load(const std::string& filename) {
     mfm_max_iterations =
         config_file.get_int("mfm", "mfm_max_iterations", mfm_max_iterations);
 
-    enable_subgrid_gas_gravity = config_file.get_bool(
-        "subgrid", "enable_subgrid_gravity", enable_subgrid_gas_gravity);
     enable_subgrid_clumping = config_file.get_bool(
         "subgrid", "enable_subgrid_clumping", enable_subgrid_clumping);
     subgrid_clumping_amplitude = config_file.get_double(
@@ -273,7 +271,6 @@ void Config::load(const std::string& filename) {
         "output", "debug_info_every_seconds", debug_info_every_seconds);
 
     num_threads = config_file.get_int("HPC", "num_threads", num_threads);
-    enable_GPU = config_file.get_bool("HPC", "use_gpu", enable_GPU);
 
     compute_derived_data();
 

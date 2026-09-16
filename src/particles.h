@@ -6,7 +6,6 @@
 #include "lbvh.h"
 
 class Diagnostics;
-class GasGrid;
 
 class ParticleSystem {
    private:
@@ -51,10 +50,6 @@ class ParticleSystem {
                                 const Grid3D& az_grid, const Config& config);
 
     void compute_and_add_pp_forces(const Config& config, Diagnostics& diag);
-
-    void compute_gas_dm_pp_forces(const GasGrid& gas, Grid3D& grav_x,
-                                  Grid3D& grav_y, Grid3D& grav_z,
-                                  const Config& config, Diagnostics& diag);
 
     double get_gravity_timestep(const Config& config) const;
 

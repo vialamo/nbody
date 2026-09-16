@@ -168,8 +168,6 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                      config.mfm_max_iterations);
 
         // [subgrid]
-        set_attr_bool(config_group, "enable_subgrid_gravity",
-                      config.enable_subgrid_gas_gravity);
         set_attr_bool(config_group, "enable_subgrid_clumping",
                       config.enable_subgrid_clumping);
         set_attr_double(config_group, "subgrid_clumping_amplitude",
@@ -196,7 +194,7 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
 
         // [HPC]
         set_attr_int(config_group, "num_threads", config.num_threads);
-        set_attr_bool(config_group, "use_gpu", config.enable_GPU);
+        set_attr_bool(config_group, "use_gpu", config.using_GPU);
 
         // Global system physics
         set_attr_double(config_group, "G", config.G);

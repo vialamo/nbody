@@ -7,6 +7,8 @@
 #include "kernels.h"
 #include "math_utils.h"
 
+//#define UNCORRECTED_GRAVITY
+
 constexpr double density_floor = 1e-12;
 double g_pressure_floor = 0.0;
 
@@ -436,14 +438,14 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         if (h_clamped) {
             num_h_clamped++;
         }
-        
-        // IMPORTANT: If we exited the loop due to max_iter OR clamping, 
+
+        // IMPORTANT: If we exited the loop due to max_iter OR clamping,
         // h_guess has been updated but current_n and current_dn_dh are stale.
         // We must re-evaluate
         if (!is_converged) {
             // Sync the properties using the finalized, clamped h_guess
             evaluate_density_sum(i, h_guess, domain_size, current_n,
-                                    current_dn_dh);
+                                 current_dn_dh);
             double h3 = h_guess * h_guess * h_guess;
             n_enc_final[i] = (4.0 / 3.0) * M_PI * h3 * current_n;
         }
@@ -452,6 +454,7 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         h[i] = h_guess;
         rho[i] = mass[i] * current_n;
 
+#ifndef UNCORRECTED_GRAVITY
         // Adaptive gravity correction (Zeta)
         double Omega_i = std::max(
             1.0 + (h_guess / (current_n * 3.0)) * current_dn_dh, 1e-12);
@@ -469,6 +472,7 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         }
 
         zeta[i] = (h_guess / (current_n * 3.0)) * (1.0 / Omega_i) * zeta_sum;
+#endif
     }
 
     clamped_h_cases += num_h_clamped;
@@ -521,7 +525,7 @@ void GasParticleSystem::apply_cooling(double dt, double a, const Config& config,
                 if (u_current <= u_rad_floor && du_dt < 0.0) {
                     // The particle is at the temperature floor and trying to
                     // cool. It is in thermal equilibrium. Consume the rest of
-                    // the step.
+                    // the step
                     dt_cell = dt - t_evolved;
                 } else {
                     dt_cell = (std::abs(du_dt) > 0.0)
@@ -737,26 +741,28 @@ void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
     const size_t n_gas = num_particles;
     const size_t num_nodes = 2 * n_gas - 1;
 
+#ifdef UNCORRECTED_GRAVITY
+    const double soft_sq = config.softening_squared;
+    const double base_soft = std::sqrt(soft_sq);
+#endif
+
     const double search_sq =
         use_pm ? cutoff_sq : std::numeric_limits<double>::infinity();
 
-#ifdef USE_GPU
-    if (config.enable_GPU) {
-        // ========================================================================
-        // GPU IMPLEMENTATION (Stack-based LBVH Traversal)
-        // ========================================================================
-        double* d_px = pos_x.data();
-        double* d_py = pos_y.data();
-        double* d_pz = pos_z.data();
-        double* d_m = mass.data();
-        double* d_h = h.data();
-        double* d_zeta = zeta.data();
-        double* d_ax = acc_x.data();
-        double* d_ay = acc_y.data();
-        double* d_az = acc_z.data();
-        BVHNode* d_bvh_nodes = bvh_nodes.data();
+    // Extract pointers
+    double* d_px = pos_x.data();
+    double* d_py = pos_y.data();
+    double* d_pz = pos_z.data();
+    double* d_m = mass.data();
+    double* d_h = h.data();
+    double* d_zeta = zeta.data();
+    double* d_ax = acc_x.data();
+    double* d_ay = acc_y.data();
+    double* d_az = acc_z.data();
+    BVHNode* d_bvh_nodes = bvh_nodes.data();
 
-        auto start_transfer = std::chrono::high_resolution_clock::now();
+#ifdef USE_GPU
+    auto start_transfer = std::chrono::high_resolution_clock::now();
 
 #pragma omp target enter data map(                                        \
         to : d_px[0 : n_gas], d_py[0 : n_gas], d_pz[0 : n_gas],           \
@@ -764,107 +770,128 @@ void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
             d_bvh_nodes[0 : num_nodes], d_ax[0 : n_gas], d_ay[0 : n_gas], \
             d_az[0 : n_gas])
 
-        auto end_transfer = std::chrono::high_resolution_clock::now();
-        auto start_compute = std::chrono::high_resolution_clock::now();
+    auto end_transfer = std::chrono::high_resolution_clock::now();
+    auto start_compute = std::chrono::high_resolution_clock::now();
+#endif
 
+// Swap the OpenMP execution pragma based on the compile-time target
+#ifdef USE_GPU
 #pragma omp target teams distribute parallel for
-        for (size_t i = 0; i < n_gas; ++i) {
-            double p1_x = d_px[i], p1_y = d_py[i], p1_z = d_pz[i];
-            double m_i = d_m[i];
-            double h_i = d_h[i];
-            double zeta_i = d_zeta[i];
+#else
+#pragma omp parallel for schedule(dynamic, 64)
+#endif
+    for (size_t i = 0; i < n_gas; ++i) {
+        double p1_x = d_px[i], p1_y = d_py[i], p1_z = d_pz[i];
+        double m_i = d_m[i];
+        double h_i = d_h[i];
+        double zeta_i = d_zeta[i];
 
-            double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
+        double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
 
-            int stack[128];
-            int stack_ptr = 0;
-            stack[stack_ptr++] = 0;  // Push root node
+        int stack[128];
+        int stack_ptr = 0;
+        stack[stack_ptr++] = 0;  // Push root node
 
-            while (stack_ptr > 0) {
-                int node_idx = stack[--stack_ptr];
-                const BVHNode& node = d_bvh_nodes[node_idx];
+        while (stack_ptr > 0) {
+            int node_idx = stack[--stack_ptr];
+            const BVHNode& node = d_bvh_nodes[node_idx];
 
-                // AABB Culling against cutoff radius
-                double aabb_dist_sq =
-                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
-                                         domain_size) +
-                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
-                                         domain_size) +
-                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
-                                         domain_size);
+            // AABB Culling against cutoff radius
+            double aabb_dist_sq =
+                min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
+                                     domain_size) +
+                min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
+                                     domain_size) +
+                min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
+                                     domain_size);
 
-                if (aabb_dist_sq > search_sq) continue;
+            if (aabb_dist_sq > search_sq) continue;
 
-                if (node.particle_idx != -1) {
-                    int j = node.particle_idx;
-                    if (i == static_cast<size_t>(j)) continue;
+            if (node.particle_idx != -1) {
+                int j = node.particle_idx;
+                if (static_cast<size_t>(j) == i) continue;
 
-                    double dx = p1_x - d_px[j];
-                    if (dx > 0.5 * domain_size)
-                        dx -= domain_size;
-                    else if (dx < -0.5 * domain_size)
-                        dx += domain_size;
+                double dx = p1_x - d_px[j];
+                if (dx > 0.5 * domain_size)
+                    dx -= domain_size;
+                else if (dx < -0.5 * domain_size)
+                    dx += domain_size;
 
-                    double dy = p1_y - d_py[j];
-                    if (dy > 0.5 * domain_size)
-                        dy -= domain_size;
-                    else if (dy < -0.5 * domain_size)
-                        dy += domain_size;
+                double dy = p1_y - d_py[j];
+                if (dy > 0.5 * domain_size)
+                    dy -= domain_size;
+                else if (dy < -0.5 * domain_size)
+                    dy += domain_size;
 
-                    double dz = p1_z - d_pz[j];
-                    if (dz > 0.5 * domain_size)
-                        dz -= domain_size;
-                    else if (dz < -0.5 * domain_size)
-                        dz += domain_size;
+                double dz = p1_z - d_pz[j];
+                if (dz > 0.5 * domain_size)
+                    dz -= domain_size;
+                else if (dz < -0.5 * domain_size)
+                    dz += domain_size;
 
-                    dx = -dx;
-                    dy = -dy;
-                    dz = -dz;
+                dx = -dx;
+                dy = -dy;
+                dz = -dz;
 
-                    double dist_sq = dx * dx + dy * dy + dz * dz;
+                double dist_sq = dx * dx + dy * dy + dz * dz;
 
-                    if (use_pm && dist_sq > cutoff_sq) continue;
-                    if (dist_sq < 1e-24) continue;
+                if (use_pm && dist_sq > cutoff_sq) continue;
+                if (dist_sq < 1e-24) continue;
 
-                    double r = std::sqrt(dist_sq);
-                    double m_j = d_m[j];
-                    double h_j = d_h[j];
-                    double zeta_j = d_zeta[j];
+                double r = std::sqrt(dist_sq);
+                double m_j = d_m[j];
 
-                    double dphi_dr_i, dW_dr_i, dphi_dr_j, dW_dr_j;
-                    Kernels::adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
-                    Kernels::adaptive_gravity_terms(r, h_j, dphi_dr_j, dW_dr_j);
+#ifdef UNCORRECTED_GRAVITY
+                // Pure Plummer Softening (Matches DM exactly, bypasses Kernels)
+                double pp_dist_sq = dist_sq + soft_sq;
+                double pp_dist = std::sqrt(pp_dist_sq);
+                
+                // We define force_mag_over_r so that when it is later multiplied 
+                // by (m_j * dx), it equals the DM equation: (G * m_j * dx) / (pp_dist^3)
+                double force_mag_over_r = G / (pp_dist_sq * pp_dist);
+                
+                // Override 'r' to match the DM's PM taper behavior perfectly
+                r = pp_dist;
+#else
+                double h_j = d_h[j];
+                double zeta_j = d_zeta[j];
 
-                    double force_mag_over_r =
-                        (G / 2.0) *
-                        ((dphi_dr_i + dphi_dr_j) + (zeta_i * dW_dr_i) / m_i +
-                         (zeta_j * dW_dr_j) / m_j) /
-                        r;
+                double dphi_dr_i, dW_dr_i, dphi_dr_j, dW_dr_j;
+                Kernels::adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
+                Kernels::adaptive_gravity_terms(r, h_j, dphi_dr_j, dW_dr_j);
 
-                    if (use_pm) {
-                        double r_scaled = r / (2.0 * r_s);
-                        double taper = std::erfc(r_scaled) +
-                                       (r / (std::sqrt(M_PI) * r_s)) *
-                                           std::exp(-r_scaled * r_scaled);
-                        force_mag_over_r *= taper;
-                    }
+                double force_mag_over_r =
+                    (G / 2.0) *
+                    ((dphi_dr_i + dphi_dr_j) + (zeta_i * dW_dr_i) / m_i +
+                     (zeta_j * dW_dr_j) / m_j) /
+                    r;
+#endif
 
-                    local_acc_x += force_mag_over_r * m_j * dx;
-                    local_acc_y += force_mag_over_r * m_j * dy;
-                    local_acc_z += force_mag_over_r * m_j * dz;
-                } else {
-                    stack[stack_ptr++] = node.left_child;
-                    stack[stack_ptr++] = node.right_child;
+                if (use_pm) {
+                    double r_scaled = r / (2.0 * r_s);
+                    double taper = std::erfc(r_scaled) +
+                                   (r / (std::sqrt(M_PI) * r_s)) *
+                                       std::exp(-r_scaled * r_scaled);
+                    force_mag_over_r *= taper;
                 }
-            }
 
-            d_ax[i] += local_acc_x;
-            d_ay[i] += local_acc_y;
-            d_az[i] += local_acc_z;
+                local_acc_x += force_mag_over_r * m_j * dx;
+                local_acc_y += force_mag_over_r * m_j * dy;
+                local_acc_z += force_mag_over_r * m_j * dz;
+            } else {
+                stack[stack_ptr++] = node.left_child;
+                stack[stack_ptr++] = node.right_child;
+            }
         }
 
-        auto end_compute = std::chrono::high_resolution_clock::now();
-        auto start_return = std::chrono::high_resolution_clock::now();
+        d_ax[i] += local_acc_x;
+        d_ay[i] += local_acc_y;
+        d_az[i] += local_acc_z;
+    }
+
+#ifdef USE_GPU
+    auto end_compute = std::chrono::high_resolution_clock::now();
+    auto start_return = std::chrono::high_resolution_clock::now();
 
 #pragma omp target exit data map(from : d_ax[0 : n_gas], d_ay[0 : n_gas], \
                                      d_az[0 : n_gas])                     \
@@ -872,126 +899,21 @@ void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
             d_m[0 : n_gas], d_h[0 : n_gas], d_zeta[0 : n_gas],            \
             d_bvh_nodes[0 : num_nodes])
 
-        auto end_return = std::chrono::high_resolution_clock::now();
+    auto end_return = std::chrono::high_resolution_clock::now();
 
-        double diff_transf =
-            std::chrono::duration_cast<std::chrono::microseconds>(
-                end_transfer - start_transfer)
-                .count();
-        double diff_comput =
-            std::chrono::duration_cast<std::chrono::microseconds>(end_compute -
-                                                                  start_compute)
-                .count();
-        double diff_return =
-            std::chrono::duration_cast<std::chrono::microseconds>(end_return -
-                                                                  start_return)
-                .count();
-
-        diag.add_prof_time(ProfRegion::Transf, diff_transf);
-        diag.add_prof_time(ProfRegion::Compute, diff_comput);
-        diag.add_prof_time(ProfRegion::Ret, diff_return);
-
-    } else
+    diag.add_prof_time(ProfRegion::Transf,
+                       std::chrono::duration_cast<std::chrono::microseconds>(
+                           end_transfer - start_transfer)
+                           .count());
+    diag.add_prof_time(ProfRegion::Compute,
+                       std::chrono::duration_cast<std::chrono::microseconds>(
+                           end_compute - start_compute)
+                           .count());
+    diag.add_prof_time(ProfRegion::Ret,
+                       std::chrono::duration_cast<std::chrono::microseconds>(
+                           end_return - start_return)
+                           .count());
 #endif
-    {
-        // ========================================================================
-        // CPU IMPLEMENTATION
-        // ========================================================================
-#pragma omp parallel for schedule(dynamic, 64)
-        for (size_t i = 0; i < n_gas; ++i) {
-            double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
-            double m_i = mass[i];
-            double h_i = h[i];
-            double zeta_i = zeta[i];
-
-            double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
-
-            int stack[128];
-            int stack_ptr = 0;
-            stack[stack_ptr++] = 0;
-
-            while (stack_ptr > 0) {
-                int node_idx = stack[--stack_ptr];
-                const BVHNode& node = bvh_nodes[node_idx];
-
-                double aabb_dist_sq =
-                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
-                                         domain_size) +
-                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
-                                         domain_size) +
-                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
-                                         domain_size);
-
-                if (aabb_dist_sq > search_sq) continue;
-
-                if (node.particle_idx != -1) {
-                    int j = node.particle_idx;
-                    if (i == static_cast<size_t>(j)) continue;
-
-                    double dx = p1_x - pos_x[j];
-                    if (dx > 0.5 * domain_size)
-                        dx -= domain_size;
-                    else if (dx < -0.5 * domain_size)
-                        dx += domain_size;
-
-                    double dy = p1_y - pos_y[j];
-                    if (dy > 0.5 * domain_size)
-                        dy -= domain_size;
-                    else if (dy < -0.5 * domain_size)
-                        dy += domain_size;
-
-                    double dz = p1_z - pos_z[j];
-                    if (dz > 0.5 * domain_size)
-                        dz -= domain_size;
-                    else if (dz < -0.5 * domain_size)
-                        dz += domain_size;
-
-                    dx = -dx;
-                    dy = -dy;
-                    dz = -dz;
-
-                    double dist_sq = dx * dx + dy * dy + dz * dz;
-
-                    if (use_pm && dist_sq > cutoff_sq) continue;
-                    if (dist_sq < 1e-24) continue;
-
-                    double r = std::sqrt(dist_sq);
-                    double m_j = mass[j];
-                    double h_j = h[j];
-                    double zeta_j = zeta[j];
-
-                    double dphi_dr_i, dW_dr_i, dphi_dr_j, dW_dr_j;
-                    Kernels::adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
-                    Kernels::adaptive_gravity_terms(r, h_j, dphi_dr_j, dW_dr_j);
-
-                    double force_mag_over_r =
-                        (G / 2.0) *
-                        ((dphi_dr_i + dphi_dr_j) + (zeta_i * dW_dr_i) / m_i +
-                         (zeta_j * dW_dr_j) / m_j) /
-                        r;
-
-                    if (use_pm) {
-                        double r_scaled = r / (2.0 * r_s);
-                        double taper = std::erfc(r_scaled) +
-                                       (r / (std::sqrt(M_PI) * r_s)) *
-                                           std::exp(-r_scaled * r_scaled);
-                        force_mag_over_r *= taper;
-                    }
-
-                    local_acc_x += force_mag_over_r * m_j * dx;
-                    local_acc_y += force_mag_over_r * m_j * dy;
-                    local_acc_z += force_mag_over_r * m_j * dz;
-                } else {
-                    stack[stack_ptr++] = node.left_child;
-                    stack[stack_ptr++] = node.right_child;
-                }
-            }
-
-            acc_x[i] += local_acc_x;
-            acc_y[i] += local_acc_y;
-            acc_z[i] += local_acc_z;
-        }
-    }
 }
 
 void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
@@ -1015,32 +937,29 @@ void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
         use_pm ? cutoff_sq : std::numeric_limits<double>::infinity();
     const double base_soft = std::sqrt(soft_sq);
 
+    // Extract pointers
+    double* d_gas_px = pos_x.data();
+    double* d_gas_py = pos_y.data();
+    double* d_gas_pz = pos_z.data();
+    double* d_gas_m = mass.data();
+    double* d_gas_h = h.data();
+    double* d_gas_zeta = zeta.data();
+    double* d_gas_ax = acc_x.data();
+    double* d_gas_ay = acc_y.data();
+    double* d_gas_az = acc_z.data();
+
+    double* d_dm_px = dm.pos_x.data();
+    double* d_dm_py = dm.pos_y.data();
+    double* d_dm_pz = dm.pos_z.data();
+    double* d_dm_m = dm.mass.data();
+    double* d_dm_ax = dm.acc_x.data();
+    double* d_dm_ay = dm.acc_y.data();
+    double* d_dm_az = dm.acc_z.data();
+
+    BVHNode* d_dm_bvh = dm.bvh_nodes.data();
+
 #ifdef USE_GPU
-    if (config.enable_GPU) {
-        // ========================================================================
-        // GPU IMPLEMENTATION (Cross-forces with Spatial Culling)
-        // ========================================================================
-        double* d_gas_px = pos_x.data();
-        double* d_gas_py = pos_y.data();
-        double* d_gas_pz = pos_z.data();
-        double* d_gas_m = mass.data();
-        double* d_gas_h = h.data();
-        double* d_gas_zeta = zeta.data();
-        double* d_gas_ax = acc_x.data();
-        double* d_gas_ay = acc_y.data();
-        double* d_gas_az = acc_z.data();
-
-        double* d_dm_px = dm.pos_x.data();
-        double* d_dm_py = dm.pos_y.data();
-        double* d_dm_pz = dm.pos_z.data();
-        double* d_dm_m = dm.mass.data();
-        double* d_dm_ax = dm.acc_x.data();
-        double* d_dm_ay = dm.acc_y.data();
-        double* d_dm_az = dm.acc_z.data();
-
-        BVHNode* d_dm_bvh = dm.bvh_nodes.data();
-
-        auto start_transfer = std::chrono::high_resolution_clock::now();
+    auto start_transfer = std::chrono::high_resolution_clock::now();
 
 #pragma omp target enter data map(                                           \
         to : d_gas_px[0 : n_gas], d_gas_py[0 : n_gas], d_gas_pz[0 : n_gas],  \
@@ -1050,122 +969,141 @@ void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
             d_dm_m[0 : n_dm], d_dm_bvh[0 : dm_num_nodes], d_dm_ax[0 : n_dm], \
             d_dm_ay[0 : n_dm], d_dm_az[0 : n_dm])
 
-        auto end_transfer = std::chrono::high_resolution_clock::now();
-        auto start_compute = std::chrono::high_resolution_clock::now();
+    auto end_transfer = std::chrono::high_resolution_clock::now();
+    auto start_compute = std::chrono::high_resolution_clock::now();
+#endif
 
+// Swap the OpenMP execution pragma based on the compile-time target
+#ifdef USE_GPU
 #pragma omp target teams distribute parallel for
-        for (size_t i = 0; i < n_gas; ++i) {
-            double p1_x = d_gas_px[i], p1_y = d_gas_py[i], p1_z = d_gas_pz[i];
-            double m_gas = d_gas_m[i];
-            double h_i = d_gas_h[i];
-            double zeta_i = d_gas_zeta[i];
+#else
+#pragma omp parallel for schedule(dynamic, 64)
+#endif
+    for (size_t i = 0; i < n_gas; ++i) {
+        double p1_x = d_gas_px[i], p1_y = d_gas_py[i], p1_z = d_gas_pz[i];
+        double m_gas = d_gas_m[i];
+        double h_i = d_gas_h[i];
+        double zeta_i = d_gas_zeta[i];
 
-            double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
+        double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
 
-            int stack[128];
-            int stack_ptr = 0;
-            stack[stack_ptr++] = 0;  // Push root of DM tree
+        int stack[128];
+        int stack_ptr = 0;
+        stack[stack_ptr++] = 0;  // Push root of DM tree
 
-            while (stack_ptr > 0) {
-                int node_idx = stack[--stack_ptr];
-                const BVHNode& node = d_dm_bvh[node_idx];
+        while (stack_ptr > 0) {
+            int node_idx = stack[--stack_ptr];
+            const BVHNode& node = d_dm_bvh[node_idx];
 
-                // Spatial Culling: Does the search sphere intersect this node's
-                // AABB?
-                double aabb_dist_sq =
-                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
-                                         domain_size) +
-                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
-                                         domain_size) +
-                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
-                                         domain_size);
+            // Spatial Culling: Does the search sphere intersect this node's
+            // AABB?
+            double aabb_dist_sq =
+                min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
+                                     domain_size) +
+                min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
+                                     domain_size) +
+                min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
+                                     domain_size);
 
-                if (aabb_dist_sq > search_sq)
-                    continue;  // Prune branch completely
+            if (aabb_dist_sq > search_sq) continue;  // Prune branch completely
 
-                if (node.particle_idx != -1) {
-                    // Exact P-P interaction at the leaf
-                    int j = node.particle_idx;
+            if (node.particle_idx != -1) {
+                // Exact P-P interaction at the leaf
+                int j = node.particle_idx;
 
-                    double dx = p1_x - d_dm_px[j];
-                    if (dx > 0.5 * domain_size)
-                        dx -= domain_size;
-                    else if (dx < -0.5 * domain_size)
-                        dx += domain_size;
+                double dx = p1_x - d_dm_px[j];
+                if (dx > 0.5 * domain_size)
+                    dx -= domain_size;
+                else if (dx < -0.5 * domain_size)
+                    dx += domain_size;
 
-                    double dy = p1_y - d_dm_py[j];
-                    if (dy > 0.5 * domain_size)
-                        dy -= domain_size;
-                    else if (dy < -0.5 * domain_size)
-                        dy += domain_size;
+                double dy = p1_y - d_dm_py[j];
+                if (dy > 0.5 * domain_size)
+                    dy -= domain_size;
+                else if (dy < -0.5 * domain_size)
+                    dy += domain_size;
 
-                    double dz = p1_z - d_dm_pz[j];
-                    if (dz > 0.5 * domain_size)
-                        dz -= domain_size;
-                    else if (dz < -0.5 * domain_size)
-                        dz += domain_size;
+                double dz = p1_z - d_dm_pz[j];
+                if (dz > 0.5 * domain_size)
+                    dz -= domain_size;
+                else if (dz < -0.5 * domain_size)
+                    dz += domain_size;
 
-                    // Flip back to (j - i) vector direction
-                    dx = -dx;
-                    dy = -dy;
-                    dz = -dz;
+                // Flip back to (j - i) vector direction
+                dx = -dx;
+                dy = -dy;
+                dz = -dz;
 
-                    double dist_sq = dx * dx + dy * dy + dz * dz;
+                double dist_sq = dx * dx + dy * dy + dz * dz;
 
-                    if (use_pm && dist_sq > cutoff_sq) continue;
-                    double r = std::sqrt(dist_sq + 1e-24);
+                if (use_pm && dist_sq > cutoff_sq) continue;
+                double r = std::sqrt(dist_sq + 1e-24);
+                double m_j = d_dm_m[j];
 
-                    // Gas kernel derivatives
-                    double dphi_dr_i, dW_dr_i, dphi_dr_j, dummy_dphi_dh;
-                    Kernels::adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
+#ifdef UNCORRECTED_GRAVITY
+                // Pure Plummer Softening (Matches DM exactly, bypasses Kernels)
+                double pp_dist_sq = dist_sq + soft_sq;
+                double pp_dist = std::sqrt(pp_dist_sq);
+                
+                // We define force_mag_over_r so that when it is later multiplied 
+                // by (m_j * dx), it equals the DM equation: (G * m_j * dx) / (pp_dist^3)
+                double force_mag_over_r = G / (pp_dist_sq * pp_dist);
+                
+                // Override 'r' to match the DM's PM taper behavior perfectly
+                r = pp_dist;
+#else
+                // Gas kernel derivatives
+                double dphi_dr_i, dW_dr_i, dphi_dr_j, dummy_dphi_dh;
+                Kernels::adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
 
-                    // DM kernel derivatives (uses fixed base_soft)
-                    Kernels::gravity_derivatives(r, base_soft, dphi_dr_j,
-                                                 dummy_dphi_dh);
+                // DM kernel derivatives (uses fixed base_soft)
+                Kernels::gravity_derivatives(r, base_soft, dphi_dr_j,
+                                             dummy_dphi_dh);
 
-                    // Force magnitude
-                    double m_j = d_dm_m[j];
-                    double force_mag_over_r =
-                        (G / 2.0) *
-                        ((dphi_dr_i + dphi_dr_j) + (zeta_i * dW_dr_i) / m_gas) /
-                        r;
+                // Force magnitude
 
-                    if (use_pm) {
-                        double r_scaled = r / (2.0 * r_s);
-                        double taper = std::erfc(r_scaled) +
-                                       (r / (std::sqrt(M_PI) * r_s)) *
-                                           std::exp(-r_scaled * r_scaled);
-                        force_mag_over_r *= taper;
-                    }
+                double force_mag_over_r =
+                    (G / 2.0) *
+                    ((dphi_dr_i + dphi_dr_j) + (zeta_i * dW_dr_i) / m_gas) / r;
+#endif
 
-                    // Pull on MFM Gas
-                    local_acc_x += force_mag_over_r * m_j * dx;
-                    local_acc_y += force_mag_over_r * m_j * dy;
-                    local_acc_z += force_mag_over_r * m_j * dz;
-
-                    // Pull on DM (Equal and opposite, N3L)
-                    double a_dm = force_mag_over_r * m_gas;
-#pragma omp atomic
-                    d_dm_ax[j] -= a_dm * dx;
-#pragma omp atomic
-                    d_dm_ay[j] -= a_dm * dy;
-#pragma omp atomic
-                    d_dm_az[j] -= a_dm * dz;
-
-                } else {
-                    // Push children
-                    stack[stack_ptr++] = node.left_child;
-                    stack[stack_ptr++] = node.right_child;
+                if (use_pm) {
+                    double r_scaled = r / (2.0 * r_s);
+                    double taper = std::erfc(r_scaled) +
+                                   (r / (std::sqrt(M_PI) * r_s)) *
+                                       std::exp(-r_scaled * r_scaled);
+                    force_mag_over_r *= taper;
                 }
-            }
 
-            d_gas_ax[i] += local_acc_x;
-            d_gas_ay[i] += local_acc_y;
-            d_gas_az[i] += local_acc_z;
+                // Pull on MFM Gas
+                local_acc_x += force_mag_over_r * m_j * dx;
+                local_acc_y += force_mag_over_r * m_j * dy;
+                local_acc_z += force_mag_over_r * m_j * dz;
+
+                // Pull on DM (Equal and opposite, N3L)
+                double a_dm = force_mag_over_r * m_gas;
+#pragma omp atomic
+                d_dm_ax[j] -= a_dm * dx;
+#pragma omp atomic
+                d_dm_ay[j] -= a_dm * dy;
+#pragma omp atomic
+                d_dm_az[j] -= a_dm * dz;
+
+            } else {
+                // Push children
+                stack[stack_ptr++] = node.left_child;
+                stack[stack_ptr++] = node.right_child;
+            }
         }
 
-        auto end_compute = std::chrono::high_resolution_clock::now();
-        auto start_return = std::chrono::high_resolution_clock::now();
+        d_gas_ax[i] += local_acc_x;
+        d_gas_ay[i] += local_acc_y;
+        d_gas_az[i] += local_acc_z;
+    }
+
+#ifdef USE_GPU
+    auto end_compute = std::chrono::high_resolution_clock::now();
+    auto start_return = std::chrono::high_resolution_clock::now();
 
 #pragma omp target exit data map(                                             \
         from : d_gas_ax[0 : n_gas], d_gas_ay[0 : n_gas], d_gas_az[0 : n_gas], \
@@ -1175,132 +1113,21 @@ void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
             d_gas_zeta[0 : n_gas], d_dm_px[0 : n_dm], d_dm_py[0 : n_dm],      \
             d_dm_pz[0 : n_dm], d_dm_m[0 : n_dm], d_dm_bvh[0 : dm_num_nodes])
 
-        auto end_return = std::chrono::high_resolution_clock::now();
+    auto end_return = std::chrono::high_resolution_clock::now();
 
-        diag.add_prof_time(
-            ProfRegion::Transf,
-            std::chrono::duration_cast<std::chrono::microseconds>(
-                end_transfer - start_transfer)
-                .count());
-        diag.add_prof_time(
-            ProfRegion::Compute,
-            std::chrono::duration_cast<std::chrono::microseconds>(end_compute -
-                                                                  start_compute)
-                .count());
-        diag.add_prof_time(
-            ProfRegion::Ret,
-            std::chrono::duration_cast<std::chrono::microseconds>(end_return -
-                                                                  start_return)
-                .count());
-
-    } else
+    diag.add_prof_time(ProfRegion::Transf,
+                       std::chrono::duration_cast<std::chrono::microseconds>(
+                           end_transfer - start_transfer)
+                           .count());
+    diag.add_prof_time(ProfRegion::Compute,
+                       std::chrono::duration_cast<std::chrono::microseconds>(
+                           end_compute - start_compute)
+                           .count());
+    diag.add_prof_time(ProfRegion::Ret,
+                       std::chrono::duration_cast<std::chrono::microseconds>(
+                           end_return - start_return)
+                           .count());
 #endif
-    {
-        // ========================================================================
-        // CPU IMPLEMENTATION
-        // ========================================================================
-#pragma omp parallel for schedule(dynamic, 64)
-        for (size_t i = 0; i < n_gas; ++i) {
-            double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
-            double m_gas = mass[i];
-            double h_i = h[i];
-            double zeta_i = zeta[i];
-
-            double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
-
-            int stack[128];
-            int stack_ptr = 0;
-            stack[stack_ptr++] = 0;
-
-            while (stack_ptr > 0) {
-                int node_idx = stack[--stack_ptr];
-                const BVHNode& node = dm.bvh_nodes[node_idx];
-
-                double aabb_dist_sq =
-                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
-                                         domain_size) +
-                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
-                                         domain_size) +
-                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
-                                         domain_size);
-
-                if (aabb_dist_sq > search_sq) continue;
-
-                if (node.particle_idx != -1) {
-                    int j = node.particle_idx;
-
-                    double dx = p1_x - dm.pos_x[j];
-                    if (dx > 0.5 * domain_size)
-                        dx -= domain_size;
-                    else if (dx < -0.5 * domain_size)
-                        dx += domain_size;
-
-                    double dy = p1_y - dm.pos_y[j];
-                    if (dy > 0.5 * domain_size)
-                        dy -= domain_size;
-                    else if (dy < -0.5 * domain_size)
-                        dy += domain_size;
-
-                    double dz = p1_z - dm.pos_z[j];
-                    if (dz > 0.5 * domain_size)
-                        dz -= domain_size;
-                    else if (dz < -0.5 * domain_size)
-                        dz += domain_size;
-
-                    dx = -dx;
-                    dy = -dy;
-                    dz = -dz;
-
-                    double dist_sq = dx * dx + dy * dy + dz * dz;
-
-                    if (use_pm && dist_sq > cutoff_sq) continue;
-                    double r = std::sqrt(dist_sq + 1e-24);
-
-                    // Gas kernel derivatives
-                    double dphi_dr_i, dW_dr_i, dphi_dr_j, dummy_dphi_dh;
-                    Kernels::adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
-
-                    // DM kernel derivatives (uses fixed base_soft)
-                    Kernels::gravity_derivatives(r, base_soft, dphi_dr_j,
-                                                 dummy_dphi_dh);
-
-                    double m_j = dm.mass[j];
-                    double force_mag_over_r =
-                        (G / 2.0) *
-                        ((dphi_dr_i + dphi_dr_j) + (zeta_i * dW_dr_i) / m_gas) /
-                        r;
-
-                    if (use_pm) {
-                        double r_scaled = r / (2.0 * r_s);
-                        double taper = std::erfc(r_scaled) +
-                                       (r / (std::sqrt(M_PI) * r_s)) *
-                                           std::exp(-r_scaled * r_scaled);
-                        force_mag_over_r *= taper;
-                    }
-
-                    local_acc_x += force_mag_over_r * m_j * dx;
-                    local_acc_y += force_mag_over_r * m_j * dy;
-                    local_acc_z += force_mag_over_r * m_j * dz;
-
-                    double a_dm = force_mag_over_r * m_gas;
-#pragma omp atomic
-                    dm.acc_x[j] -= a_dm * dx;
-#pragma omp atomic
-                    dm.acc_y[j] -= a_dm * dy;
-#pragma omp atomic
-                    dm.acc_z[j] -= a_dm * dz;
-
-                } else {
-                    stack[stack_ptr++] = node.left_child;
-                    stack[stack_ptr++] = node.right_child;
-                }
-            }
-
-            acc_x[i] += local_acc_x;
-            acc_y[i] += local_acc_y;
-            acc_z[i] += local_acc_z;
-        }
-    }
 }
 
 void GasParticleSystem::hydro_step(const Config& config, double a, double H,
@@ -1390,7 +1217,7 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
             u[i] = u_new;
         } else {
             // NORMAL REGIME: Trust the integrated internal energy.
-            // Re-sync the entropy array to match the shock-heated state.
+            // Re-sync the entropy array to match the shock-heated state
             entropy[i] = gamma_minus_1 * u[i] / std::pow(rho[i], gamma_minus_1);
         }
 
@@ -1686,7 +1513,7 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                     // SOLVER PIPELINE
                     Reconstruction::ReconstructedFace face =
                         compute_face_reconstruction(p_i, grad_i, p_j, grad_j,
-                                                    domain_size, 1e-12,
+                                                    domain_size, density_floor,
                                                     this->pressure_floor);
                     if (!face.is_valid) continue;
 

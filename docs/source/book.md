@@ -2676,7 +2676,7 @@ For each node it encounters, it evaluates a geometric rule known as the **Multip
 
 * **If the threshold is exceeded ($L/d \ge \theta$):** The node is considered too close for the previous approximation to be accurate. The algorithm opens the node and looks at the smaller sub-cubes inside it, repeating the MAC check. If it reaches the bottom of the tree (a leaf node), it performs a direct Particle-Particle (PP) calculation.
 
-By lumping distant structures into single, coarse computations, the Barnes-Hut algorithm prunes the majority of the tree, dropping the computational cost of gravity from $O(N^2)$ to $O(N \log N)$.
+By grouping distant structures into single, coarse computations, the Barnes-Hut algorithm prunes the majority of the tree, dropping the computational cost of gravity from $O(N^2)$ to $O(N \log N)$.
 
 ### The Multipole Expansion
 
@@ -2725,8 +2725,6 @@ Where $j$ and $k$ represent the X, Y, and Z coordinate axes (e.g., $r_{i,1}$ is 
 Once this $3 \times 3$ matrix is pre-calculated and stored for a tree node, the quadrupole contribution to the gravitational potential at any distant point $\mathbf{r} = (r_1, r_2, r_3)$ can be evaluated using matrix multiplication:
 $$\Phi_{\text{quadrupole}} = -\frac{G}{2r^5} \sum_{j=1}^{3} \sum_{k=1}^{3} Q_{jk} r_j r_k$$
 
-**Why Barnes-Hut Stops at the Monopole**
-
 If we wanted an ultra-precise Barnes-Hut tree, we could calculate the Quadrupole Moment Tensor ($3 \times 3$ matrix) for every single node in the tree and store it. When calculating gravity, we would compute the monopole (point mass) and then add the quadrupole correction using matrix multiplication.
 
 However, matrix multiplication is computationally expensive. Because the quadrupole effect decays rapidly as $1/r^3$, its physical influence vanishes over short distances. The Multipole Acceptance Criterion (MAC) ensures we only evaluate nodes where $r$ is so massive that the $1/r^3$ quadrupole fraction shrinks below our acceptable margin of error. Enforcing the MAC allows us to process gravity using fast, simple point masses.
@@ -2763,9 +2761,9 @@ For every particle, we generate a unique 64-bit integer representing its positio
 
 To handle collisions, the sorting algorithm utilizes a deterministic tie-breaker. If two Morton codes are identical, the algorithm compares the particles' original, unique ID numbers to decide which one goes first.
 
-If we trace the path created by counting upward through these Morton codes, the path traces a distinct "Z" shape that repeatedly subdivides space, creating a fractal pattern known as the **Z-Order Curve**.
+If we trace the path created by counting upward through these Morton codes, we get a distinct "Z" shape that repeatedly subdivides space, creating a fractal pattern known as the **Z-Order Curve**.
 
-This curve acts like a single, unbroken string folded tightly back and forth to completely fill the 3D simulation box. The convenience of this string is that if two particles are physically close to each other in the 3D box, their Morton codes will (in the majority of cases) be close to each other.
+This curve acts like a string folded back and forth filling the whole simulation box. The convenience of this string is that if two particles are physically close to each other in the 3D box, their Morton codes will (in the majority of cases) be close to each other.
 
 ### The Karras Tree Construction
 
@@ -2783,13 +2781,29 @@ For $N$ particles (the leaves), a binary tree will have $N-1$ internal branching
 
 Because there are $N-1$ internal nodes, we can launch one GPU thread for every internal node simultaneously. Each thread looks at its corresponding index in the sorted Morton array and performs three lock-free steps:
 
-1. **Find the Range:** It compares adjacent Morton codes to determine the upper and lower bounds of the specific cluster of particles it is responsible for.
+1. **Find the Range:** It compares adjacent Morton codes to determine the upper and lower bounds of the specific cluster of particles it is responsible for by evaluating a delta function, which counts the number of matching leading bits between any two Morton codes.
+    > As an example, imagine a simulation with just **$N=4$** particles.
+    > * **Internal Nodes:** Indices 0, 1, and 2.
+    > * **Leaf Nodes (Particles):** Indices 3, 4, 5, and 6.
+    > * Assume the particles have been sorted by their binary Morton codes:
+    > * Particle 0: `001`
+    > * Particle 1: `011`
+    > * Particle 2: `100`
+    > * Particle 3: `110`  
+    >
+    > Thread 0 (responsible for Internal Node 0) looks at its neighbors:  
+    >
+    > *  Direction: Thread 0 compares its Morton code (Particle 0) with its immediate neighbors. Looking right to Particle 1 (011), they share 1 leading bit (the first 0). Looking left, there is no particle, which the algorithm treats as a delta of -1. Because it shares more bits to the right than to the left ($1 > -1$), Thread 0 knows its cluster expands to the right. The "outside" boundary of this cluster is therefore defined by that left-side baseline: delta_min = -1.  
+    > *  Number of elements: The thread searches to the right, continuing as long as the delta between Particle 0 and the target particle remains greater than the delta_min boundary. It checks Particle 1 (delta = 1), Particle 2 (delta = 0), and Particle 3 (delta = 0). Because $1, 0,$ and $0$ are all greater than $-1$, they all belong to the cluster. The search hits the right edge of the array, so it stops. Thread 0 has determined it owns the full root range [0, 3].
 
 2. **Find the Split:** Using a binary search algorithm over the Morton codes, it finds the index where the highest differing bit occurs. This is the spatial plane that divides its cluster into a left half and a right half.
+    > Following the example: Looking at the range `[0, 3]`, Thread 0 sees the highest differing bit is the leftmost bit (Particle 0 starts with a `0`, Particle 3 starts with a `1`). It binary searches the range to find where this bit flips from `0` to `1`. It finds the flip happens between Particle 1 (`011`) and Particle 2 (`100`). Therefore, the split divides the cluster into a left half **[0, 1]** and a right half **[2, 3]**.
 
 3. **Assign Children:** It assigns the left side to its `left_child` and the right side to its `right_child`.
+    > In our example, because the left side `[0, 1]` contains multiple particles, Thread 0 cannot point to a leaf. Instead, it sets its `left_child` to **Internal Node 1**. Because the right side `[2, 3]` also contains multiple particles, it sets its `right_child` to **Internal Node 2**.
+    > Conversely, when Thread 1 processes the `[0, 1]` range, it splits between 0 and 1. Because the left side is Particle 0, Thread 1 sets its `left_child` to **Leaf Index 3**. Because the right side is Particle 1, it sets its `right_child` to **Leaf Index 4**.
 
-Because this relies on reading the sorted Morton array, the entire hierarchy can be built in parallel.
+Because this relies only on reading the sorted Morton array, no thread needs to wait for another to finish, and the entire hierarchy can be built in parallel.
 
 #### 2. Bottom-Up Aggregation
 
@@ -2817,13 +2831,11 @@ The traversal then operates as a flat `while` loop:
 
 2. The loop begins. The thread pops a node off the top of the stack.
 
-3. **For Hydrodynamics:** It checks if the node's bounding box overlaps the gas particle's search radius. If it doesn't, the thread issues a `continue` statement, culling the entire branch and moving on to the next node on the stack.
+3. This is the culling step:
+    * **For Hydrodynamics:** It checks if the node's bounding box overlaps the gas particle's search radius. If it doesn't, the thread issues a `continue` statement, culling the entire branch and moving on to the next node on the stack.
+    * **For Gravity:** It calculates the distance to the node's Center of Mass and checks the Multipole Acceptance Criterion (MAC). If the node is far enough away, it applies the bulk gravitational pull of the entire node and issues a `continue` statement.
 
-4. **For Gravity:** It calculates the distance to the node's Center of Mass and checks the Multipole Acceptance Criterion (MAC). If the node is far enough away, it applies the bulk gravitational pull of the entire node and issues a `continue` statement.
-
-5. If the node must be opened, the thread pushes the `left_child` and `right_child` integers onto its local stack and repeats the loop.
-
-By flattening the 3D space into a Z-order curve, building the hierarchy lock-free with Karras' algorithm, and traversing it with a manual memory stack, we have ported the oct-tree to the parallel architecture of the GPU.
+4. If the node must be opened, the thread pushes the `left_child` and `right_child` integers onto its local stack and repeats the loop.
 
 ### The TreePM Architecture
 

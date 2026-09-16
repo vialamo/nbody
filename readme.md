@@ -21,7 +21,7 @@ This repository documents my work in cosmological N-body/hydrodynamics simulatio
 * **High-Performance Computing (HPC):**
     * **OpenMP Multithreading:** Heavy loops (such as the Riemann solver, mass assignment, and grid calculations) are parallelized across available CPU cores.
     * **SIMD Vectorization:** Core CPU mathematics leverage Eigen and AVX vectorization for cache-friendly, contiguous memory speedups.
-    * **GPU Offloading:** The flattened Linear Bounding Volume Hierarchy (LBVH) tree traversals (using Morton codes) can be optionally offloaded to NVIDIA GPUs using OpenMP `#pragma omp target` directives via the NVIDIA HPC SDK (nvc++) or the Clang/LLVM toolchain.
+    * **GPU Offloading:** The flattened Linear Bounding Volume Hierarchy (LBVH) tree traversals (using Morton codes) can be offloaded to NVIDIA GPUs using OpenMP `#pragma omp target` directives via the NVIDIA HPC SDK (nvc++) or the Clang/LLVM toolchain.
 * **Numerical Methods:**
     * **Operator Splitting & Subcycling:** Employs a Strang-split fractional step method to decouple gravity, hydrodynamics, and cooling. Fast/stiff physics are **subcycled**.
     * **Cloud-in-Cell (CIC):** A symmetric mass-assignment and force-interpolation scheme for the PM grid to ensure momentum conservation.
@@ -223,7 +223,6 @@ Configures the fluid dynamics solver for the baryonic gas.
 
 Configures the subgrid models.
 
-* **`enable_subgrid_gravity`**: If enabled, the code calculates short-range Particle-Particle (PP) gravitational forces between the collisionless dark matter particles and the baryonic gas. Otherwise there are not intra-cell interactions between them.
 * **`enable_subgrid_clumping`**: Enables the cooling subgrid model. If enabled, the code applies a density-dependent clumping factor to scale the radiative cooling rate, compensating for unresolved high-density gas on coarse grids.
 * **`subgrid_clumping_amplitude`**: The amplitude for the subgrid cooling factor. Set to -1 to let the simulation auto-calculate this based on the grid resolution.
 
@@ -257,8 +256,7 @@ Manages how and when the simulation writes data to disk.
 
 High-Performance Computing (HPC) and hardware execution settings.
 
-* **`num_threads`**: The maximum number of OpenMP threads to spawn. If set to `0`, the simulation will defer to the terminal's `OMP_NUM_THREADS` environment variable, or default to all available CPU cores. 
-* **`use_gpu`**: Boolean. If set to `true`, the engine offloads compute-heavy kernels to the GPU. *Note: If enabled but no compatible OpenMP offload device is detected at runtime, the code falls back to CPU execution.*
+* **`num_threads`**: The maximum number of OpenMP threads to spawn. If set to `0`, the simulation will defer to the terminal's `OMP_NUM_THREADS` environment variable, or default to all available CPU cores.
 
 ## HDF5 Snapshot Format & Units
 

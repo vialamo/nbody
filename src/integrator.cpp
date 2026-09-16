@@ -599,12 +599,7 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
         ScopedTimer pp_timer(diag, TimerRegion::PP);
         state.dm.compute_and_add_pp_forces(config, diag);  // DM-DM
 
-        if (config.hydro_method == HydroMethod::Eulerian &&
-            config.enable_subgrid_gas_gravity) {
-            state.dm.compute_gas_dm_pp_forces(*state.gas, state.pm_gravity_x,
-                                              state.pm_gravity_y,
-                                              state.pm_gravity_z, config, diag);
-        } else if (config.hydro_method == HydroMethod::MFM) {
+        if (config.hydro_method == HydroMethod::MFM) {
             state.mfm_gas->compute_and_add_pp_forces(config, diag);  // Gas-Gas
             state.mfm_gas->compute_cross_pp_forces(state.dm, config,
                                                    diag);  // Gas-DM and DM-Gas
