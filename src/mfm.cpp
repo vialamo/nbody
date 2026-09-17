@@ -730,12 +730,14 @@ double GasParticleSystem::get_gravity_timestep(const Config& config) const {
     return dt_grav * config.gravity_accuracy_eta;
 }
 
-void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
+void GasParticleSystem::compute_and_add_pp_forces(double a,
+                                                  const Config& config,
                                                   Diagnostics& diag) {
     if (num_particles == 0) return;
 
     const double domain_size = config.domain_size;
-    const double G = config.G;
+    // Pre-scale G so all output forces are comoving accelerations
+    const double G = config.G / (a * a * a);
     const double cutoff_sq = config.cutoff_radius_squared;
     const double r_s = config.PM_smoothing_cells * config.cell_size;
     const bool use_pm = config.use_PM;
@@ -853,7 +855,7 @@ void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
                 double force_mag_over_r = G / (pp_dist_sq * pp_dist);
 
                 // Override 'r' to match the DM's PM taper behavior perfectly
-                r = pp_dist;
+                // r = pp_dist;
 #else
                 double h_j = d_h[j];
                 double zeta_j = d_zeta[j];
@@ -918,13 +920,14 @@ void GasParticleSystem::compute_and_add_pp_forces(const Config& config,
 #endif
 }
 
-void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
+void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
                                                 const Config& config,
                                                 Diagnostics& diag) {
     if (num_particles == 0 || dm.num_particles == 0) return;
 
     const double domain_size = config.domain_size;
-    const double G = config.G;
+    // Pre-scale G so all output forces are comoving accelerations
+    const double G = config.G / (a * a * a);
     const double soft_sq = config.softening_squared;
     const double cutoff_sq = config.cutoff_radius_squared;
     const double r_s = config.PM_smoothing_cells * config.cell_size;
@@ -938,6 +941,7 @@ void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
     const double search_sq =
         use_pm ? cutoff_sq : std::numeric_limits<double>::infinity();
     const double base_soft = std::sqrt(soft_sq);
+    const double spline_equivalent_h = 2.8 * base_soft;
 
     // Extract pointers
     double* d_gas_px = pos_x.data();
@@ -1053,18 +1057,17 @@ void GasParticleSystem::compute_cross_pp_forces(ParticleSystem& dm,
                 double force_mag_over_r = G / (pp_dist_sq * pp_dist);
 
                 // Override 'r' to match the DM's PM taper behavior perfectly
-                r = pp_dist;
+                // r = pp_dist;
 #else
                 // Gas kernel derivatives
                 double dphi_dr_i, dW_dr_i, dphi_dr_j, dummy_dphi_dh;
                 Kernels::adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
 
-                // DM kernel derivatives (uses fixed base_soft)
-                Kernels::gravity_derivatives(r, base_soft, dphi_dr_j,
+                // DM kernel derivatives
+                Kernels::gravity_derivatives(r, spline_equivalent_h, dphi_dr_j,
                                              dummy_dphi_dh);
 
                 // Force magnitude
-
                 double force_mag_over_r =
                     (G / 2.0) *
                     ((dphi_dr_i + dphi_dr_j) + (zeta_i * dW_dr_i) / m_gas) / r;
@@ -1201,50 +1204,6 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
 
         // Calculate pressure based on 'u'
         pressure[i] = gamma_minus_1 * rho[i] * u[i];
-
-        // Artificial Jeans Pressure Floor (Bate & Burkert 1997 Mass Criterion)
-        {
-            // Convert to physical code units
-            double a_inv3 = 1.0 / (a * a * a);
-            double rho_phys = rho[i] * a_inv3;
-
-            // Calculate physical hydrogen number density
-            double rho_cgs = rho_phys * config.unit_density_cgs;
-            double nH_cgs =
-                (rho_cgs * constants::X_MASS_FRAC) / constants::M_P_CGS;
-
-            // ONLY apply the Jeans floor to collapsed, dense gas
-            if (nH_cgs > 0.01) {
-                // Calculate the Mass Resolution Limit (Kernel Mass)
-                double M_kernel = config.mfm_target_neighbors * mass[i];
-
-                // Bate & Burkert Criterion: M_Jeans >= N_safety * M_kernel
-                // N_safety = 1.0 to 2.0 is the standard for Lagrangian codes?
-                constexpr double N_safety = 1.5;
-                double M_jeans_min = N_safety * M_kernel;
-
-                // Invert the Jeans Mass equation to find the minimum
-                // Pressure P_Jeans = (G / (\gamma * \pi)) * (6 * M_J /
-                // \pi)^(2/3) * \rho^(4/3)
-                double mass_factor =
-                    std::pow(6.0 * M_jeans_min / M_PI, 2.0 / 3.0);
-                double P_jeans_phys = (config.G / (config.gamma * M_PI)) *
-                                      mass_factor *
-                                      std::pow(rho_phys, 4.0 / 3.0);
-
-                // Convert back to code pressure units (P_code = P_phys * a)
-                double P_jeans_code = P_jeans_phys * a;
-
-                if (pressure[i] < P_jeans_code) {
-                    pressure[i] = P_jeans_code;
-
-                    // Thermodynamically sync internal energy and entropy
-                    u[i] = pressure[i] / (gamma_minus_1 * rho[i]);
-                    entropy[i] =
-                        gamma_minus_1 * u[i] / std::pow(rho[i], gamma_minus_1);
-                }
-            }
-        }
 
         // Passively sync total energy for diagnostic conservation tracking
         total_energy[i] = u[i] + ke;

@@ -2,8 +2,8 @@
 #include <vector>
 
 #include "config.h"
-#include "types.h"
 #include "lbvh.h"
+#include "types.h"
 
 class Diagnostics;
 
@@ -30,7 +30,8 @@ class ParticleSystem {
     std::vector<double> vel_y;
     std::vector<double> vel_z;
 
-    std::vector<double> acc_x;
+    std::vector<double> acc_x;  // Comoving gravitational acceleration
+                                // [Code Vel / Code Time]
     std::vector<double> acc_y;
     std::vector<double> acc_z;
 
@@ -49,7 +50,8 @@ class ParticleSystem {
     void interpolate_cic_forces(const Grid3D& ax_grid, const Grid3D& ay_grid,
                                 const Grid3D& az_grid, const Config& config);
 
-    void compute_and_add_pp_forces(const Config& config, Diagnostics& diag);
+    void compute_and_add_pp_forces(double a, const Config& config,
+                                   Diagnostics& diag);
 
     double get_gravity_timestep(const Config& config) const;
 

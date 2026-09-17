@@ -20,14 +20,14 @@ class GasParticleSystem {
     std::vector<double> vel_x;  // Comoving velocity [Code Velocity]
     std::vector<double> vel_y;
     std::vector<double> vel_z;
-    std::vector<double>
-        acc_x;  // Peculiar gravitational acceleration [Code Vel / Code Time]
+    std::vector<double> acc_x;  // Comoving gravitational acceleration
+                                // [Code Vel / Code Time]
     std::vector<double> acc_y;
     std::vector<double> acc_z;
     std::vector<double> mass;  // Particle mass [Code Mass]
 
     // MFM-specific quantities
-    std::vector<double> hydro_acc_x;  // Peculiar hydrodynamic acceleration
+    std::vector<double> hydro_acc_x;  // Comoving hydrodynamic acceleration
                                       // [Code Vel / Code Time]
     std::vector<double> hydro_acc_y;
     std::vector<double> hydro_acc_z;
@@ -110,9 +110,10 @@ class GasParticleSystem {
                                 const Grid3D& az_grid, const Config& config);
 
     // Short-range PP Gravity
-    void compute_and_add_pp_forces(const Config& config, Diagnostics& diag);
-    void compute_cross_pp_forces(ParticleSystem& dm, const Config& config,
-                                 Diagnostics& diag);
+    void compute_and_add_pp_forces(double a, const Config& config,
+                                   Diagnostics& diag);
+    void compute_cross_pp_forces(double a, ParticleSystem& dm,
+                                 const Config& config, Diagnostics& diag);
 
     const Grid3D& get_rho() const { return gas_rho; }
 

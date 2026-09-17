@@ -16,7 +16,7 @@ struct SimState {
     Grid3D total_rho;
     Grid3D phi;
 
-    // Global Gravitational Field on the Eulerian Mesh
+    // Global Comoving Gravitational Acceleration on the Mesh
     Grid3D pm_gravity_x;
     Grid3D pm_gravity_y;
     Grid3D pm_gravity_z;

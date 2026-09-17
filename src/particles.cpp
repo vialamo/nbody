@@ -132,13 +132,14 @@ void ParticleSystem::build_lbvh(const Config& config) {
                                        nullptr, morton_codes, bvh_nodes);
 }
 
-void ParticleSystem::compute_and_add_pp_forces(const Config& config,
+void ParticleSystem::compute_and_add_pp_forces(double a, const Config& config,
                                                Diagnostics& diag) {
     if (num_particles == 0) return;
 
     const size_t n_parts = num_particles;
     const double domain_size = config.domain_size;
-    const double G = config.G;
+    // Pre-scale G so all output forces are comoving accelerations
+    const double G = config.G / (a * a * a);
     const double soft_sq = config.softening_squared;
     const double cutoff_sq = config.cutoff_radius_squared;
     const double r_s = config.PM_smoothing_cells * config.cell_size;
@@ -232,9 +233,10 @@ void ParticleSystem::compute_and_add_pp_forces(const Config& config,
                 double a_pp = G * node.mass / pp_dist_sq;
 
                 if (use_pm) {
-                    double r_scaled = pp_dist / (2.0 * r_s);
+                    double r = std::sqrt(dist_sq);
+                    double r_scaled = r / (2.0 * r_s);
                     a_pp *= (std::erfc(r_scaled) +
-                             (pp_dist / (std::sqrt(M_PI) * r_s)) *
+                             (r / (std::sqrt(M_PI) * r_s)) *
                                  std::exp(-r_scaled * r_scaled));
                 }
 

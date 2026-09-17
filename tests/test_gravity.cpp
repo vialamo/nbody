@@ -109,7 +109,7 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
 
         sys.build_lbvh(config);
         sys.bin_and_assign_mass(config);
-        sys.compute_and_add_pp_forces(config, dummy_diag);
+        sys.compute_and_add_pp_forces(1.0, config, dummy_diag);
 
         // Exact Newtonian Gravity: F = G * m1 * m2 / r^2
         // F = 1.0 * 1.0 * 1.0 / (0.25 * 0.25) = 1.0 / 0.0625 = 16.0
@@ -136,7 +136,7 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
         // Reset accelerations to 0 before computing
         std::fill(sys.acc_x.begin(), sys.acc_x.end(), 0.0);
 
-        sys.compute_and_add_pp_forces(config, dummy_diag);
+        sys.compute_and_add_pp_forces(1.0, config, dummy_diag);
 
         // Because dist (0.25) > cutoff_radius (0.15), the force should be
         // exactly 0.0

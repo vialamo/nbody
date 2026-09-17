@@ -2397,11 +2397,8 @@ This test ensures the solver conserves all quantities in the absence of external
 This test has a known analytical solution (the **Sod Shock Tube**, named after Gary A. Sod, is the most famous variant) that validates the code's ability to handle all three fundamental wave structures.
 
 * **The Setup:** A 1D tube of gas is initialized with a "diaphragm" at its center. The gas on the "Left" state has a high density and pressure, while the gas on the "Right" state has a low density and pressure. At $t=0$, the diaphragm is removed.
-* **The Expected Result:** The collision of the two states generates a self-similar wave structure (meaning its shape remains constant as it stretches over time). This structure is complex, splitting into three distinct features (see below).
-* **The Validation:** After evolving the system to a time $t$, a snapshot of the simulation's density, pressure, and velocity along the 1D line is plotted. This must be compared against the known mathematical solution. A successful test will capture the speed, position, and amplitude of the three key features:
-    1.  A **Shock Wave** (an abrupt, discontinuous compression) propagating into the low-density region.
-    2.  A **Rarefaction Fan** (a smooth, continuous expansion) propagating back into the high-density region.
-    3.  A **Contact Discontinuity** (a jump in density, but not pressure) separating the two materials. Capturing this specific feature sharply, without excessive smearing, is the primary benchmark for the **HLLC Riemann solver**.
+* **The Expected Result:** The collision of the two states generates a self-similar wave structure (meaning its shape remains constant as it stretches over time). This structure is complex, splitting into several distinct features (see below).
+* **The Validation:** After evolving the system to a time $t$, a snapshot of the simulation's density, pressure, and velocity along the 1D line is plotted. This must be compared against the known analytical solution (see below).
 
 #### Physical Assumptions of the Analytical Model
 
@@ -2409,12 +2406,12 @@ The model enforces the following assumptions:
 
 * **Ideal, Adiabatic Gas:** The fluid obeys the ideal gas equation of state without any radiative cooling, heating, or thermal conduction.
 * **Pure Hydrodynamics:** The system is isolated. No external body forces, such as gravity or cosmological expansion, are present.
-* **Exact Initial States:** The fluid begins at rest ($v_L = v_R = 0$). The left state is initialized with $P_L = 1.0$ and $\rho_L = 1.0$, while the right state is set to $P_R = 0.1$ and $\rho_R = 0.125$.
+* **Initial States:** The fluid begins at rest ($v_L = v_R = 0$). The left state is initialized with $P_L = 1.0$ and $\rho_L = 1.0$, while the right state is set to $P_R = 0.1$ and $\rho_R = 0.125$.
 
 
 #### The Analytical Solution and Wave Regions
 
-The sudden removal of the diaphragm divides the 1D space into five regions, separated by moving boundaries. Let $c_L = \sqrt{\gamma P_L / \rho_L}$ represent the initial speed of sound in the unperturbed left state.
+The removal of the diaphragm divides the 1D space into five regions, separated by moving boundaries. Let $c_L = \sqrt{\gamma P_L / \rho_L}$ represent the initial speed of sound in the unperturbed left state.
 
 * **Region 1: Unperturbed Left State:** This is the gas that the rarefaction wave has not yet reached ($x \le x_0 - c_L t$). The fluid remains at its initial state $\rho_L$, $P_L$, and $v_L$.
 
@@ -2422,7 +2419,7 @@ The sudden removal of the diaphragm divides the 1D space into five regions, sepa
 
 * **Region 3: Post-Fan Plateau (Star State Left):** The fully expanded gas behind the contact discontinuity. The state sits at constant intermediate values $\rho_3$, $P_*$, and $u_*$.
 
-* **Region 4: Post-Shock Plateau (Star State Right):** The abruptly compressed gas immediately ahead of the contact discontinuity. Across a contact discontinuity, pressure and velocity must balance perfectly to avoid infinite accelerations, so $P = P_*$ and $v = u_*$. However, the density jumps to a new value, $\rho_4$.
+* **Region 4: Post-Shock Plateau (Star State Right):** The abruptly compressed gas immediately ahead of the contact discontinuity. Across a contact discontinuity, pressure and velocity must balance to avoid infinite accelerations, so $P = P_*$ and $v = u_*$. However, the density jumps to a new value, $\rho_4$.
 
 * **Region 5: Unperturbed Right State:** The gas ahead of the primary shock wave ($x > x_0 + V_{shock} t$). The state remains at $\rho_R$, $P_R$, and $v_R$.
 
@@ -2435,10 +2432,24 @@ Across the contact discontinuity, pressure and velocity are continuous ($P_3 = P
 
 $$f(P_*) = f_L(P_*, W_L) + f_R(P_*, W_R) = 0$$
 
-Where $f_L$ represents the isentropic expansion and $f_R$ represents the shock jump conditions.
+Where $f_L$ represents the isentropic expansion and $f_R$ represents the shock jump conditions. This is determined by comparing our guess for $P_*$ against the initial pressure $P_K$:
+
+* **Rarefaction Wave (Isentropic Expansion, $P_* \le P_K$)**: If the intermediate pressure is lower than the initial pressure, the gas expands smoothly. The change in velocity is governed by the conservation of Riemann invariants along characteristics and the isentropic relation ($P/\rho^\gamma = \text{const}$), yielding:
+
+    $$f_K(P_*, W_K) = \frac{2c_K}{\gamma-1} \left( \left(\frac{P_*}{P_K}\right)^{\frac{\gamma-1}{2\gamma}} - 1 \right)$$
+
+    where $c_K = \sqrt{\gamma P_K / \rho_K}$ is the sound speed of the unperturbed gas.
+
+* **Shock Wave ($P_* > P_K$)**: If the intermediate pressure is higher, a shock compresses the gas abruptly. The velocity change is governed by the Rankine-Hugoniot jump conditions, which enforce mass, momentum, and energy conservation across the discontinuous shock front:
+
+    $$f_K(P_*, W_K) = (P_* - P_K) \sqrt{\frac{A_K}{P_* + B_K}}$$
+
+    where the data-dependent constants are defined as $A_K = \frac{2}{(\gamma+1)\rho_K}$ and $B_K = \frac{\gamma-1}{\gamma+1}P_K$.
+
+    Because this piecewise function $f(P_*)$ must be found using an iterative numerical root-finding method, such as the Newton-Raphson method.
 
 **2. The Intermediate Velocity ($u_*$)**
-With $P_*$ known, the post-shock velocity is derived directly from the momentum jump conditions across the shock front:
+With $P_*$ known, the post-shock velocity is derived from the momentum jump conditions across the shock front:
 
 $$u_* = (P_* - P_R) \left( \frac{1 - \mu^2}{\rho_R (P_* + \mu^2 P_R)} \right)^{1/2}$$
 
@@ -2460,7 +2471,7 @@ $$V_{shock} = c_R \sqrt{\frac{\gamma + 1}{2\gamma} \frac{P_*}{P_R} + \frac{\gamm
 
 This is a multi-dimensional test for how a code handles a powerful, symmetric explosion.
 
-* **The Setup:** A uniform, low-density gas fills the grid, initially at rest. At $t=0$, a very large amount of thermal energy is deposited into a single central cell.
+* **The Setup:** A uniform, low-density gas fills the grid, initially at rest. At $t=0$, a very large amount of thermal energy is deposited into a central cell.
 * **The Expected Result:** A spherical shock wave propagates outwards from the center, sweeping the surrounding gas into a dense, hot shell. Because this explosion creates extreme hypersonic velocities (high Mach numbers), this is a stress-test for the **Dual Energy Formalism** and the **MUSCL slope limiters**, proving the code can handle violent energy conversions.
 * **The Validation:** This test has a known self-similar solution and is validated in two ways:
     1.  **Symmetry:** The shock front must remain spherical. Any "boxy" or distorted shape indicates that the solver is introducing errors.
@@ -2497,7 +2508,7 @@ As the simulation progresses, the expansion of the universe applies adiabatic co
 
 However, it is possible to track the energy injected by the temperature floor, accounting whenever possible for every drop of artificial energy injected or removed from the system. 
 
-The temperature floor in cosmological simulations can have a physical interpretation as photoheating. It is often set as a proxy for the Cosmic Microwave Background (CMB) or the Ultraviolet Background (UVB) reionization. This way, it is consistent to log this energy injection as a heating source.
+The temperature floor in cosmological simulations can have a physical interpretation as photoheating. It is often set as a proxy for the Cosmic Microwave Background (CMB) or the Ultraviolet Background (UVB) reionization. In this case, it is consistent to log this energy injection as a heating source.
 
 #### The Energy-Entropy Switch (Dual Energy Formalism)
 
@@ -2507,7 +2518,7 @@ Unlike in the case of the temperature floor, the entropy switch represents a num
 
 ## Adaptive Timestep
 
-Computational cosmology simulations are filled with different components. Dark matter particles interact only through gravity, a long-range force that can be relatively slow. Baryonic gas, however, interacts through hydrodynamic pressure, leading to shock waves that propagate at very high speeds, and it radiates thermal energy, which can cause temperatures to drop very fast.
+Cosmological simulations are filled with different components. Dark matter particles interact only through gravity, a long-range force that can be relatively slow. Baryonic gas, however, interacts through hydrodynamic pressure, leading to shock waves that propagate at very high speeds, and it radiates thermal energy, which can cause temperatures to drop very fast.
 
 This creates a challenge: the simulation evolves on many different timescales simultaneously. If we were to use a single, "fixed" timestep ($\Delta t$) for the entire simulation, we would be forced to choose the *smallest* possible timescale. This would make the simulation to waste resources where bigger steps could be safely taken.
 
@@ -3405,7 +3416,7 @@ If the error curve remains flat and bounded (e.g., within $0.1\%$), it proves th
 | **Mass** | $M$ | No change |
 | **Position / Length** | $L$ | $a$ |
 | **Volume** | $L^3$ | $a^3$ |
-| **Peculiar Velocity** | $L / T$ | $a$ |
+| **Velocity** | $L / T$ | $a$ |
 | **Acceleration** | $L / T^2$ | $a$ |
 | **Force** | $M \cdot L / T^2$ | $a$ |
 | **Density** | $M / L^3$ | $a^{-3}$ |

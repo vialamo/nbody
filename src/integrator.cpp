@@ -155,7 +155,9 @@ void compute_PM_acceleration(SimState& state, const Config& config) {
                    const_cast<double*>(phi.raw_data()), 1.0, 0);
 
     double norm = 1.0 / ((double)N * N * N);
-    double factor = -norm / (2.0 * config.cell_size);
+    double a_inv3 = 1.0 / (state.scale_factor * state.scale_factor * state.scale_factor);
+    // Bake the comoving scaling into the finite difference operator
+    double factor = (-norm / (2.0 * config.cell_size)) * a_inv3;
 
     // Only collapse the outer two loops so we can optimize the index math
 #pragma omp parallel for collapse(2)
@@ -187,16 +189,12 @@ void apply_mesh_gas_gravity_kick(GasGrid& gas, const Grid3D& grav_x,
     if (config.hydro_method != HydroMethod::Eulerian) return;
 
     gas.update_primitive_variables(a);
-    double a3 = a * a * a;
 
     Grid3D total_ax_gas(config.mesh_size), total_ay_gas(config.mesh_size),
         total_az_gas(config.mesh_size);
-    total_ax_gas.data =
-        (grav_x.array() / a3) - (2 * H * gas.get_velocity_x().array());
-    total_ay_gas.data =
-        (grav_y.array() / a3) - (2 * H * gas.get_velocity_y().array());
-    total_az_gas.data =
-        (grav_z.array() / a3) - (2 * H * gas.get_velocity_z().array());
+    total_ax_gas.data = grav_x.array() - (2 * H * gas.get_velocity_x().array());
+    total_ay_gas.data = grav_y.array() - (2 * H * gas.get_velocity_y().array());
+    total_az_gas.data = grav_z.array() - (2 * H * gas.get_velocity_z().array());
 
     Grid3D g_mom_x_source(config.mesh_size), g_mom_y_source(config.mesh_size),
         g_mom_z_source(config.mesh_size);
@@ -257,7 +255,6 @@ void apply_mesh_gas_gravity_kick(GasGrid& gas, const Grid3D& grav_x,
 }
 
 static void apply_dm_kick(ParticleSystem& dm, double dt, double a, double H) {
-    double a3 = a * a * a;
     double step_grav_work = 0.0;
     double step_exp_work = 0.0;
     const size_t n = dm.num_particles;
@@ -278,9 +275,9 @@ static void apply_dm_kick(ParticleSystem& dm, double dt, double a, double H) {
         double vz_old = dm.vel_z[i];
 
         // Comoving Gravitational Acceleration
-        double gx = dm.acc_x[i] / a3;
-        double gy = dm.acc_y[i] / a3;
-        double gz = dm.acc_z[i] / a3;
+        double gx = dm.acc_x[i];
+        double gy = dm.acc_y[i];
+        double gz = dm.acc_z[i];
 
         // Intermediate velocity after pure gravity kick
         double vx_g = vx_old + gx * dt;
@@ -333,9 +330,7 @@ static void apply_dm_drift(ParticleSystem& dm, double dt, double domain_size) {
 static void apply_gas_particle_gravity_kick(GasParticleSystem& gas, double dt,
                                             double a, double H,
                                             const Config& config) {
-    double a3 = a * a * a;
-
-    // Calculate exact cosmological damping factors
+    // Calculate cosmological damping factors
     double drag_factor = 1.0;
     if (H > 0.0 && a > 0.0) {
         double a_next = a + a * H * dt;
@@ -359,9 +354,9 @@ static void apply_gas_particle_gravity_kick(GasParticleSystem& gas, double dt,
         double vz_old = gas.vel_z[i];
 
         // Comoving Gravitational Acceleration
-        double gx = gas.acc_x[i] / a3;
-        double gy = gas.acc_y[i] / a3;
-        double gz = gas.acc_z[i] / a3;
+        double gx = gas.acc_x[i];
+        double gy = gas.acc_y[i];
+        double gz = gas.acc_z[i];
 
         // Intermediate velocity after pure gravity kick
         double vx_g = vx_old + gx * dt;
@@ -410,8 +405,6 @@ static void apply_gas_particle_gravity_kick(GasParticleSystem& gas, double dt,
 
 static void apply_gas_particle_hydro_kick(GasParticleSystem& gas, double dt,
                                           double a, const Config& config) {
-    double inv_a = 1.0 / a;
-    double inv_a2 = inv_a * inv_a;
     const size_t n = gas.num_particles;
     double gamma_minus_1 = config.gamma - 1.0;
     constexpr double min_energy = 1e-20;
@@ -507,6 +500,7 @@ static void calculate_max_acceleration(ParticleSystem& dm) {
     const double* ay = dm.acc_y.data();
     const double* az = dm.acc_z.data();
 
+#pragma omp parallel for reduction(max:local_max) schedule(static)
     for (size_t i = 0; i < n; ++i) {
         double accel_sq = ax[i] * ax[i] + ay[i] * ay[i] + az[i] * az[i];
         local_max = (accel_sq > local_max) ? accel_sq : local_max;
@@ -522,6 +516,7 @@ static void calculate_max_acceleration(GasParticleSystem& gas) {
     const double* ay = gas.acc_y.data();
     const double* az = gas.acc_z.data();
 
+    #pragma omp parallel for reduction(max:local_max) schedule(static)
     for (size_t i = 0; i < n; ++i) {
         double accel_sq = ax[i] * ax[i] + ay[i] * ay[i] + az[i] * az[i];
         local_max = (accel_sq > local_max) ? accel_sq : local_max;
@@ -597,11 +592,11 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
     // PP GRAVITY
     if (config.use_PP) {
         ScopedTimer pp_timer(diag, TimerRegion::PP);
-        state.dm.compute_and_add_pp_forces(config, diag);  // DM-DM
+        state.dm.compute_and_add_pp_forces(state.scale_factor, config, diag);  // DM-DM
 
         if (config.hydro_method == HydroMethod::MFM) {
-            state.mfm_gas->compute_and_add_pp_forces(config, diag);  // Gas-Gas
-            state.mfm_gas->compute_cross_pp_forces(state.dm, config,
+            state.mfm_gas->compute_and_add_pp_forces(state.scale_factor, config, diag);  // Gas-Gas
+            state.mfm_gas->compute_cross_pp_forces(state.scale_factor, state.dm, config,
                                                    diag);  // Gas-DM and DM-Gas
         }
     }
