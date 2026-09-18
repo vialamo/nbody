@@ -4,6 +4,7 @@
 
 #include "cic.h"
 #include "diagnostics.h"
+#include "kernels.h"
 #include "math_utils.h"
 
 ParticleSystem::ParticleSystem(const Config& config)
@@ -138,13 +139,15 @@ void ParticleSystem::compute_and_add_pp_forces(double a, const Config& config,
 
     const size_t n_parts = num_particles;
     const double domain_size = config.domain_size;
-    // Pre-scale G so all output forces are comoving accelerations
+    // Pre-scale G so output forces are comoving accelerations
     const double G = config.G / (a * a * a);
     const double soft_sq = config.softening_squared;
     const double cutoff_sq = config.cutoff_radius_squared;
     const double r_s = config.PM_smoothing_cells * config.cell_size;
     const bool use_pm = config.use_PM;
     const size_t num_nodes = 2 * n_parts - 1;
+    const double base_soft = std::sqrt(soft_sq);
+    const double spline_h = 2.8 * base_soft;
 
     const double search_sq =
         use_pm ? cutoff_sq : std::numeric_limits<double>::infinity();
@@ -228,21 +231,30 @@ void ParticleSystem::compute_and_add_pp_forces(double a, const Config& config,
 
                 if (use_pm && dist_sq > cutoff_sq) continue;
 
-                double pp_dist_sq = dist_sq + soft_sq;
-                double pp_dist = std::sqrt(pp_dist_sq);
-                double a_pp = G * node.mass / pp_dist_sq;
+                double r = std::sqrt(dist_sq + 1e-24);
+                double force_mag_over_r = 0.0;
+
+                // Cubic Spline Gravity
+                double dphi_dr, dummy_dphi_dh;
+                Kernels::gravity_derivatives(r, spline_h, dphi_dr,
+                                             dummy_dphi_dh);
+
+                // DM-DM has identical kernels and no zeta, so (dphi_i +
+                // dphi_j)/2 = dphi_dr
+                force_mag_over_r = G * dphi_dr / r;
 
                 if (use_pm) {
-                    double r = std::sqrt(dist_sq);
+                    // Taper evaluated safely using true geometric distance 'r'
                     double r_scaled = r / (2.0 * r_s);
-                    a_pp *= (std::erfc(r_scaled) +
-                             (r / (std::sqrt(M_PI) * r_s)) *
-                                 std::exp(-r_scaled * r_scaled));
+                    double taper = std::erfc(r_scaled) +
+                                   (r / (std::sqrt(M_PI) * r_s)) *
+                                       std::exp(-r_scaled * r_scaled);
+                    force_mag_over_r *= taper;
                 }
 
-                local_acc_x += a_pp * dx / pp_dist;
-                local_acc_y += a_pp * dy / pp_dist;
-                local_acc_z += a_pp * dz / pp_dist;
+                local_acc_x += force_mag_over_r * node.mass * dx;
+                local_acc_y += force_mag_over_r * node.mass * dy;
+                local_acc_z += force_mag_over_r * node.mass * dz;
             } else {
                 stack[stack_ptr++] = node.left_child;
                 stack[stack_ptr++] = node.right_child;

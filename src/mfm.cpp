@@ -8,8 +8,6 @@
 #include "kernels.h"
 #include "math_utils.h"
 
-// #define UNCORRECTED_GRAVITY
-
 constexpr double density_floor = 1e-12;
 double g_pressure_floor = 0.0;
 
@@ -369,13 +367,16 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
     int max_iter = config.mfm_max_iterations;
     const double mean_spacing =
         domain_size / std::cbrt(num_particles > 0 ? num_particles : 1);
-    const double min_h_cap = 0.05 * mean_spacing;
+    const double min_h_cap = std::max(
+        0.05 * mean_spacing, 2.8 * std::sqrt(config.softening_squared));
     const double max_h_cap = 0.5 * domain_size;
-    constexpr double MAX_H_GROWTH = 8.0;
+    constexpr double MAX_H_GROWTH = 1e8;
 
     size_t num_h_clamped = 0;
+    size_t num_non_converged = 0;
 
-#pragma omp parallel for schedule(dynamic, 64) reduction(+ : num_h_clamped)
+#pragma omp parallel for schedule(dynamic, 64) \
+    reduction(+ : num_h_clamped, num_non_converged)
     for (size_t i = 0; i < num_particles; ++i) {
         double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
         double h_low = 0.0;
@@ -403,11 +404,31 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
                 break;
             }
 
+            // Floor Termination:
+            // We evaluated AT the floor, and we STILL have too many neighbors.
+            // This means the root is below the floor
+            if (h_guess <= min_h_cap && N_enc > target_N) {
+                h_clamped = true;
+                is_converged = true;
+                break;
+            }
+
+            // Ceiling Termination:
+            // We evaluated AT the ceiling, and we STILL have too few neighbors.
+            // This means the root is above the ceiling
+            if (h_guess >= step_max_h && N_enc < target_N) {
+                h_clamped = true;
+                is_converged = true;
+                break;
+            }
+
+            // Update bounds
             if (N_enc > target_N)
                 h_high = h_guess;
             else
                 h_low = h_guess;
 
+            // Calculate next step
             double dN_enc_dh =
                 (4.0 / 3.0) * M_PI *
                 (3.0 * h_guess * h_guess * current_n + h3 * current_dn_dh);
@@ -416,23 +437,28 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
             if (dN_enc_dh > 0.0)
                 h_new = h_guess - (N_enc - target_N) / dN_enc_dh;
 
+            // Bisection fallback
             if (h_new <= h_low || h_new >= h_high || dN_enc_dh <= 0.0) {
-                h_guess = std::isinf(h_high) ? (1.26 * h_guess)
-                                             : 0.5 * (h_low + h_high);
+                h_guess =
+                    std::isinf(h_high)
+                        ? (1.26 * h_guess)
+                        : std::sqrt(h_low *
+                                    h_high);  // (Geometric bisection is faster)
             } else {
                 h_guess = h_new;
             }
 
-            if (h_guess >= step_max_h) {
+            // Safe Clamping:
+            // Keep the NEXT guess within physical bounds so
+            // evaluate_density_sum doesn't crash, but DO NOT break. Let the
+            // loop prove it's actually stuck on the next pass
+            if (h_guess > step_max_h) {
                 h_guess = step_max_h;
-                h_clamped = true;
-                break;
             }
             if (h_guess < min_h_cap) {
                 h_guess = min_h_cap;
-                h_clamped = true;
-                break;
             }
+
             iter++;
         }
 
@@ -440,10 +466,14 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
             num_h_clamped++;
         }
 
+        if (!is_converged) {
+            num_non_converged++;
+        }
+
         // IMPORTANT: If we exited the loop due to max_iter OR clamping,
         // h_guess has been updated but current_n and current_dn_dh are stale.
         // We must re-evaluate
-        if (!is_converged) {
+        if (h_clamped || !is_converged) {
             // Sync the properties using the finalized, clamped h_guess
             evaluate_density_sum(i, h_guess, domain_size, current_n,
                                  current_dn_dh);
@@ -455,7 +485,6 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         h[i] = h_guess;
         rho[i] = mass[i] * current_n;
 
-#ifndef UNCORRECTED_GRAVITY
         // Adaptive gravity correction (Zeta)
         double Omega_i = std::max(
             1.0 + (h_guess / (current_n * 3.0)) * current_dn_dh, 1e-12);
@@ -473,10 +502,10 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         }
 
         zeta[i] = (h_guess / (current_n * 3.0)) * (1.0 / Omega_i) * zeta_sum;
-#endif
     }
 
     clamped_h_cases += num_h_clamped;
+    non_converged_h_cases += num_non_converged;
 }
 
 void GasParticleSystem::bin_and_assign_mass(const Config& config) {
@@ -744,11 +773,6 @@ void GasParticleSystem::compute_and_add_pp_forces(double a,
     const size_t n_gas = num_particles;
     const size_t num_nodes = 2 * n_gas - 1;
 
-#ifdef UNCORRECTED_GRAVITY
-    const double soft_sq = config.softening_squared;
-    const double base_soft = std::sqrt(soft_sq);
-#endif
-
     const double search_sq =
         use_pm ? cutoff_sq : std::numeric_limits<double>::infinity();
 
@@ -844,19 +868,6 @@ void GasParticleSystem::compute_and_add_pp_forces(double a,
                 double r = std::sqrt(dist_sq);
                 double m_j = d_m[j];
 
-#ifdef UNCORRECTED_GRAVITY
-                // Pure Plummer Softening (Matches DM exactly, bypasses Kernels)
-                double pp_dist_sq = dist_sq + soft_sq;
-                double pp_dist = std::sqrt(pp_dist_sq);
-
-                // We define force_mag_over_r so that when it is later
-                // multiplied by (m_j * dx), it equals the DM equation: (G * m_j
-                // * dx) / (pp_dist^3)
-                double force_mag_over_r = G / (pp_dist_sq * pp_dist);
-
-                // Override 'r' to match the DM's PM taper behavior perfectly
-                // r = pp_dist;
-#else
                 double h_j = d_h[j];
                 double zeta_j = d_zeta[j];
 
@@ -869,7 +880,6 @@ void GasParticleSystem::compute_and_add_pp_forces(double a,
                     ((dphi_dr_i + dphi_dr_j) + (zeta_i * dW_dr_i) / m_i +
                      (zeta_j * dW_dr_j) / m_j) /
                     r;
-#endif
 
                 if (use_pm) {
                     double r_scaled = r / (2.0 * r_s);
@@ -1046,19 +1056,6 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
                 double r = std::sqrt(dist_sq + 1e-24);
                 double m_j = d_dm_m[j];
 
-#ifdef UNCORRECTED_GRAVITY
-                // Pure Plummer Softening (Matches DM exactly, bypasses Kernels)
-                double pp_dist_sq = dist_sq + soft_sq;
-                double pp_dist = std::sqrt(pp_dist_sq);
-
-                // We define force_mag_over_r so that when it is later
-                // multiplied by (m_j * dx), it equals the DM equation: (G * m_j
-                // * dx) / (pp_dist^3)
-                double force_mag_over_r = G / (pp_dist_sq * pp_dist);
-
-                // Override 'r' to match the DM's PM taper behavior perfectly
-                // r = pp_dist;
-#else
                 // Gas kernel derivatives
                 double dphi_dr_i, dW_dr_i, dphi_dr_j, dummy_dphi_dh;
                 Kernels::adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
@@ -1071,7 +1068,6 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
                 double force_mag_over_r =
                     (G / 2.0) *
                     ((dphi_dr_i + dphi_dr_j) + (zeta_i * dW_dr_i) / m_gas) / r;
-#endif
 
                 if (use_pm) {
                     double r_scaled = r / (2.0 * r_s);
@@ -1374,20 +1370,39 @@ MFMFaceFlux solve_mfm_riemann(const Reconstruction::ReconstructedFace& face,
     return out;
 }
 
-Eigen::Vector3d compute_mfm_face_area_vector(
-    const Reconstruction::ParticleState& p_i, const Eigen::Matrix3d& B_i,
-    const Reconstruction::ParticleState& p_j, const Eigen::Matrix3d& B_j,
+static Eigen::Vector3d compute_mfm_face_area_vector(
+    const Reconstruction::ParticleState& p_i,
+    const Reconstruction::ParticleGradients& grad_i,
+    const Reconstruction::ParticleState& p_j,
+    const Reconstruction::ParticleGradients& grad_j,
     const Reconstruction::ReconstructedFace& face) {
     double V_i = p_i.mass / p_i.rho;
     double V_j = p_j.mass / p_j.rho;
+    Eigen::Vector3d dx_vec = face.n * face.r;
 
     double W_i, W_j;
     Kernels::cubic_spline_value(face.r, p_i.h, W_i);
     Kernels::cubic_spline_value(face.r, p_j.h, W_j);
 
-    Eigen::Vector3d dx_vec = face.n * face.r;
-    Eigen::Vector3d Area_vec =
-        (V_i * V_j * W_i * (B_i * dx_vec)) + (V_i * V_j * W_j * (B_j * dx_vec));
+    Eigen::Vector3d Area_vec = (V_i * V_j * W_i * (grad_i.B_matrix * dx_vec)) +
+                               (V_i * V_j * W_j * (grad_j.B_matrix * dx_vec));
+
+    double facenormal_dot_dp = Area_vec.dot(dx_vec);
+
+    // SPH Fallback for Ill-Conditioned Matrices
+    if (facenormal_dot_dp < 0.0 || grad_i.ill_conditioned ||
+        grad_j.ill_conditioned) {
+        double dW_dr_i, dW_dr_j, dummy_phi;
+
+        // Extract the spatial derivative (dW/dr)
+        Kernels::adaptive_gravity_terms(face.r, p_i.h, dummy_phi, dW_dr_i);
+        Kernels::adaptive_gravity_terms(face.r, p_j.h, dummy_phi, dW_dr_j);
+
+        double face_area_mag =
+            -(V_i * V_i * dW_dr_i + V_j * V_j * dW_dr_j) / face.r;
+
+        return face_area_mag * dx_vec;
+    }
 
     return Area_vec;
 }
@@ -1487,7 +1502,7 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                     if (!face.is_valid) continue;
 
                     Eigen::Vector3d Area_vec = compute_mfm_face_area_vector(
-                        p_i, grad_i.B_matrix, p_j, grad_j.B_matrix, face);
+                        p_i, grad_i, p_j, grad_j, face);
                     double A_mag = Area_vec.norm();
                     if (A_mag < 1e-20) continue;
 

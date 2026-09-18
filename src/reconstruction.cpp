@@ -123,6 +123,7 @@ ParticleGradients compute_single_particle_gradients(
     out.grad_vx = Eigen::Vector3d::Zero();
     out.grad_vy = Eigen::Vector3d::Zero();
     out.grad_vz = Eigen::Vector3d::Zero();
+    out.raw_sum_p = Eigen::Vector3d::Zero();
     out.ill_conditioned = false;
 
     Eigen::Matrix3d E = Eigen::Matrix3d::Zero();
@@ -163,13 +164,12 @@ ParticleGradients compute_single_particle_gradients(
     out.condition_number = -1.0;
 
     if (std::abs(det) > 1e-30) {
-        Eigen::Matrix3d temp_B = E.inverse();
-        double N_cond = compute_condition_number(E, temp_B);
+        out.B_matrix = E.inverse();
+        double N_cond = compute_condition_number(E, out.B_matrix);
         out.condition_number = N_cond;
 
         constexpr double N_cond_crit = 1000.0;
         if (N_cond <= N_cond_crit) {
-            out.B_matrix = temp_B;
             out.ill_conditioned = false;
         }
     }
@@ -312,15 +312,11 @@ ParticleGradients compute_single_particle_gradients(
 #endif
     } else {
         out.B_matrix = Eigen::Matrix3d::Identity();
-        out.ill_conditioned = true;
-
-        double trace_E = E(0, 0) + E(1, 1) + E(2, 2);
-        if (trace_E > 1e-24) {
-            out.B_matrix = (3.0 / trace_E) * Eigen::Matrix3d::Identity();
-        } else {
-            out.B_matrix =
-                (1.0 / (p_i.h * p_i.h)) * Eigen::Matrix3d::Identity();
-        }
+        out.grad_rho.setZero();
+        out.grad_p.setZero();
+        out.grad_vx.setZero();
+        out.grad_vy.setZero();
+        out.grad_vz.setZero();
 
         for (const auto& nj : neighbors) {
             double dx =

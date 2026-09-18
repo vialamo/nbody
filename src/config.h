@@ -94,6 +94,10 @@ struct Config {
     // Gravity
     double comoving_softening_factor = 0.0334;
     double physical_softening_cap_a = 0.3;
+    bool use_PM = true;
+    bool use_PP = true;
+    double cutoff_radius_factor = 4.5;
+    double PM_smoothing_cells = 1.25;
 
     // Initial conditions
     InitialSetup initial_setup = InitialSetup::Cosmological;
@@ -123,12 +127,6 @@ struct Config {
     // Subgrid
     bool enable_subgrid_clumping = true;
     double subgrid_clumping_amplitude = 10.0;
-
-    // P3M
-    bool use_PM = true;
-    bool use_PP = true;
-    double cutoff_radius_factor = 4.5;
-    double PM_smoothing_cells = 1.25;
 
     // Time
     bool enable_subcycling = true;

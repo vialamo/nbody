@@ -162,7 +162,7 @@ void Config::compute_derived_data() {
 
     // For now, disable subcycling when using MFM
     if (hydro_method == HydroMethod::MFM) {
-        enable_subcycling = false; 
+        enable_subcycling = false;
     }
 
     init_derived_units();
@@ -198,6 +198,12 @@ void Config::load(const std::string& filename) {
         "gravity", "comoving_softening_factor", comoving_softening_factor);
     physical_softening_cap_a = config_file.get_double(
         "gravity", "softening_cap_scale_factor", physical_softening_cap_a);
+    use_PM = config_file.get_bool("gravity", "use_pm", use_PM);
+    use_PP = config_file.get_bool("gravity", "use_pp", use_PP);
+    cutoff_radius_factor = config_file.get_double(
+        "gravity", "cutoff_radius_factor", cutoff_radius_factor);
+    PM_smoothing_cells = config_file.get_double("gravity", "pm_smoothing_cells",
+                                                PM_smoothing_cells);
 
     std::string ics_str = config_file.get(
         "initial_conditions", "setup", InitialConfig::to_string(initial_setup));
@@ -243,13 +249,6 @@ void Config::load(const std::string& filename) {
         "subgrid", "enable_subgrid_clumping", enable_subgrid_clumping);
     subgrid_clumping_amplitude = config_file.get_double(
         "subgrid", "subgrid_clumping_amplitude", subgrid_clumping_amplitude);
-
-    use_PM = config_file.get_bool("p3m", "use_pm", use_PM);
-    use_PP = config_file.get_bool("p3m", "use_pp", use_PP);
-    cutoff_radius_factor = config_file.get_double("p3m", "cutoff_radius_factor",
-                                                  cutoff_radius_factor);
-    PM_smoothing_cells =
-        config_file.get_double("p3m", "pm_smoothing_cells", PM_smoothing_cells);
 
     enable_subcycling =
         config_file.get_bool("time", "enable_subcycling", enable_subcycling);

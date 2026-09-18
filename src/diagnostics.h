@@ -37,6 +37,7 @@ class Diagnostics {
     bool energy_initialized = false;
     bool dm_energy_initialized = false;
     size_t MFM_ill_conditioned_cases = 0;
+    size_t MFM_h_non_converged_cases = 0;
 
     // Performance State
     int accumulated_cycles = 0;

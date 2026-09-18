@@ -80,8 +80,8 @@ class GasParticleSystem {
     double accumulated_entropy_switch_energy = 0.0;
     double pressure_floor = 0.0;
     size_t ill_conditioned_cases = 0;
-    size_t clamped_area_cases = 0;
     size_t clamped_h_cases = 0;
+    size_t non_converged_h_cases = 0;
 
     // Debugging
     std::vector<double> cond_num;

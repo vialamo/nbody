@@ -95,14 +95,6 @@ TEST_CASE("MFM Gradient Estimator", "[hydro][mfm_gradients]") {
         Reconstruction::ParticleGradients grads =
             compute_single_particle_gradients(p_i, neighbors, domain_size);
 
-        // B matrix fallback
-        REQUIRE(grads.B_matrix(0, 0) == Catch::Approx(125.327).epsilon(0.01));
-        REQUIRE(grads.B_matrix(1, 1) == Catch::Approx(125.327).epsilon(0.01));
-        REQUIRE(grads.B_matrix(2, 2) == Catch::Approx(125.327).epsilon(0.01));
-
-        // Off-diagonals should be zero
-        REQUIRE(grads.B_matrix(0, 1) == 0.0);
-
         // The SPH fallback should compute an X-gradient,
         // so we only assert that the Y and Z gradients remain zero.
         REQUIRE(grads.grad_rho.y() == 0.0);

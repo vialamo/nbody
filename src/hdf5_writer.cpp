@@ -133,6 +133,12 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                         config.comoving_softening_factor);
         set_attr_double(config_group, "softening_cap_scale_factor",
                         config.physical_softening_cap_a);
+        set_attr_bool(config_group, "use_pm", config.use_PM);
+        set_attr_bool(config_group, "use_pp", config.use_PP);
+        set_attr_double(config_group, "pm_smoothing_cells",
+                        config.PM_smoothing_cells);
+        set_attr_double(config_group, "cutoff_radius_factor",
+                        config.cutoff_radius_factor);
 
         // [initial_conditions]
         set_attr_string(config_group, "setup",
@@ -172,14 +178,6 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                       config.enable_subgrid_clumping);
         set_attr_double(config_group, "subgrid_clumping_amplitude",
                         config.subgrid_clumping_amplitude);
-
-        // [p3m]
-        set_attr_bool(config_group, "use_pm", config.use_PM);
-        set_attr_bool(config_group, "use_pp", config.use_PP);
-        set_attr_double(config_group, "pm_smoothing_cells",
-                        config.PM_smoothing_cells);
-        set_attr_double(config_group, "cutoff_radius_factor",
-                        config.cutoff_radius_factor);
 
         // [time]
         set_attr_double(config_group, "max_dt_dynamical_factor",
