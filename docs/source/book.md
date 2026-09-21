@@ -2658,7 +2658,6 @@ Almgren, A. S., Bell, J. B., Lijewski, M. J., Lukić, Z., & Van Andel, E. (2013)
 
 Strang, G. (1968). *On the construction and comparison of difference schemes.* SIAM Journal on Numerical Analysis, 5(3), 506-517. Available at [https://www.pas.rochester.edu/astrobear/raw-attachment/blog/shuleli08202013/Strang1968.pdf](https://www.pas.rochester.edu/astrobear/raw-attachment/blog/shuleli08202013/Strang1968.pdf)
 
-
 ## Spatial Partitioning and the LBVH
 
 While the Particle-Mesh (PM) method solves the long-range forces, the P³M algorithm still requires direct Particle-Particle (PP) calculations for close neighbors. Furthermore, the Meshless Finite Mass (MFM) hydrodynamics solver requires gas particles to find their nearest neighbors to partition volume, estimate spatial gradients, and compute Riemann fluxes across effective faces. 
@@ -2872,6 +2871,55 @@ Karras, T. (2012). *Maximizing parallelism in the construction of BVHs, octrees,
 
 **For the Integration of LBVH/Oct-Trees in GPU N-Body Solvers:**  
 Bédorf, J., Gaburov, E., & Portegies Zwart, S. (2012). *A sparse octree gravitational N-body code that runs entirely on the GPU processor*. Journal of Computational Physics, 231(7), 2825-2839. Available at [https://arxiv.org/pdf/1106.1900](https://arxiv.org/pdf/1106.1900)
+
+## Individual particle timesteps
+
+Cosmological simulations are defined by their extreme dynamic range. To solve this, the spatial discretization of the fluid must be matched by a temporal discretization. Particles can be granted individual timesteps determined by their immediate environment.
+
+### Bounding the Local Clock
+
+Before a particle can step forward in time, the system evaluates the absolute maximum time it can safely wait before re-evaluating its surroundings. This "ideal" timestep is defined by several constraints:
+
+1. **The Courant-Friedrichs-Lewy (CFL) Condition:** In a fluid, information propagates at the local signal velocity, which is a combination of the sound speed and the relative velocities of converging gas flows. To prevent fluid volumes from interpenetrating or missing a shock boundary, a particle's timestep is restricted so that physical information cannot cross its smoothing radius in a single leap.
+
+2. **Gravitational Acceleration:** Particles experiencing immense gravitational pulls—such as those falling into a dark matter halo—must integrate their trajectories frequently to accurately resolve the curvature of their orbits. This constraint is tightly coupled to the gravitational softening length to ensure particles do not artificially fling themselves out of bound states.
+
+3. **Radiative Cooling:** When dense gas collapses, it radiates thermal energy rapidly. If a timestep is too large, the numerical solver might artificially drain all of a particle's internal energy in one step, plunging it below the cosmic temperature floor. The clock is therefore restricted so that a particle loses no more than a small fraction (e.g., 10%) of its total internal energy per step.
+
+The smallest of these three values becomes the particle's ideal physical timestep.
+
+### The Power-of-Two Hierarchy
+
+While giving every particle its ideal timestep seems optimal, doing so creates a chaotic, asynchronous timeline. If Particle A has a timestep of 102 years and neighboring Particle B has a timestep of 57 years, calculating the momentum exchange between them becomes complicated because of the misaligned clocks.
+
+Instead, the simulation imposes a quantized hierarchy. The maximum allowable global timestep ($\Delta t_{max}$) acts as the root of the hierarchy. Every particle's ideal timestep is progressively halved until it bounds the physical requirement.
+
+This means a particle's actual timestep is always $\Delta t_{max} / 2^n$, placing it into a specific "time bin". This structure guarantees synchronization. A particle on a small timestep will always land on the synchronization tick of a particle on a larger timestep, allowing them to exchange physical fluxes.
+
+### The Active Timeline and Integration
+
+With the hierarchy established, the simulation scans the timeline for the nearest upcoming synchronization point and advances the master clock to that precise moment.
+
+At this tick, only the particles whose block steps end at the current time are flagged as "active". The rest are considered "sleeping." This division requires a modified approach to the Kick-Drift-Kick (KDK) symplectic integrator:
+
+* **Drifting the Universe:** Because hydrodynamics relies on precise spatial geometries, evaluating the density field requires the true positions of every particle. Therefore, *all* particles—both active and sleeping—are drifted forward in space to the current master clock time.
+
+* **Kicking the Active:** Only the active particles are subjected to the heavy computational lifting. The tree searches, density evaluations, gradient matrix inversions, and Riemann solver flux calculations are executed only for the active subset. Their velocities and internal energies are then "kicked" using the newly computed forces.
+
+### Asymmetric Fluxes and Conservation Trade-offs
+
+When an active particle calculates a fluid interface with a neighbor, a unique scenario arises if that neighbor is currently sleeping. According to Newton's Third Law, if the active particle loses momentum, the sleeping particle must gain it.
+
+However, because the sleeping particle is locked in a much larger time bin, abruptly altering its momentum mid-step corrupts its temporal integration. To resolve this, the system processes the Riemann problem but applies the resulting flux only to the active particle. By deliberately ignoring the reverse flux onto the sleeping particle, the code accepts a microscopic violation of machine-precision energy conservation in exchange for maintaining the mathematical integrity of the hierarchical timeline.
+
+### The Wake-Up Failsafe
+
+A block time-stepping scheme is vulnerable to the approach of a supersonic shockwave. If a cold, quiescent particle in a cosmic void is assigned a massive timestep, it goes to sleep, expecting nothing to happen for millions of years. If a shockwave generated by a distant supernova crosses the void and impacts the sleeping particle mid-step, the particle will be unable to react, leading to numerical instability.
+
+To protect the fluid continuum, the scheme employs a "Wake-Up" failsafe. During the hydrodynamic force evaluation, active particles constantly scan their neighbors. If an active particle detects a sleeping neighbor, it compares their signal velocities. If the active particle's signal velocity exceeds the sleeping neighbor's by a critical threshold (for example a factor of 3), an override is triggered.
+
+The sleeping particle receives a thread-safe wake-up signal. Its massive timestep is truncated to match the time it has actually experienced, and it is flagged as active for the current clock tick. On the subsequent step, the newly awakened particle drops into a smaller power-of-two time bin, correctly resolving the incoming shockwave.
+
 
 ## Analytical Requirements for Resolution and Volume
 

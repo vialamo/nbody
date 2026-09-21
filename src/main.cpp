@@ -92,6 +92,7 @@ int main(int argc, char* argv[]) {
     SimulationEngine engine(config, logger, h5_writer, diagnostics);
     g_engine = &engine;
 
+    std::cout << "\nSimulation loop started\n" << std::endl;
     try {
         ExitStatus status = engine.run();
         switch (status) {

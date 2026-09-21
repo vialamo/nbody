@@ -57,6 +57,13 @@ GasParticleSystem::GasParticleSystem(const Config& config)
     raw_sum_p.reserve(config.num_gas_particles);
     n_enc_final.reserve(config.num_gas_particles);
 
+    time_bin.reserve(config.num_gas_particles);
+    dt_step.reserve(config.num_gas_particles);
+    t_current.reserve(config.num_gas_particles);
+    t_end.reserve(config.num_gas_particles);
+    is_active.reserve(config.num_gas_particles);
+    needs_wakeup.reserve(config.num_gas_particles);
+
     size_t num_nodes = 2 * config.num_gas_particles - 1;
     if (config.num_dm_particles > 0) {
         morton_codes.reserve(config.num_gas_particles);
@@ -116,6 +123,13 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
     raw_sum_p.push_back(Eigen::Vector3d::Zero());
     n_enc_final.push_back(0);
 
+    time_bin.push_back(0);
+    dt_step.push_back(0.0);
+    t_current.push_back(0.0);
+    t_end.push_back(0.0);
+    is_active.push_back(1);  // All particles start active at t=0
+    needs_wakeup.push_back(0);
+
     num_particles++;
 }
 
@@ -150,6 +164,12 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     std::vector<double> new_cond_num(num_particles);
     std::vector<Eigen::Vector3d> new_raw_sum_p(num_particles);
     std::vector<double> new_n_enc_final(num_particles);
+
+    std::vector<int> new_time_bin(num_particles);
+    std::vector<double> new_dt_step(num_particles),
+        new_t_current(num_particles), new_t_end(num_particles);
+    std::vector<uint8_t> new_is_active(num_particles);
+    std::vector<uint8_t> new_needs_wakeup(num_particles);
 
     for (size_t i = 0; i < num_particles; ++i) {
         int src = sorted_indices[i];
@@ -188,6 +208,12 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
         new_cond_num[i] = cond_num[src];
         new_raw_sum_p[i] = raw_sum_p[src];
         new_n_enc_final[i] = n_enc_final[src];
+        new_time_bin[i] = time_bin[src];
+        new_dt_step[i] = dt_step[src];
+        new_t_current[i] = t_current[src];
+        new_t_end[i] = t_end[src];
+        new_is_active[i] = is_active[src];
+        new_needs_wakeup[i] = needs_wakeup[src];
     }
 
     pos_x = std::move(new_px);
@@ -225,6 +251,12 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     raw_sum_p = std::move(new_raw_sum_p);
     cond_num = std::move(new_cond_num);
     n_enc_final = std::move(new_n_enc_final);
+    time_bin = std::move(new_time_bin);
+    dt_step = std::move(new_dt_step);
+    t_current = std::move(new_t_current);
+    t_end = std::move(new_t_end);
+    is_active = std::move(new_is_active);
+    needs_wakeup = std::move(new_needs_wakeup);
 }
 
 void GasParticleSystem::build_lbvh(const Config& config) {
@@ -378,6 +410,7 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
 #pragma omp parallel for schedule(dynamic, 64) \
     reduction(+ : num_h_clamped, num_non_converged)
     for (size_t i = 0; i < num_particles; ++i) {
+        if (!is_active[i]) continue;
         double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
         double h_low = 0.0;
         double h_high = std::numeric_limits<double>::infinity();
@@ -486,8 +519,12 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         rho[i] = mass[i] * current_n;
 
         // Adaptive gravity correction (Zeta)
-        double Omega_i = std::max(
-            1.0 + (h_guess / (current_n * 3.0)) * current_dn_dh, 1e-12);
+        double Omega_i = 1.0;
+        double h_over_3n = 0.0;
+        if (current_n > 1e-12) {
+            h_over_3n = h_guess / (current_n * 3.0);
+            Omega_i = std::max(1.0 + h_over_3n * current_dn_dh, 1e-12);
+        }
 
         // Sum Gas contribution
         double zeta_sum =
@@ -501,7 +538,7 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
                 dm.mass, dm.bvh_nodes, config);
         }
 
-        zeta[i] = (h_guess / (current_n * 3.0)) * (1.0 / Omega_i) * zeta_sum;
+        zeta[i] = h_over_3n * (1.0 / Omega_i) * zeta_sum;
     }
 
     clamped_h_cases += num_h_clamped;
@@ -537,6 +574,8 @@ void GasParticleSystem::apply_cooling(double dt, double a, const Config& config,
     reduction(+ : total_radiated, total_photoheated, non_converged_count, \
                   total_cycles)
     for (size_t i = 0; i < num_particles; ++i) {
+        if (!is_active[i]) continue;
+
         double local_rho = rho[i];
         if (local_rho > 1e-12) {  // Skip vacuum particles
             // Track the metal mass fraction
@@ -546,8 +585,10 @@ void GasParticleSystem::apply_cooling(double dt, double a, const Config& config,
             double t_evolved = 0.0;
             int cell_non_converged = 0;
 
+            double dt_particle = dt_step[i];
+
             // Local Particle Subcycling
-            while (t_evolved < dt) {
+            while (t_evolved < dt_particle) {
                 double du_dt = cooling.compute_du_dt(u_current, local_rho,
                                                      local_Z_frac, a, config);
 
@@ -556,14 +597,17 @@ void GasParticleSystem::apply_cooling(double dt, double a, const Config& config,
                     // The particle is at the temperature floor and trying to
                     // cool. It is in thermal equilibrium. Consume the rest of
                     // the step
-                    dt_cell = dt - t_evolved;
+                    dt_cell = dt_particle - t_evolved;
                 } else {
                     dt_cell = (std::abs(du_dt) > 0.0)
                                   ? 0.1 * (u_current / std::abs(du_dt))
-                                  : dt;
+                                  : dt_particle;
                 }
 
-                dt_cell = std::min(dt_cell, dt - t_evolved);
+                // Prevent infinite loops if u_current evaluates to 0.0
+                dt_cell = std::max(dt_cell, 1e-4 * dt_particle);
+
+                dt_cell = std::min(dt_cell, dt_particle - t_evolved);
 
                 int iters = 0;
                 u_current = cooling.solve_cooling_implicit(
@@ -619,106 +663,132 @@ double GasParticleSystem::get_cfl_timestep(double a,
     if (config.hydro_method != HydroMethod::MFM || num_particles == 0) {
         return std::numeric_limits<double>::infinity();
     }
+    if (config.enable_individual_timesteps) {
+        // Bootstrap: On the very first step, request safe step to
+        // initialize forces
+        if (global_time == 0.0) {
+            double dt_boot = config.fixed_dt;
+            while (dt_boot > 1e-6) dt_boot *= 0.5;
+            return dt_boot;
+        }
 
-    double min_dt = std::numeric_limits<double>::infinity();
-    double gamma = config.gamma;
-    double domain_size = config.domain_size;
+        // Return the time until the NEXT active particle finishes its
+        // step
+        double next_time = std::numeric_limits<double>::infinity();
+        for (size_t i = 0; i < num_particles; ++i) {
+            // Only look at future bins ignoring float precision drift matches
+            if (t_end[i] > global_time + 1e-10) {
+                next_time = std::min(next_time, t_end[i]);
+            }
+        }
 
-    // Precompute cosmology conversion factors
-    double a_inv = 1.0 / a;
-    double a_inv3 = a_inv * a_inv * a_inv;
+        double dt_next = next_time - global_time;
+        return (dt_next > 1e-10) ? dt_next
+                                 : std::numeric_limits<double>::infinity();
+    } else {
+        double min_dt = std::numeric_limits<double>::infinity();
+        double gamma = config.gamma;
+        double domain_size = config.domain_size;
+
+        // Precompute cosmology conversion factors
+        double a_inv = 1.0 / a;
+        double a_inv3 = a_inv * a_inv * a_inv;
 
 #pragma omp parallel for reduction(min : min_dt) schedule(dynamic, 64)
-    for (size_t i = 0; i < num_particles; ++i) {
-        double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
+        for (size_t i = 0; i < num_particles; ++i) {
+            double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
 
-        // Evaluate particle i in PHYSICAL units
-        double rho_phys_i = rho[i] * a_inv3;
-        double p_phys_i = pressure[i] * a_inv;
-        double c_phys_i = (rho_phys_i > 1e-12)
-                              ? std::sqrt(gamma * p_phys_i / rho_phys_i)
-                              : 0.0;
+            // Evaluate particle i in PHYSICAL units
+            double rho_phys_i = rho[i] * a_inv3;
+            double p_phys_i = pressure[i] * a_inv;
+            double c_phys_i = (rho_phys_i > 1e-12)
+                                  ? std::sqrt(gamma * p_phys_i / rho_phys_i)
+                                  : 0.0;
 
-        double v1_x_phys = vel_x[i] * a;
-        double v1_y_phys = vel_y[i] * a;
-        double v1_z_phys = vel_z[i] * a;
+            double v1_x_phys = vel_x[i] * a;
+            double v1_y_phys = vel_y[i] * a;
+            double v1_z_phys = vel_z[i] * a;
 
-        double h_i = h[i];
-        double v_sig_max_phys = 0.0;
+            double h_i = h[i];
+            double v_sig_max_phys = 0.0;
 
-        int stack[128];
-        int stack_ptr = 0;
-        stack[stack_ptr++] = 0;  // Push root
+            int stack[128];
+            int stack_ptr = 0;
+            stack[stack_ptr++] = 0;  // Push root
 
-        while (stack_ptr > 0) {
-            int node_idx = stack[--stack_ptr];
-            const BVHNode& node = bvh_nodes[node_idx];
+            while (stack_ptr > 0) {
+                int node_idx = stack[--stack_ptr];
+                const BVHNode& node = bvh_nodes[node_idx];
 
-            double dist_sq =
-                min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
-                                     domain_size) +
-                min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
-                                     domain_size) +
-                min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
-                                     domain_size);
+                double dist_sq =
+                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
+                                         domain_size);
 
-            double eff_h = std::max(h_i, node.max_h);
-            if (dist_sq > eff_h * eff_h) continue;
+                double eff_h = std::max(h_i, node.max_h);
+                if (dist_sq > eff_h * eff_h) continue;
 
-            if (node.particle_idx != -1) {
-                int j = node.particle_idx;
-                if (i == j) continue;
+                if (node.particle_idx != -1) {
+                    int j = node.particle_idx;
+                    if (i == j) continue;
 
-                double dx = periodic_displacement(pos_x[j] - p1_x, domain_size);
-                double dy = periodic_displacement(pos_y[j] - p1_y, domain_size);
-                double dz = periodic_displacement(pos_z[j] - p1_z, domain_size);
-                double r2 = dx * dx + dy * dy + dz * dz;
+                    double dx =
+                        periodic_displacement(pos_x[j] - p1_x, domain_size);
+                    double dy =
+                        periodic_displacement(pos_y[j] - p1_y, domain_size);
+                    double dz =
+                        periodic_displacement(pos_z[j] - p1_z, domain_size);
+                    double r2 = dx * dx + dy * dy + dz * dz;
 
-                if (r2 < h_i * h_i || r2 < h[j] * h[j]) {
-                    if (r2 > 1e-24) {
-                        double r = std::sqrt(r2);
+                    if (r2 < h_i * h_i || r2 < h[j] * h[j]) {
+                        if (r2 > 1e-24) {
+                            double r = std::sqrt(r2);
 
-                        // Evaluate particle j in PHYSICAL units
-                        double rho_phys_j = rho[j] * a_inv3;
-                        double p_phys_j = pressure[j] * a_inv;
-                        double c_phys_j =
-                            (rho_phys_j > 1e-12)
-                                ? std::sqrt(gamma * p_phys_j / rho_phys_j)
-                                : 0.0;
+                            // Evaluate particle j in PHYSICAL units
+                            double rho_phys_j = rho[j] * a_inv3;
+                            double p_phys_j = pressure[j] * a_inv;
+                            double c_phys_j =
+                                (rho_phys_j > 1e-12)
+                                    ? std::sqrt(gamma * p_phys_j / rho_phys_j)
+                                    : 0.0;
 
-                        // Physical relative velocity
-                        double dvx_phys = (vel_x[j] * a) - v1_x_phys;
-                        double dvy_phys = (vel_y[j] * a) - v1_y_phys;
-                        double dvz_phys = (vel_z[j] * a) - v1_z_phys;
+                            // Physical relative velocity
+                            double dvx_phys = (vel_x[j] * a) - v1_x_phys;
+                            double dvy_phys = (vel_y[j] * a) - v1_y_phys;
+                            double dvz_phys = (vel_z[j] * a) - v1_z_phys;
 
-                        double dv_dot_dx_phys =
-                            dvx_phys * dx + dvy_phys * dy + dvz_phys * dz;
-                        double v_sig_ij_phys = c_phys_i + c_phys_j;
+                            double dv_dot_dx_phys =
+                                dvx_phys * dx + dvy_phys * dy + dvz_phys * dz;
+                            double v_sig_ij_phys = c_phys_i + c_phys_j;
 
-                        if (dv_dot_dx_phys < 0.0) {
-                            v_sig_ij_phys -= dv_dot_dx_phys / r;
-                        }
+                            if (dv_dot_dx_phys < 0.0) {
+                                v_sig_ij_phys -= dv_dot_dx_phys / r;
+                            }
 
-                        if (v_sig_ij_phys > v_sig_max_phys) {
-                            v_sig_max_phys = v_sig_ij_phys;
+                            if (v_sig_ij_phys > v_sig_max_phys) {
+                                v_sig_max_phys = v_sig_ij_phys;
+                            }
                         }
                     }
+                } else {
+                    stack[stack_ptr++] = node.left_child;
+                    stack[stack_ptr++] = node.right_child;
                 }
-            } else {
-                stack[stack_ptr++] = node.left_child;
-                stack[stack_ptr++] = node.right_child;
+            }
+
+            if (v_sig_max_phys > 1e-9) {
+                double dt_i = (a * h_i) / v_sig_max_phys;
+                if (dt_i < min_dt) {
+                    min_dt = dt_i;
+                }
             }
         }
 
-        if (v_sig_max_phys > 1e-9) {
-            double dt_i = (a * h_i) / v_sig_max_phys;
-            if (dt_i < min_dt) {
-                min_dt = dt_i;
-            }
-        }
+        return min_dt * config.hydro_courant_factor;
     }
-
-    return min_dt * config.hydro_courant_factor;
 }
 
 double GasParticleSystem::get_cooling_timestep(double a, const Config& config,
@@ -727,36 +797,243 @@ double GasParticleSystem::get_cooling_timestep(double a, const Config& config,
         num_particles == 0) {
         return std::numeric_limits<double>::infinity();
     }
-
-    double min_dt_cool = std::numeric_limits<double>::infinity();
-    double u_rad_floor = cooling.get_u_rad_floor(a, config);
+    if (config.enable_individual_timesteps) {
+        return std::numeric_limits<double>::infinity();
+    } else {
+        double min_dt_cool = std::numeric_limits<double>::infinity();
+        double u_rad_floor = cooling.get_u_rad_floor(a, config);
 
 #pragma omp parallel for reduction(min : min_dt_cool)
-    for (size_t i = 0; i < num_particles; ++i) {
-        if (rho[i] > 1e-12) {
-            if (u[i] <= u_rad_floor) continue;
+        for (size_t i = 0; i < num_particles; ++i) {
+            if (rho[i] > 1e-12) {
+                if (u[i] <= u_rad_floor) continue;
 
-            double du_dt_val =
-                cooling.compute_du_dt(u[i], rho[i], metal_frac[i], a, config);
+                double du_dt_val = cooling.compute_du_dt(
+                    u[i], rho[i], metal_frac[i], a, config);
 
-            if (std::abs(du_dt_val) > 0.0) {
-                // Restrict timestep so internal energy changes at most 10%
-                double dt_cool = 0.1 * (u[i] / std::abs(du_dt_val));
-                if (dt_cool < min_dt_cool) {
-                    min_dt_cool = dt_cool;
+                if (std::abs(du_dt_val) > 0.0) {
+                    // Restrict timestep so internal energy changes at most 10%
+                    double dt_cool = 0.1 * (u[i] / std::abs(du_dt_val));
+                    if (dt_cool < min_dt_cool) {
+                        min_dt_cool = dt_cool;
+                    }
                 }
             }
         }
+        return min_dt_cool;
     }
-    return min_dt_cool;
 }
 
 double GasParticleSystem::get_gravity_timestep(const Config& config) const {
     if (num_particles == 0) return std::numeric_limits<double>::infinity();
+    if (config.enable_individual_timesteps) {
+        return std::numeric_limits<double>::infinity();
+    } else {
+        double epsilon = std::sqrt(config.softening_squared);
+        double a_max = std::sqrt(max_accel_sq);
+        double dt_grav = std::sqrt(epsilon / a_max);
+        return dt_grav * config.gravity_accuracy_eta;
+    }
+}
+
+void GasParticleSystem::sync_and_activate(double dt, const Config& config) {
+    if (!config.enable_individual_timesteps) {
+        global_time += dt;
+        for (size_t i = 0; i < num_particles; ++i) {
+            is_active[i] = 1;
+            dt_step[i] = dt;
+            t_end[i] = global_time;  // Keep timeline synced
+            needs_wakeup[i] = 0;
+        }
+        return;
+    }
+
+    double new_global_time = global_time + dt;
+
+    // Process wakeups from the previous cycle
+    for (size_t i = 0; i < num_particles; ++i) {
+        if (needs_wakeup[i]) {
+            double t_start = t_end[i] - dt_step[i];
+            dt_step[i] = new_global_time - t_start;
+            t_end[i] = new_global_time;  // Force sync to the current clock
+            needs_wakeup[i] = 0;
+        }
+    }
+
+    // Advance global clock
+    global_time = new_global_time;
+
+    // Flag active particles
+    for (size_t i = 0; i < num_particles; ++i) {
+        // A particle is active if its block step ends at the new global time
+        is_active[i] = (std::abs(t_end[i] - global_time) < 1e-10) ? 1 : 0;
+
+        // BOOTSTRAP: If it's the very first step (t=0), everyone is active
+        if (global_time <= dt + 1e-12 && t_end[i] == 0.0) {
+            is_active[i] = 1;
+            dt_step[i] = dt;  // Give them a tiny initial dt so Kick 2 works
+            t_end[i] = global_time;
+        }
+    }
+}
+
+void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
+                                                  const Config& config,
+                                                  Cooling& cooling) {
+    if (num_particles == 0) return;
+
+    if (!config.enable_individual_timesteps) {
+        // Under global timesteps, the engine already calculated dt_max as the
+        // global minimum
+        for (size_t i = 0; i < num_particles; ++i) {
+            dt_step[i] = dt_max;
+            time_bin[i] = 0;
+        }
+        return;
+    }
+
+    double gamma = config.gamma;
+    double domain_size = config.domain_size;
+    double a_inv = 1.0 / a;
+    double a_inv3 = a_inv * a_inv * a_inv;
+    double u_rad_floor =
+        config.enable_cooling ? cooling.get_u_rad_floor(a, config) : 0.0;
     double epsilon = std::sqrt(config.softening_squared);
-    double a_max = std::sqrt(max_accel_sq);
-    double dt_grav = std::sqrt(epsilon / a_max);
-    return dt_grav * config.gravity_accuracy_eta;
+
+#pragma omp parallel for schedule(dynamic, 64)
+    for (size_t i = 0; i < num_particles; ++i) {
+        // ONLY update the clock for particles that are currently active
+        if (!is_active[i]) continue;
+
+        double dt_ideal = dt_max;
+
+        // Gravity Timestep
+        double a_mag = std::sqrt(acc_x[i] * acc_x[i] + acc_y[i] * acc_y[i] +
+                                 acc_z[i] * acc_z[i]);
+        if (a_mag > 0.0) {
+            double dt_grav =
+                std::sqrt(epsilon / a_mag) * config.gravity_accuracy_eta;
+            dt_ideal = std::min(dt_ideal, dt_grav);
+        }
+
+        // Cooling Timestep
+        /*if (config.enable_cooling && rho[i] > 1e-12 && u[i] > u_rad_floor) {
+            double du_dt_val =
+                cooling.compute_du_dt(u[i], rho[i], metal_frac[i], a, config);
+            if (std::abs(du_dt_val) > 0.0) {
+                double dt_cool = 0.1 * (u[i] / std::abs(du_dt_val));
+                dt_ideal = std::min(dt_ideal, dt_cool);
+            }
+        }*/
+
+        // CFL Timestep
+        if (config.hydro_method == HydroMethod::MFM) {
+            double p1_x = pos_x[i], p1_y = pos_y[i], p1_z = pos_z[i];
+            double rho_phys_i = rho[i] * a_inv3;
+            double p_phys_i = pressure[i] * a_inv;
+            double c_phys_i = (rho_phys_i > 1e-12)
+                                  ? std::sqrt(gamma * p_phys_i / rho_phys_i)
+                                  : 0.0;
+
+            double v1_x_phys = vel_x[i] * a;
+            double v1_y_phys = vel_y[i] * a;
+            double v1_z_phys = vel_z[i] * a;
+
+            double h_i = h[i];
+            double v_sig_max_phys = 0.0;
+
+            int stack[128];
+            int stack_ptr = 0;
+            stack[stack_ptr++] = 0;
+
+            while (stack_ptr > 0) {
+                int node_idx = stack[--stack_ptr];
+                const BVHNode& node = bvh_nodes[node_idx];
+
+                double dist_sq =
+                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
+                                         domain_size) +
+                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
+                                         domain_size);
+
+                double eff_h = std::max(h_i, node.max_h);
+                if (dist_sq > eff_h * eff_h) continue;
+
+                if (node.particle_idx != -1) {
+                    int j = node.particle_idx;
+                    if (i == j) continue;
+
+                    double dx =
+                        periodic_displacement(pos_x[j] - p1_x, domain_size);
+                    double dy =
+                        periodic_displacement(pos_y[j] - p1_y, domain_size);
+                    double dz =
+                        periodic_displacement(pos_z[j] - p1_z, domain_size);
+                    double r2 = dx * dx + dy * dy + dz * dz;
+
+                    if (r2 < h_i * h_i || r2 < h[j] * h[j]) {
+                        if (r2 > 1e-24) {
+                            double r = std::sqrt(r2);
+                            double rho_phys_j = rho[j] * a_inv3;
+                            double p_phys_j = pressure[j] * a_inv;
+                            double c_phys_j =
+                                (rho_phys_j > 1e-12)
+                                    ? std::sqrt(gamma * p_phys_j / rho_phys_j)
+                                    : 0.0;
+
+                            double dvx_phys = (vel_x[j] * a) - v1_x_phys;
+                            double dvy_phys = (vel_y[j] * a) - v1_y_phys;
+                            double dvz_phys = (vel_z[j] * a) - v1_z_phys;
+
+                            double dv_dot_dx_phys =
+                                dvx_phys * dx + dvy_phys * dy + dvz_phys * dz;
+                            double v_sig_ij_phys = c_phys_i + c_phys_j;
+
+                            if (dv_dot_dx_phys < 0.0) {
+                                v_sig_ij_phys -= dv_dot_dx_phys / r;
+                            }
+
+                            if (v_sig_ij_phys > v_sig_max_phys) {
+                                v_sig_max_phys = v_sig_ij_phys;
+                            }
+                        }
+                    }
+                } else {
+                    stack[stack_ptr++] = node.left_child;
+                    stack[stack_ptr++] = node.right_child;
+                }
+            }
+
+            if (v_sig_max_phys > 1e-9) {
+                double dt_cfl =
+                    ((a * h_i) / v_sig_max_phys) * config.hydro_courant_factor;
+                dt_ideal = std::min(dt_ideal, dt_cfl);
+            }
+        }
+
+        // POWER-OF-TWO BINNING
+        int n = 0;
+        double dt_bin = dt_max;
+
+        // Halve the timestep until it safely bounds the ideal timestep
+        while (dt_bin > dt_ideal) {
+            dt_bin *= 0.5;
+            n++;
+        }
+
+        // Optional stability lock: prevent particles from jumping up bins too
+        // fast (If a particle suddenly leaves a shock, we don't want it jumping
+        // from n=8 to n=0 instantly)
+        /*if (time_bin[i] > 0 && n < time_bin[i] - 1) {
+            n = time_bin[i] - 1;
+            dt_bin = dt_max * std::pow(0.5, n);
+        }*/
+
+        time_bin[i] = n;
+        dt_step[i] = dt_bin;
+    }
 }
 
 void GasParticleSystem::compute_and_add_pp_forces(double a,
@@ -787,6 +1064,7 @@ void GasParticleSystem::compute_and_add_pp_forces(double a,
     double* d_ay = acc_y.data();
     double* d_az = acc_z.data();
     BVHNode* d_bvh_nodes = bvh_nodes.data();
+    uint8_t* d_is_active = is_active.data();
 
 #ifdef USE_GPU
     auto start_transfer = std::chrono::high_resolution_clock::now();
@@ -795,7 +1073,7 @@ void GasParticleSystem::compute_and_add_pp_forces(double a,
         to : d_px[0 : n_gas], d_py[0 : n_gas], d_pz[0 : n_gas],           \
             d_m[0 : n_gas], d_h[0 : n_gas], d_zeta[0 : n_gas],            \
             d_bvh_nodes[0 : num_nodes], d_ax[0 : n_gas], d_ay[0 : n_gas], \
-            d_az[0 : n_gas])
+            d_az[0 : n_gas], d_is_active[0 : n_gas])
 
     auto end_transfer = std::chrono::high_resolution_clock::now();
     auto start_compute = std::chrono::high_resolution_clock::now();
@@ -808,6 +1086,8 @@ void GasParticleSystem::compute_and_add_pp_forces(double a,
 #pragma omp parallel for schedule(dynamic, 64)
 #endif
     for (size_t i = 0; i < n_gas; ++i) {
+        if (!d_is_active[i]) continue;
+
         double p1_x = d_px[i], p1_y = d_py[i], p1_z = d_pz[i];
         double m_i = d_m[i];
         double h_i = d_h[i];
@@ -911,7 +1191,7 @@ void GasParticleSystem::compute_and_add_pp_forces(double a,
                                      d_az[0 : n_gas])                     \
     map(delete : d_px[0 : n_gas], d_py[0 : n_gas], d_pz[0 : n_gas],       \
             d_m[0 : n_gas], d_h[0 : n_gas], d_zeta[0 : n_gas],            \
-            d_bvh_nodes[0 : num_nodes])
+            d_bvh_nodes[0 : num_nodes], d_is_active[0 : n_gas])
 
     auto end_return = std::chrono::high_resolution_clock::now();
 
@@ -973,17 +1253,17 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
     double* d_dm_az = dm.acc_z.data();
 
     BVHNode* d_dm_bvh = dm.bvh_nodes.data();
+    uint8_t* d_is_active = is_active.data();
 
 #ifdef USE_GPU
     auto start_transfer = std::chrono::high_resolution_clock::now();
 
-#pragma omp target enter data map(                                           \
-        to : d_gas_px[0 : n_gas], d_gas_py[0 : n_gas], d_gas_pz[0 : n_gas],  \
-            d_gas_m[0 : n_gas], d_gas_h[0 : n_gas], d_gas_zeta[0 : n_gas],   \
-            d_gas_ax[0 : n_gas], d_gas_ay[0 : n_gas], d_gas_az[0 : n_gas],   \
-            d_dm_px[0 : n_dm], d_dm_py[0 : n_dm], d_dm_pz[0 : n_dm],         \
-            d_dm_m[0 : n_dm], d_dm_bvh[0 : dm_num_nodes], d_dm_ax[0 : n_dm], \
-            d_dm_ay[0 : n_dm], d_dm_az[0 : n_dm])
+#pragma omp target enter data map(                                          \
+        to : d_gas_px[0 : n_gas], d_gas_py[0 : n_gas], d_gas_pz[0 : n_gas], \
+            d_gas_m[0 : n_gas], d_gas_h[0 : n_gas], d_gas_zeta[0 : n_gas],  \
+            d_gas_ax[0 : n_gas], d_gas_ay[0 : n_gas], d_gas_az[0 : n_gas],  \
+            d_is_active[0 : n_gas], d_dm_px[0 : n_dm], d_dm_py[0 : n_dm],   \
+            d_dm_pz[0 : n_dm], d_dm_m[0 : n_dm], d_dm_bvh[0 : dm_num_nodes])
 
     auto end_transfer = std::chrono::high_resolution_clock::now();
     auto start_compute = std::chrono::high_resolution_clock::now();
@@ -996,6 +1276,8 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
 #pragma omp parallel for schedule(dynamic, 64)
 #endif
     for (size_t i = 0; i < n_gas; ++i) {
+        if (!d_is_active[i]) continue;
+
         double p1_x = d_gas_px[i], p1_y = d_gas_py[i], p1_z = d_gas_pz[i];
         double m_gas = d_gas_m[i];
         double h_i = d_gas_h[i];
@@ -1081,16 +1363,6 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
                 local_acc_x += force_mag_over_r * m_j * dx;
                 local_acc_y += force_mag_over_r * m_j * dy;
                 local_acc_z += force_mag_over_r * m_j * dz;
-
-                // Pull on DM (Equal and opposite, N3L)
-                double a_dm = force_mag_over_r * m_gas;
-#pragma omp atomic
-                d_dm_ax[j] -= a_dm * dx;
-#pragma omp atomic
-                d_dm_ay[j] -= a_dm * dy;
-#pragma omp atomic
-                d_dm_az[j] -= a_dm * dz;
-
             } else {
                 // Push children
                 stack[stack_ptr++] = node.left_child;
@@ -1107,13 +1379,13 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
     auto end_compute = std::chrono::high_resolution_clock::now();
     auto start_return = std::chrono::high_resolution_clock::now();
 
-#pragma omp target exit data map(                                             \
-        from : d_gas_ax[0 : n_gas], d_gas_ay[0 : n_gas], d_gas_az[0 : n_gas], \
-            d_dm_ax[0 : n_dm], d_dm_ay[0 : n_dm], d_dm_az[0 : n_dm])          \
-    map(delete : d_gas_px[0 : n_gas], d_gas_py[0 : n_gas],                    \
-            d_gas_pz[0 : n_gas], d_gas_m[0 : n_gas], d_gas_h[0 : n_gas],      \
-            d_gas_zeta[0 : n_gas], d_dm_px[0 : n_dm], d_dm_py[0 : n_dm],      \
-            d_dm_pz[0 : n_dm], d_dm_m[0 : n_dm], d_dm_bvh[0 : dm_num_nodes])
+#pragma omp target exit data map(from : d_gas_ax[0 : n_gas],                   \
+                                     d_gas_ay[0 : n_gas], d_gas_az[0 : n_gas]) \
+    map(delete : d_gas_px[0 : n_gas], d_gas_py[0 : n_gas],                     \
+            d_gas_pz[0 : n_gas], d_gas_m[0 : n_gas], d_gas_h[0 : n_gas],       \
+            d_gas_zeta[0 : n_gas], d_is_active[0 : n_gas], d_dm_px[0 : n_dm],  \
+            d_dm_py[0 : n_dm], d_dm_pz[0 : n_dm], d_dm_m[0 : n_dm],            \
+            d_dm_bvh[0 : dm_num_nodes])
 
     auto end_return = std::chrono::high_resolution_clock::now();
 
@@ -1160,6 +1432,8 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
 #pragma omp parallel for simd reduction( \
         + : step_floor_heating, step_entropy_switch) schedule(static)
     for (size_t i = 0; i < num_particles; ++i) {
+        if (!is_active[i]) continue;
+
         rho[i] = std::max(rho[i], density_floor);
 
         // Calculate specific kinetic energy
@@ -1220,6 +1494,8 @@ void GasParticleSystem::compute_gradients(const Config& config) {
 #pragma omp parallel for reduction(+ : step_ill_conditioned) \
     schedule(dynamic, 64)
     for (size_t i = 0; i < num_particles; ++i) {
+        if (!is_active[i]) continue;
+
         // Construct the isolated state for particle i
         Reconstruction::ParticleState p_i;
         p_i.pos = Eigen::Vector3d(pos_x[i], pos_y[i], pos_z[i]);
@@ -1412,6 +1688,8 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
     if (num_particles == 0) return;
     double domain_size = config.domain_size;
 
+    double gamma = config.gamma;
+
     // Reset accumulators
     std::fill(hydro_acc_x.begin(), hydro_acc_x.end(), 0.0);
     std::fill(hydro_acc_y.begin(), hydro_acc_y.end(), 0.0);
@@ -1421,6 +1699,8 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
 
 #pragma omp parallel for schedule(dynamic, 64)
     for (size_t i = 0; i < num_particles; ++i) {
+        if (!is_active[i]) continue;
+
         // Build the isolated state proxy for particle i
         Reconstruction::ParticleState p_i;
         p_i.pos = Eigen::Vector3d(pos_x[i], pos_y[i], pos_z[i]);
@@ -1460,8 +1740,10 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
             if (node.particle_idx != -1) {
                 int j = node.particle_idx;
 
-                // Process each pair just once to maintain N3L conservation
-                if (j <= static_cast<int>(i)) continue;
+                // Maintain N3L conservation for active pairs, but ensure
+                // inactive neighbors are always processed by the active
+                // particle
+                if (is_active[j] && j <= static_cast<int>(i)) continue;
 
                 double dx =
                     periodic_displacement(pos_x[j] - p_i.pos.x(), domain_size);
@@ -1485,6 +1767,24 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                     p_j.rho = rho[j];
                     p_j.pressure = pressure[j];
                     p_j.h = hj;
+
+                    // Wake up particle j if needed
+                    {
+                        double r = std::sqrt(r2);
+
+                        // Calculate sound speeds
+                        double c_i = std::sqrt(gamma * p_i.pressure / p_i.rho);
+                        double c_j = std::sqrt(gamma * p_j.pressure / p_j.rho);
+
+                        // The OG3 Wake-Up Check
+                        // If the active particle's signal velocity is much
+                        // larger than the neighbor's, and the neighbor is
+                        // asleep, flag it to wake up
+                        if (!is_active[j] && (c_i > 3.0 * c_j)) {
+#pragma omp atomic write
+                            needs_wakeup[j] = 1;
+                        }
+                    }
 
                     Reconstruction::ParticleGradients grad_j;
                     grad_j.B_matrix = B_matrix[j];
@@ -1552,6 +1852,7 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
 
                     if (config.disable_hydro_forces) continue;
 
+                    // Apply the flux to the active particle 'i'
 #pragma omp atomic
                     hydro_acc_x[i] -= Force_mom.x() / p_i.mass;
 #pragma omp atomic
@@ -1563,17 +1864,20 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
 #pragma omp atomic
                     de_dt[i] += de_dt_i;
 
+                    // ONLY apply the reverse flux to j if j is ALSO active
+                    if (is_active[j]) {
 #pragma omp atomic
-                    hydro_acc_x[j] += Force_mom.x() / p_j.mass;
+                        hydro_acc_x[j] += Force_mom.x() / p_j.mass;
 #pragma omp atomic
-                    hydro_acc_y[j] += Force_mom.y() / p_j.mass;
+                        hydro_acc_y[j] += Force_mom.y() / p_j.mass;
 #pragma omp atomic
-                    hydro_acc_z[j] += Force_mom.z() / p_j.mass;
+                        hydro_acc_z[j] += Force_mom.z() / p_j.mass;
 #pragma omp atomic
-                    du_dt[j] += du_dt_j;
+                        du_dt[j] += du_dt_j;
 #pragma omp atomic
-                    de_dt[j] += de_dt_j;
-                }
+                        de_dt[j] += de_dt_j;
+                    }
+                }  // End of interaction block
             } else {
                 stack[stack_ptr++] = node.left_child;
                 stack[stack_ptr++] = node.right_child;

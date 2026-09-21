@@ -145,8 +145,6 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                         InitialConfig::to_string(config.initial_setup));
         set_attr_bool(config_group, "fixed_ics", config.fixed_ics);
         set_attr_bool(config_group, "invert_phases", config.invert_phases);
-        set_attr_bool(config_group, "standing_particles",
-                      config.standing_particles);
         set_attr_double(config_group, "initial_gas_temp_k",
                         config.initial_gas_temperature_k);
         set_attr_double(config_group, "seed_metallicity_solar",

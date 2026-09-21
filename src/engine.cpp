@@ -1,7 +1,6 @@
 #include "engine.h"
 
 #include <algorithm>
-#include <iostream>
 
 #include "gas.h"
 #include "ics.h"
@@ -58,6 +57,11 @@ TimestepInfo SimulationEngine::get_timestep() const {
         dt_grav_mfm = state.mfm_gas->get_gravity_timestep(config);
     }
     ts.dt_grav = std::min(dt_grav_dm, dt_grav_mfm);
+
+    if (config.enable_individual_timesteps) {
+        ts.dt_macro = std::min(ts.dt_hydro, ts.dt_grav);
+        return ts;
+    }
 
     // The Macro Step is bounded by the SLOWER of the two primary physics
     double base_macro = std::max(ts.dt_hydro, ts.dt_grav);

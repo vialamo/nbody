@@ -96,6 +96,16 @@ class GasParticleSystem {
     std::vector<int> sorted_indices;
     std::vector<BVHNode> bvh_nodes;
 
+    // Time tracking per particle (Hierarchical block time-stepping)
+    std::vector<int> time_bin;      // Power-of-two bin level (n)
+    std::vector<double> dt_step;    // Actual timestep size (Delta t_i)
+    std::vector<double> t_current;  // Time this particle was last drifted to
+    std::vector<double> t_end;      // Time this particle's current step ends
+    std::vector<uint8_t> is_active; // Particle is synced with the global clock
+    std::vector<uint8_t>
+        needs_wakeup;  // Thread-safe flag for waking up sleeping particles
+    double global_time = 0.0;
+
     GasParticleSystem(const Config& config);
 
     void add_particle(double px, double py, double pz, double vx, double vy,
@@ -125,6 +135,11 @@ class GasParticleSystem {
     double get_cfl_timestep(double a, const Config& config) const;
     double get_cooling_timestep(double a, const Config& config,
                                 Cooling& cooling) const;
+    // Assigns power-of-two block timesteps to all active particles
+    void update_particle_timesteps(double dt_max, double a,
+                                   const Config& config, Cooling& cooling);
+    // Sync the clock, process wakeups, and flag active particles
+    void sync_and_activate(double dt, const Config& config);
 
     void hydro_step(const Config& config, double a, double H, double dt);
 

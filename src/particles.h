@@ -6,6 +6,7 @@
 #include "types.h"
 
 class Diagnostics;
+class GasParticleSystem;
 
 class ParticleSystem {
    private:
@@ -42,6 +43,13 @@ class ParticleSystem {
     double accumulated_gravitational_work = 0.0;
     double accumulated_expansion_work = 0.0;
 
+    std::vector<uint8_t> is_active;
+    std::vector<int> time_bin;
+    std::vector<double> dt_step;
+    std::vector<double> t_current;
+    std::vector<double> t_end;
+    double global_time = 0.0;
+
     ParticleSystem(const Config& config);
 
     void build_lbvh(const Config& config);
@@ -59,6 +67,11 @@ class ParticleSystem {
 
     void add_particle(double px, double py, double pz, double vx, double vy,
                       double vz, double m);
+
+    void update_particle_timesteps(double dt_max, const Config& config);
+    void sync_and_activate(double dt, const Config& config);
+    void compute_cross_pp_forces(double a, const GasParticleSystem& gas,
+                                 const Config& config, Diagnostics& diag);
 
    private:
     void sort_arrays(const std::vector<int>& sorted_indices);

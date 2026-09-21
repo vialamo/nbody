@@ -249,32 +249,3 @@ TEST_CASE("Zeldovich field has exactly zero mean (k=0 mode is dead)",
     REQUIRE(std::abs(sum_dy / M3) < 1e-14);
     REQUIRE(std::abs(sum_dz / M3) < 1e-14);
 }
-
-TEST_CASE("standing_particles flag explicitly zeroes all initial velocities",
-          "[ics][config]") {
-    Config config;
-    config.mesh_size = 16;
-    config.num_particles_1d = 16;
-    config.hydro_method = HydroMethod::Eulerian;
-
-    // Explicitly set to true
-    config.standing_particles = true;
-    config.compute_derived_data();
-
-    SimState state = initialize_state(config);
-
-    // Check Dark Matter
-    for (size_t i = 0; i < state.dm.num_particles; ++i) {
-        REQUIRE(state.dm.vel_x[i] == 0.0);
-        REQUIRE(state.dm.vel_y[i] == 0.0);
-        REQUIRE(state.dm.vel_z[i] == 0.0);
-    }
-
-    // Check Gas Momentum
-    int N3 = config.mesh_size * config.mesh_size * config.mesh_size;
-    for (int i = 0; i < N3; ++i) {
-        REQUIRE(state.gas->get_momentum_x().data[i] == 0.0);
-        REQUIRE(state.gas->get_momentum_y().data[i] == 0.0);
-        REQUIRE(state.gas->get_momentum_z().data[i] == 0.0);
-    }
-}

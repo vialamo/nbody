@@ -331,15 +331,9 @@ void initialize_dm(SimState& state, const Config& config,
                 double p_z =
                     fmod(qz + d.z + config.domain_size, config.domain_size);
 
-                double v_x = config.standing_particles
-                                 ? 0.0
-                                 : state.hubble_param * d.x * zf.f;
-                double v_y = config.standing_particles
-                                 ? 0.0
-                                 : state.hubble_param * d.y * zf.f;
-                double v_z = config.standing_particles
-                                 ? 0.0
-                                 : state.hubble_param * d.z * zf.f;
+                double v_x = state.hubble_param * d.x * zf.f;
+                double v_y = state.hubble_param * d.y * zf.f;
+                double v_z = state.hubble_param * d.z * zf.f;
 
                 state.dm.add_particle(p_x, p_y, p_z, v_x, v_y, v_z,
                                       config.dm_particle_mass);
@@ -406,15 +400,9 @@ void initialize_gas(SimState& state, const Config& config,
                     gas.metal_density.data[idx] = safe_rho * seed_metallicity;
 
                     // Calculate Velocity and Energy
-                    double vx = config.standing_particles
-                                    ? 0.0
-                                    : state.hubble_param * d.x * zf.f;
-                    double vy = config.standing_particles
-                                    ? 0.0
-                                    : state.hubble_param * d.y * zf.f;
-                    double vz = config.standing_particles
-                                    ? 0.0
-                                    : state.hubble_param * d.z * zf.f;
+                    double vx = state.hubble_param * d.x * zf.f;
+                    double vy = state.hubble_param * d.y * zf.f;
+                    double vz = state.hubble_param * d.z * zf.f;
 
                     gas.velocity_x.data[idx] = vx;
                     gas.velocity_y.data[idx] = vy;

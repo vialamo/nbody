@@ -103,7 +103,6 @@ struct Config {
     InitialSetup initial_setup = InitialSetup::Cosmological;
     bool fixed_ics = false;
     bool invert_phases = false;
-    bool standing_particles = false;
     double initial_gas_temperature_k = 50.0;
     double seed_metallicity_solar = 0.0;
     int seed = 42;
@@ -123,6 +122,7 @@ struct Config {
     double mfm_neighbor_tolerance = 0.01;
     int mfm_max_iterations = 50;
     bool disable_hydro_forces = false;
+    bool enable_individual_timesteps = true;
 
     // Subgrid
     bool enable_subgrid_clumping = true;

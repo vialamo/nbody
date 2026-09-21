@@ -202,7 +202,6 @@ Controls the generation of the primordial density field and particle distributio
 * **`seed_metallicity_solar`**: The initial uniform metallicity mass fraction (Z) of the gas, expressed as a ratio to the present-day solar metallicity ($Z\odot$). Typically set to 0.0.
 * **`fixed_ics`**: Boolean. If `true`, the Zeldovich field is generated with the exact theoretical power amplitude (while keeping random phases). If false, it defaults to traditional Gaussian random amplitudes and phases.
 * **`invert_phases`**: Boolean. If `true`, the random phases are inverted when generating the Zeldovich field. Running paired simulations with `fixed_ics = true` and inverted phases eliminates in-box cosmic variance.
-* **`standing_particles`**: Boolean. If `true`, all N-body particles remain completely stationary throughout the entire duration of the simulation. Their positions and velocities are never updated. This is strictly a debugging feature.
 * **`seed`**: Integer seed for the random number generator, ensuring reproducible initial density fields.
 
 ### `[hydro]`

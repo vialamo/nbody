@@ -163,6 +163,8 @@ void Config::compute_derived_data() {
     // For now, disable subcycling when using MFM
     if (hydro_method == HydroMethod::MFM) {
         enable_subcycling = false;
+    } else {
+        enable_individual_timesteps = false;
     }
 
     init_derived_units();
@@ -212,8 +214,6 @@ void Config::load(const std::string& filename) {
         config_file.get_bool("initial_conditions", "fixed_ics", fixed_ics);
     invert_phases = config_file.get_bool("initial_conditions", "invert_phases",
                                          invert_phases);
-    standing_particles = config_file.get_bool(
-        "initial_conditions", "standing_particles", standing_particles);
     initial_gas_temperature_k = config_file.get_double(
         "initial_conditions", "initial_gas_temp_k", initial_gas_temperature_k);
     seed_metallicity_solar = config_file.get_double(
@@ -244,6 +244,8 @@ void Config::load(const std::string& filename) {
         "mfm", "mfm_neighbor_tolerance", mfm_neighbor_tolerance);
     mfm_max_iterations =
         config_file.get_int("mfm", "mfm_max_iterations", mfm_max_iterations);
+    enable_individual_timesteps = config_file.get_bool(
+        "mfm", "enable_individual_timesteps", enable_individual_timesteps);
 
     enable_subgrid_clumping = config_file.get_bool(
         "subgrid", "enable_subgrid_clumping", enable_subgrid_clumping);
