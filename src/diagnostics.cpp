@@ -244,7 +244,9 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
         total_heated_energy = e_heat;
 
         this->MFM_ill_conditioned_cases = gas.ill_conditioned_cases;
-        gas.ill_conditioned_cases = 0;
+        //gas.ill_conditioned_cases = 0;
+        this->MFM_h_non_converged_cases = gas.non_converged_h_cases;
+        //gas.non_converged_h_cases = 0;
     } else {
         this->energy_err = 0.0;
     }

@@ -5,7 +5,7 @@ This repository documents my work in cosmological N-body/hydrodynamics simulatio
 ## Key Features Implemented
 
 * **Gravity Solvers:**
-    * **Particle-Particle (PP):** Direct summation for high-accuracy short-range forces.
+    * **Particle-Tree:** Oct-Tree traversal for high-accuracy short-range forces.
     * **Particle-Mesh (PM):** FFT-based Poisson solver for efficient long-range forces.
     * **Fourier-Split PM:** A hybrid method combining PP and PM with a Gaussian frequency filter in Fourier space, yielding an analytical short-range Complementary Error Function force that guarantees monotonic force matching.
 * **Cosmology:**
@@ -21,7 +21,7 @@ This repository documents my work in cosmological N-body/hydrodynamics simulatio
 * **High-Performance Computing (HPC):**
     * **OpenMP Multithreading:** Heavy loops (such as the Riemann solver, mass assignment, and grid calculations) are parallelized across available CPU cores.
     * **SIMD Vectorization:** Core CPU mathematics leverage Eigen and AVX vectorization for cache-friendly, contiguous memory speedups.
-    * **GPU Offloading:** The computationally expensive direct-summation particle forces can be optionally offloaded to NVIDIA GPUs using OpenMP `#pragma omp target` directives via the NVIDIA HPC SDK (nvc++) or the Clang/LLVM toolchain.
+    * **GPU Offloading:** The flattened Linear Bounding Volume Hierarchy (LBVH) tree traversals (using Morton codes) can be offloaded to NVIDIA GPUs using OpenMP `#pragma omp target` directives via the NVIDIA HPC SDK (nvc++) or the Clang/LLVM toolchain.
 * **Numerical Methods:**
     * **Operator Splitting & Subcycling:** Employs a Strang-split fractional step method to decouple gravity, hydrodynamics, and cooling. Fast/stiff physics are **subcycled**.
     * **Cloud-in-Cell (CIC):** A symmetric mass-assignment and force-interpolation scheme for the PM grid to ensure momentum conservation.
@@ -36,7 +36,7 @@ This repository documents my work in cosmological N-body/hydrodynamics simulatio
 
 ## Repository Structure
 
-* [`/src/`](src/): A high-performance C++ P³M + hydrodynamics cosmological simulation.
+* [`/src/`](src/): A high-performance C++ TreePM + hydrodynamics cosmological simulation.
 * [`/docs/`](docs/): Contains a "living book" titled **"Notes on Cosmological Simulations"** in Markdown format. It includes a `Makefile` to automatically build the source notes into EPUB and PDF files.
 * [`/scripts/`](scripts/): Contains Python utilities for post-processing, including a 3D visualizer (`viewer.py`), a validation suite (`verify_run.py`) and a diagnostic dashboard (`cosmology_dashboard.py`) to extract and plot global physical evolution from the HDF5 outputs.
 
@@ -188,12 +188,16 @@ Defines the cosmological model of the universe.
 
 * **`comoving_softening_factor`**: The baseline gravitational softening length as a multiplier of the mean inter-particle spacing.
 * **`softening_cap_scale_factor`**: The expansion scale factor at which the physical size of the softening length is capped (so that its physical size won't grow more). This is needed to preserve halo density through the simulation.
+* **`use_pm`**: Boolean. Enables the long-range Particle-Mesh (PM) force calculation via Fast Fourier Transform.
+* **`use_pp`**: Boolean. Enables the short-range Particle-Particle (PP) direct summation for sub-grid resolution.
+* **`pm_smoothing_cells`**: The fundamental mathematical scale ($r_s$) of the Fourier-space Gaussian filter, defined in units of grid cells. Determines how smoothly the grid force is blunted to avoid anisotropic grid artifacts. Minimum mathematically sound value is 1.0.
+* **`cutoff_radius_factor`**: A multiplier that dictates the cutoff radius relative to the smoothing scale ($r_c = \text{factor} \times r_s$). Because the short-range force is an erfc exponential decay, the cutoff must be placed far enough out to avoid force discontinuity. Typically set to at least 3.5.
 
 ### `[initial_conditions]`
 
 Controls the generation of the primordial density field and particle distributions.
 
-* **`setup`**: Initial configuration for gas and DM. Can be "cosmological" for a normal simulation, but also "sod_shock_tube" or "adiabatic_expansion" to create initial conditions for these specific tests. In these cases, gravity and DM will be automatically disabled and expansion adjusted according to the specific test.
+* **`setup`**: Initial configuration for gas and DM. Can be "cosmological" for a normal simulation, but also "sod_shock_tube", "adiabatic_expansion" or "sedov_blastwave" to create initial conditions for these specific tests. In these cases, gravity and DM will be automatically disabled and expansion adjusted according to the specific test.
 * **`initial_gas_temp_k`**: The physical temperature of the baryonic gas at `start_a`, in Kelvin.
 * **`seed_metallicity_solar`**: The initial uniform metallicity mass fraction (Z) of the gas, expressed as a ratio to the present-day solar metallicity ($Z\odot$). Typically set to 0.0.
 * **`fixed_ics`**: Boolean. If `true`, the Zeldovich field is generated with the exact theoretical power amplitude (while keeping random phases). If false, it defaults to traditional Gaussian random amplitudes and phases.
@@ -223,18 +227,8 @@ Configures the fluid dynamics solver for the baryonic gas.
 
 Configures the subgrid models.
 
-* **`enable_subgrid_gravity`**: If enabled, the code calculates short-range Particle-Particle (PP) gravitational forces between the collisionless dark matter particles and the baryonic gas. Otherwise there are not intra-cell interactions between them.
 * **`enable_subgrid_clumping`**: Enables the cooling subgrid model. If enabled, the code applies a density-dependent clumping factor to scale the radiative cooling rate, compensating for unresolved high-density gas on coarse grids.
 * **`subgrid_clumping_amplitude`**: The amplitude for the subgrid cooling factor. Set to -1 to let the simulation auto-calculate this based on the grid resolution.
-
-### `[p3m]`
-
-Configures the Particle-Particle Particle-Mesh (P³M) gravity solver.
-
-* **`use_pm`**: Boolean. Enables the long-range Particle-Mesh (PM) force calculation via Fast Fourier Transform.
-* **`use_pp`**: Boolean. Enables the short-range Particle-Particle (PP) direct summation for sub-grid resolution.
-* **`pm_smoothing_cells`**: The fundamental mathematical scale ($r_s$) of the Fourier-space Gaussian filter, defined in units of grid cells. Determines how smoothly the grid force is blunted to avoid anisotropic grid artifacts. Minimum mathematically sound value is 1.0.
-* **`cutoff_radius_factor`**: A multiplier that dictates the cutoff radius relative to the smoothing scale ($r_c = \text{factor} \times r_s$). Because the short-range force is an erfc exponential decay, the cutoff must be placed far enough out to avoid force discontinuity. Typically set to at least 3.5.
 
 ### `[time]`
 
@@ -257,8 +251,7 @@ Manages how and when the simulation writes data to disk.
 
 High-Performance Computing (HPC) and hardware execution settings.
 
-* **`num_threads`**: The maximum number of OpenMP threads to spawn. If set to `0`, the simulation will defer to the terminal's `OMP_NUM_THREADS` environment variable, or default to all available CPU cores. 
-* **`use_gpu`**: Boolean. If set to `true`, the engine offloads compute-heavy kernels to the GPU. *Note: If enabled but no compatible OpenMP offload device is detected at runtime, the code falls back to CPU execution.*
+* **`num_threads`**: The maximum number of OpenMP threads to spawn. If set to `0`, the simulation will defer to the terminal's `OMP_NUM_THREADS` environment variable, or default to all available CPU cores.
 
 ## HDF5 Snapshot Format & Units
 
@@ -318,8 +311,8 @@ If the Eulerian solver is used, the data is exported as 3D grids flattened into 
 
 * **`density`**: The *comoving* mass density. Because the physical volume of the grid cells expands with the universe, to calculate the true physical density, you must multiply this array by the physical mass/volume unit conversions and **divide by $a^3$**.
 * **`momentum_[x,y,z]`**: Comoving momentum density.
-* **`energy`**: The total comoving energy density (Kinetic + Internal). To convert this grid to true physical energy, you must apply the conversion factors and **multiply by $a^2$**.
-* **`pressure`**: Comoving thermal pressure. Like energy, it must be scaled by $a^2$ to reflect physical pressure.
+* **`energy`**: The total comoving energy density (Kinetic + Internal). To convert this grid to true physical energy, you must apply the conversion factors and **divide by $a$**.
+* **`pressure`**: Comoving thermal pressure. It must be divided by $a$ to reflect physical pressure.
 * **`temperature`**: Unlike the other grids, the simulation engine explicitly converts the internal energy of the gas into **Physical Kelvin** before writing this array to disk. No scale factor corrections are needed for this dataset.
 * **`metal_density`**: The *comoving* mass density of heavy elements (metals). Like the main gas density, converting this to a true physical density requires applying the mass/volume unit conversions and **dividing by $a^3$**. *(Note: To calculate the dimensionless metallicity fraction, $Z$, for data analysis, you can divide this array by the `density` array, as the comoving scale factors cancel out).*
 * **`thermal_timescale`**: The time, in code units, required for a cell to radiate all its heat at the current rate (if negative), or to double its current internal energy (if positive).
@@ -334,7 +327,7 @@ If the Meshless Finite Mass (MFM) solver is used, the data is exported as 1D arr
 * **`mass`**: The mass of each gas particle.
 * **`smoothing_length`**: The adaptive kernel radius ($h$) for each particle.
 * **`density`**: The *comoving* mass density computed at the particle's location. Apply volume conversions and **divide by $a^3$** for physical density.
-* **`pressure`**: Comoving thermal pressure. Must be scaled by $a^2$ for physical pressure.
-* **`internal_energy`**: The specific comoving internal energy (energy per unit mass, $u$) of the particle.
+* **`pressure`**: Comoving thermal pressure. Must be divided by $a$ for physical pressure.
+* **`internal_energy`**: The specific comoving internal energy (energy per unit mass, $u$) of the particle. Multiply this array by $a^2$ to recover physical specific internal energy.
 * **`metal_fraction`**: Unlike the Eulerian solver which tracks metal density, MFM directly tracks the dimensionless mass fraction of metals ($Z$). No conversions are needed.
 * **`temperature`**: Converted internally and written directly in **Physical Kelvin**. No scale factor corrections are required.

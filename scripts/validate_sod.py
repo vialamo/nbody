@@ -15,7 +15,7 @@ def get_exact_sod_solution(x, t, gamma=5.0/3.0, x0=0.5):
     """
     # GADGET/GIZMO Initial States (Hernquist & Katz variant)
     P_L, rho_L, v_L = 1.0, 1.0, 0.0
-    P_R, rho_R, v_R = 0.1795, 0.25, 0.0
+    P_R, rho_R, v_R = 0.1, 0.125, 0.0
     
     if t <= 1e-8:
         rho = np.where(x <= x0, rho_L, rho_R)
@@ -109,8 +109,8 @@ def validate_sod_shock_interactive(snapshot_dir):
         domain_size = config.get('domain_size', 1.0)
 
         # Check Gamma
-        if abs(gamma - (5.0/3.0)) > 1e-5:
-            print(f"[WARNING] Expected gamma = 5/3 for this Shock test, but found {gamma:.5f}.")
+        if abs(gamma - 1.4) > 1e-5:
+            print(f"[WARNING] Expected gamma = 1.4 for this Shock test, but found {gamma:.5f}.")
             
         # Check Cosmological Expansion
         if bool(config.get('expanding_universe', 0)):

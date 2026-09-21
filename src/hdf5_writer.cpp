@@ -60,6 +60,24 @@ void HDF5Writer::write_particle_vec(H5::Group& group, const char* dataset_name,
     dataset.close();
 }
 
+void HDF5Writer::write_particle_vec3d(H5::Group& group,
+                                      const char* dataset_name,
+                                      const std::vector<Eigen::Vector3d>& vec) {
+    if (vec.empty()) return;
+
+    // Create a 2D dataset: N particles x 3 spatial components
+    hsize_t dims[2] = {vec.size(), 3};
+    H5::DataSpace dataspace(2, dims);
+
+    H5::DataSet dataset = group.createDataSet(
+        dataset_name, H5::PredType::NATIVE_DOUBLE, dataspace);
+
+    // vec.data() returns a pointer to the contiguous block of Eigen::Vector3d
+    // structs
+    dataset.write(vec.data(), H5::PredType::NATIVE_DOUBLE);
+    dataset.close();
+}
+
 HDF5Writer::HDF5Writer(const std::string& run_dir, const Config& config)
     : output_directory(run_dir) {}
 
@@ -115,6 +133,12 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                         config.comoving_softening_factor);
         set_attr_double(config_group, "softening_cap_scale_factor",
                         config.physical_softening_cap_a);
+        set_attr_bool(config_group, "use_pm", config.use_PM);
+        set_attr_bool(config_group, "use_pp", config.use_PP);
+        set_attr_double(config_group, "pm_smoothing_cells",
+                        config.PM_smoothing_cells);
+        set_attr_double(config_group, "cutoff_radius_factor",
+                        config.cutoff_radius_factor);
 
         // [initial_conditions]
         set_attr_string(config_group, "setup",
@@ -150,20 +174,10 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                      config.mfm_max_iterations);
 
         // [subgrid]
-        set_attr_bool(config_group, "enable_subgrid_gravity",
-                      config.enable_subgrid_gas_gravity);
         set_attr_bool(config_group, "enable_subgrid_clumping",
                       config.enable_subgrid_clumping);
         set_attr_double(config_group, "subgrid_clumping_amplitude",
                         config.subgrid_clumping_amplitude);
-
-        // [p3m]
-        set_attr_bool(config_group, "use_pm", config.use_PM);
-        set_attr_bool(config_group, "use_pp", config.use_PP);
-        set_attr_double(config_group, "pm_smoothing_cells",
-                        config.PM_smoothing_cells);
-        set_attr_double(config_group, "cutoff_radius_factor",
-                        config.cutoff_radius_factor);
 
         // [time]
         set_attr_double(config_group, "max_dt_dynamical_factor",
@@ -178,7 +192,7 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
 
         // [HPC]
         set_attr_int(config_group, "num_threads", config.num_threads);
-        set_attr_bool(config_group, "use_gpu", config.enable_GPU);
+        set_attr_bool(config_group, "use_gpu", config.using_GPU);
 
         // Global system physics
         set_attr_double(config_group, "G", config.G);
@@ -303,6 +317,14 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                         gas.u[i], state.scale_factor, config);
                 }
                 write_particle_vec(gas_group, "temperature", temp_vec);
+
+                // Debugging
+                write_particle_vec3d(gas_group, "grad_p", gas.grad_p);
+                write_particle_vec(gas_group, "entropy", gas.entropy);
+                write_particle_vec(gas_group, "condition_number", gas.cond_num);
+                write_particle_vec3d(gas_group, "raw_sum_p", gas.raw_sum_p);
+                set_attr_int(gas_group, "clamped_h_cases", gas.clamped_h_cases);
+                write_particle_vec(gas_group, "n_enc", gas.n_enc_final);
             }
             gas_group.close();
         }

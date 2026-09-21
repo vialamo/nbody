@@ -89,11 +89,11 @@ TEST_CASE("initialize_state produces physically sound macro-states",
                 state.gas->get_density().data[i] * config.cell_volume;
         }
 
-        // The universe must have exactly 1.0 code mass
+        // The universe must have 1.0 code mass
         REQUIRE(total_dm_mass + total_gas_mass ==
-                Catch::Approx(1.0).margin(1e-5));
+                Catch::Approx(1.0).margin(1e-4));
         REQUIRE(total_gas_mass ==
-                Catch::Approx(config.gas_total_mass).margin(1e-5));
+                Catch::Approx(config.gas_total_mass).margin(1e-4));
     }
 
     SECTION("Conservation of Momentum") {

@@ -1854,7 +1854,7 @@ $$\Delta t_{\text{hydro}} \gg t_{\text{cool}}$$
 
 #### Limitations of Explicit Integration
 
-When a differential equation contains a timescale that is drastically shorter than the simulation's timestep, we refer to the equation as **stiff**. Explicit integrators become highly unstable when applied to stiff equations over standard simulation timesteps.
+When a differential equation contains a timescale that is drastically shorter than the simulation's timestep, we refer to the equation as **stiff**. Explicit integrators become unstable when applied to stiff equations over standard simulation timesteps.
 
 We can see why by looking back at our explicit Forward Euler equation. Let's imagine a dense gas cell where $t_{\text{cool}}$ is 10,000 years, but our hydro solver dictates we must take a step of $\Delta t = 1,000,000$ years.
 
@@ -1870,15 +1870,11 @@ The explicit solver assumes the gas continues to cool at its initial rate for th
 
 At first glance, the obvious solution to this overshoot is to shrink the global timestep $\Delta t$ to match the shortest cooling timescale. If the code took tinier steps, the explicit solver would remain stable. However, this is computationally unpractical. Forcing the hydrodynamics solver to run hundreds of extra times just to cool a small fraction of dense gas cells isn't a good solution.
 
-The standard solution is to abandon explicit integration for the thermodynamics and adopt a different approach.
-
 ### Implicit Integration
-
-To deal with the timescale mismatch between the slow hydrodynamics and the fast cooling, we can use **Implicit Integration** within the cooling operator.
 
 #### The Backward Euler Method
 
-As we saw earlier, explicit integration fails because it blindly projects the current cooling rate forward, resulting in massive overshoots. To fix this, we can use an **implicit** method, like the **Backward Euler** scheme.
+As we saw earlier, explicit integration fails because it blindly projects the current cooling rate forward, resulting in massive overshoots. To deal with the timescale mismatch between hydrodynamics and cooling, we can use an **Implicit Integration** method within the cooling operator, like the **Backward Euler** scheme.
 
 Instead of asking, *"How fast is the gas cooling right now?"*, the Backward Euler method asks, *"What future temperature would justify the energy lost to get there?"*
 
@@ -1888,7 +1884,7 @@ $$u^{n+1} = u^n - \Delta t \cdot \frac{\Lambda(T^{n+1}, \rho)}{\rho}$$
 
 Conveniently, because the cooling rate $\Lambda$ drops rapidly as the temperature drops ($\Lambda \propto \sqrt{T}$), evaluating it at the colder, future state creates an automatic, self-regulating feedback loop.
 
-If we take a massive timestep ($\Delta t$), the equation assumes the gas rapidly cools down early in the step and spends the rest of the time radiating at a very slow, gentle rate. This guarantees **unconditional stability**, meaning the numerical solution will never diverge or 'blow up', regardless of the size of the timestep $\Delta t$.
+If we take a massive timestep ($\Delta t$), the equation assumes the gas rapidly cools down early in the step and spends the rest of the time radiating at a slow rate. This guarantees **unconditional stability**, meaning the numerical solution will never diverge or 'blow up', regardless of the size of the timestep $\Delta t$.
 
 #### Newton-Raphson Root-Finding
 
@@ -1906,9 +1902,7 @@ $$u_{\text{next}} = u_{\text{guess}} - \frac{f(u_{\text{guess}})}{f'(u_{\text{gu
 
 Here, $f'$ is the derivative of the root-finding function with respect to the internal energy. In practice we can to compute this derivative numerically—by evaluating $\Lambda$ at $u_{\text{guess}}$ and at a slightly offset value to determine the local slope. This decouples the root-finding algorithm from the specific physics being modeled, allowing the cooling function to be upgraded with complex, tabulated atomic chemistry data without requiring a hard-coded analytical derivative.
 
-The solver repeats this process, converging toward the true future energy. Once the guess stops changing (reaching a strict tolerance), the solver exits. Furthermore, we can easily inject a hard **temperature floor** (e.g., the temperature of the Cosmic Microwave Background, or the 10,000 K **atomic cooling limit** established earlier) into this solver; if a Newton-Raphson guess ever drops below this floor, the solver immediately overrides the answer to the floor value and exits.
-
-This iterative engine allows the simulation to cool the gas, bridging the gap between the millions of years of cosmic expansion and the thousands of years of atomic radiation.
+The solver repeats this process, converging toward the true future energy. Once the guess stops changing (reaching a strict tolerance), the solver exits. Furthermore, we can inject a hard **temperature floor** (e.g., the temperature of the Cosmic Microwave Background, or the 10,000 K **atomic cooling limit** established earlier) into this solver; if a Newton-Raphson guess ever drops below this floor, the solver immediately overrides the answer to the floor value and exits.
 
 ### Coupling Cooling to the Simulation
 
@@ -1916,46 +1910,42 @@ The implicit solver calculates how much thermal energy the gas radiates away dur
 
 In the hydrodynamics solver, we established the **Dual Energy Formalism** to survive hypersonic flows. This means the grid tracks two different energy variables for every cell: the total energy density ($E = E_{\text{kin}} + E_{\text{int}}$) and the internal thermal energy density ($ie = E_{\text{int}}$).
 
-Radiative cooling strictly removes *thermal* energy. The photons escaping into space carry away heat, but they do not slow down the macroscopic bulk flow of the gas. The kinetic energy ($\frac{1}{2}\rho v^2$) must be preserved.
+Radiative cooling removes *thermal* energy. The photons escaping into space carry away heat, but they do not slow down the macroscopic bulk flow of the gas. The kinetic energy ($\frac{1}{2}\rho v^2$) must be preserved.
 
-Subtracting the radiated thermal energy, $\Delta E_{\text{vol}}$, solely from the independently tracked internal energy ($ie$) introduces a thermodynamic inconsistency. During the subsequent hydrodynamic step, the Dual Energy switch may evaluate the cell, detect a kinetically dominated flow, and overwrite the recently cooled internal energy by recalculating it directly from the total energy ($ie = E - E_{\text{kin}}$). Because the total energy array remained unmodified, this recalculation would artificially restore the lost thermal energy, causing the gas to spontaneously reheat.
-
-To extract the radiated light while preserving the kinetic velocity of the gas, the lost thermal energy must be substracted from **both** arrays:
+Since we are using the Dual Energy Formalism, to consistently extract the radiated light while preserving the kinetic velocity of the gas, the lost thermal energy must be substracted from **both**, internal energy and total energy arrays:
 
 $$ie_{\text{new}} = ie_{\text{old}} - \Delta E_{\text{vol}}$$
 $$E_{\text{new}} = E_{\text{old}} - \Delta E_{\text{vol}}$$
 
-Because $E_{\text{new}} - ie_{\text{new}} = (E_{\text{old}} - \Delta E_{\text{vol}}) - (ie_{\text{old}} - \Delta E_{\text{vol}}) = E_{\text{old}} - ie_{\text{old}}$, the kinetic energy remains untouched. The gas cools down, the pressure drops, but the fluid continues to flow at its exact physical speed.
+Because $E_{\text{new}} - ie_{\text{new}} = (E_{\text{old}} - \Delta E_{\text{vol}}) - (ie_{\text{old}} - \Delta E_{\text{vol}}) = E_{\text{old}} - ie_{\text{old}}$, the kinetic energy remains untouched. The gas cools down, the pressure drops, but the fluid continues to flow at the same speed.
 
 #### Thermodynamics in Comoving Coordinates
 
-In our cosmological simulation, the Eulerian grid is fixed in comoving space. While the comoving volume of a cell remains perfectly constant, the true physical volume it represents stretches with the scale factor, $a$.
+In our cosmological simulation, the Eulerian grid is fixed in comoving space. While the comoving volume of a cell remains constant, the true physical volume it represents stretches with the scale factor, $a$.
 
 Since the comoving velocity is defined as the time derivative of the comoving position: $v_{\text{code}} = \dot{x}$, the physical peculiar velocity of the gas is $v_{\text{phys}} = a \cdot v_{\text{code}}$. Because kinetic energy scales with the square of the velocity, the physical kinetic energy natively carries an $a^2$ dependence ($E_{\text{kin, phys}} \propto a^2 v_{\text{code}}^2$).
 
-To maintain absolute thermodynamic consistency within the Dual Energy Formalism, the internal energy must be scaled identically before it can be summed with the kinetic energy. Therefore, the internal energy density tracked by the solver ($ie_{\text{code}}$) relates to the physical internal energy density ($ie_{\text{phys}}$) via this exact scale factor:
+To maintain consistency within the Dual Energy Formalism, the internal energy must be scaled identically before it can be summed with the kinetic energy. Therefore, the internal energy density tracked by the solver ($ie_{\text{code}}$) relates to the physical internal energy density ($ie_{\text{phys}}$) via the scale factor:
 
 $$ie_{\text{phys}} = a^2 \cdot ie_{\text{code}}$$
 
-This mathematical transformation dictates every interaction between the cooling module and the hydrodynamic grid:
+This transformation dictates every interaction between the cooling module and the hydrodynamic grid:
 
 **1. Temperature and Cooling Conversions**
-When computing the physical temperature of the gas or querying complex, tabulated cooling functions ($\Lambda$), the solver cannot use the array values directly. It must first recover the physical specific internal energy by multiplying the code variables by $a^2$. Conversely, once the physical cooling rate is calculated, the required energy deduction ($\Delta E_{\text{vol}}$) must be mathematically mapped back to the grid by dividing the physical value by $a^2$ before applying the subtraction.
+When computing the physical temperature of the gas or querying tabulated cooling functions ($\Lambda$), the solver must first recover the physical specific internal energy by multiplying the code variables by $a^2$. Conversely, once the physical cooling rate is calculated, the required energy deduction ($\Delta E_{\text{vol}}$) must be mapped back to the grid by dividing the physical value by $a^2$ before applying the subtraction.
 
 **2. Adiabatic Expansion (PdV Work)**
-This coordinate transformation fundamentally alters the integration of adiabatic expansion. In a physical universe, a gas cools adiabatically as its volume expands, governed by its specific adiabatic index ($\gamma$). According to standard thermodynamics, the temperature of an expanding gas scales with its density as $T \propto \rho^{\gamma - 1}$. Because the physical density drops proportionally to the expanding volume ($\rho \propto a^{-3}$), the temperature—and therefore the physical internal energy for the constant mass of gas within a comoving cell—scales as:
+This coordinate transformation alters the integration of adiabatic expansion. In a physical universe, a gas cools adiabatically as its volume expands, governed by its specific adiabatic index ($\gamma$). The temperature of an expanding gas scales with its density as $T \propto \rho^{\gamma - 1}$. Because the physical density drops proportionally to the expanding volume ($\rho \propto a^{-3}$), the temperature—and therefore the physical internal energy for the constant mass of gas within a comoving cell—scales as:
 
 $$ie_{\text{phys}} \propto (a^{-3})^{\gamma - 1} = a^{-3(\gamma - 1)}$$
 
-Taking the time derivative of this mathematical relationship reveals the exact rate of energy loss. Applying the chain rule to the scale factor dependence yields:
+Taking the time derivative of this relationship we get the rate of energy loss. Applying the chain rule to the scale factor dependence yields:
 
 $$\frac{d}{dt}(ie_{\text{phys}}) \propto -3(\gamma - 1) a^{-3(\gamma - 1) - 1} \dot{a}$$
 
-By factoring out the original $a^{-3(\gamma - 1)}$ scaling and substituting the definition of the Hubble parameter ($H = \frac{\dot{a}}{a}$), it becomes clear that the physical internal energy strictly decays at a rate of $-3(\gamma - 1)H$:
+By factoring out the original $a^{-3(\gamma - 1)}$ scaling and substituting the definition of the Hubble parameter ($H = \frac{\dot{a}}{a}$), we see that the physical internal energy decays at a rate of $-3(\gamma - 1)H$:
 
 $$\frac{d}{dt}(ie_{\text{phys}}) = -3(\gamma - 1) \left(\frac{\dot{a}}{a}\right) a^{-3(\gamma - 1)} = -3(\gamma - 1)H \cdot ie_{\text{phys}}$$
-
-*(Note: For a standard monoatomic gas where $\gamma = 5/3$, this perfectly recovers the classical physical decay rate of $-2H$.)*
 
 However, because the simulation arrays must store the scaled $ie_{\text{code}}$ variable, the rate of change for the grid is governed by the chain rule:
 
@@ -1969,23 +1959,23 @@ Subtracting the expansion term to isolate the update rate for the simulation arr
 
 $$a^2 \frac{d}{dt}(ie_{\text{code}}) = \left[ -3(\gamma - 1) - 2 \right] H a^2 \cdot ie_{\text{code}}$$
 
-By factoring out the $a^2$ scaling on both sides and simplifying the mathematical coefficient (since $-3\gamma + 3 - 2 = -3\gamma + 1 = -(3\gamma - 1)$), the generalized code update rate emerges:
+By factoring out the $a^2$ scaling on both sides and simplifying the mathematical coefficient (since $-3\gamma + 3 - 2 = -3\gamma + 1 = -(3\gamma - 1)$) we get the generalized code update rate:
 
 $$\frac{d}{dt}(ie_{\text{code}}) = -(3\gamma - 1)H \cdot ie_{\text{code}}$$
 
-The physical thermodynamic cooling ($-3(\gamma - 1)H$) intrinsically combines with the coordinate system's mathematical stretching ($-2H$) to produce a strict $-(3\gamma - 1)H$ decay requirement. To consistently simulate the cosmological $PdV$ work and prevent the expansion of the universe from artificially heating the gas, the integrator must drain the internal and total energy arrays at this mathematically derived rate.
+The physical thermodynamic cooling ($-3(\gamma - 1)H$) combines with the coordinate system's stretching ($-2H$) to produce a $-(3\gamma - 1)H$ decay. To consistently simulate the cosmological $PdV$ work and prevent the expansion of the universe from artificially heating the gas, the integrator must drain the internal and total energy arrays at this rate.
 
 ### The Optically Thin Approximation
 
-In our implementation of radiative cooling, when a gas cell cools down, we mathematically subtract that thermal energy from the grid and permanently delete it from the simulation. From a strict conservation standpoint, this means our simulated universe is an open system leaking energy.
+In our implementation of radiative cooling, when a gas cell cools down, we subtract that thermal energy from the grid and permanently delete it from the simulation. From a conservation standpoint, this means our simulated universe is an open system leaking energy.
 
 In the real universe, a photon emitted by a decelerating electron could indeed travel across space, strike another atom, and transfer its energy back into heat. To simulate this accurately, we would need to upgrade our hydrodynamics engine to **Radiation Hydrodynamics (RHD)** by solving the Radiative Transfer equation.
 
-However, doing so is computationally prohibitive. To avoid this, standard cosmological codes rely on the **Optically Thin Approximation**. We assume that the cosmic gas is "optically thin," meaning it is transparent to its own radiation.
+However, doing so is computationally prohibitive. To avoid this, cosmological codes rely on the **Optically Thin Approximation**. We assume that the gas is "optically thin," meaning it is transparent to its own radiation.
 
-For the hot plasmas found inside collapsed dark matter halos, this is a good physical assumption. Even though the gas is compressed by gravity, cosmological densities are still a hard vacuum. When a high-energy X-ray photon is emitted via Bremsstrahlung cooling, its mean free path is so large that it will almost certainly sail entirely out of the galaxy, out of the dark matter halo, and completely out of the simulation box without ever striking another atom. Therefore, assuming the photon escapes into the void and permanently deleting its energy from the computational domain is a reliable representation of the physics.
+For the hot plasmas found inside collapsed dark matter halos, this is a good physical assumption. Even though the gas is compressed by gravity, cosmological densities are still a hard vacuum. When a high-energy X-ray photon is emitted via Bremsstrahlung cooling, its mean free path is so large that it will almost certainly sail entirely out of the galaxy, out of the dark matter halo, and out of the simulation box without ever striking another atom. Therefore, assuming the photon escapes into the void and permanently deleting its energy from the computational domain is a reliable representation of the physics.
 
-There are, of course, specific environments where this approximation breaks down. When gas condenses into star-forming molecular clouds, it becomes "optically thick" and opaque, trapping heat inside. Furthermore, during the Epoch of Reionization, dense neutral hydrogen violently absorbed incoming Ultraviolet light from the first stars. To account for these complex radiation effects without actually running a Radiative Transfer solver, modern simulations employ sub-grid approximations—mathematical rules that reproduce physics occurring on scales smaller than a single grid cell. A common technique is to assume the universe is bathed in a uniform, invisible glow of UV light, which we mimic by enforcing an artificial temperature floor—such as the 10,000 K atomic cooling limit—preventing the diffuse gas from cooling below the thermodynamic baseline set by this universal radiation background.
+There are also environments where this approximation breaks down. When gas condenses into star-forming molecular clouds, it becomes "optically thick" and opaque, trapping heat inside. Furthermore, during the Epoch of Reionization, dense neutral hydrogen violently absorbed incoming Ultraviolet light from the first stars. To account for these complex radiation effects without actually running a Radiative Transfer solver, simulations employ sub-grid approximations—rules that reproduce physics occurring on scales smaller than a single grid cell. A common technique is to assume the universe is bathed in a uniform glow of UV light, which we mimic by enforcing an artificial temperature floor—such as the 10,000 K atomic cooling limit—preventing the diffuse gas from cooling below the thermodynamic baseline set by this universal radiation background.
 
 ### The Subgrid Clumping Factor
 
@@ -2003,7 +1993,7 @@ Because an Eulerian solver assigns a single, smoothed average density ($\langle 
 
 $$\langle \rho \rangle^2 < \langle \rho^2 \rangle$$
 
-By smoothing out the dense clumps, the grid underestimates the true cooling rate. The thermal energy becomes trapped inside the cell, causing artificial pressure to build up. This numerical artifact results in an "adiabatic bounce," where the gas is blasted out of the gravitational well rather than condensing into a galactic core.
+This means the grid underestimates the true cooling rate. The thermal energy becomes trapped inside the cell, causing artificial pressure to build up. This numerical artifact results in a gas that is blasted out of the gravitational well rather than condensing into a galactic core.
 
 #### The Subgrid Clumping Model
 
@@ -2030,11 +2020,13 @@ The subgrid clumping factor acts as a correction to the squared average density 
 
 $$\Lambda_{true} = (C \times \langle \rho \rangle^2) f(T)$$
 
-where $f(T)$ represents the temperature-dependent physics of the cooling function. By enabling this subgrid model, the simulation acknowledges that overdense cells contain unresolved, dense knots of gas. The thermal energy is radiated away, allowing the pressure to drop and the gas to undergo collapse.
+where $f(T)$ represents the temperature-dependent physics of the cooling function.
 
-To calibrate the subgrid clumping amplitude ($A$), we require the simulation to reproduce the macroscopic condensed baryon fraction at $z=0$. Because our hydrodynamics model does not include a subgrid recipe for star formation, gas that cools below $T < 10^4$ K and reaches halo overdensities of $\Delta > 100$ remains trapped in the fluid phase. Therefore, our simulated cold dense gas fraction acts as a proxy for the total collapsed baryon budget—comprising both the interstellar medium (ISM) and stellar mass.
+To calibrate the subgrid clumping amplitude ($A$), we require the simulation to reproduce the macroscopic condensed baryon fraction at $z=0$. Because our hydrodynamics model does not include a subgrid recipe for star formation, gas that cools below $T < 10^4$ K and reaches halo overdensities of $\Delta > 100$ remains trapped in the fluid phase. Therefore, the simulated cold dense gas fraction acts as a proxy for the total collapsed baryon budget—comprising both the interstellar medium (ISM) and stellar mass.
 
 Observational baryon censuses in the local universe indicate that stars and stellar remnants account for roughly 5% to 7% of the total cosmic baryon density, while cold neutral gas (H I, He I and H$_2$) accounts for an additional 1.5% to 2% (Shull, Smith, & Danforth 2012). Consequently, we tune the parameter $A$ such that the final simulated cold dense gas mass fraction at $z=0$ settles within the interval 7% to 10%.
+
+This subgrid model acknowledges that overdense cells contain unresolved, dense knots of gas, where thermal energy is radiated away, allowing the pressure to drop and the gas to undergo collapse.
 
 *Key Literature & Further Reading*  
 **Radiative Physics:**  
@@ -2055,7 +2047,7 @@ Daisuke Nagai, Erwin Lau. (2011). *Gas Clumping in the Outskirts of Lambda-CDM C
 
 In astrophysics, the elemental composition of the universe is historically divided into three categories: Hydrogen (mass fraction $X$), Helium (mass fraction $Y$), and everything else. **Metallicity**, denoted by the letter $Z$, is the mass fraction of all elements heavier than helium (Pagel, 2009). The relationship defining the composition of any gas parcel is $X + Y + Z = 1$. The present-day metallicity in the Sun is approximately $Z \approx 0.014$ to $0.02$ (Asplund et al., 2009).
 
-These heavy elements were absent in the early cosmos. After the Big Bang, primordial nucleosynthesis produced almost exclusively Hydrogen and Helium, alongside microscopic traces of Lithium. Every element heavier than Helium had to be forged much later via stellar nucleosynthesis of the very first stars (Population III). When these massive, short-lived stars exhausted their fuel, they exploded as supernovae, seeding the surrounding gas with the first heavy elements and permanently altering the chemical and thermodynamic evolution of the universe.
+These heavy elements were absent in the early cosmos. After the Big Bang, primordial nucleosynthesis produced almost exclusively Hydrogen and Helium, alongside small traces of Lithium. Every element heavier than Helium had to be forged much later via stellar nucleosynthesis of the very first stars (Population III). When these massive, short-lived stars exhausted their fuel, they exploded as supernovae, seeding the surrounding gas with the first heavy elements and permanently altering the chemical and thermodynamic evolution of the universe.
 
 To form low-mass stars like the Sun, the gas temperature must drop to $\sim 10$ K (Bodenheimer, 2011). In a primordial universe ($Z=0$), gas cools very inefficiently. Below $10^4$ K, atomic hydrogen can no longer radiate efficiently, leaving only trace amounts of molecular hydrogen (H$_2$) as a coolant. H$_2$ is a poor radiator, meaning the gas remains relatively warm, which results in a high Jeans mass (the minimum mass a cloud must have for its gravity to overcome its internal thermal pressure, $M_J \propto \frac{T^{3/2}}{\rho^{1/2}}$) and the formation of massive, short-lived Population III stars (Bromm, Coppi, & Larson, 1999).
 
@@ -2089,13 +2081,13 @@ $Z$ becomes active in the energy equation. During the thermodynamic step, the so
 
 $$\frac{du}{dt} = \frac{\Gamma(T, \rho, z, Z) - \Lambda(T, \rho, z, Z)}{\rho}$$
 
-Because computing the quantum mechanical emission, ionization balance (the equilibrium where the rate of atoms being ionized equals the rate of ions reverting to neutral), and excitation states of every element on the fly is computationally expensive, some modern codes rely on pre-computed tables. These tables include the metal-dependent cooling rates and the heating rates generated by the photo-ionizing effect of the cosmic ultraviolet background (Haardt & Madau, 2001; Wiersma, Schaye, & Smith, 2009).
+Because computing the quantum mechanical emission, ionization balance (the equilibrium where the rate of atoms being ionized equals the rate of ions reverting to neutral), and excitation states of every element on the fly is computationally expensive, some codes rely on pre-computed tables. These tables include the metal-dependent cooling rates and the heating rates generated by the photo-ionizing effect of the cosmic ultraviolet background (Haardt & Madau, 2001; Wiersma, Schaye, & Smith, 2009).
 
-Our code uses data from Grackle, an open-source chemistry and radiative cooling library designed for astrophysical simulations of the Intergalactic Medium (IGM) (Smith et al., 2017). The specific data file implemented in this model, `HM2012.h5`, contains pre-computed, tabulated cooling and heating rates assuming ionization equilibrium generated using the photoionization code Cloudy. Cloudy numerically solves the quantum mechanical equations governing ionization balance, bound-bound emission lines (emission by excited bound electrons), and radiative recombination (radiation after a free electron is captured) for a vast array of atomic species. For the data table we are using, the Cloudy calculations were driven by the time-dependent ultraviolet background (UVB) model developed by Haardt & Madau (2012).
+Our code uses data from Grackle, an open-source chemistry and radiative cooling library designed for astrophysical simulations of the Intergalactic Medium (IGM) (Smith et al., 2017). The specific data file implemented in this model, `HM2012.h5`, contains pre-computed, tabulated cooling and heating rates assuming ionization equilibrium generated using the photoionization code Cloudy. Cloudy numerically solves the quantum mechanical equations governing ionization balance, bound-bound emission lines (emission by excited bound electrons), and radiative recombination (radiation after a free electron is captured) for an array of atomic species. For the data table we are using, the Cloudy calculations were driven by the time-dependent ultraviolet background (UVB) model developed by Haardt & Madau (2012).
 
-The resulting file provides the volumetric energy loss and gain rates structured across a three-dimensional grid. The axes of this grid correspond to cosmological redshift, gas density, and temperature. The thermodynamic outputs are separated into primordial (Hydrogen and Helium) and metal-dependent contributions. This separation conveniently allows the solver to scale the metal-line cooling rates by the metallicity fraction within each cell.
+The resulting file provides the volumetric energy loss and gain rates structured across a three-dimensional grid. The axes of this grid correspond to cosmological redshift, gas density, and temperature. The thermodynamic outputs are separated into primordial (Hydrogen and Helium) and metal-dependent contributions. This separation allows the solver to scale the metal-line cooling rates by the metallicity fraction within each cell.
 
-The pre-computed tables are explicitly dependent on redshift, as the intensity of the cosmic ultraviolet background and its corresponding photoheating rate evolve over time. The redshift-dependent background radiation is derived relying on input parameters for the chosen cosmology, including the Hubble constant, the matter density ($\Omega_M$), and the cosmological constant ($\Omega_\Lambda$). Consequently, the cooling tables are cosmology-dependent. Modifying a simulation's cosmological framework requires the generation of a new set of tables to ensure consistency.
+The pre-computed tables are dependent on redshift, as the intensity of the cosmic ultraviolet background and its corresponding photoheating rate evolve over time. The redshift-dependent background radiation is derived relying on input parameters for the chosen cosmology, including the Hubble constant, the matter density ($\Omega_M$), and the cosmological constant ($\Omega_\Lambda$). Consequently, the cooling tables are cosmology-dependent. Modifying a simulation's cosmological framework requires the generation of a new set of tables to ensure consistency.
 
 Moreover, the dependency of the model on redshift decouples the gas thermodynamics from the actual emission of ionizing sources, such as star-forming galaxies and active galactic nuclei, present within the simulation volume. With this abstraction, the photoionization and heating rates of the intergalactic medium are uniformly driven by the average global history of the real universe rather than the radiation dynamically generated by the simulation's own structures. The reason for allowing this violation of causality is that performing on-the-fly radiative transfer to track local photons, or solving the massive network of non-equilibrium chemical reactions would be too expensive computationally.
 
@@ -2145,7 +2137,7 @@ Historically, cosmological hydrodynamics codes have relied on two philosophies: 
 
 The **Meshless Finite Mass (MFM)** method was developed to capture the advantages of both Lagrangian and Eulerian schemes. Implemented in the cosmological code GIZMO (built upon the framework of GADGET-3), MFM utilizes a Riemann solver to calculate fluxes (traditionally reserved for grid-based Eulerian codes), but applies it over a meshless, Lagrangian distribution of fixed mass particles that move through space under the influence of gravity, much like the collisionless particles used to model Dark Matter.
 
-The MFM method is defined by three interdependent components: a kernel-based volume partition that replaces the mesh with a continuous density estimate, a high-order matrix gradient estimator that provides second-order-accurate spatial derivatives, and a Riemann solver that computes Godunov-type fluxes across the effective faces between particles.
+The MFM method is defined by three interdependent components: a kernel-based volume partition with a continuous density estimate, a least-squares matrix gradient estimator for second-order spatial reconstruction, and a Riemann solver that computes Godunov-type fluxes across the effective faces between particles.
 
 ### Volume Partitioning and Density
 
@@ -2185,22 +2177,27 @@ $$V_i = \omega(x_i)^{-1} (1 + \mathcal{O}(h^2))$$
 
 This expression becomes exact if the kernel length $h$ remains locally constant across the kernel domain. For this reason, we use a constant smoothing length $h_i$ for each particle, making $h(x) = h_i$ over its entire local domain.
 
-The density of the particle is then its fixed mass divided by this effective volume. This continuous volume partition means the initial density calculation in MFM is evaluated identically to standard SPH. The density $\rho_i$ of a particle can be computed as:  
+The density of the particle is then its fixed mass divided by this effective volume:  
 $$\rho_i = \frac{m_i}{V_i}$$
 
 ### Gradient Estimation and Spatial Reconstruction
 
 To achieve second-order spatial accuracy, the MFM method must reconstruct the fluid variables at the effective face from the particle-centered values. The MFM method uses a matrix gradient estimator. The gradient of a quantity $q$ at particle $i$ is obtained by a least-squares fit over all neighbors within the kernel support:
 
-$$(\nabla q)_i = \mathbf{B}_i^{-1} \sum_j (q_j - q_i) \mathbf{x}_{ij} W(|\mathbf{x}_{ij}|, h_i)$$
+$$(\nabla q)_i = \mathbf{B}_i \sum_j (q_j - q_i) \mathbf{x}_{ij} V_j W(\vert{}\mathbf{x}_{ij}\vert{}, h_i)$$
 
-where $\mathbf{x}_{ij} = \mathbf{x}_j - \mathbf{x}_i$ and $\mathbf{B}_i$ is the moment matrix:
+where $\mathbf{x}_{ij} = \mathbf{x}_j - \mathbf{x}_i$ and $\mathbf{B}_i$ is the inverse of the moment matrix:
 
-$$\mathbf{B}_i = \sum_j \mathbf{x}_{ij} \otimes \mathbf{x}_{ij} W(|\mathbf{x}_{ij}|, h_i)$$
+$$\mathbf{B}_i = \mathbf{E}_i^{-1}$$
+$$\mathbf{E}_i = \sum_j (\mathbf{x}_{ij} \otimes \mathbf{x}_{ij}) V_j W(\vert{}\mathbf{x}_{ij}\vert{}, h_i)$$
 
 This estimator is exact for linear functions — it returns the correct gradient for any field of the form $q(\mathbf{x}) = a + \mathbf{b} \cdot \mathbf{x}$ — regardless of the particle distribution.
 
-However, if specific pathological particle configurations appear (for example, if all particles in the kernel align along a single axis), the moment matrix $\mathbf{B}_i$ becomes ill-conditioned and cannot be reliably inverted. To handle these situations, we fall back to using standard SPH gradient estimators for that particle and timestep. For a generic quantity $q$, this SPH gradient estimator is defined as:
+To determine whether the moment matrix $\mathbf{E}_i$ can be reliably inverted, we evaluate its condition number, defined as:
+$$N_{\text{cond}} = \frac{1}{d} \sqrt{\Vert{}\mathbf{E}_i\Vert{}^2 \Vert{}\mathbf{B}_i\Vert{}^2}$$
+where $d = 3$ is the number of spatial dimensions.
+
+If specific pathological particle configurations appear (for example, if all particles in the kernel align along a single axis), the condition number will exceed a safe tolerance. When $N_{\text{cond}}$ surpasses a critical threshold (typically between 100 and 1000), the matrix is considered ill-conditioned. To handle these situations, we fall back to using standard SPH gradient estimators for that particle and timestep. For a generic quantity $q$, this SPH gradient estimator is defined as:
 
 $$(\nabla q)_i^{\text{SPH}} = \sum_j \frac{1}{\omega_j} q_j \nabla_i W_{ij}(h_i)$$
 
@@ -2226,7 +2223,7 @@ $$\alpha_i \equiv \min\left[1, \beta_i \min\left(\frac{\phi_{ij,ngb}^{max} - \ph
 
 Here, $\phi_{ij,ngb}^{max}$ and $\phi_{ij,ngb}^{min}$ are the maximum and minimum values among all neighbors $j$ of particle $i$, while $\phi_{ij,mid}^{max}$ and $\phi_{ij,mid}^{min}$ are the maximum and minimum values reconstructed at the interfaces. The parameter $\beta_i$ (typically between 1 and 2) determines how aggressively the limiter acts.
 
-* **Pairwise Limiter:** Second, an additional pairwise limiter is applied directly to the reconstructed states at the interface between interacting particles $i$ and $j$. This step guarantees stability in extreme situations, such as very strong shocks, by enforcing strict monotonicity bounds (ensuring that the reconstructed interface values never overshoot or undershoot the actual values of the two interacting particles), parameterized by tunable constants. The initial interface estimate $\phi_{ij,mid}^0$ is replaced by a limited value $\phi_{ij,mid}^\prime$ based on the bounds of the interacting pair:
+* **Pairwise Limiter:** Second, an additional pairwise limiter is applied to the reconstructed states at the interface between interacting particles $i$ and $j$. This step guarantees stability in extreme situations, such as very strong shocks, by enforcing strict monotonicity bounds (ensuring that the reconstructed interface values never overshoot or undershoot the actual values of the two interacting particles), parameterized by tunable constants. The initial interface estimate $\phi_{ij,mid}^0$ is replaced by a limited value $\phi_{ij,mid}^\prime$ based on the bounds of the interacting pair:
 
 $$\phi_{ij,mid}^{\prime} = \begin{cases} \phi_{i} & (\phi_{i} = \phi_{j}) \\ \max(\phi_{-}, \min[\overline{\phi}_{ij} + \delta_{2}, \phi_{ij,mid}^{0}]) & (\phi_{i} < \phi_{j}) \\ \min(\phi_{+}, \max[\overline{\phi}_{ij} - \delta_{2}, \phi_{ij,mid}^{0}]) & (\phi_{i} > \phi_{j}) \end{cases}$$
 
@@ -2248,30 +2245,29 @@ The effective face area $\mathbf{A}_{ij}$ between particles $i$ and $j$, wich en
 
 $$\mathbf{A}_{ij} = V_i \tilde{\psi}_j(\mathbf{x}_i) - V_j \tilde{\psi}_i(\mathbf{x}_j)$$
 
-Here, $\tilde{\psi}_j(\mathbf{x}_i) \equiv \mathbf{B}_i (\mathbf{x}_j - \mathbf{x}_i) \psi_j(\mathbf{x}_i)$ represents a matrix-conditioned spatial weight (conditioning a vector means applying a transformation to correct for biases, skewness, or scaling in the raw data), where $\mathbf{B}_i$ is the inverse geometry matrix used for gradient estimation and $\psi_j(\mathbf{x}_i)$ is the scalar volume fraction particle $j$ contributes at $\mathbf{x}_i$. The effective face area vector $\mathbf{A}_{ij}$ is directed from particle $i$ to particle $j$, and its magnitude $|\mathbf{A}_{ij}|$ plays the role of the face area in the flux computation.
+Here, $\tilde{\psi}_j(\mathbf{x}_i) \equiv \mathbf{B}_i (\mathbf{x}_j - \mathbf{x}_i) \psi_j(\mathbf{x}_i)$ represents a matrix-conditioned spatial weight (conditioning a vector means applying a transformation to correct for biases, skewness, or scaling in the raw data), where $\psi_j(\mathbf{x}_i)$ is the scalar volume fraction particle $j$ contributes at $\mathbf{x}_i$. The effective face area vector $\mathbf{A}_{ij}$ is directed from particle $i$ to particle $j$, and its magnitude $|\mathbf{A}_{ij}|$ plays the role of the face area in the flux computation.
 
-To evaluate the fluxes across this interface, the Riemann problem must be solved at a specific spatial location $\mathbf{x}_{\text{face}}$ along the axis connecting the two particles. Because of the symmetry of the kernel, the second-order accurate quadrature point (the chosen point to approximate the value of an integral) is the location where the volume partition between the two particles is equal, given by:  
+To evaluate the fluxes across this interface, the Riemann problem must be solved at a specific spatial location $\mathbf{x}_{\text{face}}$ along the axis connecting the two particles. The second-order accurate quadrature point (the chosen point to approximate the value of an integral) is the location where the volume partition between the two particles is equal. Because the kernel function is spherically symmetric, this point is where the fractional distance relative to each particle's smoothing length is equal, given by:  
 $$\mathbf{x}_{\text{face}} = \mathbf{x}_i + \frac{h_i}{h_i + h_j}(\mathbf{x}_j - \mathbf{x}_i)$$
 
-In practice, however, using the first-order geometric midpoint $\mathbf{x}_{\text{face}} = (\mathbf{x}_i + \mathbf{x}_j) / 2$ yields nearly identical results in standard test problems and can often enhance numerical stability.
+In practice, however, using the first-order geometric midpoint $\mathbf{x}_{\text{face}} = (\mathbf{x}_i + \mathbf{x}_j) / 2$ yields nearly identical results in standard test problems and can enhance numerical stability.
 
 ### The Riemann Solver and Flux Computation
 
-The reconstructed left and right states at the effective face form a Riemann problem: two constant states separated by a discontinuity at $t = 0$. The solution of this Riemann problem provides the flux of mass, momentum, and energy across the face, which is then used to update the conserved quantities of particles $i$ and $j$.
+The reconstructed left and right states at the effective face form a Riemann problem: two constant states separated by a discontinuity at $t = 0$. The MFM method evaluates this Riemann problem in a frame moving at the speed of the contact wave. Because the effective face moves with the fluid, there is no mass flux across the face.
 
-The MFM method in GIZMO uses an HLLC approximate Riemann solver, which resolves the contact discontinuity in addition to the two acoustic waves. The flux across the face is computed as:
+The Riemann solver provides the contact pressure ($P^*$) and the velocity of the face ($S^*$). Particles interact through mechanical forces. The contact pressure acts over the effective face area to exert a force, transferring momentum between the particles (a push). Simultaneously, because this pressure force is applied to a moving face, it computes the exact $PdV$ mechanical work being done as the particles compress or expand each other's volumes, which updates their internal energies.
 
-$$\mathbf{F}_{ij} = |\mathbf{A}_{ij}| \cdot \mathbf{F}_{\text{HLLC}}(q_L, q_R, \hat{\mathbf{n}}_{ij})$$
+The method uses an HLLC approximate Riemann solver. The flux vector across the face is computed as:  
+$$\mathbf{F}_{ij} = \tilde{\mathbf{F}}_{\text{HLLC}}(q_L, q_R) \cdot \mathbf{A}_{ij}$$
+where $\mathbf{A}_{ij}$ is the effective area vector of the face between particles $i$ and $j$ and $\sim$ is used to denote a numerical flux. The fluxes being exchanged are momentum and internal energy.
 
-where $\hat{\mathbf{n}}_{ij} = \mathbf{A}_{ij} / |\mathbf{A}_{ij}|$ is the unit normal to the effective face.
+The semi-discrete conservation equations for a particle are then:
+$$\frac{d\mathbf{U}_i}{dt} = -\sum_j \mathbf{F}_{ij}$$
 
-The semi-discrete conservation equations are then:
+where $\mathbf{U}_i = (\mathbf{P}_i, U_i)$ is the vector containing the particle's momentum and internal energy. Because the fluxes are antisymmetric ($\mathbf{F}_{ij} = -\mathbf{F}_{ji}$), the scheme manifestly conserves momentum to machine precision. 
 
-$$\frac{d\mathbf{U}_i}{dt} = -\sum_j \mathbf{F}_{ij} \cdot \mathbf{A}_{ij}$$
-
-where $\mathbf{U}_i = (m_i, m_i\mathbf{v}_i, E_i)$ is the vector of conserved quantities for particle $i$. Because the fluxes are antisymmetric ($\mathbf{F}_{ij} = -\mathbf{F}_{ji}$), the scheme conserves mass, momentum, and energy to machine precision regardless of the particle motion.
-
-### Dual Energy Formalism and Hypersonic Flows
+### Dual Energy Formalism
 
 Because the total energy in highly supersonic flows is dominated by kinetic energy, deriving the smaller internal (thermal) energy by subtracting the kinetic energy from the total energy leads to massive truncation errors.
 
@@ -2279,15 +2275,13 @@ To resolve this, the MFM implementation employs a dual energy formalism. Rather 
 
 $$\frac{dU}{dt} = \frac{dE}{dt} - \mathbf{v} \cdot \frac{d\mathbf{P}}{dt}$$
 
-where $E$ is the total energy and $\mathbf{P}$ is the momentum. Since MFM doesn't allow inter-particle mass fluxes, this formulation is equivalent to accumulating the $P dV$ work done by the fluxes at the effective faces. By trusting this integrated internal energy to determine the local pressure, the method sacrifices machine-accurate global total energy conservation in favor of maintaining accurate temperatures in hypersonic and gravity-dominated flows.
+where $E$ is the total energy and $\mathbf{P}$ is the momentum. Since MFM doesn't allow inter-particle mass fluxes, this is equivalent to accumulating the $P dV$ work done by the fluxes at the effective faces.
 
-**Extreme Mach Number Fallback**
+When trusting this integrated internal energy to determine the local pressure, the method sacrifices total energy conservation in favor of maintaining accurate temperatures in hypersonic and gravity-dominated flows. For these cases, an entropy-based fallback switch is implemented.
 
-Numerical roundoff errors in the Riemann solver can still corrupt the thermal energy during extreme compressions. To guarantee stability, an entropy-based fallback switch is implemented.
+At each timestep, the expected thermal energy of a particle is compared against the maximum kinetic energy of its interacting neighbors and the work done by local gravitational forces. If the thermal energy falls below a conservative threshold (typically $\approx 0.1\%$) of these kinetic or gravitational energies, the Riemann solver's internal energy update is bypassed. Instead, the thermal energy is calculated as if the flow were undergoing purely adiabatic expansion, utilizing a passively tracked entropy variable ($S$). 
 
-At each timestep, the expected thermal energy of a particle is compared against the maximum kinetic energy of its interacting neighbors and the work done by local gravitational forces. If the thermal energy falls below a conservative threshold (typically $\approx 0.1\%$) of these kinetic or gravitational energies, the Riemann solver's internal energy update is bypassed. Instead, the thermal energy is calculated as if the flow were undergoing purely adiabatic expansion, utilizing a passively tracked entropy variable. 
-
-In this context, "entropy" refers to the entropic function (or adiabatic constant) $S$, which dictates the relationship between pressure and density along an adiabatic fluid streamline via $P = S \rho^\gamma$. It is computed from the specific internal energy $u$ and density $\rho$ using the relation $S = (\gamma - 1) u / \rho^{\gamma - 1}$. When the fallback is triggered, the internal energy is overridden and recalculated from the current density using this stored entropy. Under normal shock conditions, this switch remains inactive, and the passive entropy array simply resynchronizes to the new, shock-heated state calculated by the Riemann solver.
+The entropic function, $S$, dictates the relationship between pressure and density along an adiabatic fluid streamline via $P = S \rho^\gamma$. It is computed from the specific internal energy $u$ and density $\rho$ using the relation $S = (\gamma - 1) u / \rho^{\gamma - 1}$. When the fallback is triggered, the internal energy is overridden and recalculated from the current density using this stored entropy. Under normal shock conditions, this switch remains inactive, and the passive entropy array simply resynchronizes to the new, shock-heated state calculated by the Riemann solver.
 
 ### Adaptive Gravitational Softening
 
@@ -2299,15 +2293,15 @@ In MFM, the differential mass at a point $x$ associated with a given particle $i
 
 $$dm_i = d^\nu x \rho(x) \frac{W(x - x_i, h(x))}{\omega(x)}$$
 
-Expanding this to leading order (treating the fluid properties as constant across the volume of a single particle) in the gradients of the density $\rho$ and the smoothing length $h$, the density distribution associated with a particle takes on the same functional form as the kernel centered on that particle:
+Expanding this to leading order (i.e., zeroth order, treating the fluid properties as constant across the volume of a particle) in the gradients of the density $\rho$ and the smoothing length $h$, the density distribution associated with a particle takes the same form as the kernel centered on that particle:
 
 $$dm_i \approx m_i W(x - x_i, h_i) d^\nu x$$
 
-This way, we treat the fluid cells in the $N$-body solver as standard particles "softened" by the same kernel function used for the hydrodynamics, matching the kernel length $h_i$. On scales larger than $h_i$, the potential and the force match that of a Newtonian point mass. Inside the kernel radius, the gravitational potential $\Phi_i \equiv G m_i \phi_i$ is computed by integrating Poisson's equation over the kernel mass distribution.
+This way, we treat the fluid cells in the $N$-body solver as standard particles "softened" by the same kernel function used for the hydrodynamics, matching the kernel length $h_i$. On scales larger than $h_i$, the potential and the force match that of a Newtonian point mass. Inside the kernel radius, the gravitational potential $\Phi_i \equiv G m_i \phi_i$ (where $\phi_i$ represents the gravitationally softened potential) is computed by integrating Poisson's equation over the kernel mass distribution.
 
 #### Conservative Force Law
 
-The kernel lengths $h_i$ change as particles move closer together or further apart. We must maintain momentum and energy conservation when dealing with variable softening lengths. If we define the gravitational self-energy of the gas (the gravitational potential energy of the entire system of gas particles, resulting from their gravitational attraction) as $E_{grav} = \frac{1}{2} \sum_{i,j} G m_i m_j \phi(r_{ij}, h_j)$, we can derive the resulting forces.
+The kernel lengths $h_i$ change as particles move closer together or further apart. We must maintain momentum and energy conservation when dealing with variable softening lengths. If we define the gravitational self-energy of the gas (the gravitational potential energy of the entire system of gas particles) as $E_{grav} = \frac{1}{2} \sum_{i,j} G m_i m_j \phi(r_{ij}, h_j)$, we can derive the resulting forces.
 
 The conservative gravitational acceleration for particle $i$ interacting with particle $j$ is given by:
 
@@ -2319,9 +2313,9 @@ $$m_i \frac{dv_i}{dt}\bigg\vert{}_{grav} = -\sum_j \frac{G m_i m_j}{2} \left( \f
 
 Where $\mathbf{r}_{ij} = \mathbf{x}_i - \mathbf{x}_j$.
 
-**1. The Symmetrized Newtonian Force:** The first term containing $\frac{\partial\phi}{\partial r}$ is the modified $1/r^2$ gravitational force. Because interacting particles $i$ and $j$ often have different smoothing lengths, the force is symmetrized by averaging the potential derivatives, guaranteeing that Newton's third law is obeyed.
+* **The Symmetrized Newtonian Force:** The first term containing $\frac{\partial\phi}{\partial r}$ is the modified $1/r^2$ gravitational force. Because interacting particles $i$ and $j$ often have different smoothing lengths, the force is symmetrized by averaging the potential derivatives, guaranteeing that Newton's third law is obeyed.
 
-**2. The $\zeta$ Correction Term:** The second term containing $\frac{\partial W}{\partial r}$ accounts for the temporal and spatial derivatives of the kernel lengths. By moving the particles, the simulation changes the local density, which modifies the gravitational potential. This means additional work is done by the expanding or contracting potentials. Note that the derivative of the kernel $\frac{\partial W}{\partial r}$ conveniently evaluates to zero for distant particles outside the kernel radius.
+* **The $\zeta$ Correction Term:** The second term containing $\frac{\partial W}{\partial r}$ accounts for the temporal and spatial derivatives of the kernel lengths. By moving the particles, the simulation changes the local density, which modifies the gravitational potential. This means additional work is done by the expanding or contracting potentials. Note that the derivative of the kernel $\frac{\partial W}{\partial r}$ conveniently evaluates to zero for distant particles outside the kernel radius.
 
 #### Computing the $\zeta$ (Zeta) Coefficients
 
@@ -2339,7 +2333,7 @@ During the subsequent gravity loop, these pre-computed $\zeta$ values are utiliz
 
 ### Initializing the Meshless Finite Mass (MFM) Gas
 
-The initial conditions for the MFM gas particles are generated using the sane Zel'dovich Approximation displacement field used for the Dark Matter. However, there are some differences.
+The initial conditions for the MFM gas particles are generated using the same Zel'dovich Approximation displacement field used for the Dark Matter. However, there are some differences.
 
 #### The Interleaved Lattice
 
@@ -2403,11 +2397,8 @@ This test ensures the solver conserves all quantities in the absence of external
 This test has a known analytical solution (the **Sod Shock Tube**, named after Gary A. Sod, is the most famous variant) that validates the code's ability to handle all three fundamental wave structures.
 
 * **The Setup:** A 1D tube of gas is initialized with a "diaphragm" at its center. The gas on the "Left" state has a high density and pressure, while the gas on the "Right" state has a low density and pressure. At $t=0$, the diaphragm is removed.
-* **The Expected Result:** The collision of the two states generates a self-similar wave structure (meaning its shape remains constant as it stretches over time). This structure is complex, splitting into three distinct features (see below).
-* **The Validation:** After evolving the system to a time $t$, a snapshot of the simulation's density, pressure, and velocity along the 1D line is plotted. This must be compared against the known mathematical solution. A successful test will capture the speed, position, and amplitude of the three key features:
-    1.  A **Shock Wave** (an abrupt, discontinuous compression) propagating into the low-density region.
-    2.  A **Rarefaction Fan** (a smooth, continuous expansion) propagating back into the high-density region.
-    3.  A **Contact Discontinuity** (a jump in density, but not pressure) separating the two materials. Capturing this specific feature sharply, without excessive smearing, is the primary benchmark for the **HLLC Riemann solver**.
+* **The Expected Result:** The collision of the two states generates a self-similar wave structure (meaning its shape remains constant as it stretches over time). This structure is complex, splitting into several distinct features (see below).
+* **The Validation:** After evolving the system to a time $t$, a snapshot of the simulation's density, pressure, and velocity along the 1D line is plotted. This must be compared against the known analytical solution (see below).
 
 #### Physical Assumptions of the Analytical Model
 
@@ -2415,12 +2406,12 @@ The model enforces the following assumptions:
 
 * **Ideal, Adiabatic Gas:** The fluid obeys the ideal gas equation of state without any radiative cooling, heating, or thermal conduction.
 * **Pure Hydrodynamics:** The system is isolated. No external body forces, such as gravity or cosmological expansion, are present.
-* **Exact Initial States:** The fluid begins at rest ($v_L = v_R = 0$). The left state is initialized with $P_L = 1.0$ and $\rho_L = 1.0$, while the right state is set to $P_R = 0.1$ and $\rho_R = 0.125$.
+* **Initial States:** The fluid begins at rest ($v_L = v_R = 0$). The left state is initialized with $P_L = 1.0$ and $\rho_L = 1.0$, while the right state is set to $P_R = 0.1$ and $\rho_R = 0.125$.
 
 
 #### The Analytical Solution and Wave Regions
 
-The sudden removal of the diaphragm divides the 1D space into five regions, separated by moving boundaries. Let $c_L = \sqrt{\gamma P_L / \rho_L}$ represent the initial speed of sound in the unperturbed left state.
+The removal of the diaphragm divides the 1D space into five regions, separated by moving boundaries. Let $c_L = \sqrt{\gamma P_L / \rho_L}$ represent the initial speed of sound in the unperturbed left state.
 
 * **Region 1: Unperturbed Left State:** This is the gas that the rarefaction wave has not yet reached ($x \le x_0 - c_L t$). The fluid remains at its initial state $\rho_L$, $P_L$, and $v_L$.
 
@@ -2428,7 +2419,7 @@ The sudden removal of the diaphragm divides the 1D space into five regions, sepa
 
 * **Region 3: Post-Fan Plateau (Star State Left):** The fully expanded gas behind the contact discontinuity. The state sits at constant intermediate values $\rho_3$, $P_*$, and $u_*$.
 
-* **Region 4: Post-Shock Plateau (Star State Right):** The abruptly compressed gas immediately ahead of the contact discontinuity. Across a contact discontinuity, pressure and velocity must balance perfectly to avoid infinite accelerations, so $P = P_*$ and $v = u_*$. However, the density jumps to a new value, $\rho_4$.
+* **Region 4: Post-Shock Plateau (Star State Right):** The abruptly compressed gas immediately ahead of the contact discontinuity. Across a contact discontinuity, pressure and velocity must balance to avoid infinite accelerations, so $P = P_*$ and $v = u_*$. However, the density jumps to a new value, $\rho_4$.
 
 * **Region 5: Unperturbed Right State:** The gas ahead of the primary shock wave ($x > x_0 + V_{shock} t$). The state remains at $\rho_R$, $P_R$, and $v_R$.
 
@@ -2441,10 +2432,24 @@ Across the contact discontinuity, pressure and velocity are continuous ($P_3 = P
 
 $$f(P_*) = f_L(P_*, W_L) + f_R(P_*, W_R) = 0$$
 
-Where $f_L$ represents the isentropic expansion and $f_R$ represents the shock jump conditions.
+Where $f_L$ represents the isentropic expansion and $f_R$ represents the shock jump conditions. This is determined by comparing our guess for $P_*$ against the initial pressure $P_K$:
+
+* **Rarefaction Wave (Isentropic Expansion, $P_* \le P_K$)**: If the intermediate pressure is lower than the initial pressure, the gas expands smoothly. The change in velocity is governed by the conservation of Riemann invariants along characteristics and the isentropic relation ($P/\rho^\gamma = \text{const}$), yielding:
+
+    $$f_K(P_*, W_K) = \frac{2c_K}{\gamma-1} \left( \left(\frac{P_*}{P_K}\right)^{\frac{\gamma-1}{2\gamma}} - 1 \right)$$
+
+    where $c_K = \sqrt{\gamma P_K / \rho_K}$ is the sound speed of the unperturbed gas.
+
+* **Shock Wave ($P_* > P_K$)**: If the intermediate pressure is higher, a shock compresses the gas abruptly. The velocity change is governed by the Rankine-Hugoniot jump conditions, which enforce mass, momentum, and energy conservation across the discontinuous shock front:
+
+    $$f_K(P_*, W_K) = (P_* - P_K) \sqrt{\frac{A_K}{P_* + B_K}}$$
+
+    where the data-dependent constants are defined as $A_K = \frac{2}{(\gamma+1)\rho_K}$ and $B_K = \frac{\gamma-1}{\gamma+1}P_K$.
+
+    Because this piecewise function $f(P_*)$ must be found using an iterative numerical root-finding method, such as the Newton-Raphson method.
 
 **2. The Intermediate Velocity ($u_*$)**
-With $P_*$ known, the post-shock velocity is derived directly from the momentum jump conditions across the shock front:
+With $P_*$ known, the post-shock velocity is derived from the momentum jump conditions across the shock front:
 
 $$u_* = (P_* - P_R) \left( \frac{1 - \mu^2}{\rho_R (P_* + \mu^2 P_R)} \right)^{1/2}$$
 
@@ -2466,7 +2471,7 @@ $$V_{shock} = c_R \sqrt{\frac{\gamma + 1}{2\gamma} \frac{P_*}{P_R} + \frac{\gamm
 
 This is a multi-dimensional test for how a code handles a powerful, symmetric explosion.
 
-* **The Setup:** A uniform, low-density gas fills the grid, initially at rest. At $t=0$, a very large amount of thermal energy is deposited into a single central cell.
+* **The Setup:** A uniform, low-density gas fills the grid, initially at rest. At $t=0$, a very large amount of thermal energy is deposited into a central cell.
 * **The Expected Result:** A spherical shock wave propagates outwards from the center, sweeping the surrounding gas into a dense, hot shell. Because this explosion creates extreme hypersonic velocities (high Mach numbers), this is a stress-test for the **Dual Energy Formalism** and the **MUSCL slope limiters**, proving the code can handle violent energy conversions.
 * **The Validation:** This test has a known self-similar solution and is validated in two ways:
     1.  **Symmetry:** The shock front must remain spherical. Any "boxy" or distorted shape indicates that the solver is introducing errors.
@@ -2487,27 +2492,6 @@ Because the background pressure is effectively zero compared to the blast, the e
 
 Inside the blast wave ($r < R_s$), the fluid variables follow smooth, self-similar curves: the density plunges rapidly toward zero near the origin, while the specific internal energy spikes, creating a nearly empty, hot cavity surrounded by a cold, dense, and fast-moving shell.
 
-When utilizing the Meshless Finite Mass (MFM) method for the Sedov-Taylor blast wave, initializing particles on a standard Cartesian (cubic) lattice is discouraged. A Cartesian grid possesses rigid planes of symmetry and collinear particle arrangements, which cause the moment matrices used in gradient estimation to become ill-conditioned. Furthermore, the distance to diagonal neighbors is longer than to axial neighbors, causing the Riemann solver to propagate the shock artificially faster along the principal axes. This results in a pathological "boxy" or cross-shaped artifact rather than a sphere.
-
-To achieve isotropic shock propagation and maintain spherical symmetry, we typically use other distributions:
-
-* **Face-Centered Cubic (FCC) Lattice:** A Face-Centered Cubic lattice is a maximally close-packed structure that increases the number of equidistant nearest neighbors from 6 to 12. This breaks collinear alignments and provides isotropic interaction paths, largely eliminating Cartesian "cross" artifacts and producing a smoothly rounded shock front. The macroscopic unit cell of an FCC lattice is a perfect cube, meaning it tiles flawlessly inside cubic domains with periodic boundary conditions.
-To generate an FCC lattice in a cubic domain of length $L$, the space is divided into a grid of $N_{\text{cell}} \times N_{\text{cell}} \times N_{\text{cell}}$ cubic unit cells, where the side length of each unit cell is $L_c = L / N_{\text{cell}}$. Every unit cell contains 4 particles defined by the following fractional basis vectors:
-$$\mathbf{b}_0 = (0.0, 0.0, 0.0)$$
-
-$$\mathbf{b}_1 = (0.5, 0.5, 0.0)$$
-
-$$\mathbf{b}_2 = (0.5, 0.0, 0.5)$$
-
-$$\mathbf{b}_3 = (0.0, 0.5, 0.5)$$
-
-By iterating through the unit cell indices $(i, j, k) \in [0, N_{\text{cell}}-1]$, the coordinates for the 4 particles within each cell are calculated as:
-$$\mathbf{x}_{i,j,k,m} = L_c \left( i + b_{m,x}, \ j + b_{m,y}, \ k + b_{m,z} \right)$$
-
-where $m \in \{0, 1, 2, 3\}$. This yields a balanced simulation containing $4 N_{\text{cell}}^3$ total particles.
-
-* **Glass Distribution:** For higher precision and spherical symmetry, an amorphous "glass" distribution is preferred. A glass has no repeating geometric structure or planes of symmetry, yet it maintains a uniform macroscopic density. Generating a glass typically requires a dedicated precursor simulation: particles are placed randomly in a periodic box and subjected to repulsive forces (such as reversed gravity) along with artificial velocity damping. The simulation is advanced until the particles relax into an equilibrium state, producing an isotropic medium that preserves the spherical geometry of a blast wave.
-
 ### The Kelvin-Helmholtz Instability
 
 This test measures the code's ability to model fluid mixing and the growth of instabilities.
@@ -2524,7 +2508,7 @@ As the simulation progresses, the expansion of the universe applies adiabatic co
 
 However, it is possible to track the energy injected by the temperature floor, accounting whenever possible for every drop of artificial energy injected or removed from the system. 
 
-The temperature floor in cosmological simulations can have a physical interpretation as photoheating. It is often set as a proxy for the Cosmic Microwave Background (CMB) or the Ultraviolet Background (UVB) reionization. This way, it is consistent to log this energy injection as a heating source.
+The temperature floor in cosmological simulations can have a physical interpretation as photoheating. It is often set as a proxy for the Cosmic Microwave Background (CMB) or the Ultraviolet Background (UVB) reionization. In this case, it is consistent to log this energy injection as a heating source.
 
 #### The Energy-Entropy Switch (Dual Energy Formalism)
 
@@ -2534,7 +2518,7 @@ Unlike in the case of the temperature floor, the entropy switch represents a num
 
 ## Adaptive Timestep
 
-Computational cosmology simulations are filled with different components. Dark matter particles interact only through gravity, a long-range force that can be relatively slow. Baryonic gas, however, interacts through hydrodynamic pressure, leading to shock waves that propagate at very high speeds, and it radiates thermal energy, which can cause temperatures to drop very fast.
+Cosmological simulations are filled with different components. Dark matter particles interact only through gravity, a long-range force that can be relatively slow. Baryonic gas, however, interacts through hydrodynamic pressure, leading to shock waves that propagate at very high speeds, and it radiates thermal energy, which can cause temperatures to drop very fast.
 
 This creates a challenge: the simulation evolves on many different timescales simultaneously. If we were to use a single, "fixed" timestep ($\Delta t$) for the entire simulation, we would be forced to choose the *smallest* possible timescale. This would make the simulation to waste resources where bigger steps could be safely taken.
 
@@ -2673,6 +2657,221 @@ Springel, V. (2005). *The cosmological simulation code GADGET-2. Monthly Notices
 Almgren, A. S., Bell, J. B., Lijewski, M. J., Lukić, Z., & Van Andel, E. (2013). *Nyx: A massively parallel AMR code for computational cosmology*. The Astrophysical Journal, 765(1), 39. Available at [https://arxiv.org/pdf/1301.4498](https://arxiv.org/pdf/1301.4498)
 
 Strang, G. (1968). *On the construction and comparison of difference schemes.* SIAM Journal on Numerical Analysis, 5(3), 506-517. Available at [https://www.pas.rochester.edu/astrobear/raw-attachment/blog/shuleli08202013/Strang1968.pdf](https://www.pas.rochester.edu/astrobear/raw-attachment/blog/shuleli08202013/Strang1968.pdf)
+
+
+## Spatial Partitioning and the LBVH
+
+While the Particle-Mesh (PM) method solves the long-range forces, the P³M algorithm still requires direct Particle-Particle (PP) calculations for close neighbors. Furthermore, the Meshless Finite Mass (MFM) hydrodynamics solver requires gas particles to find their nearest neighbors to partition volume, estimate spatial gradients, and compute Riemann fluxes across effective faces. 
+
+To make these local searches computationally viable, we must subdivide the simulation space. The spatial partitioning must dynamically adapt to the clustering of matter, providing high resolution in dense zones and coarse resolution in empty voids.
+
+### The Oct-Tree Concept
+
+An **Oct-Tree** is a hierarchical data structure that divides 3D space recursively. The process begins by treating the entire simulation box as a single cube (the "root" node). If this root cube contains more than one particle, it is sliced in half along the X, Y, and Z axes, creating 8 smaller sub-cubes (octants).
+
+The algorithm then looks at each of these 8 new octants. If an octant is empty, it is ignored. If it contains only one particle, it becomes a "leaf" node. If it contains multiple particles, it is subdivided into 8 even smaller octants. This recursive slicing continues until every particle sits isolated in its own custom-sized bounding box.
+
+This hierarchy drops the computational cost of spatial searches. When an MFM gas particle searches for its neighbors, it checks the Axis-Aligned Bounding Box (AABB) of the tree nodes. If the particle's search sphere does not intersect a node's bounding box, the algorithm ignores that node and all the particles inside it, saving unnecessary distance calculations.
+
+### The Barnes-Hut Algorithm
+
+While hydrodynamics uses the tree to find nearby neighbors, the gravity solver uses the tree to handle the vast distances of the cosmos.
+
+In 1986, Josh Barnes and Piet Hut introduced an algorithm that leveraged this hierarchical tree structure to solve the $O(N^2)$ gravitational bottleneck. Their method, known as the **Barnes-Hut algorithm**, allows us to group distant particles together and approximate their collective gravitational pull.
+
+A Barnes-Hut tree calculates the total mass and the Center of Mass for every internal node (bounding box) in the hierarchy. When calculating the gravitational pull on a specific particle, the algorithm traverses the tree starting from the root.
+
+For each node it encounters, it evaluates a geometric rule known as the **Multipole Acceptance Criterion (MAC)**. This criterion is defined by the ratio between the physical size of the node ($L$) and the distance from the particle to the node's center of mass ($d$). The algorithm compares this ratio against a dimensionless accuracy threshold, $\theta$ (typically set around $\theta \approx 0.5$):
+
+* **If the threshold is not exceeded ($L/d < \theta$):** The node is considered sufficiently distant for an approximation. The algorithm halts its traversal down that branch and treats the entire node as a single point mass located at its Center of Mass.
+
+* **If the threshold is exceeded ($L/d \ge \theta$):** The node is considered too close for the previous approximation to be accurate. The algorithm opens the node and looks at the smaller sub-cubes inside it, repeating the MAC check. If it reaches the bottom of the tree (a leaf node), it performs a direct Particle-Particle (PP) calculation.
+
+By grouping distant structures into single, coarse computations, the Barnes-Hut algorithm prunes the majority of the tree, dropping the computational cost of gravity from $O(N^2)$ to $O(N \log N)$.
+
+### The Multipole Expansion
+
+To justify treating a distant branch as a single point mass, we must look at the Newtonian formula. Suppose we want to calculate the gravitational potential $\Phi$ at a location, defined by the vector $\mathbf{r}$, caused by a distant, irregular blob of $N$ particles.
+
+The potential is the sum of the pulls from every individual particle $i$ (with mass $m_i$ and position vector $\mathbf{r}_i$) inside the blob:
+
+$$\Phi(\mathbf{r}) = -G \sum_{i=1}^{N} \frac{m_i}{\vert{}\mathbf{r} - \mathbf{r}_i\vert{}}$$
+
+Calculating this requires an $O(N)$ loop over every particle in the blob. However, because the MAC guarantees the node is far away, the distance $r$ to the blob is much larger than the distance of any internal particle from the center of the blob ($r \gg r_i$).
+
+Because the ratio $\frac{r_i}{r}$ is much smaller than 1, we can factor the massive distance $r$ out of the denominator and approximate the remaining fraction using a **Taylor series**. By expanding the distance fraction $\frac{1}{\vert{}\mathbf{r} - \mathbf{r}_i\vert{}}$ based on the small ratio $\frac{r_i}{r}$, the equation unfolds into a **multipole expansion**—a sum of decreasing mathematical terms representing increasingly detailed geometric shapes:
+
+$$\Phi(\mathbf{r}) = \Phi_{\text{monopole}} + \Phi_{\text{dipole}} + \Phi_{\text{quadrupole}} + \dots$$
+
+Here is the breakdown of these terms:
+
+**1. The Monopole (0th Order)**
+The first term in the Taylor expansion ignores the internal positions of the particles ($\mathbf{r}_i$):
+
+$$\Phi_{\text{monopole}} = -\frac{G}{r} \sum_{i=1}^{N} m_i = -\frac{GM}{r}$$
+
+This is the equation for a point mass. Its gravitational pull decays as $1/r$.
+
+**2. The Dipole (1st Order)**
+The second term introduces the first power of the internal particle positions, describing how "off-center" the mass distribution is. Its strength decays faster, scaling as $1/r^2$:
+
+$$\Phi_{\text{dipole}} = -\frac{G}{r^3} \mathbf{r} \cdot \left( \sum_{i=1}^{N} m_i \mathbf{r}_i \right)$$
+
+Notice the term in the parentheses: the sum of mass times position. By definition, the Center of Mass (CoM) is the point where $\sum m_i \mathbf{r}_i = 0$. By anchoring our Barnes-Hut tree nodes at their Center of Mass, this term conveniently cancels out to zero.
+
+**3. The Quadrupole (2nd Order)**
+The third term scales as $1/r^3$. It accounts for the squared positions of the particles, tracking how stretched or squished the blob is along different spatial axes (e.g., spherical, cigar-shaped, pancake-shaped):
+
+$$\Phi_{\text{quadrupole}} = -\frac{G}{2r^5} \sum_{i=1}^{N} m_i \left[ 3(\mathbf{r} \cdot \mathbf{r}_i)^2 - r^2 r_i^2 \right]$$
+
+We can factor this equation to separate the external position vector ($\mathbf{r}$) from the internal properties of the mass blob ($\mathbf{r}_i$). This allows us to encapsulate the blob's internal geometry into a single $3 \times 3$ matrix called the **Quadrupole Moment Tensor**:
+
+$$Q_{jk} = \sum_{i=1}^{N} m_i \left( 3 r_{i,j} r_{i,k} - r_i^2 \delta_{jk} \right)$$
+
+Where $j$ and $k$ represent the X, Y, and Z coordinate axes (e.g., $r_{i,1}$ is the x-coordinate of particle $i$), and $\delta_{jk}$ is the Kronecker delta (which equals 1 if $j=k$, and 0 otherwise). This matrix calculates the variance and covariance of the mass along the different spatial axes.
+
+* If the blob is a sphere, the mass variances along the X, Y, and Z axes are identical, and the matrix cancels out to zero.
+* If the blob is shaped like a cigar pointing along the X-axis, the $x^2$ variance will be much larger than $y^2$ or $z^2$.
+
+Once this $3 \times 3$ matrix is pre-calculated and stored for a tree node, the quadrupole contribution to the gravitational potential at any distant point $\mathbf{r} = (r_1, r_2, r_3)$ can be evaluated using matrix multiplication:
+$$\Phi_{\text{quadrupole}} = -\frac{G}{2r^5} \sum_{j=1}^{3} \sum_{k=1}^{3} Q_{jk} r_j r_k$$
+
+If we wanted an ultra-precise Barnes-Hut tree, we could calculate the Quadrupole Moment Tensor ($3 \times 3$ matrix) for every single node in the tree and store it. When calculating gravity, we would compute the monopole (point mass) and then add the quadrupole correction using matrix multiplication.
+
+However, matrix multiplication is computationally expensive. Because the quadrupole effect decays rapidly as $1/r^3$, its physical influence vanishes over short distances. The Multipole Acceptance Criterion (MAC) ensures we only evaluate nodes where $r$ is so massive that the $1/r^3$ quadrupole fraction shrinks below our acceptable margin of error. Enforcing the MAC allows us to process gravity using fast, simple point masses.
+
+### The Linear Bounding Volume Hierarchy (LBVH)
+
+To leverage the power of a GPU, we must flatten the 3D spatial partitioning of an oct-tree into a continuous, 1D array of data.
+
+This structure is known as a **Linear Bounding Volume Hierarchy (LBVH)**. In an LBVH, the nodes of the tree are packed together in a single array. A parent node stores the integer index of its children (e.g., `left_child = 52`). Because arrays are contiguous blocks of memory, the GPU can stream this data into its processors at maximum bandwidth.
+
+To flatten a 3D tree into a 1D array while ensuring that particles that are next to each other in the 3D box sit next to each other in the 1D array we can use a technique developed in the 1960s: **Morton Codes**.
+
+### Morton Codes and the Z-Order Curve
+
+A Morton code maps multi-dimensional data onto one dimension while preserving spatial locality. It achieves this by interleaving the binary bits of a particle's coordinates.
+
+To do this, we first take a particle's floating-point coordinates $(x, y, z)$ and normalize them to the size of the simulation box. We then scale these coordinates into integers according to the number of bits that will be used per dimension. To fit inside a standard 64-bit integer, we use 21 bits for each dimension (since $21 \times 3 = 63$ bits, leaving one bit unused).
+
+Let's look at an example. Imagine we have a particle at integer coordinates $X = 5$, $Y = 3$, and $Z = 6$. If we write these numbers in binary (using just 3 bits for this example), we get:
+
+* $X = 101_2$
+* $Y = 011_2$
+* $Z = 110_2$
+
+To generate the Morton code, we interleave these bits, taking one bit from $Z$, one from $Y$, and one from $X$, over and over.
+
+* We take the first bits: **1** from Z, **0** from Y, **1** from X $\rightarrow$ `101`
+* We take the second bits: **1** from Z, **1** from Y, **0** from X $\rightarrow$ `110`
+* We take the third bits: **0** from Z, **1** from Y, **1** from X $\rightarrow$ `011`
+
+Stitching them together gives us the final Morton code: `101110011`.
+
+For every particle, we generate a unique 64-bit integer representing its position in 3D space. The Morton codes are then used as sorting keys: we reorder our particle list from the smallest Morton code to the largest to get the flat 1D array. 
+
+To handle collisions, the sorting algorithm utilizes a deterministic tie-breaker. If two Morton codes are identical, the algorithm compares the particles' original, unique ID numbers to decide which one goes first.
+
+If we trace the path created by counting upward through these Morton codes, we get a distinct "Z" shape that repeatedly subdivides space, creating a fractal pattern known as the **Z-Order Curve**.
+
+This curve acts like a string folded back and forth filling the whole simulation box. The convenience of this string is that if two particles are physically close to each other in the 3D box, their Morton codes will (in the majority of cases) be close to each other.
+
+### The Karras Tree Construction
+
+A sorted list of particles based on their Morton codes is not a tree. We still need to build the hierarchy of bounding boxes—the internal nodes—that group these particles together.
+
+In 2012, Tero Karras published an algorithm that allowed to build a **Binary Radix Tree** (a tree where every node has two children, sequentially providing the 8 divisions of an oct-tree node) in parallel. He realized that if the particles are sorted by their Morton codes, the geometric structure of the oct-tree is *already implicitly defined* by the binary numbers themselves.
+
+Because Morton codes interleave spatial coordinates, the **Longest Common Prefix** (the number of identical bits at the beginning of two codes) tells us how close two particles are. If two adjacent particles share a long sequence of identical starting bits, it means they sit deep inside the same sub-region of the simulation box. The first bit where they differ indicates the geometric plane where they split into separate branches.
+
+Here is how we implemented the Karras algorithm in our code:
+
+#### 1. Defining the Topology (Parallel Split)
+
+For $N$ particles (the leaves), a binary tree will have $N-1$ internal branching nodes. In our flat arrays, indices $0$ to $N-2$ are internal nodes, and indices $N-1$ to $2N-2$ are the particle leaves.
+
+Because there are $N-1$ internal nodes, we can launch one GPU thread for every internal node simultaneously. Each thread looks at its corresponding index in the sorted Morton array and performs three lock-free steps:
+
+1. **Find the Range:** It compares adjacent Morton codes to determine the upper and lower bounds of the specific cluster of particles it is responsible for by evaluating a delta function, which counts the number of matching leading bits between any two Morton codes.
+    > As an example, imagine a simulation with just **$N=4$** particles.
+    > * **Internal Nodes:** Indices 0, 1, and 2.
+    > * **Leaf Nodes (Particles):** Indices 3, 4, 5, and 6.
+    > * Assume the particles have been sorted by their binary Morton codes:
+    > * Particle 0: `001`
+    > * Particle 1: `011`
+    > * Particle 2: `100`
+    > * Particle 3: `110`  
+    >
+    > Thread 0 (responsible for Internal Node 0) looks at its neighbors:  
+    >
+    > *  Direction: Thread 0 compares its Morton code (Particle 0) with its immediate neighbors. Looking right to Particle 1 (011), they share 1 leading bit (the first 0). Looking left, there is no particle, which the algorithm treats as a delta of -1. Because it shares more bits to the right than to the left ($1 > -1$), Thread 0 knows its cluster expands to the right. The "outside" boundary of this cluster is therefore defined by that left-side baseline: delta_min = -1.  
+    > *  Number of elements: The thread searches to the right, continuing as long as the delta between Particle 0 and the target particle remains greater than the delta_min boundary. It checks Particle 1 (delta = 1), Particle 2 (delta = 0), and Particle 3 (delta = 0). Because $1, 0,$ and $0$ are all greater than $-1$, they all belong to the cluster. The search hits the right edge of the array, so it stops. Thread 0 has determined it owns the full root range [0, 3].
+
+2. **Find the Split:** Using a binary search algorithm over the Morton codes, it finds the index where the highest differing bit occurs. This is the spatial plane that divides its cluster into a left half and a right half.
+    > Following the example: Looking at the range `[0, 3]`, Thread 0 sees the highest differing bit is the leftmost bit (Particle 0 starts with a `0`, Particle 3 starts with a `1`). It binary searches the range to find where this bit flips from `0` to `1`. It finds the flip happens between Particle 1 (`011`) and Particle 2 (`100`). Therefore, the split divides the cluster into a left half **[0, 1]** and a right half **[2, 3]**.
+
+3. **Assign Children:** It assigns the left side to its `left_child` and the right side to its `right_child`.
+    > In our example, because the left side `[0, 1]` contains multiple particles, Thread 0 cannot point to a leaf. Instead, it sets its `left_child` to **Internal Node 1**. Because the right side `[2, 3]` also contains multiple particles, it sets its `right_child` to **Internal Node 2**.
+    > Conversely, when Thread 1 processes the `[0, 1]` range, it splits between 0 and 1. Because the left side is Particle 0, Thread 1 sets its `left_child` to **Leaf Index 3**. Because the right side is Particle 1, it sets its `right_child` to **Leaf Index 4**.
+
+Because this relies only on reading the sorted Morton array, no thread needs to wait for another to finish, and the entire hierarchy can be built in parallel.
+
+#### 2. Bottom-Up Aggregation
+
+Once the topology is wired, the nodes are just empty shells. We must fill them with physical data: the Axis-Aligned Bounding Box (AABB) for hydrodynamics, and the Mass and Center of Mass for gravity.
+
+We launch a thread for every particle leaf. The thread populates its leaf with the particle's mass and coordinates, and then begins "walking" up the tree toward the root.
+
+When a thread arrives at a parent node, it uses a hardware-level **atomic counter** (a specialized flag).
+
+* If it is the *first* thread to arrive from either the left or right child, it increments the flag and terminates. It cannot compute the parent's bounding box because the other child hasn't arrived yet.
+
+* If it is the *second* thread to arrive, it knows both children have finished their calculations. It reads the bounding boxes and masses of both children, merges them together to define the parent, and then continues walking up to the next level of the tree.
+
+This bottom-up cascade aggregates the geometry and mass of the universe up to the root node.
+
+### Stack-Based Traversal
+
+With the LBVH fully constructed as a flat 1D array of nodes, we are ready to compute the physics. To search this binary tree, we use an **Iterative Stack-Based Traversal**.
+
+At the start of the physics calculation, every thread allocates a tiny, fixed-size array in its local memory. In our code, this is a 128-element integer array: `int stack[128]`. Because the depth of our LBVH is bounded by the number of bits used to generate the Morton codes, a 128-element stack (63 Morton code + 64 index tie breaker) is enough to traverse the entire universe without overflowing.
+
+The traversal then operates as a flat `while` loop:
+
+1. The thread pushes the root node (index 0) onto the stack: `stack[stack_ptr++] = 0;`.
+
+2. The loop begins. The thread pops a node off the top of the stack.
+
+3. This is the culling step:
+    * **For Hydrodynamics:** It checks if the node's bounding box overlaps the gas particle's search radius. If it doesn't, the thread issues a `continue` statement, culling the entire branch and moving on to the next node on the stack.
+    * **For Gravity:** It calculates the distance to the node's Center of Mass and checks the Multipole Acceptance Criterion (MAC). If the node is far enough away, it applies the bulk gravitational pull of the entire node and issues a `continue` statement.
+
+4. If the node must be opened, the thread pushes the `left_child` and `right_child` integers onto its local stack and repeats the loop.
+
+### The TreePM Architecture
+
+Combining the Particle-Mesh (PM) grid and the Linear Bounding Volume Hierarchy (LBVH) results in the **TreePM** (Tree-Particle-Mesh) architecture.
+
+In the TreePM framework, the gravitational potential is split into short-range and long-range contributions. This allows us to assign the strengths of each algorithm to the scales where they excel:
+
+* Long-range forces are calculated using a particle mesh. The PM solver handles these forces using Fast Fourier Transforms to efficiently bypass the $O(N^2)$ bottleneck.
+
+* Short-range forces are calculated following the oct-tree algorithm. The LBVH takes over at the sub-grid level, traversing the bounding boxes to resolve the gravitational dynamics of collapsing halos.
+
+To ensure gravity is not double-counted where these two regimes overlap, the forces must be seamlessly blended together. To achieve this, the simulation applies a continuous spatial filter to the gravitational equations. When traversing the LBVH for short-range interactions, the Newtonian force is multiplied by a complementary error function, or `erfc`. This smoothly scales the tree's gravitational pull down to zero at the cutoff radius where the PM grid's forces take over.
+
+*Key Literature & Further Reading*  
+**For the Barnes-Hut Algorithm:**  
+Barnes, J., & Hut, P. (1986). *A hierarchical O(N log N) force-calculation algorithm*. Nature, 324(6096), 446-449. Available at [https://www.nature.com/articles/324446a0](https://www.nature.com/articles/324446a0)
+
+**For Morton Codes (Z-Order Curve):**  
+Morton, G. M. (1966). *A computer oriented geodetic data base; and a 7 1/4 transverse Mercator projection*. IBM Research Report.
+
+**For the Karras Tree & LBVH Construction:**  
+Karras, T. (2012). *Maximizing parallelism in the construction of BVHs, octrees, and k-d trees*. Proceedings of the Fourth ACM SIGGRAPH / Eurographics conference on High-Performance Graphics, 33-37. Available at [https://research.nvidia.com/sites/default/files/pubs/2012-06_Maximizing-Parallelism-in/karras2012hpg_paper.pdf](https://research.nvidia.com/sites/default/files/pubs/2012-06_Maximizing-Parallelism-in/karras2012hpg_paper.pdf)
+
+**For the Integration of LBVH/Oct-Trees in GPU N-Body Solvers:**  
+Bédorf, J., Gaburov, E., & Portegies Zwart, S. (2012). *A sparse octree gravitational N-body code that runs entirely on the GPU processor*. Journal of Computational Physics, 231(7), 2825-2839. Available at [https://arxiv.org/pdf/1106.1900](https://arxiv.org/pdf/1106.1900)
 
 ## Analytical Requirements for Resolution and Volume
 
@@ -3207,3 +3406,25 @@ $$\text{Fractional Error} = \frac{E(t_n) - E(t_0) + W_{exp}(t_n)}{|E(t_0)|}$$
 Plotting this fractional error across the lifespan of a simulation acts as the ultimate diagnostic of numerical integrity. Because N-body codes generally rely on symplectic integrators (like the Leapfrog method), the fractional error should not exhibit long-term secular growth. Instead, it should hover near zero.
 
 If the error curve remains flat and bounded (e.g., within $0.1\%$), it proves that the Hamiltonian of the system is preserved and the equations of motion are accurately resolving the deepest density collapses. Conversely, a rapidly growing fractional error immediately flags numerical artifacts, such as inadequate force softening, timestep violations, or non-physical force discontinuities at periodic boundaries.
+
+
+## Appendix
+### Cosmological Unit Conversion Cheatsheet
+
+| Physical Concept | Dimensions | Factor from comoving to physical |
+| --- | --- | --- |
+| **Mass** | $M$ | No change |
+| **Position / Length** | $L$ | $a$ |
+| **Volume** | $L^3$ | $a^3$ |
+| **Velocity** | $L / T$ | $a$ |
+| **Acceleration** | $L / T^2$ | $a$ |
+| **Force** | $M \cdot L / T^2$ | $a$ |
+| **Density** | $M / L^3$ | $a^{-3}$ |
+| **Pressure** | $M / (L \cdot T^2)$ | $a^{-1}$ |
+| **Specific Internal Energy** *(MFM)* | $L^2 / T^2$ | $a^2$ |
+| **Specific Kinetic Energy** *(MFM)* | $L^2 / T^2$ | $a^2$ |
+| **Volumetric Energy Density** *(Eulerian)* | $M / (L \cdot T^2)$ | $a^{-1}$ |
+| **Volumetric Momentum Density** *(Eulerian)* | $M / (L^2 \cdot T)$ | $a^{-2}$ |
+| **Entropic Function** ($S = P / \rho^\gamma$) | $M^{1-\gamma} \cdot L^{3\gamma - 1} / T^2$ | $a^{3\gamma - 1}$ |
+| **Time** | $T$ | No change (tracked physically) |
+| **Temperature** | $\Theta$ | No change (converted internally) |

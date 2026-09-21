@@ -309,7 +309,7 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
                 tot_pmass = np.concatenate([p_mass, gm]) if len(p_mass) > 0 else gm
                 
             tot_particles = len(tot_pmass)
-            tot_part_mesh_size = int(np.round(tot_particles**(1.0/3.0))) if tot_particles > 0 else 0
+            tot_part_mesh_size = int(np.round(len(p_mass)**(1.0/3.0))) if len(p_mass) > 0 else 0
             rho_grid = f['Gas/density'][:] if has_eulerian_hydro else None
 
             if i in target_indices:
@@ -438,7 +438,7 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
                         tot_pmass = np.concatenate([p_mass, gm]) if len(p_mass) > 0 else gm
 
                     tot_particles = len(tot_pmass)
-                    tot_part_mesh_size = int(np.round(tot_particles**(1.0/3.0))) if tot_particles > 0 else 0
+                    tot_part_mesh_size = int(np.round(len(p_mass)**(1.0/3.0))) if len(p_mass) > 0 else 0
                     rho_grid = f['Gas/density'][:] if has_eulerian_hydro else None
                     
                     k_bins_p, pk_p = compute_power_spectrum(tot_px, tot_py, tot_pz, tot_pmass, box_h_mpc, mesh_size, tot_part_mesh_size, gas_rho=rho_grid)

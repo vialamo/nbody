@@ -180,7 +180,25 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
                 double code_k2 =
                     code_kx * code_kx + code_ky * code_ky + code_kz * code_kz;
 
+                // CIC Deconvolution
+                auto sinc = [](double freq, int mesh_size) {
+                    if (freq == 0.0) return 1.0;
+                    double arg = M_PI * freq / mesh_size;
+                    return std::sin(arg) / arg;
+                };
+
+                // The CIC interpolation window in Fourier space is sinc^2 per
+                // dimension
+                double sinc_x = sinc(kx_freq, M);
+                double sinc_y = sinc(ky_freq, M);
+                double sinc_z = sinc(kz_freq, M);
+                double cic_filter =
+                    (sinc_x * sinc_x) * (sinc_y * sinc_y) * (sinc_z * sinc_z);
+
                 std::complex<double> phi_k = -delta_k / code_k2;
+
+                // Divide the potential by the CIC filter
+                phi_k /= cic_filter;
 
                 // Calculate the Zel'dovich displacement by taking the negative
                 // gradient of the potential (-nabla Phi). In Fourier space,
@@ -459,9 +477,9 @@ void initialize_gas(SimState& state, const Config& config,
 void initialize_sod_shock_tube(SimState& state, const Config& config) {
     // GADGET/GIZMO Shock Tube parameters (Hernquist & Katz 1989)
     double rho_L = 1.0;
-    double rho_R = 0.25;
+    double rho_R = 0.125;
     double P_L = 1.0;
-    double P_R = 0.1795;
+    double P_R = 0.1;
 
     double L = config.domain_size;
     double gamma = config.gamma;
@@ -645,10 +663,10 @@ void initialize_adiabatic_expansion(SimState& state, const Config& config) {
 }
 
 void initialize_sedov_blastwave(SimState& state, const Config& config) {
-    // Standard Sedov-Taylor parameters
+    // Sedov-Taylor parameters
     double E_total = 1.0;
     double rho_bg = 1.0;
-    double P_bg = 1e-5;  // Almost zero pressure for the background to create a
+    double P_bg = 1e-6;  // Almost zero pressure for the background to create a
                          // strong shock
     double gamma = config.gamma;
     double u_bg = P_bg / (rho_bg * (gamma - 1.0));
@@ -719,109 +737,61 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
         gas.update_primitive_variables(state.scale_factor);
 
     } else if (config.hydro_method == HydroMethod::MFM) {
-        // Use a Face-Centered Cubic (FCC) lattice.
-        // FCC is close-packed (12 equidistant nearest neighbors) yielding good
-        // isotropic shock propagation, and tiles inside a cubic box.
+        // Use a Simple Cubic lattice (regular grid)
+        // matching the OpenGadget3 Sedov blastwave setup
+        int M = N_res;
+        if (M < 1) M = 1;
 
-        // Calculate how many FCC unit cells we need to approximate the
-        // requested resolution
-        int N_cell = static_cast<int>(std::round(N_res / std::cbrt(4.0)));
-        if (N_cell < 1) N_cell = 1;
-
-        int total_particles = 4 * N_cell * N_cell * N_cell;
-        double L_c =
-            L / static_cast<double>(N_cell);  // Size of the cubic unit cell
-
+        double dx = L / static_cast<double>(M);
+        int total_particles = M * M * M;
         double gas_particle_mass =
             rho_bg * (L * L * L) / static_cast<double>(total_particles);
-        double effective_dx = std::cbrt(gas_particle_mass / rho_bg);
-        double initial_h = 1.2 * effective_dx;
+        double initial_h = 2.0 * dx;
 
-        struct PartData {
-            double x, y, z, r, weight;
-        };
-        std::vector<PartData> pdata;
-        pdata.reserve(total_particles);
+        // Toggle to replicate OpenGadget3's 8-particle split
+        // Set to false to force all energy into 1 particle
+        constexpr bool spread_over_8_particles = true;
 
-        double w_sum = 0.0;
+        int i_min, i_max, num_central;
 
-        // FCC Basis vectors inside a unit cell (scaled by L_c)
-        double basis[4][3] = {
-            {0.0, 0.0, 0.0}, {0.5, 0.5, 0.0}, {0.5, 0.0, 0.5}, {0.0, 0.5, 0.5}};
+        if (spread_over_8_particles) {
+            // Even grids get the 8 central particles, odd grids get the 1
+            // center
+            i_min = (M % 2 == 0) ? (M / 2) - 1 : (M / 2);
+            i_max = M / 2;
+            num_central = (M % 2 == 0) ? 8 : 1;
+        } else {
+            // Force 1 central particle at the (M/2) index
+            i_min = M / 2;
+            i_max = M / 2;
+            num_central = 1;
+        }
 
-        // Lay out FCC particles and calculate energy weights
-        for (int i = 0; i < N_cell; ++i) {
-            for (int j = 0; j < N_cell; ++j) {
-                for (int k = 0; k < N_cell; ++k) {
-                    for (int b = 0; b < 4; ++b) {
-                        double qx = (i + basis[b][0]) * L_c;
-                        double qy = (j + basis[b][1]) * L_c;
-                        double qz = (k + basis[b][2]) * L_c;
+        double injected_E = E_total / num_central;
+        double added_u = injected_E / gas_particle_mass;
 
-                        // Microscopic grid-lock breaking noise
-                        double noise_x = ((rand() / (double)RAND_MAX) - 0.5) *
-                                         1e-4 * effective_dx;
-                        double noise_y = ((rand() / (double)RAND_MAX) - 0.5) *
-                                         1e-4 * effective_dx;
-                        double noise_z = ((rand() / (double)RAND_MAX) - 0.5) *
-                                         1e-4 * effective_dx;
+        for (int i = 0; i < M; ++i) {
+            for (int j = 0; j < M; ++j) {
+                for (int k = 0; k < M; ++k) {
+                    // Place particles at cell centers
+                    double p_x = (i + 0.5) * dx;
+                    double p_y = (j + 0.5) * dx;
+                    double p_z = (k + 0.5) * dx;
 
-                        double p_x = std::fmod(qx + noise_x + L, L);
-                        double p_y = std::fmod(qy + noise_y + L, L);
-                        double p_z = std::fmod(qz + noise_z + L, L);
+                    double particle_u = u_bg;
 
-                        double r = std::sqrt((p_x - center) * (p_x - center) +
-                                             (p_y - center) * (p_y - center) +
-                                             (p_z - center) * (p_z - center));
-
-                        // Gaussian energy smoothing
-                        double w = 0.0;
-                        if (r < 3.0 * R_inj) {
-                            w = std::exp(-(r * r) / (R_inj * R_inj));
-                        }
-                        w_sum += w;
-
-                        pdata.push_back({p_x, p_y, p_z, r, w});
+                    // If the index falls in the central cluster, inject the
+                    // blast energy
+                    if (i >= i_min && i <= i_max && j >= i_min && j <= i_max &&
+                        k >= i_min && k <= i_max) {
+                        particle_u += added_u;
                     }
+
+                    state.mfm_gas->add_particle(p_x, p_y, p_z, 0.0, 0.0, 0.0,
+                                                gas_particle_mass, particle_u,
+                                                initial_h, seed_metallicity);
                 }
             }
-        }
-
-        // Inject energy and initialize particles
-        constexpr bool smooth_energy_injection = true;
-
-        // Find the central particle for single-particle injection
-        double min_r = std::numeric_limits<double>::max();
-        size_t central_idx = 0;
-        if (!smooth_energy_injection) {
-            for (size_t i = 0; i < pdata.size(); ++i) {
-                if (pdata[i].r < min_r) {
-                    min_r = pdata[i].r;
-                    central_idx = i;
-                }
-            }
-        }
-
-        // Inject energy and initialize particles
-        for (size_t i = 0; i < pdata.size(); ++i) {
-            const auto& pd = pdata[i];
-            double particle_u = u_bg;
-
-            if (smooth_energy_injection) {
-                // Distribute E_total based on the gaussian weights
-                if (pd.weight > 0.0 && w_sum > 0.0) {
-                    double injected_E = E_total * (pd.weight / w_sum);
-                    particle_u += (injected_E / gas_particle_mass);
-                }
-            } else {
-                if (i == central_idx) {
-                    particle_u += (E_total / gas_particle_mass);
-                }
-            }
-
-            state.mfm_gas->add_particle(pd.x, pd.y, pd.z, 0.0, 0.0, 0.0,
-                                        gas_particle_mass, particle_u,
-                                        initial_h, seed_metallicity);
         }
     }
 }
@@ -839,6 +809,7 @@ SimState initialize_state(Config& config) {
 
         // Dark Matter Step
         initialize_dm(state, config, z_field);
+        state.dm.build_lbvh(config);
         state.dm.bin_and_assign_mass(config);
 
         // Gas Step

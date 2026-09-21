@@ -29,6 +29,8 @@ class HDF5Writer {
                     const Grid3D& grid);
     void write_particle_vec(H5::Group& group, const char* dataset_name,
                             const std::vector<double>& vec);
+    void write_particle_vec3d(H5::Group& group, const char* dataset_name,
+                              const std::vector<Eigen::Vector3d>& vec);
 
    public:
     HDF5Writer(const std::string& run_dir, const Config& config);

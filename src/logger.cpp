@@ -202,4 +202,8 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
         std::cout << "  [WARNING] MFM ill conditioned cases: "
                   << diag.MFM_ill_conditioned_cases << "\n";
     }
+    if (diag.MFM_h_non_converged_cases > 0) {
+        std::cout << "  [WARNING] MFM h non converged cases: "
+                  << diag.MFM_h_non_converged_cases << "\n";
+    }
 }

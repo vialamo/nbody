@@ -32,7 +32,7 @@ static void print_info(const Config& config) {
     if (num_devices == 0) {
         std::cout << "GPU: not available\n" << std::endl;
     } else {
-        if (config.enable_GPU) {
+        if (config.using_GPU) {
             std::cout << "GPU: enabled\n" << std::endl;
         } else {
             std::cout << "GPU: disabled\n" << std::endl;
@@ -43,7 +43,7 @@ static void print_info(const Config& config) {
 void signal_handler(int signal) {
     if (signal == SIGINT) {
         std::cout << "\n[Ctrl+C Detected] Finishing the current cycle and "
-                     "shutting down safely..."
+                     "shutting down..."
                   << std::endl;
         if (g_engine != nullptr) {
             g_engine->request_stop();
@@ -72,9 +72,6 @@ int main(int argc, char* argv[]) {
     if (config.num_threads > 0) {
         omp_set_num_threads(config.num_threads);
     }
-    if (omp_get_num_devices() == 0) {
-        config.enable_GPU = false;
-    }
 
     print_info(config);
 
@@ -85,7 +82,7 @@ int main(int argc, char* argv[]) {
 
     // Copy the config file into the run directory for reproducibility
     std::filesystem::copy_file(
-        "simulation.ini", run_dir + "/simulation.ini",
+        config_filename, run_dir + "/simulation.ini",
         std::filesystem::copy_options::overwrite_existing);
 
     HDF5Writer h5_writer(run_dir, config);

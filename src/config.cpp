@@ -76,8 +76,8 @@ void Config::compute_derived_data() {
         omega_lambda = 0.0;
         omega_m = 1.0;
         omega_baryon = 1.0;
-        gamma = 5.0 / 3.0;
-        total_mass = 0.625;
+        gamma = 1.4;
+        total_mass = 0.5625;
         a_end = 0.15;
     } else if (initial_setup == InitialSetup::AdiabaticExpansion) {
         enable_subcycling = false;
@@ -103,6 +103,7 @@ void Config::compute_derived_data() {
         omega_baryon = 1.0;
         gamma = 5.0 / 3.0;
         total_mass = 1.0;
+        a_end = 0.1;
     }
 
     cell_size = domain_size / mesh_size;
@@ -161,7 +162,7 @@ void Config::compute_derived_data() {
 
     // For now, disable subcycling when using MFM
     if (hydro_method == HydroMethod::MFM) {
-        enable_subcycling = false; 
+        enable_subcycling = false;
     }
 
     init_derived_units();
@@ -197,6 +198,12 @@ void Config::load(const std::string& filename) {
         "gravity", "comoving_softening_factor", comoving_softening_factor);
     physical_softening_cap_a = config_file.get_double(
         "gravity", "softening_cap_scale_factor", physical_softening_cap_a);
+    use_PM = config_file.get_bool("gravity", "use_pm", use_PM);
+    use_PP = config_file.get_bool("gravity", "use_pp", use_PP);
+    cutoff_radius_factor = config_file.get_double(
+        "gravity", "cutoff_radius_factor", cutoff_radius_factor);
+    PM_smoothing_cells = config_file.get_double("gravity", "pm_smoothing_cells",
+                                                PM_smoothing_cells);
 
     std::string ics_str = config_file.get(
         "initial_conditions", "setup", InitialConfig::to_string(initial_setup));
@@ -238,19 +245,10 @@ void Config::load(const std::string& filename) {
     mfm_max_iterations =
         config_file.get_int("mfm", "mfm_max_iterations", mfm_max_iterations);
 
-    enable_subgrid_gas_gravity = config_file.get_bool(
-        "subgrid", "enable_subgrid_gravity", enable_subgrid_gas_gravity);
     enable_subgrid_clumping = config_file.get_bool(
         "subgrid", "enable_subgrid_clumping", enable_subgrid_clumping);
     subgrid_clumping_amplitude = config_file.get_double(
         "subgrid", "subgrid_clumping_amplitude", subgrid_clumping_amplitude);
-
-    use_PM = config_file.get_bool("p3m", "use_pm", use_PM);
-    use_PP = config_file.get_bool("p3m", "use_pp", use_PP);
-    cutoff_radius_factor = config_file.get_double("p3m", "cutoff_radius_factor",
-                                                  cutoff_radius_factor);
-    PM_smoothing_cells =
-        config_file.get_double("p3m", "pm_smoothing_cells", PM_smoothing_cells);
 
     enable_subcycling =
         config_file.get_bool("time", "enable_subcycling", enable_subcycling);
@@ -272,7 +270,6 @@ void Config::load(const std::string& filename) {
         "output", "debug_info_every_seconds", debug_info_every_seconds);
 
     num_threads = config_file.get_int("HPC", "num_threads", num_threads);
-    enable_GPU = config_file.get_bool("HPC", "use_gpu", enable_GPU);
 
     compute_derived_data();
 
