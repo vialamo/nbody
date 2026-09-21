@@ -2,6 +2,8 @@
 
 #include <omp.h>
 
+#include <iostream>
+
 #include "math_utils.h"
 #include "particles.h"
 #include "pocketfft_hdronly.h"
@@ -879,6 +881,17 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
             apply_gas_particle_hydro_kick(*state.mfm_gas, dt / 2.0,
                                           state.scale_factor, config, true);
         }
+
+        // DIAGNOSTIC PRINT
+        /*{
+            size_t active_gas = 0;
+            for (size_t i = 0; i < state.mfm_gas->num_particles; i++)
+                if (state.mfm_gas->is_active[i]) active_gas++;
+            std::cout << "Cycle active gas: " << active_gas << " / "
+                      << state.mfm_gas->num_particles << " ("
+                      << (active_gas * 100.0 / state.mfm_gas->num_particles)
+                      << "%)\n";
+        }*/
 
         // Approximate the scale factor at the half-step (t + dt/2)
         double mid_a =

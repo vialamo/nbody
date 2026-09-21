@@ -48,6 +48,8 @@ class ParticleSystem {
     std::vector<double> dt_step;
     std::vector<double> t_current;
     std::vector<double> t_end;
+    std::vector<int> active_indices;
+    size_t num_active = 0;
     double global_time = 0.0;
 
     ParticleSystem(const Config& config);

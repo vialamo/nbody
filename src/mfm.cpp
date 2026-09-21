@@ -257,6 +257,14 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     t_end = std::move(new_t_end);
     is_active = std::move(new_is_active);
     needs_wakeup = std::move(new_needs_wakeup);
+
+    active_indices.clear();
+    for (size_t i = 0; i < num_particles; ++i) {
+        if (is_active[i]) {
+            active_indices.push_back(i);
+        }
+    }
+    num_active = active_indices.size();
 }
 
 void GasParticleSystem::build_lbvh(const Config& config) {
@@ -875,6 +883,14 @@ void GasParticleSystem::sync_and_activate(double dt, const Config& config) {
             t_end[i] = global_time;
         }
     }
+
+    active_indices.clear();
+    for (size_t i = 0; i < num_particles; ++i) {
+        if (is_active[i]) {
+            active_indices.push_back(i);
+        }
+    }
+    num_active = active_indices.size();
 }
 
 void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
@@ -1023,16 +1039,21 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
             n++;
         }
 
-        // Optional stability lock: prevent particles from jumping up bins too
-        // fast (If a particle suddenly leaves a shock, we don't want it jumping
-        // from n=8 to n=0 instantly)
-        /*if (time_bin[i] > 0 && n < time_bin[i] - 1) {
-            n = time_bin[i] - 1;
-            dt_bin = dt_max * std::pow(0.5, n);
-        }*/
+        // A particle can ONLY adopt a timestep bin if the current global clock
+        // is aligned to an integer multiple of that bin's boundary.
+        // If not aligned, it must drop to a smaller bin that IS aligned
+        double ratio = global_time / dt_bin;
+        while (std::abs(ratio - std::round(ratio)) > 1e-5 && n < 30) {
+            dt_bin *= 0.5;
+            n++;
+            ratio = global_time / dt_bin;
+        }
 
         time_bin[i] = n;
         dt_step[i] = dt_bin;
+
+        // Project the end time of the new step
+        t_end[i] = global_time + dt_bin;
     }
 }
 
@@ -1064,7 +1085,8 @@ void GasParticleSystem::compute_and_add_pp_forces(double a,
     double* d_ay = acc_y.data();
     double* d_az = acc_z.data();
     BVHNode* d_bvh_nodes = bvh_nodes.data();
-    uint8_t* d_is_active = is_active.data();
+    int* d_active_idx = active_indices.data();
+    size_t n_active = num_active;
 
 #ifdef USE_GPU
     auto start_transfer = std::chrono::high_resolution_clock::now();
@@ -1073,7 +1095,7 @@ void GasParticleSystem::compute_and_add_pp_forces(double a,
         to : d_px[0 : n_gas], d_py[0 : n_gas], d_pz[0 : n_gas],           \
             d_m[0 : n_gas], d_h[0 : n_gas], d_zeta[0 : n_gas],            \
             d_bvh_nodes[0 : num_nodes], d_ax[0 : n_gas], d_ay[0 : n_gas], \
-            d_az[0 : n_gas], d_is_active[0 : n_gas])
+            d_az[0 : n_gas], d_active_idx[0 : n_active])
 
     auto end_transfer = std::chrono::high_resolution_clock::now();
     auto start_compute = std::chrono::high_resolution_clock::now();
@@ -1085,8 +1107,8 @@ void GasParticleSystem::compute_and_add_pp_forces(double a,
 #else
 #pragma omp parallel for schedule(dynamic, 64)
 #endif
-    for (size_t i = 0; i < n_gas; ++i) {
-        if (!d_is_active[i]) continue;
+    for (size_t k = 0; k < n_active; ++k) {
+        size_t i = d_active_idx[k];
 
         double p1_x = d_px[i], p1_y = d_py[i], p1_z = d_pz[i];
         double m_i = d_m[i];
@@ -1191,7 +1213,7 @@ void GasParticleSystem::compute_and_add_pp_forces(double a,
                                      d_az[0 : n_gas])                     \
     map(delete : d_px[0 : n_gas], d_py[0 : n_gas], d_pz[0 : n_gas],       \
             d_m[0 : n_gas], d_h[0 : n_gas], d_zeta[0 : n_gas],            \
-            d_bvh_nodes[0 : num_nodes], d_is_active[0 : n_gas])
+            d_bvh_nodes[0 : num_nodes], d_active_idx[0 : n_active])
 
     auto end_return = std::chrono::high_resolution_clock::now();
 
@@ -1253,16 +1275,17 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
     double* d_dm_az = dm.acc_z.data();
 
     BVHNode* d_dm_bvh = dm.bvh_nodes.data();
-    uint8_t* d_is_active = is_active.data();
+    int* d_active_idx = active_indices.data();
+    size_t n_active = num_active;
 
 #ifdef USE_GPU
     auto start_transfer = std::chrono::high_resolution_clock::now();
 
-#pragma omp target enter data map(                                          \
-        to : d_gas_px[0 : n_gas], d_gas_py[0 : n_gas], d_gas_pz[0 : n_gas], \
-            d_gas_m[0 : n_gas], d_gas_h[0 : n_gas], d_gas_zeta[0 : n_gas],  \
-            d_gas_ax[0 : n_gas], d_gas_ay[0 : n_gas], d_gas_az[0 : n_gas],  \
-            d_is_active[0 : n_gas], d_dm_px[0 : n_dm], d_dm_py[0 : n_dm],   \
+#pragma omp target enter data map(                                            \
+        to : d_gas_px[0 : n_gas], d_gas_py[0 : n_gas], d_gas_pz[0 : n_gas],   \
+            d_gas_m[0 : n_gas], d_gas_h[0 : n_gas], d_gas_zeta[0 : n_gas],    \
+            d_gas_ax[0 : n_gas], d_gas_ay[0 : n_gas], d_gas_az[0 : n_gas],    \
+            d_active_idx[0 : n_active], d_dm_px[0 : n_dm], d_dm_py[0 : n_dm], \
             d_dm_pz[0 : n_dm], d_dm_m[0 : n_dm], d_dm_bvh[0 : dm_num_nodes])
 
     auto end_transfer = std::chrono::high_resolution_clock::now();
@@ -1275,8 +1298,8 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
 #else
 #pragma omp parallel for schedule(dynamic, 64)
 #endif
-    for (size_t i = 0; i < n_gas; ++i) {
-        if (!d_is_active[i]) continue;
+    for (size_t k = 0; k < n_active; ++k) {
+        size_t i = d_active_idx[k];
 
         double p1_x = d_gas_px[i], p1_y = d_gas_py[i], p1_z = d_gas_pz[i];
         double m_gas = d_gas_m[i];
@@ -1383,9 +1406,9 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
                                      d_gas_ay[0 : n_gas], d_gas_az[0 : n_gas]) \
     map(delete : d_gas_px[0 : n_gas], d_gas_py[0 : n_gas],                     \
             d_gas_pz[0 : n_gas], d_gas_m[0 : n_gas], d_gas_h[0 : n_gas],       \
-            d_gas_zeta[0 : n_gas], d_is_active[0 : n_gas], d_dm_px[0 : n_dm],  \
-            d_dm_py[0 : n_dm], d_dm_pz[0 : n_dm], d_dm_m[0 : n_dm],            \
-            d_dm_bvh[0 : dm_num_nodes])
+            d_gas_zeta[0 : n_gas], d_active_idx[0 : n_active],                 \
+            d_dm_px[0 : n_dm], d_dm_py[0 : n_dm], d_dm_pz[0 : n_dm],           \
+            d_dm_m[0 : n_dm], d_dm_bvh[0 : dm_num_nodes])
 
     auto end_return = std::chrono::high_resolution_clock::now();
 

@@ -104,6 +104,8 @@ class GasParticleSystem {
     std::vector<uint8_t> is_active; // Particle is synced with the global clock
     std::vector<uint8_t>
         needs_wakeup;  // Thread-safe flag for waking up sleeping particles
+    std::vector<int> active_indices;
+    size_t num_active = 0;
     double global_time = 0.0;
 
     GasParticleSystem(const Config& config);
