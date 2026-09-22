@@ -268,7 +268,7 @@ static void apply_dm_kick(ParticleSystem& dm, double dt, double a, double H,
     schedule(static)
     for (size_t i = 0; i < n; i++) {
         // Gate the kick based on the individual timeline boundaries
-        if (config.enable_individual_timesteps) {
+        if (config.individual_particle_timesteps) {
             double t_start = dm.t_end[i] - dm.dt_step[i];
             bool do_kick = false;
 
@@ -373,7 +373,7 @@ static void apply_gas_particle_gravity_kick(GasParticleSystem& gas, double dt,
 #pragma omp parallel for reduction(+ : step_grav_work, step_exp_work) \
     schedule(static)
     for (size_t i = 0; i < n; i++) {
-        if (config.enable_individual_timesteps) {
+        if (config.individual_particle_timesteps) {
             double t_start = gas.t_end[i] - gas.dt_step[i];
             bool do_kick = false;
             if (is_kick1) {
@@ -469,7 +469,7 @@ static void apply_gas_particle_hydro_kick(GasParticleSystem& gas, double dt,
 
 #pragma omp parallel for reduction(+ : step_hydro_exp_work) schedule(static)
     for (size_t i = 0; i < n; i++) {
-        if (config.enable_individual_timesteps) {
+        if (config.individual_particle_timesteps) {
             double t_start = gas.t_end[i] - gas.dt_step[i];
             bool do_kick = false;
             if (is_kick1) {
@@ -619,18 +619,25 @@ static void update_softening(SimState& state, Config& config) {
         current_comoving_softening * current_comoving_softening;
 }
 
-void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
+void compute_forces(SimState& state, Config& config, Diagnostics& diag,
+                    bool is_macro_step) {
     update_softening(state, config);
 
-    // PM GRAVITY
+    // ALWAYS REBUILD THE TREES
     {
-        ScopedTimer pm_timer(diag, TimerRegion::PM);
-
+        ScopedTimer pm_timer(diag, TimerRegion::Tree);
         state.dm.build_lbvh(config);
-        state.dm.bin_and_assign_mass(config);  // Sorts DM arrays into PM grid
-
         if (config.hydro_method == HydroMethod::MFM) {
             state.mfm_gas->build_lbvh(config);
+        }
+    }
+
+    // SOLVE GLOBAL PM MESH
+    if (is_macro_step) {
+        ScopedTimer pm_timer(diag, TimerRegion::PM);
+        state.dm.bin_and_assign_mass(config);
+
+        if (config.hydro_method == HydroMethod::MFM) {
             state.mfm_gas->bin_and_assign_mass(config);
             state.total_rho.data =
                 state.dm.get_rho().data + state.mfm_gas->get_rho().data;
@@ -643,7 +650,13 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
 
         if (config.use_PM) {
             compute_PM_acceleration(state, config);
+        }
+    }
 
+    // APPLY PM FORCES & reset
+    {
+        ScopedTimer pm_timer(diag, TimerRegion::PM);
+        if (config.use_PM) {
             state.dm.interpolate_cic_forces(state.pm_gravity_x,
                                             state.pm_gravity_y,
                                             state.pm_gravity_z, config);
@@ -882,17 +895,6 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
                                           state.scale_factor, config, true);
         }
 
-        // DIAGNOSTIC PRINT
-        /*{
-            size_t active_gas = 0;
-            for (size_t i = 0; i < state.mfm_gas->num_particles; i++)
-                if (state.mfm_gas->is_active[i]) active_gas++;
-            std::cout << "Cycle active gas: " << active_gas << " / "
-                      << state.mfm_gas->num_particles << " ("
-                      << (active_gas * 100.0 / state.mfm_gas->num_particles)
-                      << "%)\n";
-        }*/
-
         // Approximate the scale factor at the half-step (t + dt/2)
         double mid_a =
             state.scale_factor * (1.0 + 0.5 * state.hubble_param * dt);
@@ -935,7 +937,10 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
         // UPDATE COSMOLOGY to t + dt
         state.total_time += dt;
         update_cosmology(state, config);
-        compute_forces(state, config, diag);
+        bool is_macro = (!config.individual_particle_timesteps) ||
+                        (std::abs(std::remainder(state.total_time,
+                                                 config.fixed_dt)) < 1e-10);
+        compute_forces(state, config, diag, is_macro);
 
         // KICK 2 (Half step)
         apply_gravity_kick(state, dt / 2.0, state.scale_factor,

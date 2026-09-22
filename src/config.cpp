@@ -158,13 +158,15 @@ void Config::compute_derived_data() {
     softening_squared = actual_softening * actual_softening;
 
     const double dynamical_time = 1.0 / std::sqrt(G);
-    fixed_dt = max_dt_dynamical_factor * dynamical_time;
+    double raw_fixed_dt = max_dt_dynamical_factor * dynamical_time;
+    // Snap to the nearest lower power of 2
+    fixed_dt = std::pow(2.0, std::floor(std::log2(raw_fixed_dt)));
 
     // For now, disable subcycling when using MFM
     if (hydro_method == HydroMethod::MFM) {
         enable_subcycling = false;
     } else {
-        enable_individual_timesteps = false;
+        individual_particle_timesteps = false;
     }
 
     init_derived_units();
@@ -244,8 +246,6 @@ void Config::load(const std::string& filename) {
         "mfm", "mfm_neighbor_tolerance", mfm_neighbor_tolerance);
     mfm_max_iterations =
         config_file.get_int("mfm", "mfm_max_iterations", mfm_max_iterations);
-    enable_individual_timesteps = config_file.get_bool(
-        "mfm", "enable_individual_timesteps", enable_individual_timesteps);
 
     enable_subgrid_clumping = config_file.get_bool(
         "subgrid", "enable_subgrid_clumping", enable_subgrid_clumping);
@@ -265,6 +265,8 @@ void Config::load(const std::string& filename) {
     use_adaptive_dt =
         config_file.get_bool("time", "use_adaptive_dt", use_adaptive_dt);
     max_cycles = config_file.get_int("time", "max_cycles", max_cycles);
+    individual_particle_timesteps = config_file.get_bool(
+        "time", "individual_particle_time", individual_particle_timesteps);
 
     save_HDF5_every_delta_a = config_file.get_double(
         "output", "save_hdf5_every_delta_a", save_HDF5_every_delta_a);

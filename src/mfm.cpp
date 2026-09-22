@@ -671,7 +671,7 @@ double GasParticleSystem::get_cfl_timestep(double a,
     if (config.hydro_method != HydroMethod::MFM || num_particles == 0) {
         return std::numeric_limits<double>::infinity();
     }
-    if (config.enable_individual_timesteps) {
+    if (config.individual_particle_timesteps) {
         // Bootstrap: On the very first step, request safe step to
         // initialize forces
         if (global_time == 0.0) {
@@ -805,7 +805,7 @@ double GasParticleSystem::get_cooling_timestep(double a, const Config& config,
         num_particles == 0) {
         return std::numeric_limits<double>::infinity();
     }
-    if (config.enable_individual_timesteps) {
+    if (config.individual_particle_timesteps) {
         return std::numeric_limits<double>::infinity();
     } else {
         double min_dt_cool = std::numeric_limits<double>::infinity();
@@ -834,7 +834,7 @@ double GasParticleSystem::get_cooling_timestep(double a, const Config& config,
 
 double GasParticleSystem::get_gravity_timestep(const Config& config) const {
     if (num_particles == 0) return std::numeric_limits<double>::infinity();
-    if (config.enable_individual_timesteps) {
+    if (config.individual_particle_timesteps) {
         return std::numeric_limits<double>::infinity();
     } else {
         double epsilon = std::sqrt(config.softening_squared);
@@ -845,7 +845,7 @@ double GasParticleSystem::get_gravity_timestep(const Config& config) const {
 }
 
 void GasParticleSystem::sync_and_activate(double dt, const Config& config) {
-    if (!config.enable_individual_timesteps) {
+    if (!config.individual_particle_timesteps) {
         global_time += dt;
         for (size_t i = 0; i < num_particles; ++i) {
             is_active[i] = 1;
@@ -861,8 +861,12 @@ void GasParticleSystem::sync_and_activate(double dt, const Config& config) {
     // Process wakeups from the previous cycle
     for (size_t i = 0; i < num_particles; ++i) {
         if (needs_wakeup[i]) {
-            double t_start = t_end[i] - dt_step[i];
-            dt_step[i] = new_global_time - t_start;
+            // GIZMO Wake-up logic:
+            // Snap the particle to the current active micro-step size.
+            // It will drift the full distance since it last moved (using
+            // t_current), but its kicks and cooling will use this tiny
+            // micro-step
+            dt_step[i] = dt;
             t_end[i] = new_global_time;  // Force sync to the current clock
             needs_wakeup[i] = 0;
         }
@@ -876,7 +880,7 @@ void GasParticleSystem::sync_and_activate(double dt, const Config& config) {
         // A particle is active if its block step ends at the new global time
         is_active[i] = (std::abs(t_end[i] - global_time) < 1e-10) ? 1 : 0;
 
-        // BOOTSTRAP: If it's the very first step (t=0), everyone is active
+        // BOOTSTRAP: If it's the first step (t=0), everyone is active
         if (global_time <= dt + 1e-12 && t_end[i] == 0.0) {
             is_active[i] = 1;
             dt_step[i] = dt;  // Give them a tiny initial dt so Kick 2 works
@@ -891,6 +895,10 @@ void GasParticleSystem::sync_and_activate(double dt, const Config& config) {
         }
     }
     num_active = active_indices.size();
+
+    active_particles_fraction +=
+        static_cast<double>(num_active) / static_cast<double>(num_particles);
+    active_particles_num_cycles++;
 }
 
 void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
@@ -898,7 +906,7 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
                                                   Cooling& cooling) {
     if (num_particles == 0) return;
 
-    if (!config.enable_individual_timesteps) {
+    if (!config.individual_particle_timesteps) {
         // Under global timesteps, the engine already calculated dt_max as the
         // global minimum
         for (size_t i = 0; i < num_particles; ++i) {
@@ -931,16 +939,6 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
                 std::sqrt(epsilon / a_mag) * config.gravity_accuracy_eta;
             dt_ideal = std::min(dt_ideal, dt_grav);
         }
-
-        // Cooling Timestep
-        /*if (config.enable_cooling && rho[i] > 1e-12 && u[i] > u_rad_floor) {
-            double du_dt_val =
-                cooling.compute_du_dt(u[i], rho[i], metal_frac[i], a, config);
-            if (std::abs(du_dt_val) > 0.0) {
-                double dt_cool = 0.1 * (u[i] / std::abs(du_dt_val));
-                dt_ideal = std::min(dt_ideal, dt_cool);
-            }
-        }*/
 
         // CFL Timestep
         if (config.hydro_method == HydroMethod::MFM) {
@@ -1026,6 +1024,38 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
                 double dt_cfl =
                     ((a * h_i) / v_sig_max_phys) * config.hydro_courant_factor;
                 dt_ideal = std::min(dt_ideal, dt_cfl);
+            }
+        }
+
+        // Kinematic Compression Limiter (div v)
+        // Extract the physical velocity divergence from the Jacobian
+        double div_v = grad_vx[i].x() + grad_vy[i].y() + grad_vz[i].z();
+
+        // Only limit the step if the gas is actively compressing
+        if (div_v < 0.0) {
+            // Restrict the timestep so the density increases by no more than
+            // ~15% per step. In an expanding universe, total divergence is (3H
+            // + div_v), but limiting on the peculiar compression
+            // (div_v < 0) is a safe baseline
+            double dt_div = 0.15 / std::abs(div_v);
+            dt_ideal = std::min(dt_ideal, dt_div);
+        }
+
+        // Bounded Cooling Timestep
+        if (config.enable_cooling && rho[i] > 1e-12 && u[i] > u_rad_floor) {
+            double du_dt_val =
+                cooling.compute_du_dt(u[i], rho[i], metal_frac[i], a, config);
+            if (std::abs(du_dt_val) > 0.0) {
+                // The raw physical cooling timestep
+                double dt_cool = 0.1 * (u[i] / std::abs(du_dt_val));
+
+                // Allow the particle to step down and wake up, but never let it
+                // drop lower than 1/16th of the global macro step. This caps
+                // the maximum number of cooling-induced micro-cycles at 16,
+                // preventing the freeze
+                double safe_dt_cool = std::max(dt_cool, dt_max / 16.0);
+
+                dt_ideal = std::min(dt_ideal, safe_dt_cool);
             }
         }
 
@@ -1711,8 +1741,6 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
     if (num_particles == 0) return;
     double domain_size = config.domain_size;
 
-    double gamma = config.gamma;
-
     // Reset accumulators
     std::fill(hydro_acc_x.begin(), hydro_acc_x.end(), 0.0);
     std::fill(hydro_acc_y.begin(), hydro_acc_y.end(), 0.0);
@@ -1791,22 +1819,12 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                     p_j.pressure = pressure[j];
                     p_j.h = hj;
 
-                    // Wake up particle j if needed
-                    {
-                        double r = std::sqrt(r2);
-
-                        // Calculate sound speeds
-                        double c_i = std::sqrt(gamma * p_i.pressure / p_i.rho);
-                        double c_j = std::sqrt(gamma * p_j.pressure / p_j.rho);
-
-                        // The OG3 Wake-Up Check
-                        // If the active particle's signal velocity is much
-                        // larger than the neighbor's, and the neighbor is
-                        // asleep, flag it to wake up
-                        if (!is_active[j] && (c_i > 3.0 * c_j)) {
+                    // Saitoh & Makino (2009) Timestep Limiter
+                    // Wake up the sleeping neighbor if its timestep is
+                    // larger (e.g., 4x) than the active particle hitting it
+                    if (!is_active[j] && (dt_step[j] > 4.0 * dt_step[i])) {
 #pragma omp atomic write
-                            needs_wakeup[j] = 1;
-                        }
+                        needs_wakeup[j] = 1;
                     }
 
                     Reconstruction::ParticleGradients grad_j;
@@ -1907,4 +1925,20 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
             }
         }
     }
+}
+
+double GasParticleSystem::get_active_particles_per_cycle_and_reset(
+    const Config& config) {
+    double percent_particles_updated = 1.0;
+    if (config.individual_particle_timesteps &&
+        active_particles_num_cycles > 0) {
+        percent_particles_updated =
+            active_particles_fraction /
+            static_cast<double>(active_particles_num_cycles);
+    }
+
+    active_particles_fraction = 0.0;
+    active_particles_num_cycles = 0;
+
+    return percent_particles_updated;
 }

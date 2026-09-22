@@ -122,7 +122,6 @@ struct Config {
     double mfm_neighbor_tolerance = 0.01;
     int mfm_max_iterations = 50;
     bool disable_hydro_forces = false;
-    bool enable_individual_timesteps = true;
 
     // Subgrid
     bool enable_subgrid_clumping = true;
@@ -137,6 +136,7 @@ struct Config {
     double a_start = 0.02;
     double a_end = 1.0;
     int max_cycles = 1000000000;
+    bool individual_particle_timesteps = true;
 
     // Output
     double save_HDF5_every_delta_a = 0.005;

@@ -35,7 +35,8 @@ double Diagnostics::get_io_time() const {
 double Diagnostics::get_average_overhead() const {
     double total_physics =
         get_average(TimerRegion::PM) + get_average(TimerRegion::PP) +
-        get_average(TimerRegion::Hydro) + get_average(TimerRegion::Cool);
+        get_average(TimerRegion::Hydro) + get_average(TimerRegion::Cool) +
+        get_average(TimerRegion::Tree);
     return get_average(TimerRegion::Step) - total_physics;
 }
 
@@ -244,9 +245,12 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
         total_heated_energy = e_heat;
 
         this->MFM_ill_conditioned_cases = gas.ill_conditioned_cases;
-        //gas.ill_conditioned_cases = 0;
+        // gas.ill_conditioned_cases = 0;
         this->MFM_h_non_converged_cases = gas.non_converged_h_cases;
-        //gas.non_converged_h_cases = 0;
+        // gas.non_converged_h_cases = 0;
+
+        percent_particles_updated =
+            gas.get_active_particles_per_cycle_and_reset(config) * 100.0;
     } else {
         this->energy_err = 0.0;
     }

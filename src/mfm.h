@@ -87,6 +87,8 @@ class GasParticleSystem {
     std::vector<double> cond_num;
     std::vector<Eigen::Vector3d> raw_sum_p;
     std::vector<double> n_enc_final;
+    double active_particles_fraction = 0.0;
+    size_t active_particles_num_cycles = 0;
 
     // Spatial Hashing
     std::vector<CIC_Data> cic_data;
@@ -97,11 +99,11 @@ class GasParticleSystem {
     std::vector<BVHNode> bvh_nodes;
 
     // Time tracking per particle (Hierarchical block time-stepping)
-    std::vector<int> time_bin;      // Power-of-two bin level (n)
-    std::vector<double> dt_step;    // Actual timestep size (Delta t_i)
-    std::vector<double> t_current;  // Time this particle was last drifted to
-    std::vector<double> t_end;      // Time this particle's current step ends
-    std::vector<uint8_t> is_active; // Particle is synced with the global clock
+    std::vector<int> time_bin;       // Power-of-two bin level (n)
+    std::vector<double> dt_step;     // Actual timestep size (Delta t_i)
+    std::vector<double> t_current;   // Time this particle was last drifted to
+    std::vector<double> t_end;       // Time this particle's current step ends
+    std::vector<uint8_t> is_active;  // Particle is synced with the global clock
     std::vector<uint8_t>
         needs_wakeup;  // Thread-safe flag for waking up sleeping particles
     std::vector<int> active_indices;
@@ -156,6 +158,8 @@ class GasParticleSystem {
     void compute_hydro_forces(const Config& config, double a, double dt);
 
     void build_lbvh(const Config& config);
+
+    double get_active_particles_per_cycle_and_reset(const Config& config);
 
    private:
     void sort_arrays(const std::vector<int>& sorted_indices);

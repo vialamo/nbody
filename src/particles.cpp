@@ -531,7 +531,7 @@ void ParticleSystem::compute_cross_pp_forces(double a,
 
 double ParticleSystem::get_gravity_timestep(const Config& config) const {
     if (num_particles == 0) return std::numeric_limits<double>::infinity();
-    if (config.enable_individual_timesteps) {
+    if (config.individual_particle_timesteps) {
         // Bootstrap: On the first step, request safe step to initialize
         // forces
         if (global_time == 0.0) {
@@ -562,7 +562,7 @@ double ParticleSystem::get_gravity_timestep(const Config& config) const {
 }
 
 void ParticleSystem::sync_and_activate(double dt, const Config& config) {
-    if (!config.enable_individual_timesteps) {
+    if (!config.individual_particle_timesteps) {
         global_time += dt;
         for (size_t i = 0; i < num_particles; ++i) {
             is_active[i] = 1;
@@ -604,7 +604,7 @@ void ParticleSystem::update_particle_timesteps(double dt_max,
                                                const Config& config) {
     if (num_particles == 0) return;
 
-    if (!config.enable_individual_timesteps) {
+    if (!config.individual_particle_timesteps) {
         // Under global timesteps, all particles just take the macro step
         for (size_t i = 0; i < num_particles; ++i) {
             dt_step[i] = dt_max;

@@ -187,6 +187,8 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         set_attr_bool(config_group, "use_adaptive_dt", config.use_adaptive_dt);
         set_attr_double(config_group, "a_start", config.a_start);
         set_attr_double(config_group, "a_end", config.a_end);
+        set_attr_bool(config_group, "individual_particle_time",
+                      config.individual_particle_timesteps);
 
         // [HPC]
         set_attr_int(config_group, "num_threads", config.num_threads);

@@ -58,7 +58,7 @@ TimestepInfo SimulationEngine::get_timestep() const {
     }
     ts.dt_grav = std::min(dt_grav_dm, dt_grav_mfm);
 
-    if (config.enable_individual_timesteps) {
+    if (config.individual_particle_timesteps) {
         ts.dt_macro = std::min(ts.dt_hydro, ts.dt_grav);
         return ts;
     }

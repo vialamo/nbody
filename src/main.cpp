@@ -26,6 +26,9 @@ static void print_info(const Config& config) {
               << "\n";
     std::cout << "Initial Setup = "
               << InitialConfig::to_string(config.initial_setup) << "\n";
+    if (config.individual_particle_timesteps) {
+        std::cout << "Base timestep: " << config.fixed_dt << "\n";
+    }
 
     std::cout << "Threads: " << omp_get_max_threads() << " | ";
     int num_devices = omp_get_num_devices();
@@ -92,7 +95,8 @@ int main(int argc, char* argv[]) {
     SimulationEngine engine(config, logger, h5_writer, diagnostics);
     g_engine = &engine;
 
-    std::cout << "\nSimulation loop started\n" << std::endl;
+    std::cout << "\nSimulation loop started: " << timestamp << "\n"
+              << std::endl;
     try {
         ExitStatus status = engine.run();
         switch (status) {

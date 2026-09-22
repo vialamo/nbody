@@ -153,14 +153,22 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
               << " | Grav: " << format_double(diag.dt_gravity, 1, true)
               << " | CFL: " << format_double(diag.dt_cfl, 1, true)
               << " | Cool: " << format_double(diag.dt_cool, 1, true) << "\n";
-    std::cout
-        << "    - Subcycles/step:   Hydro: "
-        << format_double(diag.get_average_substeps(SubstepCounter::Hydro), 1)
-        << " | Gravity: "
-        << format_double(diag.get_average_substeps(SubstepCounter::Gravity), 1)
-        << " | Cooling: "
-        << format_double(diag.get_average_substeps(SubstepCounter::Cool), 1)
-        << "\n";
+    if (conf.enable_subcycling) {
+        std::cout << "    - Subcycles/step:   Hydro: "
+                  << format_double(
+                         diag.get_average_substeps(SubstepCounter::Hydro), 1)
+                  << " | Gravity: "
+                  << format_double(
+                         diag.get_average_substeps(SubstepCounter::Gravity), 1)
+                  << " | Cooling: "
+                  << format_double(
+                         diag.get_average_substeps(SubstepCounter::Cool), 1)
+                  << "\n";
+    }
+    if (conf.individual_particle_timesteps) {
+        std::cout << "    - Particles/step:   "
+                  << format_double(diag.percent_particles_updated, 1) << "%\n";
+    }
 
     std::cout << "  [Performance (ms / cycle)]" << "\n";
     std::cout << "    - Step: "
@@ -175,6 +183,8 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
               << format_double(diag.get_average(TimerRegion::Hydro) * 1000.0, 0)
               << " | Cooling: "
               << format_double(diag.get_average(TimerRegion::Cool) * 1000.0, 0)
+              << " | Tree: "
+              << format_double(diag.get_average(TimerRegion::Tree) * 1000.0, 0)
               << "\n"
               << "    - I/O Spike: "
               << format_double(diag.get_io_time() * 1000.0, 0) << "\n";

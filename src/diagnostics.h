@@ -6,7 +6,7 @@
 #include "config.h"
 #include "state.h"
 
-enum class TimerRegion { Step, PM, PP, Hydro, Cool, IO, NUM_REGIONS };
+enum class TimerRegion { Step, PM, PP, Hydro, Cool, IO, Tree, NUM_REGIONS };
 enum class SubstepCounter { Hydro, Gravity, Cool, NUM_COUNTERS };
 enum class ProfRegion { Transf, Ret, Compute, NUM_PROF_REGIONS };
 
@@ -38,6 +38,7 @@ class Diagnostics {
     bool dm_energy_initialized = false;
     size_t MFM_ill_conditioned_cases = 0;
     size_t MFM_h_non_converged_cases = 0;
+    double percent_particles_updated = 0;
 
     // Performance State
     int accumulated_cycles = 0;
