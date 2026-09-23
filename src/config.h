@@ -121,15 +121,12 @@ struct Config {
     double mfm_target_neighbors = 32.0;
     double mfm_neighbor_tolerance = 0.01;
     int mfm_max_iterations = 50;
-    bool disable_hydro_forces = false;
 
     // Subgrid
     bool enable_subgrid_clumping = true;
     double subgrid_clumping_amplitude = 10.0;
 
     // Time
-    bool enable_subcycling = true;
-    bool use_adaptive_dt = true;
     double max_dt_dynamical_factor = 1e-3;
     double hydro_courant_factor = 0.4;
     double gravity_accuracy_eta = 0.2;

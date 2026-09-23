@@ -2,7 +2,7 @@
 
 #include <omp.h>
 
-#include <iostream>
+// #include <iostream>
 
 #include "math_utils.h"
 #include "particles.h"
@@ -619,21 +619,20 @@ static void update_softening(SimState& state, Config& config) {
         current_comoving_softening * current_comoving_softening;
 }
 
-void compute_forces(SimState& state, Config& config, Diagnostics& diag,
-                    bool is_macro_step) {
+void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
     update_softening(state, config);
 
-    // ALWAYS REBUILD THE TREES
+    // Build trees
     {
-        ScopedTimer pm_timer(diag, TimerRegion::Tree);
+        ScopedTimer timer(diag, TimerRegion::Tree);
         state.dm.build_lbvh(config);
         if (config.hydro_method == HydroMethod::MFM) {
             state.mfm_gas->build_lbvh(config);
         }
     }
 
-    // SOLVE GLOBAL PM MESH
-    if (is_macro_step) {
+    // PM
+    {
         ScopedTimer pm_timer(diag, TimerRegion::PM);
         state.dm.bin_and_assign_mass(config);
 
@@ -650,13 +649,7 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag,
 
         if (config.use_PM) {
             compute_PM_acceleration(state, config);
-        }
-    }
 
-    // APPLY PM FORCES & reset
-    {
-        ScopedTimer pm_timer(diag, TimerRegion::PM);
-        if (config.use_PM) {
             state.dm.interpolate_cic_forces(state.pm_gravity_x,
                                             state.pm_gravity_y,
                                             state.pm_gravity_z, config);
@@ -708,262 +701,90 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag,
     }
 
     // Finalize
-    calculate_max_acceleration(state.dm);
-    if (config.hydro_method == HydroMethod::MFM) {
-        calculate_max_acceleration(*state.mfm_gas);
+    {
+        ScopedTimer pp_timer(diag, TimerRegion::PP);
+        calculate_max_acceleration(state.dm);
+        if (config.hydro_method == HydroMethod::MFM) {
+            calculate_max_acceleration(*state.mfm_gas);
+        }
     }
 }
 
 void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
               Diagnostics& diag) {
-    if (ts.subcycle_hydro) {
-        // Save old state for interpolation
-        double old_a = state.scale_factor;
-        double old_H = state.hubble_param;
+    double dt = ts.dt_macro;
 
-        // Fast-forward to get the target cosmology at the end of the macro-step
-        state.total_time += ts.dt_macro;
-        update_cosmology(state, config);
-        double target_a = state.scale_factor;
-        double target_H = state.hubble_param;
-
-        // Rewind state
-        state.total_time -= ts.dt_macro;
-        state.scale_factor = old_a;
-        state.hubble_param = old_H;
-
-        // Kick DM with old forces
-        apply_gravity_kick(state, ts.dt_macro / 2.0, old_a, old_H, config,
-                           true);
-
-        // Drift DM to the end of the step
-        apply_dm_drift(state.dm, ts.dt_macro, config.domain_size);
-
-        // Run Hydro Subcycling with Interpolation
-        double t_sub = 0.0;
-        while (t_sub < ts.dt_macro) {
-            diag.add_substeps(SubstepCounter::Hydro);
-
-            double dt_h = std::min(config.hydro_method == HydroMethod::Eulerian
-                                       ? state.gas->get_cfl_timestep()
-                                       : ts.dt_macro,
-                                   ts.dt_macro - t_sub);
-
-            double alpha_start = t_sub / ts.dt_macro;
-            double alpha_mid = (t_sub + (dt_h / 2.0)) / ts.dt_macro;
-            double alpha_end = (t_sub + dt_h) / ts.dt_macro;
-
-            // Interpolate cosmology
-            double a_start = old_a + alpha_start * (target_a - old_a);
-            double a_mid = old_a + alpha_mid * (target_a - old_a);
-            double a_end = old_a + alpha_end * (target_a - old_a);
-            double H_mid = old_H + alpha_mid * (target_H - old_H);
-
-            // Hydro Drift
-            if (config.hydro_method == HydroMethod::Eulerian) {
-                {
-                    ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
-                    state.gas->hydro_step(dt_h, a_mid);
-                }
-                if (config.enable_cooling) {
-                    ScopedTimer cooling_timer(diag, TimerRegion::Cool);
-                    state.gas->apply_cooling(dt_h, a_mid, state.cooling);
-                    diag.add_substeps(SubstepCounter::Cool,
-                                      state.gas->get_cooling_total_cycles());
-                }
-            }
-
-            t_sub += dt_h;
-        }
-
-        state.total_time += ts.dt_macro;
-        update_cosmology(state, config);
-        compute_forces(state, config, diag);
-
-        // Kick gravity
-        apply_gravity_kick(state, ts.dt_macro / 2.0, state.scale_factor,
-                           state.hubble_param, config, false);
-
-    } else if (ts.subcycle_grav) {
-        // Save cosmology state for interpolation
-        double old_a = state.scale_factor;
-        double old_H = state.hubble_param;
-
-        // Fast-forward cosmology to get the target at the end of the macro-step
-        state.total_time += ts.dt_macro;
-        update_cosmology(state, config);
-        double target_a = state.scale_factor;
-        double target_H = state.hubble_param;
-
-        // Rewind time for the loop
-        state.total_time -= ts.dt_macro;
-        state.scale_factor = old_a;
-        state.hubble_param = old_H;
-
-        // Lambda helper for the gravity subcycle to avoid code duplication
-        // t_offset is either 0.0 (first half) or ts.dt_macro/2.0 (second half)
-        auto run_gravity_subcycles = [&](double t_offset, double duration) {
-            double t_sub = 0.0;
-            while (t_sub < duration) {
-                diag.add_substeps(SubstepCounter::Gravity);
-
-                // Determine micro-step size for gravity
-                double dt_g = std::min(state.dm.get_gravity_timestep(config),
-                                       duration - t_sub);
-
-                // Alpha tracks the total progress relative to the full macro
-                // step (0.0 to 1.0)
-                double t_mid = t_offset + t_sub + (dt_g / 2.0);
-                double alpha = t_mid / ts.dt_macro;
-                double interp_a = old_a + alpha * (target_a - old_a);
-                double interp_H = old_H + alpha * (target_H - old_H);
-
-                // Micro-Kick 1 (DM and Gas)
-                apply_gravity_kick(state, dt_g / 2.0, interp_a, interp_H,
-                                   config, true);
-
-                // Micro-Drift DM
-                apply_dm_drift(state.dm, dt_g, config.domain_size);
-
-                // Update forces. (DM has moved, Gas density/positions are
-                // frozen)
-                // We set scale_factor to interp_a because the softening
-                // length calculation inside compute_forces relies on it
-                state.scale_factor = interp_a;
-                compute_forces(state, config, diag);
-                state.scale_factor = old_a;
-
-                apply_gravity_kick(state, dt_g / 2.0, interp_a, interp_H,
-                                   config, false);
-
-                t_sub += dt_g;
-            }
-        };
-
-        // First Grav Half-Step
-        run_gravity_subcycles(0.0, ts.dt_macro / 2.0);
-
-        double mid_a = old_a + 0.5 * (target_a - old_a);
-        double mid_H = old_H + 0.5 * (target_H - old_H);
-
-        // Full Macro-Step Drift for Gas
-        if (config.hydro_method == HydroMethod::Eulerian) {
-            {
-                ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
-                state.gas->hydro_step(ts.dt_macro, mid_a);
-            }
-            if (config.enable_cooling) {
-                ScopedTimer cooling_timer(diag, TimerRegion::Cool);
-                state.gas->apply_cooling(ts.dt_macro, mid_a, state.cooling);
-                diag.add_substeps(SubstepCounter::Cool,
-                                  state.gas->get_cooling_total_cycles());
-            }
-        }
-
-        // The Gas has now moved to dt, but DM is paused at dt/2.
-        // We MUST recompute forces so the second gravity subcycle
-        // feels the new, shifted gas density
-        state.scale_factor = mid_a;
-        compute_forces(state, config, diag);
-        state.scale_factor = old_a;
-
-        // Second Grav Half-Step
-        run_gravity_subcycles(ts.dt_macro / 2.0, ts.dt_macro / 2.0);
-
-        // Finalize
-        state.total_time += ts.dt_macro;
-        update_cosmology(state, config);
-        compute_forces(state, config, diag);
-
-    } else {
-        double dt = ts.dt_macro;
-
-        state.dm.sync_and_activate(dt, config);
-
-        // MFM CLOCK SYNC & WAKE-UPS
-        if (config.hydro_method == HydroMethod::MFM) {
-            state.mfm_gas->sync_and_activate(dt, config);
-        }
-
-        // KICK 1 (Half step)
-        apply_gravity_kick(state, dt / 2.0, state.scale_factor,
-                           state.hubble_param, config, true);
-        if (config.hydro_method == HydroMethod::MFM) {
-            // Note: apply_gas_particle_hydro_kick ignores the (dt / 2.0) passed
-            // here and uses gas.dt_step[i] / 2.0 internally
-            apply_gas_particle_hydro_kick(*state.mfm_gas, dt / 2.0,
-                                          state.scale_factor, config, true);
-        }
-
-        // Approximate the scale factor at the half-step (t + dt/2)
-        double mid_a =
-            state.scale_factor * (1.0 + 0.5 * state.hubble_param * dt);
-        double mid_H = state.hubble_param;
-
-        // DRIFT
-        apply_dm_drift(state.dm, dt, config.domain_size);
-
-        if (config.hydro_method == HydroMethod::Eulerian) {
-            {
-                ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
-                state.gas->hydro_step(dt, mid_a);
-            }
-            if (config.enable_cooling) {
-                ScopedTimer cooling_timer(diag, TimerRegion::Cool);
-                state.gas->apply_cooling(dt, mid_a, state.cooling);
-                diag.add_substeps(SubstepCounter::Cool,
-                                  state.gas->get_cooling_total_cycles());
-            }
-        } else if (config.hydro_method == HydroMethod::MFM) {
-            {
-                ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
-
-                // apply_gas_particle_drift automatically drifts to global_time
-                apply_gas_particle_drift(*state.mfm_gas, dt,
-                                         config.domain_size);
-                // These loops skip inactive particles
-                state.mfm_gas->compute_density_and_h(config, state.dm);
-                state.mfm_gas->hydro_step(config, mid_a, mid_H, dt);
-            }
-
-            if (config.enable_cooling) {
-                ScopedTimer cooling_timer(diag, TimerRegion::Cool);
-                state.mfm_gas->apply_cooling(dt, mid_a, config, state.cooling);
-                diag.add_substeps(SubstepCounter::Cool,
-                                  state.mfm_gas->cooling_total_cycles);
-            }
-        }
-
-        // UPDATE COSMOLOGY to t + dt
-        state.total_time += dt;
-        update_cosmology(state, config);
-        bool is_macro = (!config.individual_particle_timesteps) ||
-                        (std::abs(std::remainder(state.total_time,
-                                                 config.fixed_dt)) < 1e-10);
-        compute_forces(state, config, diag, is_macro);
-
-        // KICK 2 (Half step)
-        apply_gravity_kick(state, dt / 2.0, state.scale_factor,
-                           state.hubble_param, config, false);
-
-        if (config.hydro_method == HydroMethod::MFM) {
-            apply_gas_particle_hydro_kick(*state.mfm_gas, dt / 2.0,
-                                          state.scale_factor, config, false);
-        }
-
-        // MFM TIME BIN ASSIGNMENT
-        if (config.hydro_method == HydroMethod::MFM) {
-            // Give them config.fixed_dt as the max allowable macro step bound
-            state.mfm_gas->update_particle_timesteps(
-                config.fixed_dt, state.scale_factor, config, state.cooling);
-            for (size_t i = 0; i < state.mfm_gas->num_particles; ++i) {
-                if (state.mfm_gas->is_active[i]) {
-                    state.mfm_gas->t_end[i] =
-                        state.mfm_gas->global_time + state.mfm_gas->dt_step[i];
-                }
-            }
-        }
-
-        state.dm.update_particle_timesteps(config.fixed_dt, config);
+    // Clock sync and wake-ups
+    state.dm.sync_and_activate(dt, config);
+    if (config.hydro_method == HydroMethod::MFM) {
+        state.mfm_gas->sync_and_activate(dt, config);
     }
+
+    // KICK 1 (Half step)
+    apply_gravity_kick(state, dt / 2.0, state.scale_factor, state.hubble_param,
+                       config, true);
+    if (config.hydro_method == HydroMethod::MFM) {
+        // Note: apply_gas_particle_hydro_kick ignores the (dt / 2.0) passed
+        // here and uses gas.dt_step[i] / 2.0 internally
+        apply_gas_particle_hydro_kick(*state.mfm_gas, dt / 2.0,
+                                      state.scale_factor, config, true);
+    }
+
+    // Approximate the scale factor at the half-step (t + dt/2)
+    double mid_a = state.scale_factor * (1.0 + 0.5 * state.hubble_param * dt);
+    double mid_H = state.hubble_param;
+
+    // DRIFT
+    apply_dm_drift(state.dm, dt, config.domain_size);
+
+    if (config.hydro_method == HydroMethod::Eulerian) {
+        {
+            ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
+            state.gas->hydro_step(dt, mid_a);
+        }
+        if (config.enable_cooling) {
+            ScopedTimer cooling_timer(diag, TimerRegion::Cool);
+            state.gas->apply_cooling(dt, mid_a, state.cooling);
+            diag.add_substeps(SubstepCounter::Cool,
+                              state.gas->get_cooling_total_cycles());
+        }
+    } else if (config.hydro_method == HydroMethod::MFM) {
+        {
+            ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
+
+            // apply_gas_particle_drift automatically drifts to global_time
+            apply_gas_particle_drift(*state.mfm_gas, dt, config.domain_size);
+            // These loops skip inactive particles
+            state.mfm_gas->compute_density_and_h(config, state.dm);
+            state.mfm_gas->hydro_step(config, mid_a, mid_H, dt);
+        }
+
+        if (config.enable_cooling) {
+            ScopedTimer cooling_timer(diag, TimerRegion::Cool);
+            state.mfm_gas->apply_cooling(dt, mid_a, config, state.cooling);
+            diag.add_substeps(SubstepCounter::Cool,
+                              state.mfm_gas->cooling_total_cycles);
+        }
+    }
+
+    // UPDATE COSMOLOGY to t + dt
+    state.total_time += dt;
+    update_cosmology(state, config);
+    compute_forces(state, config, diag);
+
+    // KICK 2 (Half step)
+    apply_gravity_kick(state, dt / 2.0, state.scale_factor, state.hubble_param,
+                       config, false);
+
+    if (config.hydro_method == HydroMethod::MFM) {
+        apply_gas_particle_hydro_kick(*state.mfm_gas, dt / 2.0,
+                                      state.scale_factor, config, false);
+    }
+
+    // Time bin assignment
+    if (config.hydro_method == HydroMethod::MFM) {
+        state.mfm_gas->update_particle_timesteps(
+            config.fixed_dt, state.scale_factor, config, state.cooling);
+    }
+    state.dm.update_particle_timesteps(config.fixed_dt, config);
 }

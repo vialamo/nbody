@@ -184,7 +184,6 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                         config.gravity_accuracy_eta);
         set_attr_double(config_group, "hydro_courant_factor",
                         config.hydro_courant_factor);
-        set_attr_bool(config_group, "use_adaptive_dt", config.use_adaptive_dt);
         set_attr_double(config_group, "a_start", config.a_start);
         set_attr_double(config_group, "a_end", config.a_end);
         set_attr_bool(config_group, "individual_particle_time",

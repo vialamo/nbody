@@ -26,6 +26,13 @@ class GasParticleSystem {
     std::vector<double> acc_z;
     std::vector<double> mass;  // Particle mass [Code Mass]
 
+    // Discrete impulse accumulators for sleeping particles
+    std::vector<double> ext_dv_x; 
+    std::vector<double> ext_dv_y;
+    std::vector<double> ext_dv_z;
+    std::vector<double> ext_du;
+    std::vector<double> ext_de;
+
     // MFM-specific quantities
     std::vector<double> hydro_acc_x;  // Comoving hydrodynamic acceleration
                                       // [Code Vel / Code Time]
@@ -70,6 +77,8 @@ class GasParticleSystem {
 
     Grid3D gas_rho;  // Gridded comoving gas density for PM gravity/diagnostics
                      // [Code Mass / Code Length^3]
+
+    std::vector<double> v_sig_max; // Cached maximum signal velocity
 
     size_t cooling_failed_cells = 0;
     size_t cooling_total_cycles = 0;

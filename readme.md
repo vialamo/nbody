@@ -238,7 +238,7 @@ Controls the adaptive timestepping and integration limits.
 * **`cfl_safety_factor`**: The Courant-Friedrichs-Lewy (CFL) number. Restricts the hydrodynamics timestep to ensure information does not travel further than one grid cell per step (must be < 1.0, typically `0.3`).
 * **`a_start`**: The scale factor at which the simulation begins (e.g., `0.02` corresponds to redshift z = 49).
 * **`a_end`**: The scale factor at which the simulation terminates. Set to `1.0` to run up to the present day (z = 0).
-* **`individual_particle_time`**: Only when using MFM. Enables individual particle timesteps (based on a hierarchy of powers of two). Otherwise, all particles are advanced in equal steps.
+* **`individual_particle_time`**: Only when using MFM. Enables individual particle timesteps for gas and dark matter. Particles are binned into a synchronized power-of-two time hierarchy based on their local physics. If disabled, the entire simulation advances on the global macro-step.
 
 ### `[output]`
 

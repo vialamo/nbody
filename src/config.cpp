@@ -67,7 +67,6 @@ void Config::compute_derived_data() {
     }
 
     if (initial_setup == InitialSetup::SodShockTube) {
-        enable_subcycling = false;
         expanding_universe = false;
         enable_cooling = false;
         use_PM = false;
@@ -80,7 +79,6 @@ void Config::compute_derived_data() {
         total_mass = 0.5625;
         a_end = 0.15;
     } else if (initial_setup == InitialSetup::AdiabaticExpansion) {
-        enable_subcycling = false;
         expanding_universe = true;
         enable_cooling = false;
         use_PM = false;
@@ -92,7 +90,6 @@ void Config::compute_derived_data() {
         gamma = 5.0 / 3.0;
         total_mass = 1.0;
     } else if (initial_setup == InitialSetup::SedovBlastwave) {
-        enable_subcycling = false;
         expanding_universe = false;
         enable_cooling = false;
         use_PM = false;
@@ -162,13 +159,6 @@ void Config::compute_derived_data() {
     // Snap to the nearest lower power of 2
     fixed_dt = std::pow(2.0, std::floor(std::log2(raw_fixed_dt)));
 
-    // For now, disable subcycling when using MFM
-    if (hydro_method == HydroMethod::MFM) {
-        enable_subcycling = false;
-    } else {
-        individual_particle_timesteps = false;
-    }
-
     init_derived_units();
 }
 
@@ -237,8 +227,6 @@ void Config::load(const std::string& filename) {
         config_file.get_double("hydro", "cooling_cutoff_k", cooling_cutoff_k);
     cooling_table_path =
         config_file.get("hydro", "cooling_table_path", cooling_table_path);
-    disable_hydro_forces = config_file.get_bool("hydro", "disable_hydro_forces",
-                                                disable_hydro_forces);
 
     mfm_target_neighbors = config_file.get_double("mfm", "mfm_target_neighbors",
                                                   mfm_target_neighbors);
@@ -252,8 +240,6 @@ void Config::load(const std::string& filename) {
     subgrid_clumping_amplitude = config_file.get_double(
         "subgrid", "subgrid_clumping_amplitude", subgrid_clumping_amplitude);
 
-    enable_subcycling =
-        config_file.get_bool("time", "enable_subcycling", enable_subcycling);
     max_dt_dynamical_factor = config_file.get_double(
         "time", "max_dt_dynamical_factor", max_dt_dynamical_factor);
     a_start = config_file.get_double("time", "a_start", a_start);
@@ -262,8 +248,6 @@ void Config::load(const std::string& filename) {
         "time", "hydro_courant_factor", hydro_courant_factor);
     gravity_accuracy_eta = config_file.get_double(
         "time", "gravity_accuracy_eta", gravity_accuracy_eta);
-    use_adaptive_dt =
-        config_file.get_bool("time", "use_adaptive_dt", use_adaptive_dt);
     max_cycles = config_file.get_int("time", "max_cycles", max_cycles);
     individual_particle_timesteps = config_file.get_bool(
         "time", "individual_particle_time", individual_particle_timesteps);

@@ -38,6 +38,7 @@ ParticleSystem::ParticleSystem(const Config& config)
     dt_step.reserve(config.num_dm_particles);
     t_current.reserve(config.num_dm_particles);
     t_end.reserve(config.num_dm_particles);
+    active_indices.reserve(config.num_dm_particles);
 }
 
 void ParticleSystem::add_particle(double px, double py, double pz, double vx,
@@ -58,6 +59,9 @@ void ParticleSystem::add_particle(double px, double py, double pz, double vx,
     t_current.push_back(0.0);
     t_end.push_back(0.0);
     is_active.push_back(1);
+
+    active_indices.push_back(num_particles);
+    num_active++;
 
     num_particles++;
 }
@@ -535,9 +539,7 @@ double ParticleSystem::get_gravity_timestep(const Config& config) const {
         // Bootstrap: On the first step, request safe step to initialize
         // forces
         if (global_time == 0.0) {
-            double dt_boot = config.fixed_dt;
-            while (dt_boot > 1e-6) dt_boot *= 0.5;
-            return dt_boot;
+            return config.fixed_dt / pow(2, 16);
         }
 
         // Return the time until the NEXT active DM particle finishes its step
@@ -617,10 +619,13 @@ void ParticleSystem::update_particle_timesteps(double dt_max,
 
     double epsilon = std::sqrt(config.softening_squared);
 
+    // Prevent OpenMP from deadlocking on 0-trip dynamic loops
+    // during micro-cycles where all particles are asleep
+    if (num_active == 0) return;
+
 #pragma omp parallel for schedule(dynamic, 64)
-    for (size_t i = 0; i < num_particles; ++i) {
-        // ONLY update the clock for particles that are currently active
-        if (!is_active[i]) continue;
+    for (size_t k = 0; k < num_active; ++k) {
+        size_t i = active_indices[k];
 
         double dt_ideal = dt_max;
 

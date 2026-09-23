@@ -46,6 +46,4 @@ struct TimestepInfo {
     double dt_hydro;
     double dt_grav;
     double dt_cool;
-    bool subcycle_hydro;
-    bool subcycle_grav;
 };

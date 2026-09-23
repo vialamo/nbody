@@ -33,13 +33,6 @@ SimulationEngine::SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5,
 
 TimestepInfo SimulationEngine::get_timestep() const {
     TimestepInfo ts = {0};
-    ts.subcycle_hydro = false;
-    ts.subcycle_grav = false;
-
-    if (!config.use_adaptive_dt) {
-        ts.dt_macro = config.fixed_dt;
-        return ts;
-    }
 
     // Get raw physics constraints
     if (config.hydro_method == HydroMethod::Eulerian) {
@@ -63,22 +56,14 @@ TimestepInfo SimulationEngine::get_timestep() const {
         return ts;
     }
 
-    // The Macro Step is bounded by the SLOWER of the two primary physics
-    double base_macro = std::max(ts.dt_hydro, ts.dt_grav);
-
     // Cosmological Expansion Limiter
     double dt_expansion = std::numeric_limits<double>::infinity();
     if (config.expanding_universe && state.hubble_param > 0.0) {
         dt_expansion = 0.01 / state.hubble_param;
     }
 
-    // Apply safety caps
-    ts.dt_macro = std::min({base_macro, dt_expansion, config.fixed_dt});
-
-    if (!config.enable_subcycling) {
-        ts.dt_macro =
-            std::min({ts.dt_hydro, ts.dt_grav, dt_expansion, config.fixed_dt});
-    }
+    ts.dt_macro =
+        std::min({ts.dt_hydro, ts.dt_grav, dt_expansion, config.fixed_dt});
 
     // Force the simulation to land on the next output target
     if (config.save_HDF5_every_delta_a > 0.0 && config.expanding_universe) {
@@ -90,17 +75,6 @@ TimestepInfo SimulationEngine::get_timestep() const {
         const double MIN_VALID_DT = 1e-10;
         if (dt_snapshot > MIN_VALID_DT && dt_snapshot < ts.dt_macro) {
             ts.dt_macro = dt_snapshot;
-        }
-    }
-
-    // Determine who subcycles
-    if (config.enable_subcycling) {
-        if (ts.dt_hydro < ts.dt_grav && ts.dt_hydro < ts.dt_macro) {
-            ts.subcycle_hydro = true;
-            ts.subcycle_grav = false;
-        } else if (ts.dt_hydro > ts.dt_grav && ts.dt_grav < ts.dt_macro) {
-            ts.subcycle_hydro = false;
-            ts.subcycle_grav = true;
         }
     }
 
