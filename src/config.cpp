@@ -77,7 +77,7 @@ void Config::compute_derived_data() {
         omega_baryon = 1.0;
         gamma = 1.4;
         total_mass = 0.5625;
-        a_end = 0.15;
+        a_end = 0.12;
     } else if (initial_setup == InitialSetup::AdiabaticExpansion) {
         expanding_universe = true;
         enable_cooling = false;

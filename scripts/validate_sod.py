@@ -143,25 +143,25 @@ def validate_sod_shock_interactive(snapshot_dir):
     
     scatter_kwargs = {'s': 6 if hydro_method == "eulerian" else 4, 
                       'color': color_prefix, 'alpha': 0.8, 'label': f'{label_prefix} Sim'}
-    sim_line_kwargs = {'color': color_prefix, 'lw': 1.0 if hydro_method == "eulerian" else 0.5, 'alpha': 0.8}
+    #sim_line_kwargs = {'color': color_prefix, 'lw': 1.0 if hydro_method == "eulerian" else 0.5, 'alpha': 0.8}
     exact_line_kwargs = {'color': 'black', 'lw': 1.5, 'linestyle': '--', 'label': 'Exact Solution'}
     
     # Density
-    line_sim_rho, = axs[0, 0].plot([], [], **sim_line_kwargs)
+    #line_sim_rho, = axs[0, 0].plot([], [], **sim_line_kwargs)
     scat_rho = axs[0, 0].scatter([], [], **scatter_kwargs)
     line_rho, = axs[0, 0].plot([], [], **exact_line_kwargs)
     axs[0, 0].set_ylabel(r"Density ($\rho$)")
     axs[0, 0].set_title("Density Profile")
     
     # Velocity
-    line_sim_v, = axs[0, 1].plot([], [], **sim_line_kwargs)
+    #line_sim_v, = axs[0, 1].plot([], [], **sim_line_kwargs)
     scat_v = axs[0, 1].scatter([], [], **scatter_kwargs)
     line_v, = axs[0, 1].plot([], [], **exact_line_kwargs)
     axs[0, 1].set_ylabel(r"Velocity ($v_x$)")
     axs[0, 1].set_title("Velocity Profile")
     
     # Pressure
-    line_sim_P, = axs[1, 0].plot([], [], **sim_line_kwargs)
+    #line_sim_P, = axs[1, 0].plot([], [], **sim_line_kwargs)
     scat_P = axs[1, 0].scatter([], [], **scatter_kwargs)
     line_P, = axs[1, 0].plot([], [], **exact_line_kwargs)
     axs[1, 0].set_ylabel(r"Pressure ($P$)")
@@ -169,7 +169,7 @@ def validate_sod_shock_interactive(snapshot_dir):
     axs[1, 0].set_title("Pressure Profile")
     
     # Internal Energy
-    line_sim_u, = axs[1, 1].plot([], [], **sim_line_kwargs)
+    #line_sim_u, = axs[1, 1].plot([], [], **sim_line_kwargs)
     scat_u = axs[1, 1].scatter([], [], **scatter_kwargs)
     line_u, = axs[1, 1].plot([], [], **exact_line_kwargs)
     axs[1, 1].set_ylabel(r"Internal Energy ($u$)")
@@ -241,8 +241,8 @@ def validate_sod_shock_interactive(snapshot_dir):
                 u = f['Gas/internal_energy'][:]
                 P = rho * u * (gamma - 1.0)
                 
-                safe_y_min, safe_y_max = domain_size * 0.495, domain_size * 0.505
-                safe_z_min, safe_z_max = domain_size * 0.495, domain_size * 0.505
+                safe_y_min, safe_y_max = domain_size * 0.0, domain_size * 1.0
+                safe_z_min, safe_z_max = domain_size * 0.0, domain_size * 1.0
 
                 valid_mask = (x >= left_bnd) & (x <= right_bnd) & \
                              (y >= safe_y_min) & (y <= safe_y_max) & \
@@ -267,10 +267,10 @@ def validate_sod_shock_interactive(snapshot_dir):
         scat_u.set_offsets(np.c_[x_v, u_v])
 
         # Thin Connecting Lines (using sorted data)
-        line_sim_rho.set_data(x_sorted, rho_v[sort_idx])
-        line_sim_v.set_data(x_sorted, v_v[sort_idx])
-        line_sim_P.set_data(x_sorted, P_v[sort_idx])
-        line_sim_u.set_data(x_sorted, u_v[sort_idx])
+        #line_sim_rho.set_data(x_sorted, rho_v[sort_idx])
+        #line_sim_v.set_data(x_sorted, v_v[sort_idx])
+        #line_sim_P.set_data(x_sorted, P_v[sort_idx])
+        #line_sim_u.set_data(x_sorted, u_v[sort_idx])
 
         # Update Analytical Lines
         x_exact = np.linspace(0, domain_size, 1000)

@@ -463,7 +463,7 @@ void initialize_gas(SimState& state, const Config& config,
 }
 
 void initialize_sod_shock_tube(SimState& state, const Config& config) {
-    // GADGET/GIZMO Shock Tube parameters (Hernquist & Katz 1989)
+    // Shock Tube parameters (Hernquist & Katz 1989)
     double rho_L = 1.0;
     double rho_R = 0.125;
     double P_L = 1.0;

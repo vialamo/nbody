@@ -26,13 +26,6 @@ class GasParticleSystem {
     std::vector<double> acc_z;
     std::vector<double> mass;  // Particle mass [Code Mass]
 
-    // Discrete impulse accumulators for sleeping particles
-    std::vector<double> ext_dv_x; 
-    std::vector<double> ext_dv_y;
-    std::vector<double> ext_dv_z;
-    std::vector<double> ext_du;
-    std::vector<double> ext_de;
-
     // MFM-specific quantities
     std::vector<double> hydro_acc_x;  // Comoving hydrodynamic acceleration
                                       // [Code Vel / Code Time]

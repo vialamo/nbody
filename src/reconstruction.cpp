@@ -5,16 +5,17 @@
 
 #include "kernels.h"
 
-// Enable to use the limiter explained in the Gizmo paper.
-// Disable to use the limiter used in the Gizmo code.
-// #define THEORETICAL_LIMITER
-
-// Disable limiter completely
-// #define DISABLE_LIMITER
+// Disable limiter
+//#define DISABLE_LIMITER
 
 #ifdef DISABLE_LIMITER
 #define ZEROTH_ORDER_RECONSTRUCTION
+#else
+// Enable to use the limiter explained in the Gizmo paper.
+// Disable to use the limiter used in the Gizmo code
+#define THEORETICAL_LIMITER
 #endif
+
 
 namespace Reconstruction {
 
@@ -78,6 +79,7 @@ double apply_pairwise_limiter(double phi_L_center, double phi_R_center,
     }
 }
 #else
+#ifndef DISABLE_LIMITER
 inline void scalar_limiter(Eigen::Vector3d& grad, double valmax, double valmin,
                            double alim, double h, double shoot_tol,
                            bool pos_preserve, double d_max, double val_cen) {
@@ -104,6 +106,7 @@ inline void scalar_limiter(Eigen::Vector3d& grad, double valmax, double valmin,
         if (cfac < 1.0) grad *= cfac;
     }
 }
+#endif
 #endif
 
 inline double compute_condition_number(const Eigen::Matrix3d& E,
@@ -160,6 +163,7 @@ ParticleGradients compute_single_particle_gradients(
     E(2, 1) = E(1, 2);
 
     double det = E.determinant();
+    constexpr double N_cond_crit = 1000.0;
     out.ill_conditioned = true;
     out.condition_number = -1.0;
 
@@ -168,7 +172,6 @@ ParticleGradients compute_single_particle_gradients(
         double N_cond = compute_condition_number(E, out.B_matrix);
         out.condition_number = N_cond;
 
-        constexpr double N_cond_crit = 1000.0;
         if (N_cond <= N_cond_crit) {
             out.ill_conditioned = false;
         }
@@ -282,7 +285,15 @@ ParticleGradients compute_single_particle_gradients(
             }
         }
 
-        double beta = 1.5;
+        double beta = 2.0;
+        if (out.condition_number > 0.0) {
+            constexpr double beta_min = 1.0;
+            constexpr double beta_max = 2.0;
+            beta = std::max(
+                beta_min,
+                beta_max * std::min(1.0, N_cond_crit / out.condition_number));
+        }
+
         out.grad_rho *= compute_gradient_alpha(
             d_rho_max, d_rho_min, phi_mid_max_rho, phi_mid_min_rho, beta);
         out.grad_p *= compute_gradient_alpha(d_p_max, d_p_min, phi_mid_max_p,
