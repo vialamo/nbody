@@ -589,74 +589,114 @@ void GasParticleSystem::apply_cooling(double dt, double a, const Config& config,
     double gamma_minus_1 = config.gamma - 1.0;
 
     if (num_active != 0) {
-#pragma omp parallel for schedule(static)                                 \
-    reduction(+ : total_radiated, total_photoheated, non_converged_count, \
-                  total_cycles)
+        /*#pragma omp parallel for schedule(static) \
+            reduction(+ : total_radiated, total_photoheated,
+           non_converged_count, \ total_cycles) for (size_t k = 0; k <
+           num_active; ++k) { size_t i = active_indices[k];
+
+                    double local_rho = rho[i];
+                    if (local_rho > 1e-12) {  // Skip vacuum particles
+                        // Track the metal mass fraction
+                        double local_Z_frac = metal_frac[i];
+                        double u_current = u[i];
+                        double u_initial = u_current;
+                        double t_evolved = 0.0;
+                        int cell_non_converged = 0;
+
+                        double dt_particle = dt_step[i];
+
+                        // Local Particle Subcycling
+                        while (t_evolved < dt_particle) {
+                            double du_dt = cooling.compute_du_dt(
+                                u_current, local_rho, local_Z_frac, a, config);
+
+                            double dt_cell;
+                            if (u_current <= u_rad_floor && du_dt < 0.0) {
+                                // The particle is at the temperature floor and
+           trying
+                                // to cool. It is in thermal equilibrium.
+           Consume the
+                                // rest of the step
+                                dt_cell = dt_particle - t_evolved;
+                            } else {
+                                dt_cell = (std::abs(du_dt) > 0.0)
+                                              ? 0.1 * (u_current /
+           std::abs(du_dt)) : dt_particle;
+                            }
+
+                            // Prevent infinite loops if u_current evaluates to
+           0.0 dt_cell = std::max(dt_cell, 1e-4 * dt_particle);
+
+                            dt_cell = std::min(dt_cell, dt_particle -
+           t_evolved);
+
+                            int iters = 0;
+                            u_current = cooling.solve_cooling_implicit(
+                                u_current, local_rho, local_Z_frac, a, dt_cell,
+                                u_rad_floor, config, iters);
+
+                            if (iters >= Cooling::MAX_ITER) {
+                                cell_non_converged++;
+                            }
+
+                            t_evolved += dt_cell;
+                            total_cycles++;
+                        }
+
+                        if (cell_non_converged > 0) {
+                            non_converged_count++;
+                        }
+
+                        double delta_u = u_current - u_initial;
+                        if (std::abs(delta_u) > 0.0) {
+                            // Update the internal energy
+                            u[i] = u_current;
+                            total_energy[i] += delta_u;
+
+                            // Sync the entropy so the dual-energy switch
+                            // doesn't override the update
+                            entropy[i] =
+                                gamma_minus_1 * u[i] / std::pow(rho[i],
+           gamma_minus_1);
+
+                            // Track total energy change using the particle mass
+                            double delta_E = delta_u * mass[i];
+                            if (delta_u < 0.0) {
+                                total_radiated -= delta_E;
+                            } else {
+                                total_photoheated += delta_E;
+                            }
+                        }
+                    }
+                }*/
+#pragma omp parallel for schedule(static) \
+    reduction(+ : total_radiated, total_photoheated, non_converged_count)
         for (size_t k = 0; k < num_active; ++k) {
             size_t i = active_indices[k];
 
             double local_rho = rho[i];
             if (local_rho > 1e-12) {  // Skip vacuum particles
-                // Track the metal mass fraction
                 double local_Z_frac = metal_frac[i];
-                double u_current = u[i];
-                double u_initial = u_current;
-                double t_evolved = 0.0;
-                int cell_non_converged = 0;
-
+                double u_initial = u[i];
                 double dt_particle = dt_step[i];
 
-                // Local Particle Subcycling
-                while (t_evolved < dt_particle) {
-                    double du_dt = cooling.compute_du_dt(
-                        u_current, local_rho, local_Z_frac, a, config);
+                int iters = 0;
+                // Solve cooling implicitly across the FULL macro-step in one go
+                double u_current = cooling.solve_cooling_implicit(
+                    u_initial, local_rho, local_Z_frac, a, dt_particle,
+                    u_rad_floor, config, iters);
 
-                    double dt_cell;
-                    if (u_current <= u_rad_floor && du_dt < 0.0) {
-                        // The particle is at the temperature floor and trying
-                        // to cool. It is in thermal equilibrium. Consume the
-                        // rest of the step
-                        dt_cell = dt_particle - t_evolved;
-                    } else {
-                        dt_cell = (std::abs(du_dt) > 0.0)
-                                      ? 0.1 * (u_current / std::abs(du_dt))
-                                      : dt_particle;
-                    }
-
-                    // Prevent infinite loops if u_current evaluates to 0.0
-                    dt_cell = std::max(dt_cell, 1e-4 * dt_particle);
-
-                    dt_cell = std::min(dt_cell, dt_particle - t_evolved);
-
-                    int iters = 0;
-                    u_current = cooling.solve_cooling_implicit(
-                        u_current, local_rho, local_Z_frac, a, dt_cell,
-                        u_rad_floor, config, iters);
-
-                    if (iters >= Cooling::MAX_ITER) {
-                        cell_non_converged++;
-                    }
-
-                    t_evolved += dt_cell;
-                    total_cycles++;
-                }
-
-                if (cell_non_converged > 0) {
+                if (iters >= Cooling::MAX_ITER) {
                     non_converged_count++;
                 }
 
                 double delta_u = u_current - u_initial;
                 if (std::abs(delta_u) > 0.0) {
-                    // Update the internal energy
                     u[i] = u_current;
                     total_energy[i] += delta_u;
-
-                    // Sync the entropy so the dual-energy switch
-                    // doesn't override the update
                     entropy[i] =
                         gamma_minus_1 * u[i] / std::pow(rho[i], gamma_minus_1);
 
-                    // Track total energy change using the particle mass
                     double delta_E = delta_u * mass[i];
                     if (delta_u < 0.0) {
                         total_radiated -= delta_E;
@@ -854,7 +894,106 @@ double GasParticleSystem::get_gravity_timestep(const Config& config) const {
     }
 }
 
-void GasParticleSystem::sync_and_activate(double dt, const Config& config) {
+KickWork GasParticleSystem::kick_particle_gravity(size_t i, double dt, double a,
+                                                  double H,
+                                                  const Config& config) {
+    KickWork work;
+
+    // Cosmological factors parameterized by the local dt
+    double drag_factor = 1.0;
+    if (H > 0.0 && a > 0.0) {
+        double a_next = a + a * H * dt;
+        drag_factor = (a / a_next) * (a / a_next);
+    }
+    double expansion_factor = (3.0 * config.gamma - 1.0) * H * dt;
+
+    double m = mass[i];
+    double vx_old = vel_x[i];
+    double vy_old = vel_y[i];
+    double vz_old = vel_z[i];
+
+    // Intermediate velocity after gravity kick
+    double vx_g = vx_old + acc_x[i] * dt;
+    double vy_g = vy_old + acc_y[i] * dt;
+    double vz_g = vz_old + acc_z[i] * dt;
+
+    // Gravitational Work (dW_grav = dK_grav)
+    double ke_old =
+        0.5 * m * (vx_old * vx_old + vy_old * vy_old + vz_old * vz_old);
+    double ke_g = 0.5 * m * (vx_g * vx_g + vy_g * vy_g + vz_g * vz_g);
+    work.grav_work = (ke_g - ke_old);
+
+    // Final velocity after Hubble Drag decay
+    double vx_new = vx_g * drag_factor;
+    double vy_new = vy_g * drag_factor;
+    double vz_new = vz_g * drag_factor;
+
+    // Apply Cosmological Adiabatic Cooling (Thermal energy lost to PdV work)
+    double u_old = u[i];
+    double u_cooling = u_old * expansion_factor;
+
+    // Expansion Work Accumulation
+    double ke_new =
+        0.5 * m * (vx_new * vx_new + vy_new * vy_new + vz_new * vz_new);
+    work.exp_work = (ke_g - ke_new) + (u_cooling * m);
+
+    // Update particle arrays
+    vel_x[i] = vx_new;
+    vel_y[i] = vy_new;
+    vel_z[i] = vz_new;
+    u[i] -= u_cooling;
+    entropy[i] -= entropy[i] * expansion_factor;
+
+    // Maintain strict Dual Energy synchronization
+    double spec_ke_old = ke_old / m;
+    double spec_ke_new = ke_new / m;
+    total_energy[i] += (spec_ke_new - spec_ke_old) - u_cooling;
+
+    return work;
+}
+
+KickWork GasParticleSystem::kick_particle_hydro(size_t i, double dt,
+                                                const Config& config) {
+    KickWork work;
+    double gamma_minus_1 = config.gamma - 1.0;
+    constexpr double min_energy = 1e-20;
+
+    double m = mass[i];
+    double vx_old = vel_x[i];
+    double vy_old = vel_y[i];
+    double vz_old = vel_z[i];
+    double ke_old =
+        0.5 * m * (vx_old * vx_old + vy_old * vy_old + vz_old * vz_old);
+
+    vel_x[i] += hydro_acc_x[i] * dt;
+    vel_y[i] += hydro_acc_y[i] * dt;
+    vel_z[i] += hydro_acc_z[i] * dt;
+
+    double ke_new =
+        0.5 * m *
+        (vel_x[i] * vel_x[i] + vel_y[i] * vel_y[i] + vel_z[i] * vel_z[i]);
+    double delta_ke = ke_new - ke_old;
+
+    double delta_u = du_dt[i] * dt;
+    u[i] += delta_u;
+
+    // Track the "Hydro Expansion Work" for the diagnostics
+    double expected_delta_ke = (de_dt[i] - du_dt[i]) * dt * m;
+    work.hydro_exp_work = (delta_ke - expected_delta_ke);
+
+    total_energy[i] += de_dt[i] * dt;
+
+    if (u[i] < min_energy) u[i] = min_energy;
+    if (total_energy[i] < min_energy) total_energy[i] = min_energy;
+
+    entropy[i] = gamma_minus_1 * u[i] / std::pow(rho[i], gamma_minus_1);
+    pressure[i] = gamma_minus_1 * rho[i] * u[i];
+
+    return work;
+}
+
+void GasParticleSystem::sync_and_activate(double dt, double a, double H,
+                                          const Config& config) {
     if (!config.individual_particle_timesteps) {
         global_time += dt;
         for (size_t i = 0; i < num_particles; ++i) {
@@ -871,12 +1010,38 @@ void GasParticleSystem::sync_and_activate(double dt, const Config& config) {
     // Process wakeups from the previous cycle
     for (size_t i = 0; i < num_particles; ++i) {
         if (needs_wakeup[i]) {
+            double dt_old = dt_step[i];
+            double dt_new = dt;
+
+            // The particle previously received Kick 1 for dt_old / 2.
+            // This projected its velocity to t_kicked_to
+            double t_start_old = t_end[i] - dt_old;
+            double t_kicked_to = t_start_old + (dt_old / 2.0);
+
+            // We must rewind the velocity back to the CURRENT
+            // global_time. Then the engine will natively apply Kick 1 for
+            // dt_new / 2
+            double dt_excess = t_kicked_to - global_time;
+
+            // Rewind kicks using negative time
+            // Note that we should better compute the a and H which
+            // originally kicked the particle
+            KickWork w_hydro = kick_particle_hydro(i, -dt_excess, config);
+            KickWork w_grav =
+                kick_particle_gravity(i, -dt_excess, a, H, config);
+
+            // Adjust global accumulators (adding negative work subtracts the
+            // phantom work)
+            accumulated_expansion_work -= w_hydro.hydro_exp_work;
+            accumulated_gravitational_work += w_grav.grav_work;
+            accumulated_expansion_work += w_grav.exp_work;
+
             // GIZMO Wake-up logic:
             // Snap the particle to the current active micro-step size.
             // It will drift the full distance since it last moved (using
             // t_current), but its kicks and cooling will use this tiny
             // micro-step
-            dt_step[i] = dt;
+            dt_step[i] = dt_new;
             t_end[i] = new_global_time;  // Force sync to the current clock
             needs_wakeup[i] = 0;
         }
@@ -967,7 +1132,7 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
         }
 
         // Bounded Cooling Timestep
-        if (config.enable_cooling && rho[i] > 1e-12 && u[i] > u_rad_floor) {
+        /*if (config.enable_cooling && rho[i] > 1e-12 && u[i] > u_rad_floor) {
             double du_dt_val =
                 cooling.compute_du_dt(u[i], rho[i], metal_frac[i], a, config);
             if (std::abs(du_dt_val) > 0.0) {
@@ -980,7 +1145,7 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
 
                 dt_ideal = std::min(dt_ideal, safe_dt_cool);
             }
-        }
+        }*/
 
         // POWER-OF-TWO BINNING
         int n = 0;
@@ -1399,7 +1564,7 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
     const double u_floor =
         Cooling::get_internal_energy_from_temp(config.temp_floor_k, a, config);
 
-//#define USE_OG3_ENTROPY_SWITCH
+// #define USE_OG3_ENTROPY_SWITCH
 #ifdef USE_OG3_ENTROPY_SWITCH
     // OG3 tuned parameters (Groth et al. 2023)
     const double alpha_kin = 3.0e-3;
@@ -1423,6 +1588,9 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
             // Calculate specific kinetic energy
             double ke = 0.5 * (vel_x[i] * vel_x[i] + vel_y[i] * vel_y[i] +
                                vel_z[i] * vel_z[i]);
+
+            // Calculate the conserved internal energy
+            double u_cons = total_energy[i] - ke;
 
 #ifdef USE_OG3_ENTROPY_SWITCH
             double threshold_kin = alpha_kin * max_rel_ke[i];
@@ -1448,9 +1616,14 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
                 // Track the energy injected (or removed) by the switch
                 step_entropy_switch += (u_new - u[i]) * mass[i];
                 u[i] = u_new;
+
+                // Because we abandoned the conservative branch, we must sync
+                // the total energy to reflect the new, trusted internal energy
+                total_energy[i] = u[i] + ke;
             } else {
                 // NORMAL REGIME: Trust the integrated internal energy.
                 // Re-sync the entropy array to match the shock-heated state
+                u[i] = u_cons;
                 entropy[i] =
                     gamma_minus_1 * u[i] / std::pow(rho[i], gamma_minus_1);
             }
@@ -1465,14 +1638,14 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
                 // Sync the entropy array again if we hit the temperature floor
                 entropy[i] =
                     gamma_minus_1 * u[i] / std::pow(rho[i], gamma_minus_1);
+
+                // If the floor modifies the internal energy, total energy must
+                // absorb it
+                total_energy[i] += injected_u;
             }
 
             // Calculate pressure based on 'u'
             pressure[i] = gamma_minus_1 * rho[i] * u[i];
-
-            // Passively sync total energy for diagnostic conservation tracking
-            total_energy[i] = u[i] + ke;
-
             metal_frac[i] = std::max(0.0, std::min(metal_frac[i], 1.0));
         }
     }
@@ -1672,8 +1845,8 @@ static inline void update_signal_velocities(
     const Reconstruction::ParticleState& p_i,
     const Reconstruction::ParticleState& p_j, double dx, double dy, double dz,
     double r2, double a, double a_inv, double a_inv3, double gamma,
-    double& v_sig_max_i, double& v_sig_max_j, bool is_active_j,
-    uint8_t& needs_wakeup_j) {
+    double& v_sig_max_i, double& v_sig_max_j, double& out_v_sig_ij,
+    double& out_c_phys_j) {
     double r = std::sqrt(r2);
 
     double rho_phys_i = p_i.rho * a_inv3;
@@ -1686,6 +1859,8 @@ static inline void update_signal_velocities(
     double c_phys_j =
         (rho_phys_j > 1e-12) ? std::sqrt(gamma * p_phys_j / rho_phys_j) : 0.0;
 
+    out_c_phys_j = c_phys_j;
+
     double dvx_phys = (p_j.vel.x() - p_i.vel.x()) * a;
     double dvy_phys = (p_j.vel.y() - p_i.vel.y()) * a;
     double dvz_phys = (p_j.vel.z() - p_i.vel.z()) * a;
@@ -1697,13 +1872,7 @@ static inline void update_signal_velocities(
         v_sig_ij_phys -= dv_dot_dx_phys / r;
     }
 
-    // OpenGadget3 Wake-up Limiter
-    // Wake up the sleeping neighbor if the signal velocity of the interaction
-    // exceeds 3x its own sound speed (f_w = 3.0)
-    if (!is_active_j && !needs_wakeup_j && (v_sig_ij_phys > 3.0 * c_phys_j)) {
-#pragma omp atomic write
-        needs_wakeup_j = 1;
-    }
+    out_v_sig_ij = v_sig_ij_phys;
 
     // Fast atomic max using Compare-and-Swap (CAS) to avoid OpenMP lock
     // overhead
@@ -1817,15 +1986,6 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                     p_j.pressure = pressure[j];
                     p_j.h = hj;
 
-                    // Saitoh & Makino (2009) Timestep Limiter
-                    // Wake up the sleeping neighbor if its timestep is
-                    // larger (e.g., 4x) than the active particle hitting it
-                    if (!is_active[j] && !needs_wakeup[j] &&
-                        (dt_step[j] > 4.0 * dt_step[i])) {
-#pragma omp atomic write
-                        needs_wakeup[j] = 1;
-                    }
-
                     Reconstruction::ParticleGradients grad_j;
                     grad_j.B_matrix = B_matrix[j];
                     grad_j.grad_rho = grad_rho[j];
@@ -1871,10 +2031,10 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                         face_phys, v_frame_phys, config.gamma);
 
                     // Calculate Maximum Signal Velocity for the CFL condition
+                    double v_sig_ij, c_phys_j;
                     update_signal_velocities(p_i, p_j, dx, dy, dz, r2, a, a_inv,
                                              a_inv3, config.gamma, v_sig_max[i],
-                                             v_sig_max[j], is_active[j],
-                                             needs_wakeup[j]);
+                                             v_sig_max[j], v_sig_ij, c_phys_j);
 
                     // Back to code units
                     double P_star_com = flux_1d_phys.P_star * a;
@@ -1920,6 +2080,22 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                         du_dt[j] += du_dt_j;
 #pragma omp atomic
                         de_dt[j] += de_dt_j;
+                    } else if (!needs_wakeup[j]) {
+                        // OpenGadget3 Wake-up Limiter
+                        // Wake up the sleeping neighbor if the signal
+                        // velocity of the interaction exceeds 3x its own
+                        // sound speed (f_w = 3.0)
+                        bool og3_trigger = (v_sig_ij > 3.0 * c_phys_j);
+
+                        // Saitoh & Makino (2009) Timestep Limiter
+                        // Wake up the sleeping neighbor if its timestep is
+                        // larger (e.g., 4x) than the active particle
+                        // hitting it
+                        // bool gizmo_trigger = (dt_step[j] > 4.0 * dt_step[i]);
+                        if (og3_trigger /* || gizmo_trigger*/) {
+#pragma omp atomic write
+                            needs_wakeup[j] = 1;
+                        }
                     }
                 }
             } else {

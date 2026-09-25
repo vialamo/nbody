@@ -5,15 +5,19 @@
 
 #include "kernels.h"
 
-// Disable limiter
+
+#define ZEROTH_ORDER_RECONSTRUCTION
+
+#ifndef ZEROTH_ORDER_RECONSTRUCTION
 //#define DISABLE_LIMITER
 
-#ifdef DISABLE_LIMITER
-#define ZEROTH_ORDER_RECONSTRUCTION
-#else
+#ifndef DISABLE_LIMITER
 // Enable to use the limiter explained in the Gizmo paper.
 // Disable to use the limiter used in the Gizmo code
 #define THEORETICAL_LIMITER
+#endif
+#else
+#define DISABLE_LIMITER
 #endif
 
 

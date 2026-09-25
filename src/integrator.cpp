@@ -377,11 +377,9 @@ static void apply_gas_particle_gravity_kick(GasParticleSystem& gas, double dt,
             double t_start = gas.t_end[i] - gas.dt_step[i];
             bool do_kick = false;
             if (is_kick1) {
-                // Kick 1 only applies if the particle's block step just started
                 if (std::abs(gas.global_time - dt_macro - t_start) < 1e-10)
                     do_kick = true;
             } else {
-                // Kick 2 only applies if the particle's block step just ended
                 if (std::abs(gas.global_time - gas.t_end[i]) < 1e-10)
                     do_kick = true;
             }
@@ -390,66 +388,11 @@ static void apply_gas_particle_gravity_kick(GasParticleSystem& gas, double dt,
             if (!gas.is_active[i]) continue;
         }
 
-        // Compute the individual half-step for this specific active particle
         double half_dt = gas.dt_step[i] / 2.0;
+        KickWork work = gas.kick_particle_gravity(i, half_dt, a, H, config);
 
-        // Update the cosmological factors to use half_dt instead of dt
-        double drag_factor = 1.0;
-        if (H > 0.0 && a > 0.0) {
-            double a_next = a + a * H * half_dt;
-            drag_factor = (a / a_next) * (a / a_next);
-        }
-        double expansion_factor = (3.0 * config.gamma - 1.0) * H * half_dt;
-
-        double m = gas.mass[i];
-        double vx_old = gas.vel_x[i];
-        double vy_old = gas.vel_y[i];
-        double vz_old = gas.vel_z[i];
-
-        // Comoving Gravitational Acceleration
-        double gx = gas.acc_x[i];
-        double gy = gas.acc_y[i];
-        double gz = gas.acc_z[i];
-
-        // Intermediate velocity after pure gravity kick
-        double vx_g = vx_old + gx * half_dt;
-        double vy_g = vy_old + gy * half_dt;
-        double vz_g = vz_old + gz * half_dt;
-
-        // Gravitational Work (dW_grav = dK_grav)
-        double ke_old =
-            0.5 * m * (vx_old * vx_old + vy_old * vy_old + vz_old * vz_old);
-        double ke_g = 0.5 * m * (vx_g * vx_g + vy_g * vy_g + vz_g * vz_g);
-        step_grav_work += (ke_g - ke_old);
-
-        // Final velocity after Hubble Drag decay
-        double vx_new = vx_g * drag_factor;
-        double vy_new = vy_g * drag_factor;
-        double vz_new = vz_g * drag_factor;
-
-        // Apply Cosmological Adiabatic Cooling (Thermal energy lost to PdV
-        // work)
-        double u_old = gas.u[i];
-        double u_cooling = u_old * expansion_factor;
-
-        // Expansion Work Accumulation (Kinetic + Thermal energy lost to Hubble
-        // drag/expansion)
-        double ke_new =
-            0.5 * m * (vx_new * vx_new + vy_new * vy_new + vz_new * vz_new);
-        step_exp_work += (ke_g - ke_new) + (u_cooling * m);
-
-        // Update particle arrays
-        gas.vel_x[i] = vx_new;
-        gas.vel_y[i] = vy_new;
-        gas.vel_z[i] = vz_new;
-        gas.u[i] -= u_cooling;
-        gas.entropy[i] -= gas.entropy[i] * expansion_factor;
-
-        // Ensure total_energy absorbs both the change in KE and internal energy
-        // to maintain perfect synchronization for the Dual Energy Formalism
-        double spec_ke_old = ke_old / m;
-        double spec_ke_new = ke_new / m;
-        gas.total_energy[i] += (spec_ke_new - spec_ke_old) - u_cooling;
+        step_grav_work += work.grav_work;
+        step_exp_work += work.exp_work;
     }
 
     gas.accumulated_gravitational_work += step_grav_work;
@@ -460,11 +403,7 @@ static void apply_gas_particle_hydro_kick(GasParticleSystem& gas, double dt,
                                           double a, const Config& config,
                                           bool is_kick1) {
     const size_t n = gas.num_particles;
-    double gamma_minus_1 = config.gamma - 1.0;
-    constexpr double min_energy = 1e-20;
-
     double step_hydro_exp_work = 0.0;
-
     double dt_macro = 2.0 * dt;
 
 #pragma omp parallel for reduction(+ : step_hydro_exp_work) schedule(static)
@@ -485,53 +424,11 @@ static void apply_gas_particle_hydro_kick(GasParticleSystem& gas, double dt,
         }
 
         double half_dt = gas.dt_step[i] / 2.0;
+        KickWork work = gas.kick_particle_hydro(i, half_dt, config);
 
-        double m = gas.mass[i];
-        double vx_old = gas.vel_x[i];
-        double vy_old = gas.vel_y[i];
-        double vz_old = gas.vel_z[i];
-        double ke_old =
-            0.5 * m * (vx_old * vx_old + vy_old * vy_old + vz_old * vz_old);
-
-        // Hydro Acceleration (Force / m)
-        double hx = gas.hydro_acc_x[i];
-        double hy = gas.hydro_acc_y[i];
-        double hz = gas.hydro_acc_z[i];
-
-        gas.vel_x[i] += hx * half_dt;
-        gas.vel_y[i] += hy * half_dt;
-        gas.vel_z[i] += hz * half_dt;
-
-        double ke_new =
-            0.5 * m *
-            (gas.vel_x[i] * gas.vel_x[i] + gas.vel_y[i] * gas.vel_y[i] +
-             gas.vel_z[i] * gas.vel_z[i]);
-        double delta_ke = ke_new - ke_old;
-
-        // Update internal energy. du_dt is d(u_com)/dt.
-        double delta_u = gas.du_dt[i] * half_dt;
-        gas.u[i] += delta_u;
-
-        // Track the "Hydro Expansion Work" for the diagnostics
-        // The expected KE change if a=1 is (de_dt - du_dt) * dt * m
-        double expected_delta_ke = (gas.de_dt[i] - gas.du_dt[i]) * half_dt * m;
-
-        // The difference is PdV work done against the comoving frame
-        step_hydro_exp_work += (delta_ke - expected_delta_ke);
-
-        // total_energy[i] tracks passively for diagnostics
-        gas.total_energy[i] += gas.de_dt[i] * half_dt;
-
-        if (gas.u[i] < min_energy) gas.u[i] = min_energy;
-        if (gas.total_energy[i] < min_energy) gas.total_energy[i] = min_energy;
-
-        // Keep primitive variables strictly synchronized
-        gas.entropy[i] =
-            gamma_minus_1 * gas.u[i] / std::pow(gas.rho[i], gamma_minus_1);
-        gas.pressure[i] = gamma_minus_1 * gas.rho[i] * gas.u[i];
+        step_hydro_exp_work += work.hydro_exp_work;
     }
 
-    // Offset the cosmological expansion work tracked in diagnostics
     gas.accumulated_expansion_work -= step_hydro_exp_work;
 }
 
@@ -717,7 +614,8 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
     // Clock sync and wake-ups
     state.dm.sync_and_activate(dt, config);
     if (config.hydro_method == HydroMethod::MFM) {
-        state.mfm_gas->sync_and_activate(dt, config);
+        state.mfm_gas->sync_and_activate(dt, state.scale_factor,
+                                         state.hubble_param, config);
     }
 
     // KICK 1 (Half step)

@@ -152,7 +152,7 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
                 std::complex<double> delta_k;
                 if (config.fixed_ics) {
                     // Extract the random phase, discard the random magnitude.
-                    // std::abs() on a complex number returns its magnitude.
+                    // std::abs() on a complex number returns its magnitude
                     double mag = std::abs(current_k);
 
                     // Protect against division by zero

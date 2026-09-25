@@ -93,10 +93,8 @@ void Cooling::load_cooling_tables(const Config& config) {
         // Precalculate cgs to code unit conversions
         double X_over_mp = constants::X_MASS_FRAC / constants::M_P_CGS;
 
-        // Heating scales with (1 / a^2)
-        double heating_factor = X_over_mp * config.cooling_conversion_factor;
-
-        // Cooling scales with (rho_code / a^5)
+        // Both Cooling and Heating scale with (rho_code / a^5) because both are
+        // normalized by nH^2
         double cooling_factor = config.unit_density_cgs *
                                 (X_over_mp * X_over_mp) *
                                 config.cooling_conversion_factor;
@@ -104,19 +102,12 @@ void Cooling::load_cooling_tables(const Config& config) {
         size_t stride_d = cooling_data.Nz * cooling_data.Nt;
 
         for (size_t id = 0; id < cooling_data.Nd; ++id) {
-            double nH_bin = std::pow(10.0, cooling_data.density[id]);
-
             for (size_t iz = 0; iz < cooling_data.Nz; ++iz) {
                 for (size_t it = 0; it < cooling_data.Nt; ++it) {
                     size_t idx = id * stride_d + iz * cooling_data.Nt + it;
 
-                    // Bake in the nH correction and the code unit conversions
-                    // Grackle/Cloudy tables store heating as (Heating / nH^2)
-                    // instead of (/nH). So multiply by nH at load time
-                    cooling_data.heating_primordial[idx] *=
-                        (nH_bin * heating_factor);
-                    cooling_data.heating_metal[idx] *=
-                        (nH_bin * heating_factor);
+                    cooling_data.heating_primordial[idx] *= cooling_factor;
+                    cooling_data.heating_metal[idx] *= cooling_factor;
 
                     cooling_data.cooling_primordial[idx] *= cooling_factor;
                     cooling_data.cooling_metal[idx] *= cooling_factor;
@@ -160,7 +151,7 @@ Cooling::Cooling(const Config& config) {
     double default_clumping_A =
         std::max(0.0, (use_table ? 0.12 : 1.0) * A_curve.evaluate(resolution));
     if (config.hydro_method == HydroMethod::MFM) {
-        //default_clumping_A *= 0.2;
+        // default_clumping_A *= 0.2;
     }
 
     subgrid_clumping_A = config.subgrid_clumping_amplitude < 0
@@ -264,18 +255,20 @@ double Cooling::compute_tabulated_cooling(double u_code, double rho_code,
     // Combine rates based on metallicity
     double metal_ratio = Z / constants::Z_SOLAR;
 
-    double lambda_code = lambda_prim + (lambda_metal * metal_ratio);
-    double gamma_code = gamma_prim + (gamma_metal * metal_ratio);
+    double lambda_scaled = lambda_prim + (lambda_metal * metal_ratio);
+    double gamma_scaled = gamma_prim + (gamma_metal * metal_ratio);
 
     // Apply dynamic scale factor and density dependencies
+    // The a^5 denominator breaks down into a^3 (to convert rho_code to
+    // rho_phys) and a^2 (to convert du_phys/dt to du_code/dt)
     double a2 = a * a;
     double a5 = a2 * a2 * a;
 
-    double heating = gamma_code / a2;
-    double cooling = (lambda_code * rho_code * clumping_factor) / a5;
+    double heating_code = (gamma_scaled * rho_code * clumping_factor) / a5;
+    double cooling_code = (lambda_scaled * rho_code * clumping_factor) / a5;
 
     // Return the final volumetric code energy change
-    return heating - cooling;
+    return heating_code - cooling_code;
 }
 
 double Cooling::compute_clumping_factor(double rho_code, double a,
@@ -321,7 +314,7 @@ double Cooling::get_u_rad_floor(double a, const Config& config) const {
     double target_floor_k = 0.0;
     if (use_table) {
         // The table handles real physics. Only enforce the CMB and absolute
-        // hydro floor.
+        // hydro floor
         double t_cmb = 2.7315 / a;
         target_floor_k = std::max(config.temp_floor_k, t_cmb);
     } else {
@@ -360,7 +353,7 @@ double Cooling::solve_cooling_implicit(double u_old, double rho_code, double Z,
 
         // If f_low is positive, the root lies below u_rad_floor.
         // This happens when rapid cooling + a large dt push the target
-        // below the radiation floor. Just clamp to the floor.
+        // below the radiation floor. Just clamp to the floor
         if (f_low >= 0.0) {
             iterations_taken = 0;
             return u_rad_floor;

@@ -9,6 +9,12 @@
 
 class Cooling;
 
+struct KickWork {
+    double grav_work = 0.0;
+    double exp_work = 0.0;
+    double hydro_exp_work = 0.0;
+};
+
 class GasParticleSystem {
    public:
     size_t num_particles = 0;
@@ -145,7 +151,11 @@ class GasParticleSystem {
     void update_particle_timesteps(double dt_max, double a,
                                    const Config& config, Cooling& cooling);
     // Sync the clock, process wakeups, and flag active particles
-    void sync_and_activate(double dt, const Config& config);
+    void sync_and_activate(double dt, double a, double H, const Config& config);
+
+    // Reversible single-particle kick physics
+    KickWork kick_particle_gravity(size_t i, double dt, double a, double H, const Config& config);
+    KickWork kick_particle_hydro(size_t i, double dt, const Config& config);
 
     void hydro_step(const Config& config, double a, double H, double dt);
 
