@@ -232,7 +232,7 @@ TEST_CASE("MFM Riemann Solver", "[hydro][mfm_riemann]") {
         MFMFaceFlux flux = solve_mfm_riemann(face, v_frame, gamma);
 
         // Because flow is supersonic to the right, S_L > 0.
-        // Solver MUST pick exactly the Left state (Upwinding).
+        // Solver MUST pick the Left state (Upwinding)
         REQUIRE(flux.P_star == Catch::Approx(1.0));  // P_star = P_L = 1.0
         REQUIRE(flux.flux_mom.x() == Catch::Approx(1.0));
 

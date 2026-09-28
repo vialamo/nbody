@@ -4,12 +4,12 @@
 #include <cmath>
 
 #include "kernels.h"
-
+#include "math_utils.h"
 
 #define ZEROTH_ORDER_RECONSTRUCTION
 
 #ifndef ZEROTH_ORDER_RECONSTRUCTION
-//#define DISABLE_LIMITER
+// #define DISABLE_LIMITER
 
 #ifndef DISABLE_LIMITER
 // Enable to use the limiter explained in the Gizmo paper.
@@ -20,16 +20,15 @@
 #define DISABLE_LIMITER
 #endif
 
-
 namespace Reconstruction {
 
 namespace {  // Anonymous namespace for private helper functions
 
-inline double periodic_displacement(double dx, double domain_size) {
+/*inline double periodic_displacement(double dx, double domain_size) {
     if (dx > 0.5 * domain_size) return dx - domain_size;
     if (dx < -0.5 * domain_size) return dx + domain_size;
     return dx;
-}
+}*/
 
 #ifdef THEORETICAL_LIMITER
 inline int math_sign(double x) { return (x > 0.0) ? 1 : ((x < 0.0) ? -1 : 0); }
@@ -113,12 +112,15 @@ inline void scalar_limiter(Eigen::Vector3d& grad, double valmax, double valmin,
 #endif
 #endif
 
-inline double compute_condition_number(const Eigen::Matrix3d& E,
-                                       const Eigen::Matrix3d& B) {
+}  // end anonymous namespace
+
+double evaluate_matrix_condition_number(const Eigen::Matrix3d& E) {
+    double det = E.determinant();
+    if (std::abs(det) < 1e-30) return -1.0;
+
+    Eigen::Matrix3d B = E.inverse();
     return (1.0 / 3.0) * std::sqrt(E.squaredNorm() * B.squaredNorm());
 }
-
-}  // end anonymous namespace
 
 ParticleGradients compute_single_particle_gradients(
     const ParticleState& p_i, const std::vector<ParticleState>& neighbors,
@@ -131,7 +133,7 @@ ParticleGradients compute_single_particle_gradients(
     out.grad_vy = Eigen::Vector3d::Zero();
     out.grad_vz = Eigen::Vector3d::Zero();
     out.raw_sum_p = Eigen::Vector3d::Zero();
-    out.ill_conditioned = false;
+    out.ill_conditioned = true;
 
     Eigen::Matrix3d E = Eigen::Matrix3d::Zero();
 
@@ -145,40 +147,29 @@ ParticleGradients compute_single_particle_gradients(
             periodic_displacement(nj.pos.z() - p_i.pos.z(), domain_size);
 
         double r2 = dx * dx + dy * dy + dz * dz;
-        if (r2 < p_i.h * p_i.h && r2 > 1e-24) {
-            double r = std::sqrt(r2);
-            double W;
-            Kernels::cubic_spline_value(r, p_i.h, W);
+        double r = std::sqrt(r2);
+        double W;
+        Kernels::cubic_spline_value(r, p_i.h, W);
+        double V_j = nj.mass / nj.rho;
+        double weight = W;// * V_j;
 
-            double V_j = nj.mass / nj.rho;
-            double weight = W * V_j;
-
-            E(0, 0) += dx * dx * weight;
-            E(0, 1) += dx * dy * weight;
-            E(0, 2) += dx * dz * weight;
-            E(1, 1) += dy * dy * weight;
-            E(1, 2) += dy * dz * weight;
-            E(2, 2) += dz * dz * weight;
-        }
+        E(0, 0) += dx * dx * weight;
+        E(0, 1) += dx * dy * weight;
+        E(0, 2) += dx * dz * weight;
+        E(1, 1) += dy * dy * weight;
+        E(1, 2) += dy * dz * weight;
+        E(2, 2) += dz * dz * weight;
     }
 
     E(1, 0) = E(0, 1);
     E(2, 0) = E(0, 2);
     E(2, 1) = E(1, 2);
 
-    double det = E.determinant();
-    constexpr double N_cond_crit = 1000.0;
-    out.ill_conditioned = true;
-    out.condition_number = -1.0;
+    out.condition_number = evaluate_matrix_condition_number(E);
 
-    if (std::abs(det) > 1e-30) {
+    if (out.condition_number > 0.0 && out.condition_number <= N_cond_crit) {
+        out.ill_conditioned = false;
         out.B_matrix = E.inverse();
-        double N_cond = compute_condition_number(E, out.B_matrix);
-        out.condition_number = N_cond;
-
-        if (N_cond <= N_cond_crit) {
-            out.ill_conditioned = false;
-        }
     }
 
     if (!out.ill_conditioned) {
@@ -205,37 +196,29 @@ ParticleGradients compute_single_particle_gradients(
                 periodic_displacement(nj.pos.z() - p_i.pos.z(), domain_size);
 
             double r2 = dx * dx + dy * dy + dz * dz;
-            if ((r2 < p_i.h * p_i.h || r2 < nj.h * nj.h) && r2 > 1e-24) {
-                double r = std::sqrt(r2);
-                r_max = std::max(r_max, r);
+            double r = std::sqrt(r2);
+            r_max = std::max(r_max, r);
+            d_rho_max = std::max(d_rho_max, nj.rho - p_i.rho);
+            d_rho_min = std::min(d_rho_min, nj.rho - p_i.rho);
+            d_p_max = std::max(d_p_max, nj.pressure - p_i.pressure);
+            d_p_min = std::min(d_p_min, nj.pressure - p_i.pressure);
+            d_vx_max = std::max(d_vx_max, nj.vel.x() - p_i.vel.x());
+            d_vx_min = std::min(d_vx_min, nj.vel.x() - p_i.vel.x());
+            d_vy_max = std::max(d_vy_max, nj.vel.y() - p_i.vel.y());
+            d_vy_min = std::min(d_vy_min, nj.vel.y() - p_i.vel.y());
+            d_vz_max = std::max(d_vz_max, nj.vel.z() - p_i.vel.z());
+            d_vz_min = std::min(d_vz_min, nj.vel.z() - p_i.vel.z());
 
-                d_rho_max = std::max(d_rho_max, nj.rho - p_i.rho);
-                d_rho_min = std::min(d_rho_min, nj.rho - p_i.rho);
-                d_p_max = std::max(d_p_max, nj.pressure - p_i.pressure);
-                d_p_min = std::min(d_p_min, nj.pressure - p_i.pressure);
-                d_vx_max = std::max(d_vx_max, nj.vel.x() - p_i.vel.x());
-                d_vx_min = std::min(d_vx_min, nj.vel.x() - p_i.vel.x());
-                d_vy_max = std::max(d_vy_max, nj.vel.y() - p_i.vel.y());
-                d_vy_min = std::min(d_vy_min, nj.vel.y() - p_i.vel.y());
-                d_vz_max = std::max(d_vz_max, nj.vel.z() - p_i.vel.z());
-                d_vz_min = std::min(d_vz_min, nj.vel.z() - p_i.vel.z());
-            }
+            double W;
+            Kernels::cubic_spline_value(r, p_i.h, W);
+            Eigen::Vector3d dx_vec(dx, dy, dz);
+            double weight = W;// * (nj.mass / nj.rho);
 
-            if (r2 < p_i.h * p_i.h && r2 > 1e-24) {
-                double r = std::sqrt(r2);
-                double W;
-                Kernels::cubic_spline_value(r, p_i.h, W);
-
-                double V_j = nj.mass / nj.rho;
-                double weight = W * V_j;
-                Eigen::Vector3d dx_vec(dx, dy, dz);
-
-                sum_rho += (nj.rho - p_i.rho) * dx_vec * weight;
-                sum_p += (nj.pressure - p_i.pressure) * dx_vec * weight;
-                sum_vx += (nj.vel.x() - p_i.vel.x()) * dx_vec * weight;
-                sum_vy += (nj.vel.y() - p_i.vel.y()) * dx_vec * weight;
-                sum_vz += (nj.vel.z() - p_i.vel.z()) * dx_vec * weight;
-            }
+            sum_rho += (nj.rho - p_i.rho) * dx_vec * weight;
+            sum_p += (nj.pressure - p_i.pressure) * dx_vec * weight;
+            sum_vx += (nj.vel.x() - p_i.vel.x()) * dx_vec * weight;
+            sum_vy += (nj.vel.y() - p_i.vel.y()) * dx_vec * weight;
+            sum_vz += (nj.vel.z() - p_i.vel.z()) * dx_vec * weight;
         }
 
         out.grad_rho = out.B_matrix * sum_rho;
@@ -262,7 +245,7 @@ ParticleGradients compute_single_particle_gradients(
                 periodic_displacement(nj.pos.z() - p_i.pos.z(), domain_size);
 
             double r2 = dx * dx + dy * dy + dz * dz;
-            if ((r2 < p_i.h * p_i.h || r2 < nj.h * nj.h) && r2 > 1e-24) {
+            /*if ((r2 < p_i.h * p_i.h || r2 < nj.h * nj.h) && r2 > 1e-24)*/ {
                 double fraction_i = p_i.h / (p_i.h + nj.h);
                 Eigen::Vector3d dx_face_i =
                     fraction_i * Eigen::Vector3d(dx, dy, dz);
@@ -341,22 +324,19 @@ ParticleGradients compute_single_particle_gradients(
             double dz =
                 periodic_displacement(nj.pos.z() - p_i.pos.z(), domain_size);
             double r2 = dx * dx + dy * dy + dz * dz;
+            double r = std::sqrt(r2);
+            double dphi_dr_dummy, dW_dr;
+            Kernels::adaptive_gravity_terms(r, p_i.h, dphi_dr_dummy, dW_dr);
 
-            if (r2 < p_i.h * p_i.h && r2 > 1e-24) {
-                double r = std::sqrt(r2);
-                double dphi_dr_dummy, dW_dr;
-                Kernels::adaptive_gravity_terms(r, p_i.h, dphi_dr_dummy, dW_dr);
+            double V_j = nj.mass / nj.rho;
+            Eigen::Vector3d dx_vec(dx, dy, dz);
+            Eigen::Vector3d grad_W_i = -dW_dr * dx_vec / r;
 
-                double V_j = nj.mass / nj.rho;
-                Eigen::Vector3d dx_vec(dx, dy, dz);
-                Eigen::Vector3d grad_W_i = -dW_dr * dx_vec / r;
-
-                out.grad_rho += V_j * (nj.rho - p_i.rho) * grad_W_i;
-                out.grad_p += V_j * (nj.pressure - p_i.pressure) * grad_W_i;
-                out.grad_vx += V_j * (nj.vel.x() - p_i.vel.x()) * grad_W_i;
-                out.grad_vy += V_j * (nj.vel.y() - p_i.vel.y()) * grad_W_i;
-                out.grad_vz += V_j * (nj.vel.z() - p_i.vel.z()) * grad_W_i;
-            }
+            out.grad_rho += V_j * (nj.rho - p_i.rho) * grad_W_i;
+            out.grad_p += V_j * (nj.pressure - p_i.pressure) * grad_W_i;
+            out.grad_vx += V_j * (nj.vel.x() - p_i.vel.x()) * grad_W_i;
+            out.grad_vy += V_j * (nj.vel.y() - p_i.vel.y()) * grad_W_i;
+            out.grad_vz += V_j * (nj.vel.z() - p_i.vel.z()) * grad_W_i;
         }
     }
 
@@ -454,11 +434,11 @@ ReconstructedFace compute_face_reconstruction(
 #endif
 #else
 #ifdef ZEROTH_ORDER_RECONSTRUCTION
-    face.rho_L = p_i.rho;
-    face.rho_R = p_j.rho;
+    face.rho_L = std::max(p_i.rho, 0*density_floor);
+    face.rho_R = std::max(p_j.rho, 0*density_floor);
 
-    face.p_L = p_i.pressure;
-    face.p_R = p_j.pressure;
+    face.p_L = std::max(p_i.pressure, 0*pressure_floor);
+    face.p_R = std::max(p_j.pressure, 0*pressure_floor);
 
     face.v_L = p_i.vel;
     face.v_R = p_j.vel;

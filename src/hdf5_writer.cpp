@@ -170,6 +170,8 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                         config.mfm_neighbor_tolerance);
         set_attr_int(config_group, "mfm_max_iterations",
                      config.mfm_max_iterations);
+        set_attr_double(config_group, "mfm_min_hsml_fraction",
+                        config.mfm_min_hsml_fraction);
 
         // [subgrid]
         set_attr_bool(config_group, "enable_subgrid_clumping",

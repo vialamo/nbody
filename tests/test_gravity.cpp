@@ -93,7 +93,7 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
     config.num_dm_particles = 2;
 
     config.G = 1.0;
-    config.softening_squared = 0.0001;
+    config.softening = 0.01;
 
     Diagnostics dummy_diag;
 

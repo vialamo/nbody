@@ -428,7 +428,7 @@ void initialize_gas(SimState& state, const Config& config,
             config.gas_total_mass / (N_part * N_part * N_part);
 
         // Initial guess for smoothing length
-        double initial_h = 1.2 * spacing;
+        double initial_h = 0.5 * spacing * cbrt(config.mfm_target_neighbors);
 
         for (int i = 0; i < N_part; ++i) {
             for (int j = 0; j < N_part; ++j) {

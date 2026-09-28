@@ -38,6 +38,7 @@ class Diagnostics {
     bool dm_energy_initialized = false;
     size_t MFM_ill_conditioned_cases = 0;
     size_t MFM_h_non_converged_cases = 0;
+    size_t MFM_neighbor_increased_cases = 0;
     double percent_particles_updated = 0;
 
     // Performance State

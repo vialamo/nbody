@@ -184,12 +184,11 @@ void ParticleSystem::compute_and_add_pp_forces(double a, const Config& config,
     const double domain_size = config.domain_size;
     // Pre-scale G so output forces are comoving accelerations
     const double G = config.G / (a * a * a);
-    const double soft_sq = config.softening_squared;
     const double cutoff_sq = config.cutoff_radius_squared;
     const double r_s = config.PM_smoothing_cells * config.cell_size;
     const bool use_pm = config.use_PM;
     const size_t num_nodes = 2 * n_parts - 1;
-    const double base_soft = std::sqrt(soft_sq);
+    const double base_soft = config.softening;
     const double spline_h = 2.8 * base_soft;
 
     const double search_sq =
@@ -283,8 +282,13 @@ void ParticleSystem::compute_and_add_pp_forces(double a, const Config& config,
 
                 // Cubic Spline Gravity
                 double dphi_dr, dummy_dphi_dh;
+#ifdef USE_ADAPTIVE_SOFTENING
                 Kernels::gravity_derivatives(r, spline_h, dphi_dr,
                                              dummy_dphi_dh);
+#else
+                Kernels::gravity_derivatives(r, base_soft, dphi_dr,
+                                             dummy_dphi_dh);
+#endif
 
                 // DM-DM has identical kernels and no zeta, so (dphi_i +
                 // dphi_j)/2 = dphi_dr
@@ -350,7 +354,6 @@ void ParticleSystem::compute_cross_pp_forces(double a,
 
     // Pre-scale G so all output forces are comoving accelerations
     const double G = config.G / (a * a * a);
-    const double soft_sq = config.softening_squared;
     const double cutoff_sq = config.cutoff_radius_squared;
     const double r_s = config.PM_smoothing_cells * config.cell_size;
     const bool use_pm = config.use_PM;
@@ -362,7 +365,7 @@ void ParticleSystem::compute_cross_pp_forces(double a,
     // Search radius is the PM cutoff. If not using PM, it's infinite
     const double search_sq =
         use_pm ? cutoff_sq : std::numeric_limits<double>::infinity();
-    const double base_soft = std::sqrt(soft_sq);
+    const double base_soft = config.softening;
     const double spline_equivalent_h = 2.8 * base_soft;
 
     // Extract DM pointers
@@ -380,19 +383,30 @@ void ParticleSystem::compute_cross_pp_forces(double a,
     const double* d_gas_pz = gas.pos_z.data();
     const double* d_gas_m = gas.mass.data();
     const double* d_gas_h = gas.h.data();
+#ifdef USE_ADAPTIVE_SOFTENING
     const double* d_gas_zeta = gas.zeta.data();
+#endif
     const BVHNode* d_gas_bvh = gas.bvh_nodes.data();
     int* d_active_idx = active_indices.data();  // Extract indirection array
     size_t n_active = num_active;
 
 #ifdef USE_GPU
     auto start_transfer = std::chrono::high_resolution_clock::now();
+#ifdef USE_ADAPTIVE_SOFTENING
 #pragma omp target enter data map(                                            \
         to : d_dm_px[0 : n_dm], d_dm_py[0 : n_dm], d_dm_pz[0 : n_dm],         \
             d_active_idx[0 : n_active], d_dm_ax[0 : n_dm], d_dm_ay[0 : n_dm], \
             d_dm_az[0 : n_dm], d_gas_px[0 : n_gas], d_gas_py[0 : n_gas],      \
             d_gas_pz[0 : n_gas], d_gas_m[0 : n_gas], d_gas_h[0 : n_gas],      \
             d_gas_zeta[0 : n_gas], d_gas_bvh[0 : gas_num_nodes])
+#else
+#pragma omp target enter data map(                                            \
+        to : d_dm_px[0 : n_dm], d_dm_py[0 : n_dm], d_dm_pz[0 : n_dm],         \
+            d_active_idx[0 : n_active], d_dm_ax[0 : n_dm], d_dm_ay[0 : n_dm], \
+            d_dm_az[0 : n_dm], d_gas_px[0 : n_gas], d_gas_py[0 : n_gas],      \
+            d_gas_pz[0 : n_gas], d_gas_m[0 : n_gas], d_gas_h[0 : n_gas],      \
+            d_gas_bvh[0 : gas_num_nodes])
+#endif
     auto end_transfer = std::chrono::high_resolution_clock::now();
     auto start_compute = std::chrono::high_resolution_clock::now();
 #endif
@@ -461,6 +475,7 @@ void ParticleSystem::compute_cross_pp_forces(double a,
 
                 double r = std::sqrt(dist_sq + 1e-24);
                 double m_gas = d_gas_m[j];
+#ifdef USE_ADAPTIVE_SOFTENING
                 double h_gas = d_gas_h[j];
                 double zeta_gas = d_gas_zeta[j];
 
@@ -479,6 +494,14 @@ void ParticleSystem::compute_cross_pp_forces(double a,
                     (G / 2.0) *
                     ((dphi_dr_i + dphi_dr_j) + (zeta_gas * dW_dr_j) / m_gas) /
                     r;
+
+#else
+                // OG3 / Standard TreePM P-P Force
+                double dphi_dr, dummy_dphi_dh;
+                Kernels::gravity_derivatives(r, base_soft, dphi_dr,
+                                             dummy_dphi_dh);
+                double force_mag_over_r = G * dphi_dr / r;
+#endif
 
                 if (use_pm) {
                     double r_scaled = r / (2.0 * r_s);
@@ -509,6 +532,7 @@ void ParticleSystem::compute_cross_pp_forces(double a,
 #ifdef USE_GPU
     auto end_compute = std::chrono::high_resolution_clock::now();
     auto start_return = std::chrono::high_resolution_clock::now();
+#ifdef USE_ADAPTIVE_SOFTENING
 #pragma omp target exit data map(from : d_dm_ax[0 : n_dm], d_dm_ay[0 : n_dm], \
                                      d_dm_az[0 : n_dm])                       \
     map(delete : d_dm_px[0 : n_dm], d_dm_py[0 : n_dm], d_dm_pz[0 : n_dm],     \
@@ -516,6 +540,14 @@ void ParticleSystem::compute_cross_pp_forces(double a,
             d_gas_py[0 : n_gas], d_gas_pz[0 : n_gas], d_gas_m[0 : n_gas],     \
             d_gas_h[0 : n_gas], d_gas_zeta[0 : n_gas],                        \
             d_gas_bvh[0 : gas_num_nodes])
+#else
+#pragma omp target exit data map(from : d_dm_ax[0 : n_dm], d_dm_ay[0 : n_dm], \
+                                     d_dm_az[0 : n_dm])                       \
+    map(delete : d_dm_px[0 : n_dm], d_dm_py[0 : n_dm], d_dm_pz[0 : n_dm],     \
+            d_active_idx[0 : n_active], d_gas_px[0 : n_gas],                  \
+            d_gas_py[0 : n_gas], d_gas_pz[0 : n_gas], d_gas_m[0 : n_gas],     \
+            d_gas_h[0 : n_gas], d_gas_bvh[0 : gas_num_nodes])
+#endif
     auto end_return = std::chrono::high_resolution_clock::now();
 
     diag.add_prof_time(ProfRegion::Transf,
@@ -555,7 +587,7 @@ double ParticleSystem::get_gravity_timestep(const Config& config) const {
         return (dt_next > 1e-10) ? dt_next
                                  : std::numeric_limits<double>::infinity();
     } else {
-        double epsilon = std::sqrt(config.softening_squared);
+        double epsilon = config.softening;
         double a_max = std::sqrt(max_accel_sq);
         double dt_grav = std::sqrt(epsilon / a_max);
 
@@ -617,7 +649,7 @@ void ParticleSystem::update_particle_timesteps(double dt_max,
         return;
     }
 
-    double epsilon = std::sqrt(config.softening_squared);
+    double epsilon = config.softening;
 
     // Prevent OpenMP from deadlocking on 0-trip dynamic loops
     // during micro-cycles where all particles are asleep

@@ -152,7 +152,7 @@ void Config::compute_derived_data() {
     }
 
     base_comoving_softening = actual_softening;
-    softening_squared = actual_softening * actual_softening;
+    softening = actual_softening;
 
     const double dynamical_time = 1.0 / std::sqrt(G);
     double raw_fixed_dt = max_dt_dynamical_factor * dynamical_time;
@@ -234,6 +234,8 @@ void Config::load(const std::string& filename) {
         "mfm", "mfm_neighbor_tolerance", mfm_neighbor_tolerance);
     mfm_max_iterations =
         config_file.get_int("mfm", "mfm_max_iterations", mfm_max_iterations);
+    mfm_min_hsml_fraction = config_file.get_double(
+        "mfm", "mfm_min_hsml_fraction", mfm_min_hsml_fraction);
 
     enable_subgrid_clumping = config_file.get_bool(
         "subgrid", "enable_subgrid_clumping", enable_subgrid_clumping);

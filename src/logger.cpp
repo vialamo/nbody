@@ -204,4 +204,8 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
         std::cout << "  [WARNING] MFM h non converged cases: "
                   << diag.MFM_h_non_converged_cases << "\n";
     }
+    if (diag.MFM_neighbor_increased_cases > 0) {
+        std::cout << "  [WARNING] MFM neighbor increased cases: "
+                  << diag.MFM_neighbor_increased_cases << "\n";
+    }
 }

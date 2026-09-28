@@ -507,13 +507,12 @@ static void update_softening(SimState& state, Config& config) {
     double cap_a = config.physical_softening_cap_a;
     double current_comoving_softening = config.base_comoving_softening;
 
-    if (a > cap_a) {
+    if (a > cap_a && config.expanding_universe) {
         // Shrink comoving softening so physical softening stays constant
         current_comoving_softening =
             config.base_comoving_softening * (cap_a / a);
     }
-    config.softening_squared =
-        current_comoving_softening * current_comoving_softening;
+    config.softening = current_comoving_softening;
 }
 
 void compute_forces(SimState& state, Config& config, Diagnostics& diag) {

@@ -7,6 +7,8 @@
 #include "particles.h"
 #include "reconstruction.h"
 
+#define USE_ADAPTIVE_SOFTENING
+
 class Cooling;
 
 struct KickWork {
@@ -72,12 +74,14 @@ class GasParticleSystem {
     std::vector<Eigen::Vector3d> grad_vz;
     std::vector<Eigen::Vector3d> grad_p;  // [Pressure / Code Length]
 
+#ifdef USE_ADAPTIVE_SOFTENING
     std::vector<double> zeta;  // Correction term for adaptive gravity softening
+#endif
 
     Grid3D gas_rho;  // Gridded comoving gas density for PM gravity/diagnostics
                      // [Code Mass / Code Length^3]
 
-    std::vector<double> v_sig_max; // Cached maximum signal velocity
+    std::vector<double> v_sig_max;  // Cached maximum signal velocity
 
     size_t cooling_failed_cells = 0;
     size_t cooling_total_cycles = 0;
@@ -97,6 +101,7 @@ class GasParticleSystem {
     std::vector<double> n_enc_final;
     double active_particles_fraction = 0.0;
     size_t active_particles_num_cycles = 0;
+    size_t neighbor_increased_cases = 0;
 
     // Spatial Hashing
     std::vector<CIC_Data> cic_data;
@@ -154,7 +159,8 @@ class GasParticleSystem {
     void sync_and_activate(double dt, double a, double H, const Config& config);
 
     // Reversible single-particle kick physics
-    KickWork kick_particle_gravity(size_t i, double dt, double a, double H, const Config& config);
+    KickWork kick_particle_gravity(size_t i, double dt, double a, double H,
+                                   const Config& config);
     KickWork kick_particle_hydro(size_t i, double dt, const Config& config);
 
     void hydro_step(const Config& config, double a, double H, double dt);
@@ -182,6 +188,12 @@ class GasParticleSystem {
                               double domain_size, double& out_n,
                               double& out_dn_dh) const;
 
+    // Lightweight BVH walker to check if a given h_guess yields a
+    // well-conditioned matrix
+    double check_matrix_condition(size_t particle_idx, double h_guess,
+                                  double domain_size) const;
+
+#ifdef USE_ADAPTIVE_SOFTENING
     // A tree-walker that computes the zeta gravity correction from a target
     // tree
     double compute_zeta_contribution(double p1_x, double p1_y, double p1_z,
@@ -192,6 +204,7 @@ class GasParticleSystem {
                                      const std::vector<double>& target_mass,
                                      const std::vector<BVHNode>& target_bvh,
                                      const Config& config) const;
+#endif
 };
 
 // Output of the Riemann Solver

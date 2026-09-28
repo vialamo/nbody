@@ -2,6 +2,8 @@
 #include <Eigen/Dense>
 #include <vector>
 
+constexpr double N_cond_crit = 100.0;
+
 namespace Reconstruction {
 
 struct ParticleState {
@@ -50,5 +52,9 @@ ReconstructedFace compute_face_reconstruction(
     const ParticleState& p_i, const ParticleGradients& grad_i,
     const ParticleState& p_j, const ParticleGradients& grad_j,
     double domain_size, double density_floor, double pressure_floor);
+
+// Evaluates the condition number of a geometric E matrix. Returns -1.0 if
+// singular
+double evaluate_matrix_condition_number(const Eigen::Matrix3d& E);
 
 }  // namespace Reconstruction

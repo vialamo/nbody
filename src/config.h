@@ -121,6 +121,7 @@ struct Config {
     double mfm_target_neighbors = 32.0;
     double mfm_neighbor_tolerance = 0.01;
     int mfm_max_iterations = 50;
+    double mfm_min_hsml_fraction = 0.25;
 
     // Subgrid
     bool enable_subgrid_clumping = true;
@@ -150,7 +151,7 @@ struct Config {
     int num_dm_particles = 0;
     int num_gas_particles = 0;
     double dm_particle_mass = 0.0, gas_total_mass = 0.0;
-    double softening_squared = 0.0;
+    double softening = 0.0;
     double base_comoving_softening = 0.0;
 
     double fixed_dt = 0.0;

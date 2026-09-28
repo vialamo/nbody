@@ -1,6 +1,7 @@
 #include "mfm.h"
 
 #include <chrono>
+#include <iostream>
 
 #include "cic.h"
 #include "constants.h"
@@ -51,7 +52,9 @@ GasParticleSystem::GasParticleSystem(const Config& config)
     max_rel_ke.reserve(config.num_gas_particles);
     delta_E_grav.reserve(config.num_gas_particles);
 
+#ifdef USE_ADAPTIVE_SOFTENING
     zeta.reserve(config.num_gas_particles);
+#endif
 
     v_sig_max.reserve(config.num_gas_particles);
 
@@ -111,7 +114,9 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
     max_rel_ke.push_back(0.0);
     delta_E_grav.push_back(0.0);
 
+#ifdef USE_ADAPTIVE_SOFTENING
     zeta.push_back(0.0);
+#endif
     v_sig_max.push_back(0.0);
 
     double initial_ke = 0.5 * (vx * vx + vy * vy + vz * vz);
@@ -162,7 +167,9 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     std::vector<Eigen::Vector3d> new_grad_vy(num_particles),
         new_grad_vz(num_particles);
     std::vector<Eigen::Vector3d> new_grad_p(num_particles);
+#ifdef USE_ADAPTIVE_SOFTENING
     std::vector<double> new_zeta(num_particles);
+#endif
 
     std::vector<double> new_entropy(num_particles);
     std::vector<double> new_max_rel_ke(num_particles);
@@ -208,7 +215,9 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
         new_grad_vy[i] = grad_vy[src];
         new_grad_vz[i] = grad_vz[src];
         new_grad_p[i] = grad_p[src];
+#ifdef USE_ADAPTIVE_SOFTENING
         new_zeta[i] = zeta[src];
+#endif
         new_entropy[i] = entropy[src];
         new_max_rel_ke[i] = max_rel_ke[src];
         new_delta_E_grav[i] = delta_E_grav[src];
@@ -251,7 +260,9 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     grad_vy = std::move(new_grad_vy);
     grad_vz = std::move(new_grad_vz);
     grad_p = std::move(new_grad_p);
+#ifdef USE_ADAPTIVE_SOFTENING
     zeta = std::move(new_zeta);
+#endif
     entropy = std::move(new_entropy);
     max_rel_ke = std::move(new_max_rel_ke);
     delta_E_grav = std::move(new_delta_E_grav);
@@ -339,6 +350,69 @@ void GasParticleSystem::evaluate_density_sum(size_t particle_idx,
     }
 }
 
+double GasParticleSystem::check_matrix_condition(size_t particle_idx,
+                                                 double h_guess,
+                                                 double domain_size) const {
+    Eigen::Matrix3d E = Eigen::Matrix3d::Zero();
+    double p1_x = pos_x[particle_idx];
+    double p1_y = pos_y[particle_idx];
+    double p1_z = pos_z[particle_idx];
+    double search_sq = h_guess * h_guess;
+
+    int stack[128];
+    int stack_ptr = 0;
+    stack[stack_ptr++] = 0;
+
+    while (stack_ptr > 0) {
+        int node_idx = stack[--stack_ptr];
+        const BVHNode& node = bvh_nodes[node_idx];
+
+        double dist_sq = min_periodic_dist_sq(p1_x, node.bbox.min_x,
+                                              node.bbox.max_x, domain_size) +
+                         min_periodic_dist_sq(p1_y, node.bbox.min_y,
+                                              node.bbox.max_y, domain_size) +
+                         min_periodic_dist_sq(p1_z, node.bbox.min_z,
+                                              node.bbox.max_z, domain_size);
+
+        if (dist_sq > search_sq) continue;
+
+        if (node.particle_idx != -1) {
+            int j = node.particle_idx;
+            if (static_cast<size_t>(j) == particle_idx)
+                continue;  // Self-contribution to gradient matrix is zero
+
+            double dx = periodic_displacement(pos_x[j] - p1_x, domain_size);
+            double dy = periodic_displacement(pos_y[j] - p1_y, domain_size);
+            double dz = periodic_displacement(pos_z[j] - p1_z, domain_size);
+            double r2 = dx * dx + dy * dy + dz * dz;
+
+            if (r2 < search_sq && r2 > 1e-24) {
+                double r = std::sqrt(r2);
+                double W;
+                Kernels::cubic_spline_value(r, h_guess, W);
+                double V_j = mass[j] / std::max(rho[j], density_floor);
+                double weight = W;// * V_j;
+                E(0, 0) += dx * dx * weight;
+                E(0, 1) += dx * dy * weight;
+                E(0, 2) += dx * dz * weight;
+                E(1, 1) += dy * dy * weight;
+                E(1, 2) += dy * dz * weight;
+                E(2, 2) += dz * dz * weight;
+            }
+        } else {
+            stack[stack_ptr++] = node.left_child;
+            stack[stack_ptr++] = node.right_child;
+        }
+    }
+
+    E(1, 0) = E(0, 1);
+    E(2, 0) = E(0, 2);
+    E(2, 1) = E(1, 2);
+
+    return Reconstruction::evaluate_matrix_condition_number(E);
+}
+
+#ifdef USE_ADAPTIVE_SOFTENING
 double GasParticleSystem::compute_zeta_contribution(
     double p1_x, double p1_y, double p1_z, double h_i,
     const std::vector<double>& target_x, const std::vector<double>& target_y,
@@ -398,6 +472,7 @@ double GasParticleSystem::compute_zeta_contribution(
     }
     return zeta_sum;
 }
+#endif
 
 // --------------------------------------------------------------------------------
 // Density and Smoothing Length Iteration
@@ -412,20 +487,23 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
     double target_N = config.mfm_target_neighbors;
     double tol = config.mfm_neighbor_tolerance;
     int max_iter = config.mfm_max_iterations;
-    const double mean_spacing =
-        domain_size / std::cbrt(num_particles > 0 ? num_particles : 1);
-    const double min_h_cap = std::max(
-        0.05 * mean_spacing, 2.8 * std::sqrt(config.softening_squared));
+    /*const double mean_spacing =
+        domain_size / std::cbrt(num_particles > 0 ? num_particles : 1);*/
+    const double min_h_cap = /*std::max(0.05 * mean_spacing,*/
+                             // #ifdef USE_ADAPTIVE_SOFTENING
+        2.8 *
+        // #endif
+        config.mfm_min_hsml_fraction * config.softening;
     const double max_h_cap = 0.5 * domain_size;
-    constexpr double MAX_H_GROWTH = 1e8;
 
     size_t num_h_clamped = 0;
     size_t num_non_converged = 0;
+    size_t step_neighbor_increased_cases = 0;
 
     if (num_active == 0) return;
 
-#pragma omp parallel for schedule(dynamic, 64) \
-    reduction(+ : num_h_clamped, num_non_converged)
+#pragma omp parallel for schedule(dynamic, 64) reduction( \
+        + : num_h_clamped, num_non_converged, step_neighbor_increased_cases)
     for (size_t k = 0; k < num_active; ++k) {
         size_t i = active_indices[k];
 
@@ -433,109 +511,120 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         double h_low = 0.0;
         double h_high = std::numeric_limits<double>::infinity();
         double h_guess = h[i];
-        double step_max_h = std::min(max_h_cap, h[i] * MAX_H_GROWTH);
+        double current_n_enc = n_enc_final[i];
 
-        int iter = 0;
+        double current_target_N = target_N;
         double current_n = 0.0;
         double current_dn_dh = 0.0;
-        bool is_converged = false;
+
+        bool matrix_converged = false;
+        int matrix_iters = 0;
         bool h_clamped = false;
+        bool is_converged = false;
 
-        // Newton-Raphson Solver for h_i
-        while (iter < max_iter) {
-            evaluate_density_sum(i, h_guess, domain_size, current_n,
-                                 current_dn_dh);
+        // OUTER LOOP: Matrix Regularization via Target Expansion
+        while (!matrix_converged && matrix_iters < 10 && h_guess < max_h_cap) {
+            int nr_iter = 0;
+            is_converged = false;
+            h_clamped = false;
 
-            double h3 = h_guess * h_guess * h_guess;
-            double N_enc = (4.0 / 3.0) * M_PI * h3 * current_n;
-            n_enc_final[i] = N_enc;
+            // INNER LOOP: Standard Newton-Raphson Solver
+            while (nr_iter < max_iter) {
+                evaluate_density_sum(i, h_guess, domain_size, current_n,
+                                     current_dn_dh);
 
-            if (std::abs(N_enc - target_N) < tol) {
-                is_converged = true;
+                double h3 = h_guess * h_guess * h_guess;
+                double N_enc = (4.0 / 3.0) * M_PI * h3 * current_n;
+                current_n_enc = N_enc;
+
+                if (std::abs(N_enc - current_target_N) < tol) {
+                    is_converged = true;
+                    break;
+                }
+
+                // Floor Termination
+                if (h_guess <= min_h_cap && N_enc > current_target_N) {
+                    h_clamped = true;
+                    is_converged = true;
+                    break;
+                }
+
+                // Ceiling Termination
+                if (h_guess >= max_h_cap && N_enc < current_target_N) {
+                    h_clamped = true;
+                    is_converged = true;
+                    break;
+                }
+
+                // Update bounds
+                if (N_enc > current_target_N)
+                    h_high = h_guess;
+                else
+                    h_low = h_guess;
+
+                // Calculate next step
+                double dN_enc_dh =
+                    (4.0 / 3.0) * M_PI *
+                    (3.0 * h_guess * h_guess * current_n + h3 * current_dn_dh);
+                double h_new = h_guess;
+
+                if (dN_enc_dh > 0.0)
+                    h_new = h_guess - (N_enc - current_target_N) / dN_enc_dh;
+
+                // Bisection fallback
+                if (h_new <= h_low || h_new >= h_high || dN_enc_dh <= 0.0) {
+                    h_guess = std::isinf(h_high) ? (1.26 * h_guess)
+                                                 : std::sqrt(h_low * h_high);
+                } else {
+                    h_guess = h_new;
+                }
+
+                // Safe Clamping
+                if (h_guess > max_h_cap) h_guess = max_h_cap;
+                if (h_guess < min_h_cap) h_guess = min_h_cap;
+
+                nr_iter++;
+            }
+
+            // Sync properties if we exited without convergence
+            if (h_clamped || !is_converged) {
+                evaluate_density_sum(i, h_guess, domain_size, current_n,
+                                     current_dn_dh);
+                double h3 = h_guess * h_guess * h_guess;
+                current_n_enc = (4.0 / 3.0) * M_PI * h3 * current_n;
+            }
+
+            // If clamped at the ceiling, further expansion is impossible
+            if (h_clamped && h_guess >= max_h_cap) {
                 break;
             }
 
-            // Floor Termination:
-            // We evaluated AT the floor, and we STILL have too many neighbors.
-            // This means the root is below the floor
-            if (h_guess <= min_h_cap && N_enc > target_N) {
-                h_clamped = true;
-                is_converged = true;
-                break;
-            }
+            // EVALUATE MATRIX CONDITION
+            double cond = check_matrix_condition(i, h_guess, domain_size);
 
-            // Ceiling Termination:
-            // We evaluated AT the ceiling, and we STILL have too few neighbors.
-            // This means the root is above the ceiling
-            if (h_guess >= step_max_h && N_enc < target_N) {
-                h_clamped = true;
-                is_converged = true;
-                break;
-            }
+            if (cond < 0.0 || cond > N_cond_crit) {
+                // Matrix is ill-conditioned. Find MORE particles
+                current_target_N *= 1.2;
 
-            // Update bounds
-            if (N_enc > target_N)
-                h_high = h_guess;
-            else
-                h_low = h_guess;
+                // Reset the upper bound because the new root is larger
+                h_high = std::numeric_limits<double>::infinity();
 
-            // Calculate next step
-            double dN_enc_dh =
-                (4.0 / 3.0) * M_PI *
-                (3.0 * h_guess * h_guess * current_n + h3 * current_dn_dh);
-            double h_new = h_guess;
-
-            if (dN_enc_dh > 0.0)
-                h_new = h_guess - (N_enc - target_N) / dN_enc_dh;
-
-            // Bisection fallback
-            if (h_new <= h_low || h_new >= h_high || dN_enc_dh <= 0.0) {
-                h_guess =
-                    std::isinf(h_high)
-                        ? (1.26 * h_guess)
-                        : std::sqrt(h_low *
-                                    h_high);  // (Geometric bisection is faster)
+                matrix_iters++;
+                step_neighbor_increased_cases++;
             } else {
-                h_guess = h_new;
+                matrix_converged = true;
             }
-
-            // Safe Clamping:
-            // Keep the NEXT guess within physical bounds so
-            // evaluate_density_sum doesn't crash, but DO NOT break. Let the
-            // loop prove it's actually stuck on the next pass
-            if (h_guess > step_max_h) {
-                h_guess = step_max_h;
-            }
-            if (h_guess < min_h_cap) {
-                h_guess = min_h_cap;
-            }
-
-            iter++;
-        }
-
-        if (h_clamped) {
-            num_h_clamped++;
-        }
-
-        if (!is_converged) {
-            num_non_converged++;
-        }
-
-        // IMPORTANT: If we exited the loop due to max_iter OR clamping,
-        // h_guess has been updated but current_n and current_dn_dh are stale.
-        // We must re-evaluate
-        if (h_clamped || !is_converged) {
-            // Sync the properties using the finalized, clamped h_guess
-            evaluate_density_sum(i, h_guess, domain_size, current_n,
-                                 current_dn_dh);
-            double h3 = h_guess * h_guess * h_guess;
-            n_enc_final[i] = (4.0 / 3.0) * M_PI * h3 * current_n;
         }
 
         // Commit finalized state
         h[i] = h_guess;
         rho[i] = mass[i] * current_n;
+        n_enc_final[i] = current_n_enc;
 
+        if (h_clamped) num_h_clamped++;
+        if (!is_converged) num_non_converged++;
+
+#ifdef USE_ADAPTIVE_SOFTENING
         // Adaptive gravity correction (Zeta)
         double Omega_i = 1.0;
         double h_over_3n = 0.0;
@@ -557,10 +646,12 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         }
 
         zeta[i] = h_over_3n * (1.0 / Omega_i) * zeta_sum;
+#endif
     }
 
     clamped_h_cases += num_h_clamped;
     non_converged_h_cases += num_non_converged;
+    neighbor_increased_cases += step_neighbor_increased_cases;
 }
 
 void GasParticleSystem::bin_and_assign_mass(const Config& config) {
@@ -589,86 +680,6 @@ void GasParticleSystem::apply_cooling(double dt, double a, const Config& config,
     double gamma_minus_1 = config.gamma - 1.0;
 
     if (num_active != 0) {
-        /*#pragma omp parallel for schedule(static) \
-            reduction(+ : total_radiated, total_photoheated,
-           non_converged_count, \ total_cycles) for (size_t k = 0; k <
-           num_active; ++k) { size_t i = active_indices[k];
-
-                    double local_rho = rho[i];
-                    if (local_rho > 1e-12) {  // Skip vacuum particles
-                        // Track the metal mass fraction
-                        double local_Z_frac = metal_frac[i];
-                        double u_current = u[i];
-                        double u_initial = u_current;
-                        double t_evolved = 0.0;
-                        int cell_non_converged = 0;
-
-                        double dt_particle = dt_step[i];
-
-                        // Local Particle Subcycling
-                        while (t_evolved < dt_particle) {
-                            double du_dt = cooling.compute_du_dt(
-                                u_current, local_rho, local_Z_frac, a, config);
-
-                            double dt_cell;
-                            if (u_current <= u_rad_floor && du_dt < 0.0) {
-                                // The particle is at the temperature floor and
-           trying
-                                // to cool. It is in thermal equilibrium.
-           Consume the
-                                // rest of the step
-                                dt_cell = dt_particle - t_evolved;
-                            } else {
-                                dt_cell = (std::abs(du_dt) > 0.0)
-                                              ? 0.1 * (u_current /
-           std::abs(du_dt)) : dt_particle;
-                            }
-
-                            // Prevent infinite loops if u_current evaluates to
-           0.0 dt_cell = std::max(dt_cell, 1e-4 * dt_particle);
-
-                            dt_cell = std::min(dt_cell, dt_particle -
-           t_evolved);
-
-                            int iters = 0;
-                            u_current = cooling.solve_cooling_implicit(
-                                u_current, local_rho, local_Z_frac, a, dt_cell,
-                                u_rad_floor, config, iters);
-
-                            if (iters >= Cooling::MAX_ITER) {
-                                cell_non_converged++;
-                            }
-
-                            t_evolved += dt_cell;
-                            total_cycles++;
-                        }
-
-                        if (cell_non_converged > 0) {
-                            non_converged_count++;
-                        }
-
-                        double delta_u = u_current - u_initial;
-                        if (std::abs(delta_u) > 0.0) {
-                            // Update the internal energy
-                            u[i] = u_current;
-                            total_energy[i] += delta_u;
-
-                            // Sync the entropy so the dual-energy switch
-                            // doesn't override the update
-                            entropy[i] =
-                                gamma_minus_1 * u[i] / std::pow(rho[i],
-           gamma_minus_1);
-
-                            // Track total energy change using the particle mass
-                            double delta_E = delta_u * mass[i];
-                            if (delta_u < 0.0) {
-                                total_radiated -= delta_E;
-                            } else {
-                                total_photoheated += delta_E;
-                            }
-                        }
-                    }
-                }*/
 #pragma omp parallel for schedule(static) \
     reduction(+ : total_radiated, total_photoheated, non_converged_count)
         for (size_t k = 0; k < num_active; ++k) {
@@ -887,7 +898,7 @@ double GasParticleSystem::get_gravity_timestep(const Config& config) const {
     if (config.individual_particle_timesteps) {
         return std::numeric_limits<double>::infinity();
     } else {
-        double epsilon = std::sqrt(config.softening_squared);
+        double epsilon = config.softening;
         double a_max = std::sqrt(max_accel_sq);
         double dt_grav = std::sqrt(epsilon / a_max);
         return dt_grav * config.gravity_accuracy_eta;
@@ -1092,11 +1103,11 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
         return;
     }
 
-    double a_inv = 1.0 / a;
-    double a_inv3 = a_inv * a_inv * a_inv;
+    //double a_inv = 1.0 / a;
+    //double a_inv3 = a_inv * a_inv * a_inv;
     double u_rad_floor =
         config.enable_cooling ? cooling.get_u_rad_floor(a, config) : 0.0;
-    double epsilon = std::sqrt(config.softening_squared);
+    double epsilon = config.softening;
 
     if (num_active == 0) return;
 
@@ -1130,22 +1141,6 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
                 ((a * h[i]) / v_sig_max_phys) * config.hydro_courant_factor;
             dt_ideal = std::min(dt_ideal, dt_cfl);
         }
-
-        // Bounded Cooling Timestep
-        /*if (config.enable_cooling && rho[i] > 1e-12 && u[i] > u_rad_floor) {
-            double du_dt_val =
-                cooling.compute_du_dt(u[i], rho[i], metal_frac[i], a, config);
-            if (std::abs(du_dt_val) > 0.0) {
-                // The raw physical cooling timestep
-                double dt_cool = 0.1 * (u[i] / std::abs(du_dt_val));
-
-                // Allow the particle to step down and wake up, but never let it
-                // drop lower than cooling_clamp_floor
-                double safe_dt_cool = std::max(dt_cool, cooling_clamp_floor);
-
-                dt_ideal = std::min(dt_ideal, safe_dt_cool);
-            }
-        }*/
 
         // POWER-OF-TWO BINNING
         int n = 0;
@@ -1188,6 +1183,9 @@ void GasParticleSystem::compute_and_add_pp_forces(double a,
     const bool use_pm = config.use_PM;
     const size_t n_gas = num_particles;
     const size_t num_nodes = 2 * n_gas - 1;
+#ifndef USE_ADAPTIVE_SOFTENING
+    double epsilon = config.softening;
+#endif
 
     const double search_sq =
         use_pm ? cutoff_sq : std::numeric_limits<double>::infinity();
@@ -1198,7 +1196,9 @@ void GasParticleSystem::compute_and_add_pp_forces(double a,
     double* d_pz = pos_z.data();
     double* d_m = mass.data();
     double* d_h = h.data();
+#ifdef USE_ADAPTIVE_SOFTENING
     double* d_zeta = zeta.data();
+#endif
     double* d_ax = acc_x.data();
     double* d_ay = acc_y.data();
     double* d_az = acc_z.data();
@@ -1209,11 +1209,19 @@ void GasParticleSystem::compute_and_add_pp_forces(double a,
 #ifdef USE_GPU
     auto start_transfer = std::chrono::high_resolution_clock::now();
 
+#ifdef USE_ADAPTIVE_SOFTENING
 #pragma omp target enter data map(                                        \
         to : d_px[0 : n_gas], d_py[0 : n_gas], d_pz[0 : n_gas],           \
             d_m[0 : n_gas], d_h[0 : n_gas], d_zeta[0 : n_gas],            \
             d_bvh_nodes[0 : num_nodes], d_ax[0 : n_gas], d_ay[0 : n_gas], \
             d_az[0 : n_gas], d_active_idx[0 : n_active])
+#else
+#pragma omp target enter data map(                                      \
+        to : d_px[0 : n_gas], d_py[0 : n_gas], d_pz[0 : n_gas],         \
+            d_m[0 : n_gas], d_h[0 : n_gas], d_bvh_nodes[0 : num_nodes], \
+            d_ax[0 : n_gas], d_ay[0 : n_gas], d_az[0 : n_gas],          \
+            d_active_idx[0 : n_active])
+#endif
 
     auto end_transfer = std::chrono::high_resolution_clock::now();
     auto start_compute = std::chrono::high_resolution_clock::now();
@@ -1229,9 +1237,11 @@ void GasParticleSystem::compute_and_add_pp_forces(double a,
         size_t i = d_active_idx[k];
 
         double p1_x = d_px[i], p1_y = d_py[i], p1_z = d_pz[i];
+#ifdef USE_ADAPTIVE_SOFTENING
         double m_i = d_m[i];
         double h_i = d_h[i];
         double zeta_i = d_zeta[i];
+#endif
 
         double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
 
@@ -1288,6 +1298,7 @@ void GasParticleSystem::compute_and_add_pp_forces(double a,
                 double r = std::sqrt(dist_sq);
                 double m_j = d_m[j];
 
+#ifdef USE_ADAPTIVE_SOFTENING
                 double h_j = d_h[j];
                 double zeta_j = d_zeta[j];
 
@@ -1300,7 +1311,13 @@ void GasParticleSystem::compute_and_add_pp_forces(double a,
                     ((dphi_dr_i + dphi_dr_j) + (zeta_i * dW_dr_i) / m_i +
                      (zeta_j * dW_dr_j) / m_j) /
                     r;
-
+#else
+                // OG3 / Standard TreePM P-P Force
+                double dphi_dr, dummy_dphi_dh;
+                Kernels::gravity_derivatives(r, epsilon, dphi_dr,
+                                             dummy_dphi_dh);
+                double force_mag_over_r = G * dphi_dr / r;
+#endif
                 if (use_pm) {
                     double r_scaled = r / (2.0 * r_s);
                     double taper = std::erfc(r_scaled) +
@@ -1327,11 +1344,19 @@ void GasParticleSystem::compute_and_add_pp_forces(double a,
     auto end_compute = std::chrono::high_resolution_clock::now();
     auto start_return = std::chrono::high_resolution_clock::now();
 
+#ifdef USE_ADAPTIVE_SOFTENING
 #pragma omp target exit data map(from : d_ax[0 : n_gas], d_ay[0 : n_gas], \
                                      d_az[0 : n_gas])                     \
     map(delete : d_px[0 : n_gas], d_py[0 : n_gas], d_pz[0 : n_gas],       \
             d_m[0 : n_gas], d_h[0 : n_gas], d_zeta[0 : n_gas],            \
             d_bvh_nodes[0 : num_nodes], d_active_idx[0 : n_active])
+#else
+#pragma omp target exit data map(from : d_ax[0 : n_gas], d_ay[0 : n_gas], \
+                                     d_az[0 : n_gas])                     \
+    map(delete : d_px[0 : n_gas], d_py[0 : n_gas], d_pz[0 : n_gas],       \
+            d_m[0 : n_gas], d_h[0 : n_gas], d_bvh_nodes[0 : num_nodes],   \
+            d_active_idx[0 : n_active])
+#endif
 
     auto end_return = std::chrono::high_resolution_clock::now();
 
@@ -1358,7 +1383,6 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
     const double domain_size = config.domain_size;
     // Pre-scale G so all output forces are comoving accelerations
     const double G = config.G / (a * a * a);
-    const double soft_sq = config.softening_squared;
     const double cutoff_sq = config.cutoff_radius_squared;
     const double r_s = config.PM_smoothing_cells * config.cell_size;
     const bool use_pm = config.use_PM;
@@ -1370,7 +1394,7 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
     // tree traversal)
     const double search_sq =
         use_pm ? cutoff_sq : std::numeric_limits<double>::infinity();
-    const double base_soft = std::sqrt(soft_sq);
+    const double base_soft = config.softening;
     const double spline_equivalent_h = 2.8 * base_soft;
 
     // Extract pointers
@@ -1379,7 +1403,9 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
     double* d_gas_pz = pos_z.data();
     double* d_gas_m = mass.data();
     double* d_gas_h = h.data();
+#ifdef USE_ADAPTIVE_SOFTENING
     double* d_gas_zeta = zeta.data();
+#endif
     double* d_gas_ax = acc_x.data();
     double* d_gas_ay = acc_y.data();
     double* d_gas_az = acc_z.data();
@@ -1399,12 +1425,21 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
 #ifdef USE_GPU
     auto start_transfer = std::chrono::high_resolution_clock::now();
 
+#ifdef USE_ADAPTIVE_SOFTENING
 #pragma omp target enter data map(                                            \
         to : d_gas_px[0 : n_gas], d_gas_py[0 : n_gas], d_gas_pz[0 : n_gas],   \
             d_gas_m[0 : n_gas], d_gas_h[0 : n_gas], d_gas_zeta[0 : n_gas],    \
             d_gas_ax[0 : n_gas], d_gas_ay[0 : n_gas], d_gas_az[0 : n_gas],    \
             d_active_idx[0 : n_active], d_dm_px[0 : n_dm], d_dm_py[0 : n_dm], \
             d_dm_pz[0 : n_dm], d_dm_m[0 : n_dm], d_dm_bvh[0 : dm_num_nodes])
+#else
+#pragma omp target enter data map(                                            \
+        to : d_gas_px[0 : n_gas], d_gas_py[0 : n_gas], d_gas_pz[0 : n_gas],   \
+            d_gas_m[0 : n_gas], d_gas_h[0 : n_gas], d_gas_ax[0 : n_gas],      \
+            d_gas_ay[0 : n_gas], d_gas_az[0 : n_gas],                         \
+            d_active_idx[0 : n_active], d_dm_px[0 : n_dm], d_dm_py[0 : n_dm], \
+            d_dm_pz[0 : n_dm], d_dm_m[0 : n_dm], d_dm_bvh[0 : dm_num_nodes])
+#endif
 
     auto end_transfer = std::chrono::high_resolution_clock::now();
     auto start_compute = std::chrono::high_resolution_clock::now();
@@ -1420,9 +1455,11 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
         size_t i = d_active_idx[k];
 
         double p1_x = d_gas_px[i], p1_y = d_gas_py[i], p1_z = d_gas_pz[i];
+#ifdef USE_ADAPTIVE_SOFTENING
         double m_gas = d_gas_m[i];
         double h_i = d_gas_h[i];
         double zeta_i = d_gas_zeta[i];
+#endif
 
         double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
 
@@ -1447,7 +1484,7 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
             if (aabb_dist_sq > search_sq) continue;  // Prune branch completely
 
             if (node.particle_idx != -1) {
-                // Exact P-P interaction at the leaf
+                // P-P interaction at the leaf
                 int j = node.particle_idx;
 
                 double dx = p1_x - d_dm_px[j];
@@ -1479,6 +1516,7 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
                 double r = std::sqrt(dist_sq + 1e-24);
                 double m_j = d_dm_m[j];
 
+#ifdef USE_ADAPTIVE_SOFTENING
                 // Gas kernel derivatives
                 double dphi_dr_i, dW_dr_i, dphi_dr_j, dummy_dphi_dh;
                 Kernels::adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
@@ -1491,6 +1529,13 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
                 double force_mag_over_r =
                     (G / 2.0) *
                     ((dphi_dr_i + dphi_dr_j) + (zeta_i * dW_dr_i) / m_gas) / r;
+#else
+                // OG3 / Standard TreePM P-P Force
+                double dphi_dr, dummy_dphi_dh;
+                Kernels::gravity_derivatives(r, base_soft, dphi_dr,
+                                             dummy_dphi_dh);
+                double force_mag_over_r = G * dphi_dr / r;
+#endif
 
                 if (use_pm) {
                     double r_scaled = r / (2.0 * r_s);
@@ -1520,6 +1565,7 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
     auto end_compute = std::chrono::high_resolution_clock::now();
     auto start_return = std::chrono::high_resolution_clock::now();
 
+#ifdef USE_ADAPTIVE_SOFTENING
 #pragma omp target exit data map(from : d_gas_ax[0 : n_gas],                   \
                                      d_gas_ay[0 : n_gas], d_gas_az[0 : n_gas]) \
     map(delete : d_gas_px[0 : n_gas], d_gas_py[0 : n_gas],                     \
@@ -1527,6 +1573,14 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
             d_gas_zeta[0 : n_gas], d_active_idx[0 : n_active],                 \
             d_dm_px[0 : n_dm], d_dm_py[0 : n_dm], d_dm_pz[0 : n_dm],           \
             d_dm_m[0 : n_dm], d_dm_bvh[0 : dm_num_nodes])
+#else
+#pragma omp target exit data map(from : d_gas_ax[0 : n_gas],                   \
+                                     d_gas_ay[0 : n_gas], d_gas_az[0 : n_gas]) \
+    map(delete : d_gas_px[0 : n_gas], d_gas_py[0 : n_gas],                     \
+            d_gas_pz[0 : n_gas], d_gas_m[0 : n_gas], d_gas_h[0 : n_gas],       \
+            d_active_idx[0 : n_active], d_dm_px[0 : n_dm], d_dm_py[0 : n_dm],  \
+            d_dm_pz[0 : n_dm], d_dm_m[0 : n_dm], d_dm_bvh[0 : dm_num_nodes])
+#endif
 
     auto end_return = std::chrono::high_resolution_clock::now();
 
@@ -1662,6 +1716,8 @@ void GasParticleSystem::compute_gradients(const Config& config) {
 
     if (num_active == 0) return;
 
+    bool debug_printed = false;
+
 #pragma omp parallel for reduction(+ : step_ill_conditioned) \
     schedule(dynamic, 64)
     for (size_t k = 0; k < num_active; ++k) {
@@ -1710,22 +1766,22 @@ void GasParticleSystem::compute_gradients(const Config& config) {
                 double r2 = dx * dx + dy * dy + dz * dz;
 
                 if ((r2 < p_i.h * p_i.h || r2 < h[j] * h[j]) && r2 > 1e-24) {
-                    Reconstruction::ParticleState nj;
-                    nj.pos = Eigen::Vector3d(pos_x[j], pos_y[j], pos_z[j]);
-                    nj.vel = Eigen::Vector3d(vel_x[j], vel_y[j], vel_z[j]);
-                    nj.mass = mass[j];
-                    nj.rho = rho[j];
-                    nj.pressure = pressure[j];
-                    nj.h = h[j];
-                    neighbors.push_back(nj);
-
                     double rel_vx = vel_x[j] - p_i.vel.x();
                     double rel_vy = vel_y[j] - p_i.vel.y();
                     double rel_vz = vel_z[j] - p_i.vel.z();
                     double rel_v2 =
                         rel_vx * rel_vx + rel_vy * rel_vy + rel_vz * rel_vz;
-
                     local_max_rel_ke = std::max(local_max_rel_ke, 0.5 * rel_v2);
+                    if (r2 < p_i.h * p_i.h) {
+                        Reconstruction::ParticleState nj;
+                        nj.pos = Eigen::Vector3d(pos_x[j], pos_y[j], pos_z[j]);
+                        nj.vel = Eigen::Vector3d(vel_x[j], vel_y[j], vel_z[j]);
+                        nj.mass = mass[j];
+                        nj.rho = rho[j];
+                        nj.pressure = pressure[j];
+                        nj.h = h[j];
+                        neighbors.push_back(nj);
+                    }
                 }
             } else {
                 stack[stack_ptr++] = node.left_child;
@@ -1755,6 +1811,65 @@ void GasParticleSystem::compute_gradients(const Config& config) {
 
         if (grads.ill_conditioned) {
             step_ill_conditioned++;
+
+            if (!debug_printed) {
+#pragma omp critical
+                {
+                    if (!debug_printed) {
+                        debug_printed = true;
+
+                        std::cout
+                            << "\n=== ILL-CONDITIONED MATRIX DIAGNOSTIC ===\n";
+                        std::cout << "Particle Index: " << i << "\n";
+                        std::cout << "Pos: (" << p_i.pos.x() << ", "
+                                  << p_i.pos.y() << ", " << p_i.pos.z()
+                                  << ")\n";
+                        std::cout << "h_i: " << p_i.h << " | rho_i: " << p_i.rho
+                                  << "\n";
+                        std::cout << "n_enc: " << n_enc_final[i] << "\n";
+                        std::cout
+                            << "Condition Number: " << grads.condition_number
+                            << "\n";
+                        std::cout
+                            << "Number of neighbors found: " << neighbors.size()
+                            << "\n";
+
+                        int exact_overlaps = 0;
+                        int extremely_close = 0;
+
+                        std::cout << "Neighbor distances:\n";
+                        for (size_t n = 0; n < neighbors.size(); ++n) {
+                            double dx = periodic_displacement(
+                                neighbors[n].pos.x() - p_i.pos.x(),
+                                domain_size);
+                            double dy = periodic_displacement(
+                                neighbors[n].pos.y() - p_i.pos.y(),
+                                domain_size);
+                            double dz = periodic_displacement(
+                                neighbors[n].pos.z() - p_i.pos.z(),
+                                domain_size);
+                            double r = std::sqrt(dx * dx + dy * dy + dz * dz);
+
+                            std::cout << "  N[" << n << "] r = " << r
+                                      << " | dx: " << dx << " dy: " << dy
+                                      << " dz: " << dz << "\n";
+
+                            if (r < 1e-12)
+                                exact_overlaps++;
+                            else if (r < 0.05 * p_i.h)
+                                extremely_close++;
+                        }
+
+                        std::cout << "Diagnostics:\n";
+                        std::cout << "  Exact overlaps (r < 1e-12): "
+                                  << exact_overlaps << "\n";
+                        std::cout << "  Highly clumped (r < 0.05*h): "
+                                  << extremely_close << "\n";
+                        std::cout
+                            << "=========================================\n";
+                    }
+                }
+            }
         }
     }
 
@@ -1816,8 +1931,11 @@ static Eigen::Vector3d compute_mfm_face_area_vector(
     Kernels::cubic_spline_value(face.r, p_i.h, W_i);
     Kernels::cubic_spline_value(face.r, p_j.h, W_j);
 
-    Eigen::Vector3d Area_vec = (V_i * V_j * W_i * (grad_i.B_matrix * dx_vec)) +
-                               (V_i * V_j * W_j * (grad_j.B_matrix * dx_vec));
+    
+    Eigen::Vector3d Area_vec = (V_i * W_i * (grad_i.B_matrix * dx_vec)) +
+                               (V_j * W_j * (grad_j.B_matrix * dx_vec));
+    /*Eigen::Vector3d Area_vec = (V_i * V_j * W_i * (grad_i.B_matrix * dx_vec)) +
+                               (V_i * V_j * W_j * (grad_j.B_matrix * dx_vec));*/
 
     double facenormal_dot_dp = Area_vec.dot(dx_vec);
 
@@ -1831,7 +1949,9 @@ static Eigen::Vector3d compute_mfm_face_area_vector(
         Kernels::adaptive_gravity_terms(face.r, p_j.h, dummy_phi, dW_dr_j);
 
         double face_area_mag =
-            -(V_i * V_i * dW_dr_i + V_j * V_j * dW_dr_j) / face.r;
+            -(p_i.mass * p_j.mass) *
+            (dW_dr_i / (p_i.rho * p_i.rho) + dW_dr_j / (p_j.rho * p_j.rho)) /
+            face.r;
 
         return face_area_mag * dx_vec;
     }
@@ -1840,7 +1960,8 @@ static Eigen::Vector3d compute_mfm_face_area_vector(
 }
 
 // Computes the maximum signal velocity between two particles and updates
-// their cached maximums using lock-free atomics for the CFL timestep condition
+// their cached maximums using lock-free atomics for the CFL timestep
+// condition
 static inline void update_signal_velocities(
     const Reconstruction::ParticleState& p_i,
     const Reconstruction::ParticleState& p_j, double dx, double dy, double dz,
@@ -1892,8 +2013,8 @@ static inline void update_signal_velocities(
     // Update particle i
     atomic_update_max(&v_sig_max_i, v_sig_ij_phys);
 
-    // Because of the (j <= i) symmetry optimization, thread 'j' might skip 'i'.
-    // Therefore, thread 'i' MUST push the max velocity to 'j'
+    // Because of the (j <= i) symmetry optimization, thread 'j' might skip
+    // 'i'. Therefore, thread 'i' MUST push the max velocity to 'j'
     atomic_update_max(&v_sig_max_j, v_sig_ij_phys);
 }
 
@@ -2030,7 +2151,8 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                     MFMFaceFlux flux_1d_phys = solve_mfm_riemann(
                         face_phys, v_frame_phys, config.gamma);
 
-                    // Calculate Maximum Signal Velocity for the CFL condition
+                    // Calculate Maximum Signal Velocity for the CFL
+                    // condition
                     double v_sig_ij, c_phys_j;
                     update_signal_velocities(p_i, p_j, dx, dy, dz, r2, a, a_inv,
                                              a_inv3, config.gamma, v_sig_max[i],
@@ -2091,7 +2213,8 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                         // Wake up the sleeping neighbor if its timestep is
                         // larger (e.g., 4x) than the active particle
                         // hitting it
-                        // bool gizmo_trigger = (dt_step[j] > 4.0 * dt_step[i]);
+                        // bool gizmo_trigger = (dt_step[j] > 4.0 *
+                        // dt_step[i]);
                         if (og3_trigger /* || gizmo_trigger*/) {
 #pragma omp atomic write
                             needs_wakeup[j] = 1;
