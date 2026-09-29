@@ -24,12 +24,6 @@ namespace Reconstruction {
 
 namespace {  // Anonymous namespace for private helper functions
 
-/*inline double periodic_displacement(double dx, double domain_size) {
-    if (dx > 0.5 * domain_size) return dx - domain_size;
-    if (dx < -0.5 * domain_size) return dx + domain_size;
-    return dx;
-}*/
-
 #ifdef THEORETICAL_LIMITER
 inline int math_sign(double x) { return (x > 0.0) ? 1 : ((x < 0.0) ? -1 : 0); }
 
@@ -150,8 +144,12 @@ ParticleGradients compute_single_particle_gradients(
         double r = std::sqrt(r2);
         double W;
         Kernels::cubic_spline_value(r, p_i.h, W);
+#ifdef VOLUME_WEIGHTED
         double V_j = nj.mass / nj.rho;
-        double weight = W;// * V_j;
+        double weight = W * V_j;
+#else
+        double weight = W;
+#endif
 
         E(0, 0) += dx * dx * weight;
         E(0, 1) += dx * dy * weight;
@@ -212,7 +210,12 @@ ParticleGradients compute_single_particle_gradients(
             double W;
             Kernels::cubic_spline_value(r, p_i.h, W);
             Eigen::Vector3d dx_vec(dx, dy, dz);
-            double weight = W;// * (nj.mass / nj.rho);
+#ifdef VOLUME_WEIGHTED
+            double V_j = nj.mass / nj.rho;
+            double weight = W * V_j;
+#else
+            double weight = W;
+#endif
 
             sum_rho += (nj.rho - p_i.rho) * dx_vec * weight;
             sum_p += (nj.pressure - p_i.pressure) * dx_vec * weight;
@@ -434,11 +437,11 @@ ReconstructedFace compute_face_reconstruction(
 #endif
 #else
 #ifdef ZEROTH_ORDER_RECONSTRUCTION
-    face.rho_L = std::max(p_i.rho, 0*density_floor);
-    face.rho_R = std::max(p_j.rho, 0*density_floor);
+    face.rho_L = std::max(p_i.rho, 0 * density_floor);
+    face.rho_R = std::max(p_j.rho, 0 * density_floor);
 
-    face.p_L = std::max(p_i.pressure, 0*pressure_floor);
-    face.p_R = std::max(p_j.pressure, 0*pressure_floor);
+    face.p_L = std::max(p_i.pressure, 0 * pressure_floor);
+    face.p_R = std::max(p_j.pressure, 0 * pressure_floor);
 
     face.v_L = p_i.vel;
     face.v_R = p_j.vel;

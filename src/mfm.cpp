@@ -390,8 +390,8 @@ double GasParticleSystem::check_matrix_condition(size_t particle_idx,
                 double r = std::sqrt(r2);
                 double W;
                 Kernels::cubic_spline_value(r, h_guess, W);
-                double V_j = mass[j] / std::max(rho[j], density_floor);
-                double weight = W;// * V_j;
+                // double V_j = mass[j] / std::max(rho[j], density_floor);
+                double weight = W;  // * V_j;
                 E(0, 0) += dx * dx * weight;
                 E(0, 1) += dx * dy * weight;
                 E(0, 2) += dx * dz * weight;
@@ -487,12 +487,10 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
     double target_N = config.mfm_target_neighbors;
     double tol = config.mfm_neighbor_tolerance;
     int max_iter = config.mfm_max_iterations;
-    /*const double mean_spacing =
-        domain_size / std::cbrt(num_particles > 0 ? num_particles : 1);*/
-    const double min_h_cap = /*std::max(0.05 * mean_spacing,*/
-                             // #ifdef USE_ADAPTIVE_SOFTENING
+    const double min_h_cap =
+#ifdef USE_ADAPTIVE_SOFTENING
         2.8 *
-        // #endif
+#endif
         config.mfm_min_hsml_fraction * config.softening;
     const double max_h_cap = 0.5 * domain_size;
 
@@ -606,7 +604,8 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
                 // Matrix is ill-conditioned. Find MORE particles
                 current_target_N *= 1.2;
 
-                // Reset the upper bound because the new root is larger
+                // Reset the bounds because the new root is larger
+                h_low = h_guess;
                 h_high = std::numeric_limits<double>::infinity();
 
                 matrix_iters++;
@@ -1103,8 +1102,6 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
         return;
     }
 
-    //double a_inv = 1.0 / a;
-    //double a_inv3 = a_inv * a_inv * a_inv;
     double u_rad_floor =
         config.enable_cooling ? cooling.get_u_rad_floor(a, config) : 0.0;
     double epsilon = config.softening;
@@ -1931,11 +1928,15 @@ static Eigen::Vector3d compute_mfm_face_area_vector(
     Kernels::cubic_spline_value(face.r, p_i.h, W_i);
     Kernels::cubic_spline_value(face.r, p_j.h, W_j);
 
-    
+#ifdef VOLUME_WEIGHTED
+    // B_matrix has units [L^-2], requires V_i * V_j to yield Area [L^2]
+    Eigen::Vector3d Area_vec = (V_i * V_j * W_i * (grad_i.B_matrix * dx_vec)) +
+                               (V_i * V_j * W_j * (grad_j.B_matrix * dx_vec));
+#else
+    // B_matrix has units [L], requires only V_i to yield Area [L^2]
     Eigen::Vector3d Area_vec = (V_i * W_i * (grad_i.B_matrix * dx_vec)) +
                                (V_j * W_j * (grad_j.B_matrix * dx_vec));
-    /*Eigen::Vector3d Area_vec = (V_i * V_j * W_i * (grad_i.B_matrix * dx_vec)) +
-                               (V_i * V_j * W_j * (grad_j.B_matrix * dx_vec));*/
+#endif
 
     double facenormal_dot_dp = Area_vec.dot(dx_vec);
 
@@ -1949,10 +1950,12 @@ static Eigen::Vector3d compute_mfm_face_area_vector(
         Kernels::adaptive_gravity_terms(face.r, p_j.h, dummy_phi, dW_dr_j);
 
         double face_area_mag =
-            -(p_i.mass * p_j.mass) *
+            /*-(p_i.mass * p_j.mass) *
             (dW_dr_i / (p_i.rho * p_i.rho) + dW_dr_j / (p_j.rho * p_j.rho)) /
-            face.r;
+            face.r;*/
+            -(V_i * V_i * dW_dr_i + V_j * V_j * dW_dr_j) / face.r;
 
+        std::cout << "\nSPH" << std::endl;
         return face_area_mag * dx_vec;
     }
 
@@ -2056,6 +2059,9 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
         grad_i.grad_vx = grad_vx[i];
         grad_i.grad_vy = grad_vy[i];
         grad_i.grad_vz = grad_vz[i];
+        grad_i.ill_conditioned =
+            (cond_num[i] < 0.0 || cond_num[i] > N_cond_crit);
+        grad_i.condition_number = cond_num[i];
 
         int stack[128];
         int stack_ptr = 0;
@@ -2114,6 +2120,9 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                     grad_j.grad_vx = grad_vx[j];
                     grad_j.grad_vy = grad_vy[j];
                     grad_j.grad_vz = grad_vz[j];
+                    grad_j.ill_conditioned =
+                        (cond_num[j] < 0.0 || cond_num[j] > N_cond_crit);
+                    grad_j.condition_number = cond_num[j];
 
                     // SOLVER PIPELINE
                     Reconstruction::ReconstructedFace face =
@@ -2202,7 +2211,8 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                         du_dt[j] += du_dt_j;
 #pragma omp atomic
                         de_dt[j] += de_dt_j;
-                    } else if (!needs_wakeup[j]) {
+                    } else if (config.individual_particle_timesteps &&
+                               !needs_wakeup[j]) {
                         // OpenGadget3 Wake-up Limiter
                         // Wake up the sleeping neighbor if the signal
                         // velocity of the interaction exceeds 3x its own

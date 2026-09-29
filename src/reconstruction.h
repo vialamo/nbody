@@ -2,6 +2,8 @@
 #include <Eigen/Dense>
 #include <vector>
 
+//#define VOLUME_WEIGHTED
+
 constexpr double N_cond_crit = 100.0;
 
 namespace Reconstruction {
