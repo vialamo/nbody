@@ -57,9 +57,7 @@ GasParticleSystem::GasParticleSystem(const Config& config)
 #endif
 
     v_sig_max.reserve(config.num_gas_particles);
-
     cond_num.reserve(config.num_gas_particles);
-    raw_sum_p.reserve(config.num_gas_particles);
     n_enc_final.reserve(config.num_gas_particles);
 
     time_bin.reserve(config.num_gas_particles);
@@ -129,7 +127,6 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
     grad_p.push_back(Eigen::Vector3d::Zero());
 
     cond_num.push_back(0);
-    raw_sum_p.push_back(Eigen::Vector3d::Zero());
     n_enc_final.push_back(0);
 
     time_bin.push_back(0);
@@ -176,7 +173,6 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     std::vector<double> new_delta_E_grav(num_particles);
 
     std::vector<double> new_cond_num(num_particles);
-    std::vector<Eigen::Vector3d> new_raw_sum_p(num_particles);
     std::vector<double> new_n_enc_final(num_particles);
 
     std::vector<int> new_time_bin(num_particles);
@@ -222,7 +218,6 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
         new_max_rel_ke[i] = max_rel_ke[src];
         new_delta_E_grav[i] = delta_E_grav[src];
         new_cond_num[i] = cond_num[src];
-        new_raw_sum_p[i] = raw_sum_p[src];
         new_n_enc_final[i] = n_enc_final[src];
         new_time_bin[i] = time_bin[src];
         new_dt_step[i] = dt_step[src];
@@ -266,7 +261,6 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     entropy = std::move(new_entropy);
     max_rel_ke = std::move(new_max_rel_ke);
     delta_E_grav = std::move(new_delta_E_grav);
-    raw_sum_p = std::move(new_raw_sum_p);
     cond_num = std::move(new_cond_num);
     n_enc_final = std::move(new_n_enc_final);
     time_bin = std::move(new_time_bin);
@@ -350,9 +344,18 @@ void GasParticleSystem::evaluate_density_sum(size_t particle_idx,
     }
 }
 
-double GasParticleSystem::check_matrix_condition(size_t particle_idx,
-                                                 double h_guess,
-                                                 double domain_size) const {
+// Evaluates the condition number of a geometric E matrix. Returns -1.0 if
+// singular
+static inline double evaluate_matrix_condition_number(
+    const Eigen::Matrix3d& E, const Eigen::Matrix3d& B) {
+    double det = E.determinant();
+    if (std::abs(det) < 1e-30) return -1.0;
+    return (1.0 / 3.0) * std::sqrt(E.squaredNorm() * B.squaredNorm());
+}
+
+double GasParticleSystem::build_matrix_and_compute_condition(
+    size_t particle_idx, double h_guess, double domain_size,
+    Eigen::Matrix3d& B) const {
     Eigen::Matrix3d E = Eigen::Matrix3d::Zero();
     double p1_x = pos_x[particle_idx];
     double p1_y = pos_y[particle_idx];
@@ -409,7 +412,8 @@ double GasParticleSystem::check_matrix_condition(size_t particle_idx,
     E(2, 0) = E(0, 2);
     E(2, 1) = E(1, 2);
 
-    return Reconstruction::evaluate_matrix_condition_number(E);
+    B = E.inverse();
+    return evaluate_matrix_condition_number(E, B);
 }
 
 #ifdef USE_ADAPTIVE_SOFTENING
@@ -598,7 +602,8 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
             }
 
             // EVALUATE MATRIX CONDITION
-            double cond = check_matrix_condition(i, h_guess, domain_size);
+            double cond = build_matrix_and_compute_condition(
+                i, h_guess, domain_size, B_matrix[i]);
 
             if (cond < 0.0 || cond > N_cond_crit) {
                 // Matrix is ill-conditioned. Find MORE particles
@@ -616,6 +621,8 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
         }
 
         // Commit finalized state
+        cond_num[i] = build_matrix_and_compute_condition(
+            i, h_guess, domain_size, B_matrix[i]);
         h[i] = h_guess;
         rho[i] = mass[i] * current_n;
         n_enc_final[i] = current_n_enc;
@@ -1713,159 +1720,198 @@ void GasParticleSystem::compute_gradients(const Config& config) {
 
     if (num_active == 0) return;
 
+#define USE_MFM_ARRAYS
+
+#ifdef USE_MFM_ARRAYS
+    Reconstruction::FluidStateArrays system_data{
+        pos_x.data(),    pos_y.data(), pos_z.data(),   vel_x.data(),
+        vel_y.data(),    vel_z.data(), mass.data(),    rho.data(),
+        pressure.data(), h.data(),     cond_num.data()};
+#else
     bool debug_printed = false;
+#endif
 
-#pragma omp parallel for reduction(+ : step_ill_conditioned) \
-    schedule(dynamic, 64)
-    for (size_t k = 0; k < num_active; ++k) {
-        size_t i = active_indices[k];
-
-        // Construct the isolated state for particle i
-        Reconstruction::ParticleState p_i;
-        p_i.pos = Eigen::Vector3d(pos_x[i], pos_y[i], pos_z[i]);
-        p_i.vel = Eigen::Vector3d(vel_x[i], vel_y[i], vel_z[i]);
-        p_i.mass = mass[i];
-        p_i.rho = rho[i];
-        p_i.pressure = pressure[i];
-        p_i.h = h[i];
-
-        double local_max_rel_ke = 0.0;
+#pragma omp parallel reduction(+ : step_ill_conditioned)
+    {
+#ifdef USE_MFM_ARRAYS
+        // Declare the reusable buffer ONCE per thread
+        std::vector<int> neighbors;
+#else
         std::vector<Reconstruction::ParticleState> neighbors;
+#endif
+        neighbors.reserve(256);
 
-        int stack[128];
-        int stack_ptr = 0;
-        stack[stack_ptr++] = 0;  // Push root
+#pragma omp for schedule(dynamic, 64)
+        for (size_t k = 0; k < num_active; ++k) {
+            size_t i = active_indices[k];
 
-        while (stack_ptr > 0) {
-            int node_idx = stack[--stack_ptr];
-            const BVHNode& node = bvh_nodes[node_idx];
+            neighbors.clear();
 
-            double dist_sq =
-                min_periodic_dist_sq(p_i.pos.x(), node.bbox.min_x,
-                                     node.bbox.max_x, domain_size) +
-                min_periodic_dist_sq(p_i.pos.y(), node.bbox.min_y,
-                                     node.bbox.max_y, domain_size) +
-                min_periodic_dist_sq(p_i.pos.z(), node.bbox.min_z,
-                                     node.bbox.max_z, domain_size);
+            // Construct the isolated state for particle i
+            Reconstruction::ParticleState p_i;
+            p_i.pos = Eigen::Vector3d(pos_x[i], pos_y[i], pos_z[i]);
+            p_i.vel = Eigen::Vector3d(vel_x[i], vel_y[i], vel_z[i]);
+            p_i.mass = mass[i];
+            p_i.rho = rho[i];
+            p_i.pressure = pressure[i];
+            p_i.h = h[i];
 
-            double eff_h = std::max(p_i.h, node.max_h);
-            if (dist_sq > eff_h * eff_h) continue;
+            double local_max_rel_ke = 0.0;
 
-            if (node.particle_idx != -1) {
-                int j = node.particle_idx;
+            int stack[128];
+            int stack_ptr = 0;
+            stack[stack_ptr++] = 0;  // Push root
 
-                double dx =
-                    periodic_displacement(pos_x[j] - p_i.pos.x(), domain_size);
-                double dy =
-                    periodic_displacement(pos_y[j] - p_i.pos.y(), domain_size);
-                double dz =
-                    periodic_displacement(pos_z[j] - p_i.pos.z(), domain_size);
-                double r2 = dx * dx + dy * dy + dz * dz;
+            while (stack_ptr > 0) {
+                int node_idx = stack[--stack_ptr];
+                const BVHNode& node = bvh_nodes[node_idx];
 
-                if ((r2 < p_i.h * p_i.h || r2 < h[j] * h[j]) && r2 > 1e-24) {
-                    double rel_vx = vel_x[j] - p_i.vel.x();
-                    double rel_vy = vel_y[j] - p_i.vel.y();
-                    double rel_vz = vel_z[j] - p_i.vel.z();
-                    double rel_v2 =
-                        rel_vx * rel_vx + rel_vy * rel_vy + rel_vz * rel_vz;
-                    local_max_rel_ke = std::max(local_max_rel_ke, 0.5 * rel_v2);
-                    if (r2 < p_i.h * p_i.h) {
-                        Reconstruction::ParticleState nj;
-                        nj.pos = Eigen::Vector3d(pos_x[j], pos_y[j], pos_z[j]);
-                        nj.vel = Eigen::Vector3d(vel_x[j], vel_y[j], vel_z[j]);
-                        nj.mass = mass[j];
-                        nj.rho = rho[j];
-                        nj.pressure = pressure[j];
-                        nj.h = h[j];
-                        neighbors.push_back(nj);
-                    }
-                }
-            } else {
-                stack[stack_ptr++] = node.left_child;
-                stack[stack_ptr++] = node.right_child;
-            }
-        }
+                double dist_sq =
+                    min_periodic_dist_sq(p_i.pos.x(), node.bbox.min_x,
+                                         node.bbox.max_x, domain_size) +
+                    min_periodic_dist_sq(p_i.pos.y(), node.bbox.min_y,
+                                         node.bbox.max_y, domain_size) +
+                    min_periodic_dist_sq(p_i.pos.z(), node.bbox.min_z,
+                                         node.bbox.max_z, domain_size);
 
-        max_rel_ke[i] = local_max_rel_ke;
+                double eff_h = std::max(p_i.h, node.max_h);
+                if (dist_sq > eff_h * eff_h) continue;
 
-        // Calculate delta E_grav = |a_grav| * h
-        double a_grav_mag = std::sqrt(
-            acc_x[i] * acc_x[i] + acc_y[i] * acc_y[i] + acc_z[i] * acc_z[i]);
-        delta_E_grav[i] = a_grav_mag * p_i.h;
+                if (node.particle_idx != -1) {
+                    int j = node.particle_idx;
 
-        Reconstruction::ParticleGradients grads =
-            compute_single_particle_gradients(p_i, neighbors, domain_size);
+                    double dx = periodic_displacement(pos_x[j] - p_i.pos.x(),
+                                                      domain_size);
+                    double dy = periodic_displacement(pos_y[j] - p_i.pos.y(),
+                                                      domain_size);
+                    double dz = periodic_displacement(pos_z[j] - p_i.pos.z(),
+                                                      domain_size);
+                    double r2 = dx * dx + dy * dy + dz * dz;
 
-        // Map results back to SOA
-        B_matrix[i] = grads.B_matrix;
-        grad_rho[i] = grads.grad_rho;
-        grad_p[i] = grads.grad_p;
-        grad_vx[i] = grads.grad_vx;
-        grad_vy[i] = grads.grad_vy;
-        grad_vz[i] = grads.grad_vz;
-        cond_num[i] = grads.condition_number;
-        raw_sum_p[i] = grads.raw_sum_p;
-
-        if (grads.ill_conditioned) {
-            step_ill_conditioned++;
-
-            if (!debug_printed) {
-#pragma omp critical
-                {
-                    if (!debug_printed) {
-                        debug_printed = true;
-
-                        std::cout
-                            << "\n=== ILL-CONDITIONED MATRIX DIAGNOSTIC ===\n";
-                        std::cout << "Particle Index: " << i << "\n";
-                        std::cout << "Pos: (" << p_i.pos.x() << ", "
-                                  << p_i.pos.y() << ", " << p_i.pos.z()
-                                  << ")\n";
-                        std::cout << "h_i: " << p_i.h << " | rho_i: " << p_i.rho
-                                  << "\n";
-                        std::cout << "n_enc: " << n_enc_final[i] << "\n";
-                        std::cout
-                            << "Condition Number: " << grads.condition_number
-                            << "\n";
-                        std::cout
-                            << "Number of neighbors found: " << neighbors.size()
-                            << "\n";
-
-                        int exact_overlaps = 0;
-                        int extremely_close = 0;
-
-                        std::cout << "Neighbor distances:\n";
-                        for (size_t n = 0; n < neighbors.size(); ++n) {
-                            double dx = periodic_displacement(
-                                neighbors[n].pos.x() - p_i.pos.x(),
-                                domain_size);
-                            double dy = periodic_displacement(
-                                neighbors[n].pos.y() - p_i.pos.y(),
-                                domain_size);
-                            double dz = periodic_displacement(
-                                neighbors[n].pos.z() - p_i.pos.z(),
-                                domain_size);
-                            double r = std::sqrt(dx * dx + dy * dy + dz * dz);
-
-                            std::cout << "  N[" << n << "] r = " << r
-                                      << " | dx: " << dx << " dy: " << dy
-                                      << " dz: " << dz << "\n";
-
-                            if (r < 1e-12)
-                                exact_overlaps++;
-                            else if (r < 0.05 * p_i.h)
-                                extremely_close++;
+                    if ((r2 < p_i.h * p_i.h || r2 < h[j] * h[j]) &&
+                        r2 > 1e-24) {
+                        double rel_vx = vel_x[j] - p_i.vel.x();
+                        double rel_vy = vel_y[j] - p_i.vel.y();
+                        double rel_vz = vel_z[j] - p_i.vel.z();
+                        double rel_v2 =
+                            rel_vx * rel_vx + rel_vy * rel_vy + rel_vz * rel_vz;
+                        local_max_rel_ke =
+                            std::max(local_max_rel_ke, 0.5 * rel_v2);
+                        if (r2 < p_i.h * p_i.h) {
+#ifdef USE_MFM_ARRAYS
+                            neighbors.push_back(j);
+#else
+                            Reconstruction::ParticleState nj;
+                            nj.pos =
+                                Eigen::Vector3d(pos_x[j], pos_y[j], pos_z[j]);
+                            nj.vel =
+                                Eigen::Vector3d(vel_x[j], vel_y[j], vel_z[j]);
+                            nj.mass = mass[j];
+                            nj.rho = rho[j];
+                            nj.pressure = pressure[j];
+                            nj.h = h[j];
+                            neighbors.push_back(nj);
+#endif
                         }
+                    }
+                } else {
+                    stack[stack_ptr++] = node.left_child;
+                    stack[stack_ptr++] = node.right_child;
+                }
+            }
 
-                        std::cout << "Diagnostics:\n";
-                        std::cout << "  Exact overlaps (r < 1e-12): "
-                                  << exact_overlaps << "\n";
-                        std::cout << "  Highly clumped (r < 0.05*h): "
-                                  << extremely_close << "\n";
-                        std::cout
-                            << "=========================================\n";
+            max_rel_ke[i] = local_max_rel_ke;
+
+            // Calculate delta E_grav = |a_grav| * h
+            double a_grav_mag =
+                std::sqrt(acc_x[i] * acc_x[i] + acc_y[i] * acc_y[i] +
+                          acc_z[i] * acc_z[i]);
+            delta_E_grav[i] = a_grav_mag * p_i.h;
+
+            bool ill_conditioned =
+                (cond_num[i] < 0.0 || cond_num[i] > N_cond_crit);
+
+#ifdef USE_MFM_ARRAYS
+            Reconstruction::ParticleGradients grads =
+                Reconstruction::compute_single_particle_gradients(
+                    i, neighbors.data(), neighbors.size(), system_data,
+                    B_matrix[i], ill_conditioned, domain_size);
+#else
+            Reconstruction::ParticleGradients grads =
+                compute_single_particle_gradients(p_i, neighbors, B_matrix[i],
+                                                  ill_conditioned, cond_num[i],
+                                                  domain_size);
+#endif
+
+            // Map results back to SOA
+            grad_rho[i] = grads.grad_rho;
+            grad_p[i] = grads.grad_p;
+            grad_vx[i] = grads.grad_vx;
+            grad_vy[i] = grads.grad_vy;
+            grad_vz[i] = grads.grad_vz;
+
+            if (grads.ill_conditioned) {
+                step_ill_conditioned++;
+
+#ifndef USE_MFM_ARRAYS
+                if (!debug_printed) {
+#pragma omp critical
+                    {
+                        if (!debug_printed) {
+                            debug_printed = true;
+
+                            std::cout << "\n=== ILL-CONDITIONED MATRIX "
+                                         "DIAGNOSTIC ===\n";
+                            std::cout << "Particle Index: " << i << "\n";
+                            std::cout << "Pos: (" << p_i.pos.x() << ", "
+                                      << p_i.pos.y() << ", " << p_i.pos.z()
+                                      << ")\n";
+                            std::cout << "h_i: " << p_i.h
+                                      << " | rho_i: " << p_i.rho << "\n";
+                            std::cout << "n_enc: " << n_enc_final[i] << "\n";
+                            std::cout << "Condition Number: " << cond_num[i]
+                                      << "\n";
+                            std::cout << "Number of neighbors found: "
+                                      << neighbors.size() << "\n";
+
+                            int exact_overlaps = 0;
+                            int extremely_close = 0;
+
+                            std::cout << "Neighbor distances:\n";
+                            for (size_t n = 0; n < neighbors.size(); ++n) {
+                                double dx = periodic_displacement(
+                                    neighbors[n].pos.x() - p_i.pos.x(),
+                                    domain_size);
+                                double dy = periodic_displacement(
+                                    neighbors[n].pos.y() - p_i.pos.y(),
+                                    domain_size);
+                                double dz = periodic_displacement(
+                                    neighbors[n].pos.z() - p_i.pos.z(),
+                                    domain_size);
+                                double r =
+                                    std::sqrt(dx * dx + dy * dy + dz * dz);
+
+                                std::cout << "  N[" << n << "] r = " << r
+                                          << " | dx: " << dx << " dy: " << dy
+                                          << " dz: " << dz << "\n";
+
+                                if (r < 1e-12)
+                                    exact_overlaps++;
+                                else if (r < 0.05 * p_i.h)
+                                    extremely_close++;
+                            }
+
+                            std::cout << "Diagnostics:\n";
+                            std::cout << "  Exact overlaps (r < 1e-12): "
+                                      << exact_overlaps << "\n";
+                            std::cout << "  Highly clumped (r < 0.05*h): "
+                                      << extremely_close << "\n";
+                            std::cout << "================================="
+                                         "========\n";
+                        }
                     }
                 }
+#endif
             }
         }
     }
@@ -1912,54 +1958,6 @@ MFMFaceFlux solve_mfm_riemann(const Reconstruction::ReconstructedFace& face,
     out.S_star = S_star;  // Return the relative face speed
 
     return out;
-}
-
-static Eigen::Vector3d compute_mfm_face_area_vector(
-    const Reconstruction::ParticleState& p_i,
-    const Reconstruction::ParticleGradients& grad_i,
-    const Reconstruction::ParticleState& p_j,
-    const Reconstruction::ParticleGradients& grad_j,
-    const Reconstruction::ReconstructedFace& face) {
-    double V_i = p_i.mass / p_i.rho;
-    double V_j = p_j.mass / p_j.rho;
-    Eigen::Vector3d dx_vec = face.n * face.r;
-
-    double W_i, W_j;
-    Kernels::cubic_spline_value(face.r, p_i.h, W_i);
-    Kernels::cubic_spline_value(face.r, p_j.h, W_j);
-
-#ifdef VOLUME_WEIGHTED
-    // B_matrix has units [L^-2], requires V_i * V_j to yield Area [L^2]
-    Eigen::Vector3d Area_vec = (V_i * V_j * W_i * (grad_i.B_matrix * dx_vec)) +
-                               (V_i * V_j * W_j * (grad_j.B_matrix * dx_vec));
-#else
-    // B_matrix has units [L], requires only V_i to yield Area [L^2]
-    Eigen::Vector3d Area_vec = (V_i * W_i * (grad_i.B_matrix * dx_vec)) +
-                               (V_j * W_j * (grad_j.B_matrix * dx_vec));
-#endif
-
-    double facenormal_dot_dp = Area_vec.dot(dx_vec);
-
-    // SPH Fallback for Ill-Conditioned Matrices
-    if (facenormal_dot_dp < 0.0 || grad_i.ill_conditioned ||
-        grad_j.ill_conditioned) {
-        double dW_dr_i, dW_dr_j, dummy_phi;
-
-        // Extract the spatial derivative (dW/dr)
-        Kernels::adaptive_gravity_terms(face.r, p_i.h, dummy_phi, dW_dr_i);
-        Kernels::adaptive_gravity_terms(face.r, p_j.h, dummy_phi, dW_dr_j);
-
-        double face_area_mag =
-            /*-(p_i.mass * p_j.mass) *
-            (dW_dr_i / (p_i.rho * p_i.rho) + dW_dr_j / (p_j.rho * p_j.rho)) /
-            face.r;*/
-            -(V_i * V_i * dW_dr_i + V_j * V_j * dW_dr_j) / face.r;
-
-        std::cout << "\nSPH" << std::endl;
-        return face_area_mag * dx_vec;
-    }
-
-    return Area_vec;
 }
 
 // Computes the maximum signal velocity between two particles and updates
@@ -2039,7 +2037,9 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
         v_sig_max[i] = 0.0;
     }
 
-#pragma omp parallel for schedule(dynamic, 64)
+    size_t step_sph_fallbacks = 0;
+
+#pragma omp parallel for schedule(dynamic, 64) reduction(+ : step_sph_fallbacks)
     for (size_t k = 0; k < num_active; ++k) {
         size_t i = active_indices[k];
 
@@ -2053,7 +2053,6 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
         p_i.h = h[i];
 
         Reconstruction::ParticleGradients grad_i;
-        grad_i.B_matrix = B_matrix[i];
         grad_i.grad_rho = grad_rho[i];
         grad_i.grad_p = grad_p[i];
         grad_i.grad_vx = grad_vx[i];
@@ -2061,7 +2060,6 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
         grad_i.grad_vz = grad_vz[i];
         grad_i.ill_conditioned =
             (cond_num[i] < 0.0 || cond_num[i] > N_cond_crit);
-        grad_i.condition_number = cond_num[i];
 
         int stack[128];
         int stack_ptr = 0;
@@ -2114,7 +2112,6 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                     p_j.h = hj;
 
                     Reconstruction::ParticleGradients grad_j;
-                    grad_j.B_matrix = B_matrix[j];
                     grad_j.grad_rho = grad_rho[j];
                     grad_j.grad_p = grad_p[j];
                     grad_j.grad_vx = grad_vx[j];
@@ -2122,24 +2119,19 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                     grad_j.grad_vz = grad_vz[j];
                     grad_j.ill_conditioned =
                         (cond_num[j] < 0.0 || cond_num[j] > N_cond_crit);
-                    grad_j.condition_number = cond_num[j];
 
                     // SOLVER PIPELINE
                     Reconstruction::ReconstructedFace face =
-                        compute_face_reconstruction(p_i, grad_i, p_j, grad_j,
-                                                    domain_size, density_floor,
-                                                    this->pressure_floor);
+                        compute_face_reconstruction(
+                            p_i, grad_i, p_j, grad_j, B_matrix[i], B_matrix[j],
+                            domain_size, density_floor, this->pressure_floor);
                     if (!face.is_valid) continue;
 
-                    Eigen::Vector3d Area_vec = compute_mfm_face_area_vector(
-                        p_i, grad_i, p_j, grad_j, face);
-                    double A_mag = Area_vec.norm();
-                    if (A_mag < 1e-20) continue;
-
-                    face.n = Area_vec / A_mag;
+                    if (face.used_sph_fallback) {
+                        step_sph_fallbacks++;
+                    }
 
                     double fraction_i = p_i.h / (p_i.h + p_j.h);
-                    double fraction_j = 1.0 - fraction_i;
                     Eigen::Vector3d v_frame =
                         p_i.vel + fraction_i * (p_j.vel - p_i.vel);
 
@@ -2171,21 +2163,18 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                     double P_star_com = flux_1d_phys.P_star * a;
                     double S_star_com = flux_1d_phys.S_star * a_inv;
 
-                    Eigen::Vector3d Force_mom = P_star_com * Area_vec;
+                    Eigen::Vector3d Force_mom = P_star_com * face.area_vec;
                     Eigen::Vector3d v_star_lab =
                         v_frame + (S_star_com * face.n);
 
                     double work_i =
-                        P_star_com * (v_star_lab - p_i.vel).dot(Area_vec);
-                    double work_j =
-                        P_star_com * (v_star_lab - p_j.vel).dot(Area_vec);
+                        P_star_com * (v_star_lab - p_i.vel).dot(face.area_vec);
 
                     double du_dt_i = -work_i / p_i.mass;
-                    double du_dt_j = work_j / p_j.mass;
 
-                    double Rate_energy = P_star_com * v_star_lab.dot(Area_vec);
+                    double Rate_energy =
+                        P_star_com * v_star_lab.dot(face.area_vec);
                     double de_dt_i = -Rate_energy / p_i.mass;
-                    double de_dt_j = Rate_energy / p_j.mass;
 
                     // Apply the flux to the active particle 'i'
 #pragma omp atomic
@@ -2201,6 +2190,11 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
 
                     // Apply the reverse flux to j if j is ALSO active
                     if (is_active[j]) {
+                        double work_j =
+                            P_star_com *
+                            (v_star_lab - p_j.vel).dot(face.area_vec);
+                        double du_dt_j = work_j / p_j.mass;
+                        double de_dt_j = Rate_energy / p_j.mass;
 #pragma omp atomic
                         hydro_acc_x[j] += Force_mom.x() / p_j.mass;
 #pragma omp atomic
@@ -2237,6 +2231,7 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
             }
         }
     }
+    this->sph_fallback_cases += step_sph_fallbacks;
 }
 
 double GasParticleSystem::get_active_particles_per_cycle_and_reset(

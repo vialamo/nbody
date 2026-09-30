@@ -57,6 +57,8 @@ class GasParticleSystem {
     std::vector<Eigen::Matrix3d>
         B_matrix;  // Geometric inverse matrix [1 / Code Length^2]
 
+    std::vector<double> cond_num;
+
     std::vector<double>
         entropy;  // Entropic function (S = P / rho^gamma)
                   // [Code Velocity^2 / (Code Mass / Code Length^3)^(gamma-1)]
@@ -96,12 +98,11 @@ class GasParticleSystem {
     size_t non_converged_h_cases = 0;
 
     // Debugging
-    std::vector<double> cond_num;
-    std::vector<Eigen::Vector3d> raw_sum_p;
     std::vector<double> n_enc_final;
     double active_particles_fraction = 0.0;
     size_t active_particles_num_cycles = 0;
     size_t neighbor_increased_cases = 0;
+    size_t sph_fallback_cases = 0;
 
     // Spatial Hashing
     std::vector<CIC_Data> cic_data;
@@ -190,8 +191,8 @@ class GasParticleSystem {
 
     // Lightweight BVH walker to check if a given h_guess yields a
     // well-conditioned matrix
-    double check_matrix_condition(size_t particle_idx, double h_guess,
-                                  double domain_size) const;
+    double build_matrix_and_compute_condition(size_t particle_idx, double h_guess,
+                                  double domain_size, Eigen::Matrix3d& B) const;
 
 #ifdef USE_ADAPTIVE_SOFTENING
     // A tree-walker that computes the zeta gravity correction from a target

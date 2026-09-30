@@ -249,9 +249,9 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
         this->MFM_h_non_converged_cases = gas.non_converged_h_cases;
         // gas.non_converged_h_cases = 0;
         this->MFM_neighbor_increased_cases = gas.neighbor_increased_cases;
-
         percent_particles_updated =
             gas.get_active_particles_per_cycle_and_reset(config) * 100.0;
+        this->MFM_sph_fallback_cases = gas.sph_fallback_cases;
     } else {
         this->energy_err = 0.0;
     }

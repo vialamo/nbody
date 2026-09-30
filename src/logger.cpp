@@ -208,4 +208,8 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
         std::cout << "  [WARNING] MFM neighbor increased cases: "
                   << diag.MFM_neighbor_increased_cases << "\n";
     }
+    if (diag.MFM_sph_fallback_cases > 0) {
+        std::cout << "  [WARNING] MFM SPH fallback cases: "
+                  << diag.MFM_sph_fallback_cases << "\n";
+    }
 }
