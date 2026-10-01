@@ -49,7 +49,12 @@ TimestepInfo SimulationEngine::get_timestep() const {
     if (config.hydro_method == HydroMethod::MFM) {
         dt_grav_mfm = state.mfm_gas->get_gravity_timestep(config);
     }
-    ts.dt_grav = std::min(dt_grav_dm, dt_grav_mfm);
+
+    if (config.use_PM || config.use_PP) {
+        ts.dt_grav = std::min(dt_grav_dm, dt_grav_mfm);
+    } else {
+        ts.dt_grav = std::numeric_limits<double>::infinity();
+    }
 
     if (config.individual_particle_timesteps) {
         ts.dt_macro = std::min(ts.dt_hydro, ts.dt_grav);

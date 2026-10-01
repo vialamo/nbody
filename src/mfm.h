@@ -180,6 +180,8 @@ class GasParticleSystem {
 
     double get_active_particles_per_cycle_and_reset(const Config& config);
 
+    void reset_velocities();
+
    private:
     void sort_arrays(const std::vector<int>& sorted_indices);
 

@@ -133,11 +133,34 @@ if(USE_GPU_OFFLOAD)
             -fopenmp-targets=nvptx64-nvidia-cuda
             -fuse-ld=lld
         )
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+        set(GPU_ARCH "sm_${COMPUTE_VERSION}")
+
+        message(STATUS "Applying GCC GPU Offload Flags (${GPU_ARCH})")
+        target_compile_options(SimulationCore PUBLIC
+            -fopenmp
+            -foffload=nvptx-none
+            "-foffload-options=nvptx-none=-march=${GPU_ARCH}"
+            -fcf-protection=none
+            -fno-stack-protector # Bypass host stack canaries leaking to the GPU
+        )
+        add_link_options(
+            -fopenmp
+            -foffload=nvptx-none
+            "-foffload-options=nvptx-none=-march=${GPU_ARCH}"
+            -fcf-protection=none
+            -fno-stack-protector
+        )
     else()
         message(FATAL_ERROR "GPU Offloading is currently only supported via nvc++ or Clang.")
     endif()
 else()
     message(STATUS "GPU Offloading DISABLED (Using CPU backend)")
+    
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+        target_compile_options(SimulationCore PUBLIC -foffload=disable)
+        add_link_options(-foffload=disable)
+    endif()
 endif()
 # ==============================================================================
 # MAIN EXECUTABLE

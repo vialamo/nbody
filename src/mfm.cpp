@@ -1723,7 +1723,7 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
     accumulated_entropy_switch_energy += step_entropy_switch;
 }
 
-/*void GasParticleSystem::compute_gradients(const Config& config) {
+void GasParticleSystem::compute_gradients(const Config& config) {
     if (num_particles == 0) return;
     double domain_size = config.domain_size;
     size_t step_ill_conditioned = 0;
@@ -1880,8 +1880,8 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
     }
 
     ill_conditioned_cases += step_ill_conditioned;
-}*/
-void GasParticleSystem::compute_gradients(const Config& config) {
+}
+/*void GasParticleSystem::compute_gradients(const Config& config) {
     if (num_particles == 0) return;
     double domain_size = config.domain_size;
     size_t step_ill_conditioned = 0;
@@ -2100,7 +2100,7 @@ void GasParticleSystem::compute_gradients(const Config& config) {
     }
 
     ill_conditioned_cases += step_ill_conditioned;
-}
+}*/
 
 // MFM Riemann Solver (Frame Boosted)
 MFMFaceFlux solve_mfm_riemann(const Reconstruction::ReconstructedFace& face,
@@ -2431,4 +2431,15 @@ double GasParticleSystem::get_active_particles_per_cycle_and_reset(
     active_particles_num_cycles = 0;
 
     return percent_particles_updated;
+}
+
+void GasParticleSystem::reset_velocities() {
+    double damping_factor = 0.95;
+
+#pragma omp parallel for schedule(dynamic, 64)
+    for (size_t i = 0; i < num_particles; ++i) {
+        vel_x[i] *= damping_factor;
+        vel_y[i] *= damping_factor;
+        vel_z[i] *= damping_factor;
+    }
 }

@@ -678,6 +678,10 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
                                       state.scale_factor, config, false);
     }
 
+    if (config.initial_setup == InitialSetup::Glass) {
+        state.mfm_gas->reset_velocities();
+    }
+
     // Time bin assignment
     if (config.hydro_method == HydroMethod::MFM) {
         state.mfm_gas->update_particle_timesteps(

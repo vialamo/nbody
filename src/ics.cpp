@@ -784,6 +784,49 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
     }
 }
 
+void initialize_glass(SimState& state, const Config& config) {
+    if (config.hydro_method != HydroMethod::MFM) return;
+
+    int N_part = config.num_gas_particles_1d;
+    size_t total_particles = static_cast<size_t>(N_part) * N_part * N_part;
+
+    double gas_particle_mass =
+        config.gas_total_mass / static_cast<double>(total_particles);
+    double spacing = config.domain_size / N_part;
+
+    // Provide a safe initial guess for the smoothing length;
+    // the density iteration will correct this on step 0
+    double initial_h = 1.2 * spacing;
+    double seed_metallicity = 0.0;
+
+    const double initial_internal_energy =
+        Cooling::get_internal_energy_from_temp(1e7,
+                                               1.0, config);
+
+    // Initialize the random number generator
+    std::default_random_engine generator(config.seed);
+    std::uniform_real_distribution<double> distribution(0.0,
+                                                        config.domain_size);
+
+    for (size_t i = 0; i < total_particles; ++i) {
+        // Sample random coordinates within the periodic box
+        double p_x = distribution(generator);
+        double p_y = distribution(generator);
+        double p_z = distribution(generator);
+
+        // Ensure particles are bounded within [0, domain_size)
+        // (uniform_real_distribution can occasionally return domain_size)
+        if (p_x >= config.domain_size) p_x -= 1e-10;
+        if (p_y >= config.domain_size) p_y -= 1e-10;
+        if (p_z >= config.domain_size) p_z -= 1e-10;
+
+        state.mfm_gas->add_particle(p_x, p_y, p_z, 0.0, 0.0,
+                                    0.0,  // Initial velocity is zero
+                                    gas_particle_mass, initial_internal_energy,
+                                    initial_h, seed_metallicity);
+    }
+}
+
 SimState initialize_state(Config& config) {
     SimState state(config);
     state.total_time = 0;
@@ -808,6 +851,8 @@ SimState initialize_state(Config& config) {
         initialize_adiabatic_expansion(state, config);
     } else if (config.initial_setup == InitialSetup::SedovBlastwave) {
         initialize_sedov_blastwave(state, config);
+    } else if (config.initial_setup == InitialSetup::Glass) {
+        initialize_glass(state, config);
     }
 
     config.expanding_universe = prev_expanding_universe;
