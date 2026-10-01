@@ -517,7 +517,7 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
 
         // Spacing: Right side spacing must scale by the cube root of the
         // density ratio in 3D to maintain equal particle masses across the
-        // domain.
+        // domain
         double dx_L = L / N;
         double dx_R =
             dx_L *

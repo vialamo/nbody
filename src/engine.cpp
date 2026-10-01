@@ -100,12 +100,22 @@ void SimulationEngine::step() {
         cycle_count < config.max_cycles;
 
     // I/O and Logging
-    const double TOLERANCE = 1e-7;
+    bool is_synchronized = true;
+    if (config.individual_particle_timesteps) {
+        // At a true macrostep boundary, all particles have reached their t_end
+        // and are flagged as active for the upcoming cycle
+        double ratio = state.total_time / config.fixed_dt;
+        is_synchronized = (std::abs(ratio - std::round(ratio)) < 1e-7);
+    }
+
+    constexpr double TOLERANCE = 1e-7;
     bool must_save_snapshot =
-        state.scale_factor >= (next_output_a - TOLERANCE) ||
-        (!config.expanding_universe && cycle_count % 4 == 0) ||
-        (config.initial_setup == InitialSetup::SedovBlastwave &&
-         cycle_count < 30);
+        is_synchronized &&
+        (state.scale_factor >= (next_output_a - TOLERANCE) ||
+         (!config.expanding_universe && cycle_count % 4 == 0) ||
+         (config.initial_setup == InitialSetup::SedovBlastwave &&
+          cycle_count < 30));
+
     if (config.save_HDF5_every_delta_a > 0.0 &&
         (!needs_more_cycles || must_save_snapshot)) {
         ScopedTimer io_timer(diagnostics, TimerRegion::IO);

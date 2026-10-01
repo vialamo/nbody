@@ -354,8 +354,8 @@ static inline double evaluate_matrix_condition_number(
 }
 
 double GasParticleSystem::build_matrix_and_compute_condition(
-    size_t particle_idx, double h_guess, double domain_size,
-    Eigen::Matrix3d& B) const {
+    size_t particle_idx, double h_guess, double domain_size, Eigen::Matrix3d& B,
+    bool volume_weighted) {
     Eigen::Matrix3d E = Eigen::Matrix3d::Zero();
     double p1_x = pos_x[particle_idx];
     double p1_y = pos_y[particle_idx];
@@ -393,8 +393,11 @@ double GasParticleSystem::build_matrix_and_compute_condition(
                 double r = std::sqrt(r2);
                 double W;
                 Kernels::cubic_spline_value(r, h_guess, W);
-                // double V_j = mass[j] / std::max(rho[j], density_floor);
-                double weight = W;  // * V_j;
+                double weight = W;
+                if (volume_weighted) {
+                    double V_j = mass[j] / std::max(rho[j], density_floor);
+                    weight = W * V_j;
+                }
                 E(0, 0) += dx * dx * weight;
                 E(0, 1) += dx * dy * weight;
                 E(0, 2) += dx * dz * weight;
@@ -603,7 +606,7 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
 
             // EVALUATE MATRIX CONDITION
             double cond = build_matrix_and_compute_condition(
-                i, h_guess, domain_size, B_matrix[i]);
+                i, h_guess, domain_size, B_matrix[i], false);
 
             if (cond < 0.0 || cond > N_cond_crit) {
                 // Matrix is ill-conditioned. Find MORE particles
@@ -622,7 +625,7 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
 
         // Commit finalized state
         cond_num[i] = build_matrix_and_compute_condition(
-            i, h_guess, domain_size, B_matrix[i]);
+            i, h_guess, domain_size, B_matrix[i], false);
         h[i] = h_guess;
         rho[i] = mass[i] * current_n;
         n_enc_final[i] = current_n_enc;
@@ -653,6 +656,13 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
 
         zeta[i] = h_over_3n * (1.0 / Omega_i) * zeta_sum;
 #endif
+    }
+
+#pragma omp parallel for schedule(dynamic, 64)
+    for (size_t k = 0; k < num_active; ++k) {
+        size_t i = active_indices[k];
+        cond_num[i] = build_matrix_and_compute_condition(i, h[i], domain_size,
+                                                         B_matrix[i], true);
     }
 
     clamped_h_cases += num_h_clamped;
@@ -1679,7 +1689,7 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
                 // the total energy to reflect the new, trusted internal energy
                 total_energy[i] = u[i] + ke;
             } else {
-                // NORMAL REGIME: Trust the integrated internal energy.
+                // NORMAL REGIME: Trust the conservative internal energy.
                 // Re-sync the entropy array to match the shock-heated state
                 u[i] = u_cons;
                 entropy[i] =
@@ -1713,6 +1723,164 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
     accumulated_entropy_switch_energy += step_entropy_switch;
 }
 
+/*void GasParticleSystem::compute_gradients(const Config& config) {
+    if (num_particles == 0) return;
+    double domain_size = config.domain_size;
+    size_t step_ill_conditioned = 0;
+
+    if (num_active == 0) return;
+
+    Reconstruction::FluidStateArrays system_data{
+        pos_x.data(),    pos_y.data(), pos_z.data(),   vel_x.data(),
+        vel_y.data(),    vel_z.data(), mass.data(),    rho.data(),
+        pressure.data(), h.data(),     cond_num.data()};
+
+    bool debug_printed = false;
+
+#pragma omp parallel reduction(+ : step_ill_conditioned)
+    {
+        // Declare the reusable buffer ONCE per thread
+        std::vector<int> neighbors;
+        neighbors.reserve(256);
+
+#pragma omp for schedule(dynamic, 64)
+        for (size_t k = 0; k < num_active; ++k) {
+            size_t i = active_indices[k];
+
+            neighbors.clear();
+
+            double local_max_rel_ke = 0.0;
+
+            int stack[128];
+            int stack_ptr = 0;
+            stack[stack_ptr++] = 0;  // Push root
+
+            while (stack_ptr > 0) {
+                int node_idx = stack[--stack_ptr];
+                const BVHNode& node = bvh_nodes[node_idx];
+
+                double dist_sq =
+                    min_periodic_dist_sq(pos_x[i], node.bbox.min_x,
+                                         node.bbox.max_x, domain_size) +
+                    min_periodic_dist_sq(pos_y[i], node.bbox.min_y,
+                                         node.bbox.max_y, domain_size) +
+                    min_periodic_dist_sq(pos_z[i], node.bbox.min_z,
+                                         node.bbox.max_z, domain_size);
+
+                double eff_h = std::max(h[i], node.max_h);
+                if (dist_sq > eff_h * eff_h) continue;
+
+                if (node.particle_idx != -1) {
+                    int j = node.particle_idx;
+
+                    double dx =
+                        periodic_displacement(pos_x[j] - pos_x[i], domain_size);
+                    double dy =
+                        periodic_displacement(pos_y[j] - pos_y[i], domain_size);
+                    double dz =
+                        periodic_displacement(pos_z[j] - pos_z[i], domain_size);
+                    double r2 = dx * dx + dy * dy + dz * dz;
+
+                    if ((r2 < h[i] * h[i] || r2 < h[j] * h[j]) && r2 > 1e-24) {
+                        double rel_vx = vel_x[j] - vel_x[i];
+                        double rel_vy = vel_y[j] - vel_y[i];
+                        double rel_vz = vel_z[j] - vel_z[i];
+                        double rel_v2 =
+                            rel_vx * rel_vx + rel_vy * rel_vy + rel_vz * rel_vz;
+                        local_max_rel_ke =
+                            std::max(local_max_rel_ke, 0.5 * rel_v2);
+                        if (r2 < h[i] * h[i]) {
+                            neighbors.push_back(j);
+                        }
+                    }
+                } else {
+                    stack[stack_ptr++] = node.left_child;
+                    stack[stack_ptr++] = node.right_child;
+                }
+            }
+
+            max_rel_ke[i] = local_max_rel_ke;
+
+            // Calculate delta E_grav = |a_grav| * h
+            double a_grav_mag =
+                std::sqrt(acc_x[i] * acc_x[i] + acc_y[i] * acc_y[i] +
+                          acc_z[i] * acc_z[i]);
+            delta_E_grav[i] = a_grav_mag * h[i];
+
+            bool ill_conditioned =
+                (cond_num[i] < 0.0 || cond_num[i] > N_cond_crit);
+
+            Reconstruction::ParticleGradients grads =
+                Reconstruction::compute_single_particle_gradients(
+                    i, neighbors.data(), neighbors.size(), system_data,
+                    B_matrix[i], ill_conditioned, domain_size);
+
+            // Map results back to SOA
+            grad_rho[i] = grads.grad_rho;
+            grad_p[i] = grads.grad_p;
+            grad_vx[i] = grads.grad_vx;
+            grad_vy[i] = grads.grad_vy;
+            grad_vz[i] = grads.grad_vz;
+
+            if (ill_conditioned) {
+                step_ill_conditioned++;
+
+                if (!debug_printed) {
+                    debug_printed = true;
+
+                    std::cout << "\n=== ILL-CONDITIONED MATRIX "
+                                 "DIAGNOSTIC ===\n";
+                    std::cout << "Particle Index: " << i << "\n";
+                    std::cout << "Pos: (" << pos_x[i] << ", " << pos_y[i]
+                              << ", " << pos_z[i] << ")\n";
+                    std::cout << "h_i: " << h[i] << " | rho_i: " << rho[i]
+                              << "\n";
+                    std::cout << "n_enc: " << n_enc_final[i] << "\n";
+                    std::cout << "Condition Number: " << cond_num[i] << "\n";
+                    std::cout
+                        << "Number of neighbors found: " << neighbors.size()
+                        << "\n";
+
+                    int exact_overlaps = 0;
+                    int extremely_close = 0;
+
+                    std::cout << "Neighbor distances:\n";
+                    for (size_t n = 0; n < neighbors.size(); ++n) {
+                        int j = neighbors[n];
+                        double dx = periodic_displacement(pos_x[j] - pos_x[i],
+                                                          domain_size);
+                        double dy = periodic_displacement(pos_y[j] - pos_y[i],
+                                                          domain_size);
+                        double dz = periodic_displacement(pos_z[j] - pos_z[i],
+                                                          domain_size);
+                        double r = std::sqrt(dx * dx + dy * dy + dz * dz);
+
+                        std::cout << "  N[" << n << "] (Idx: " << j
+                                  << ") r = " << r << " | dx: " << dx
+                                  << " dy: " << dy << " dz: " << dz << "\n";
+
+                        if (r < 1e-12)
+                            exact_overlaps++;
+                        else if (r < 0.05 * h[i])
+                            extremely_close++;
+                    }
+
+                    std::cout << "Diagnostics:\n";
+                    std::cout
+                        << "  Exact overlaps (r < 1e-12): " << exact_overlaps
+                        << "\n";
+                    std::cout
+                        << "  Highly clumped (r < 0.05*h): " << extremely_close
+                        << "\n";
+                    std::cout << "================================="
+                                 "========\n";
+                }
+            }
+        }
+    }
+
+    ill_conditioned_cases += step_ill_conditioned;
+}*/
 void GasParticleSystem::compute_gradients(const Config& config) {
     if (num_particles == 0) return;
     double domain_size = config.domain_size;
@@ -1720,7 +1888,7 @@ void GasParticleSystem::compute_gradients(const Config& config) {
 
     if (num_active == 0) return;
 
-#define USE_MFM_ARRAYS
+    // #define USE_MFM_ARRAYS
 
 #ifdef USE_MFM_ARRAYS
     Reconstruction::FluidStateArrays system_data{
@@ -1747,14 +1915,21 @@ void GasParticleSystem::compute_gradients(const Config& config) {
 
             neighbors.clear();
 
+            double dt_pred_i = global_time - (t_end[i] - dt_step[i] / 2.0);
+
             // Construct the isolated state for particle i
             Reconstruction::ParticleState p_i;
             p_i.pos = Eigen::Vector3d(pos_x[i], pos_y[i], pos_z[i]);
-            p_i.vel = Eigen::Vector3d(vel_x[i], vel_y[i], vel_z[i]);
+            p_i.vel = Eigen::Vector3d(
+                vel_x[i] + (acc_x[i] + hydro_acc_x[i]) * dt_pred_i,
+                vel_y[i] + (acc_y[i] + hydro_acc_y[i]) * dt_pred_i,
+                vel_z[i] + (acc_z[i] + hydro_acc_z[i]) * dt_pred_i);
             p_i.mass = mass[i];
             p_i.rho = rho[i];
-            p_i.pressure = pressure[i];
             p_i.h = h[i];
+
+            double u_pred_i = u[i] + du_dt[i] * dt_pred_i;
+            p_i.pressure = (config.gamma - 1.0) * rho[i] * u_pred_i;
 
             double local_max_rel_ke = 0.0;
 
@@ -1790,9 +1965,15 @@ void GasParticleSystem::compute_gradients(const Config& config) {
 
                     if ((r2 < p_i.h * p_i.h || r2 < h[j] * h[j]) &&
                         r2 > 1e-24) {
-                        double rel_vx = vel_x[j] - p_i.vel.x();
-                        double rel_vy = vel_y[j] - p_i.vel.y();
-                        double rel_vz = vel_z[j] - p_i.vel.z();
+                        double dt_pred_j =
+                            global_time - (t_end[j] - dt_step[j] / 2.0);
+                        Eigen::Vector3d pj_vel(
+                            vel_x[j] + (acc_x[j] + hydro_acc_x[j]) * dt_pred_j,
+                            vel_y[j] + (acc_y[j] + hydro_acc_y[j]) * dt_pred_j,
+                            vel_z[j] + (acc_z[j] + hydro_acc_z[j]) * dt_pred_j);
+                        double rel_vx = pj_vel.x() - p_i.vel.x();
+                        double rel_vy = pj_vel.y() - p_i.vel.y();
+                        double rel_vz = pj_vel.z() - p_i.vel.z();
                         double rel_v2 =
                             rel_vx * rel_vx + rel_vy * rel_vy + rel_vz * rel_vz;
                         local_max_rel_ke =
@@ -1801,15 +1982,17 @@ void GasParticleSystem::compute_gradients(const Config& config) {
 #ifdef USE_MFM_ARRAYS
                             neighbors.push_back(j);
 #else
+
                             Reconstruction::ParticleState nj;
                             nj.pos =
                                 Eigen::Vector3d(pos_x[j], pos_y[j], pos_z[j]);
-                            nj.vel =
-                                Eigen::Vector3d(vel_x[j], vel_y[j], vel_z[j]);
+                            nj.vel = pj_vel;
                             nj.mass = mass[j];
                             nj.rho = rho[j];
-                            nj.pressure = pressure[j];
                             nj.h = h[j];
+                            double u_pred_j = u[j] + du_dt[j] * dt_pred_j;
+                            nj.pressure =
+                                (config.gamma - 1.0) * rho[j] * u_pred_j;
                             neighbors.push_back(nj);
 #endif
                         }

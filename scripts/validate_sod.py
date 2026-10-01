@@ -22,7 +22,8 @@ def get_exact_sod_solution(x, t, gamma=5.0/3.0, x0=0.5):
         P = np.where(x <= x0, P_L, P_R)
         v = np.zeros_like(x)
         ie = P / (rho * (gamma - 1.0))
-        return rho, v, P, ie
+        S = P / (rho**gamma)
+        return rho, v, P, ie, S
 
     # Dynamic Riemann Solver for the Star State
     mu2 = (gamma - 1.0) / (gamma + 1.0)
@@ -88,7 +89,8 @@ def get_exact_sod_solution(x, t, gamma=5.0/3.0, x0=0.5):
             rho[i], P[i], v[i] = rho_R, P_R, v_R
             
     ie = P / (rho * (gamma - 1.0))
-    return rho, v, P, ie
+    S = P / (rho**gamma)
+    return rho, v, P, ie, S
 
 def validate_sod_shock_interactive(snapshot_dir):
     files = sorted(glob.glob(os.path.join(snapshot_dir, "snapshot_*.hdf5")))
@@ -129,13 +131,78 @@ def validate_sod_shock_interactive(snapshot_dir):
             print(f"[ERROR] Sod shock test must be pure hydrodynamics.")
             sys.exit(1)
 
+   # --- Pre-calculate Global Errors ---
+    print("Pre-calculating global energy tracking from all snapshots...")
+    times = []
+    err_tot = []
+    err_sw = []
+    E0 = None
+
+    for f_name in files:
+        with h5py.File(f_name, 'r') as f:
+            t = f['Header'].attrs['simulation_time']
+            times.append(t)
+            
+            if 'Gas' in f:
+                gas = f['Gas']
+                
+                # Total Energy summation using explicitly declared method
+                if hydro_method == "mfm":
+                    if 'mass' in gas and 'internal_energy' in gas and 'velocity_x' in gas:
+                        mass = gas['mass'][:]
+                        u_ie = gas['internal_energy'][:]
+                        v_x = gas['velocity_x'][:]
+                        v_y = gas['velocity_y'][:] if 'velocity_y' in gas else 0.0
+                        v_z = gas['velocity_z'][:] if 'velocity_z' in gas else 0.0
+                        
+                        ke = 0.5 * (v_x**2 + v_y**2 + v_z**2)
+                        E_current = np.sum(mass * (u_ie + ke))
+                    else:
+                        E_current = 0.0
+                        
+                elif hydro_method == "eulerian":
+                    N = config.get('mesh_size_1d', 32)
+                    dx = domain_size / N
+                    vol = dx**3
+                    rho_g = gas['density'][:]
+                    p_g = gas['pressure'][:]
+                    mom_x = gas['momentum_x'][:]
+                    mom_y = gas['momentum_y'][:] if 'momentum_y' in gas else 0.0
+                    mom_z = gas['momentum_z'][:] if 'momentum_z' in gas else 0.0
+                    
+                    kin = 0.5 * (mom_x**2 + mom_y**2 + mom_z**2) / rho_g
+                    therm = p_g / (gamma - 1.0)
+                    E_current = np.sum((therm + kin) * vol)
+                else:
+                    E_current = 0.0
+
+                if E0 is None and E_current != 0:
+                    E0 = E_current
+                
+                if E0 is not None and E0 != 0:
+                    frac_err = (E_current - E0) / E0
+                else:
+                    frac_err = 0.0
+                err_tot.append(frac_err)
+                
+                # Entropy Switch Energy
+                sw_energy = gas.attrs.get('cumulative_entropy_switch_energy', 0.0)
+                if E0 is not None and E0 != 0:
+                    sw_err = sw_energy / E0
+                else:
+                    sw_err = 0.0
+                err_sw.append(sw_err)
+            else:
+                err_tot.append(0.0)
+                err_sw.append(0.0)
+
     # Styling based on solver method
     label_prefix = "Eulerian Grid" if hydro_method == "eulerian" else "MFM Particles"
     color_prefix = "darkorange" if hydro_method == "eulerian" else "royalblue"
     
-    # Plot Setup
-    fig, axs = plt.subplots(2, 2, figsize=(14, 10))
-    plt.subplots_adjust(bottom=0.15) 
+    # Plot Setup - Expanded to 3x2 grid
+    fig, axs = plt.subplots(3, 2, figsize=(14, 14))
+    plt.subplots_adjust(bottom=0.10, hspace=0.3) 
 
     axs[0, 0].set_ylim(-0.05, 1.15)
     axs[0, 1].set_ylim(-0.1, 1.2)  
@@ -143,41 +210,54 @@ def validate_sod_shock_interactive(snapshot_dir):
     
     scatter_kwargs = {'s': 6 if hydro_method == "eulerian" else 4, 
                       'color': color_prefix, 'alpha': 0.8, 'label': f'{label_prefix} Sim'}
-    #sim_line_kwargs = {'color': color_prefix, 'lw': 1.0 if hydro_method == "eulerian" else 0.5, 'alpha': 0.8}
     exact_line_kwargs = {'color': 'black', 'lw': 1.5, 'linestyle': '--', 'label': 'Exact Solution'}
     
     # Density
-    #line_sim_rho, = axs[0, 0].plot([], [], **sim_line_kwargs)
     scat_rho = axs[0, 0].scatter([], [], **scatter_kwargs)
     line_rho, = axs[0, 0].plot([], [], **exact_line_kwargs)
     axs[0, 0].set_ylabel(r"Density ($\rho$)")
     axs[0, 0].set_title("Density Profile")
     
     # Velocity
-    #line_sim_v, = axs[0, 1].plot([], [], **sim_line_kwargs)
     scat_v = axs[0, 1].scatter([], [], **scatter_kwargs)
     line_v, = axs[0, 1].plot([], [], **exact_line_kwargs)
     axs[0, 1].set_ylabel(r"Velocity ($v_x$)")
     axs[0, 1].set_title("Velocity Profile")
     
     # Pressure
-    #line_sim_P, = axs[1, 0].plot([], [], **sim_line_kwargs)
     scat_P = axs[1, 0].scatter([], [], **scatter_kwargs)
     line_P, = axs[1, 0].plot([], [], **exact_line_kwargs)
     axs[1, 0].set_ylabel(r"Pressure ($P$)")
-    axs[1, 0].set_xlabel("Position (x)")
     axs[1, 0].set_title("Pressure Profile")
     
     # Internal Energy
-    #line_sim_u, = axs[1, 1].plot([], [], **sim_line_kwargs)
     scat_u = axs[1, 1].scatter([], [], **scatter_kwargs)
     line_u, = axs[1, 1].plot([], [], **exact_line_kwargs)
     axs[1, 1].set_ylabel(r"Internal Energy ($u$)")
-    axs[1, 1].set_xlabel("Position (x)")
     axs[1, 1].set_title("Specific Internal Energy")
 
+    # Global Fractional Errors (Time Series)
+    axs[2, 0].plot(times, err_tot, label=r'$\Delta E_{tot} / E_0$', color='black', lw=1.5)
+    axs[2, 0].plot(times, err_sw, label=r'$E_{switch} / E_0$', color='red', lw=1.5, linestyle='-.')
+    vline_time = axs[2, 0].axvline(0, color='gray', linestyle='--', alpha=0.7)
+    if len(times) > 1:
+        axs[2, 0].set_xlim(min(times), max(times))
+    axs[2, 0].set_ylabel("Fractional Error")
+    axs[2, 0].set_xlabel("Time")
+    axs[2, 0].set_title("Global Energy Conservation")
+    axs[2, 0].legend(loc='upper left', fontsize=9)
+
+    # Entropy
+    scat_s = axs[2, 1].scatter([], [], **scatter_kwargs)
+    line_s, = axs[2, 1].plot([], [], **exact_line_kwargs)
+    axs[2, 1].set_ylabel(r"Entropy ($S = P/\rho^\gamma$)")
+    axs[2, 1].set_xlabel("Position (x)")
+    axs[2, 1].set_title("Entropy Profile")
+
+    # Format bounds/grids for spatial plots
     for ax in axs.flat:
-        ax.set_xlim(0, domain_size)
+        if ax != axs[2, 0]: # Skip the time-series plot
+            ax.set_xlim(0, domain_size)
         ax.grid(True, linestyle=':', alpha=0.6)
     axs[0, 0].legend(loc='upper right', fontsize=9)
 
@@ -197,7 +277,7 @@ def validate_sod_shock_interactive(snapshot_dir):
             P_R_plot = 0.1795
             rho_R_plot = 0.25
             c_R_plot = np.sqrt(gamma * P_R_plot / rho_R_plot)
-            _, _, P_star_plot, _ = get_exact_sod_solution(np.array([domain_size/2.0]), 1e-8, gamma)
+            _, _, P_star_plot, _, _ = get_exact_sod_solution(np.array([domain_size/2.0]), 1e-8, gamma)
             V_shock = c_R_plot * np.sqrt((gamma + 1.0) / (2.0 * gamma) * (P_star_plot[0] / P_R_plot) + (gamma - 1.0) / (2.0 * gamma))
             
             left_bnd = c_L * time
@@ -224,6 +304,7 @@ def validate_sod_shock_interactive(snapshot_dir):
                 v_line = mom_x_3d[:, mid, mid] / rho_line
                 P_line = P_3d[:, mid, mid]
                 u_line = P_line / (rho_line * (gamma - 1.0))
+                s_line = P_line / (rho_line**gamma)
                 
                 valid_mask = (x_all >= left_bnd) & (x_all <= right_bnd)
                 x_v = x_all[valid_mask]
@@ -231,6 +312,7 @@ def validate_sod_shock_interactive(snapshot_dir):
                 v_v = v_line[valid_mask]
                 P_v = P_line[valid_mask]
                 u_v = u_line[valid_mask]
+                s_v = s_line[valid_mask]
                 
             elif method == "mfm":
                 x = f['Gas/position_x'][:]
@@ -240,6 +322,8 @@ def validate_sod_shock_interactive(snapshot_dir):
                 v_x = f['Gas/velocity_x'][:]
                 u = f['Gas/internal_energy'][:]
                 P = rho * u * (gamma - 1.0)
+                
+                s = f['Gas/entropy'][:]
                 
                 safe_y_min, safe_y_max = domain_size * 0.0, domain_size * 1.0
                 safe_z_min, safe_z_max = domain_size * 0.0, domain_size * 1.0
@@ -253,6 +337,7 @@ def validate_sod_shock_interactive(snapshot_dir):
                 v_v = v_x[valid_mask]
                 P_v = P[valid_mask]
                 u_v = u[valid_mask]
+                s_v = s[valid_mask]
             
         fig.suptitle(f"Sod Shock Validation - Snapshot {idx} (t={time:.4f})", fontsize=16)
         
@@ -265,32 +350,40 @@ def validate_sod_shock_interactive(snapshot_dir):
         scat_v.set_offsets(np.c_[x_v, v_v])
         scat_P.set_offsets(np.c_[x_v, P_v])
         scat_u.set_offsets(np.c_[x_v, u_v])
-
-        # Thin Connecting Lines (using sorted data)
-        #line_sim_rho.set_data(x_sorted, rho_v[sort_idx])
-        #line_sim_v.set_data(x_sorted, v_v[sort_idx])
-        #line_sim_P.set_data(x_sorted, P_v[sort_idx])
-        #line_sim_u.set_data(x_sorted, u_v[sort_idx])
+        scat_s.set_offsets(np.c_[x_v, s_v])
 
         # Update Analytical Lines
         x_exact = np.linspace(0, domain_size, 1000)
-        rho_ex, v_ex, P_ex, u_ex = get_exact_sod_solution(x_exact, time, gamma, x0=domain_size/2.0)
+        rho_ex, v_ex, P_ex, u_ex, s_ex = get_exact_sod_solution(x_exact, time, gamma, x0=domain_size/2.0)
         
         line_rho.set_data(x_exact, rho_ex)
         line_v.set_data(x_exact, v_ex)
         line_P.set_data(x_exact, P_ex)
         line_u.set_data(x_exact, u_ex)
+        line_s.set_data(x_exact, s_ex)
 
+        # Time tracking vertical line
+        vline_time.set_xdata([time, time])
+
+        # Dynamic plotting limits
         if len(u_v) > 0:
             current_u_min = min(np.min(u_v), np.min(u_ex))
             current_u_max = max(np.max(u_v), np.max(u_ex))
-            
             u_range = current_u_max - current_u_min
             padding = u_range * 0.15 if u_range > 0 else 0.5
-            
             axs[1, 1].set_ylim(current_u_min - padding, current_u_max + padding)
 
+        if len(s_v) > 0:
+            current_s_min = min(np.min(s_v), np.min(s_ex))
+            current_s_max = max(np.max(s_v), np.max(s_ex))
+            s_range = current_s_max - current_s_min
+            padding_s = s_range * 0.15 if s_range > 0 else 0.5
+            axs[2, 1].set_ylim(current_s_min - padding_s, current_s_max + padding_s)
+
+        # Apply Wave Bounds
         for ax in axs.flat:
+            if ax == axs[2, 0]: # Skip the time-series plot
+                continue
             [p.remove() for p in reversed(ax.patches)]
             ax.axvspan(0, min(left_bnd, domain_size), color='gray', alpha=0.2)
             if right_bnd < domain_size:
@@ -299,7 +392,7 @@ def validate_sod_shock_interactive(snapshot_dir):
         fig.canvas.draw_idle()
 
     # Slider
-    ax_slider = fig.add_axes([0.15, 0.05, 0.7, 0.03])
+    ax_slider = fig.add_axes([0.15, 0.02, 0.7, 0.03])
     snap_slider = Slider(
         ax=ax_slider,
         label='Snapshot ID',

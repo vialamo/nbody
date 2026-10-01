@@ -2,8 +2,6 @@
 #include <Eigen/Dense>
 #include <vector>
 
-// #define VOLUME_WEIGHTED
-
 constexpr double N_cond_crit = 100.0;
 
 namespace Reconstruction {
@@ -57,16 +55,16 @@ struct ReconstructedFace {
 
 // Computes spatial gradients using least-squares matrix inversion
 ParticleGradients compute_single_particle_gradients(
-    const ParticleState& p_i, const std::vector<ParticleState>& neighbors,
-    const Eigen::Matrix3d& B, bool ill_conditioned, double condition_number,
-    double domain_size);
-
-ParticleGradients compute_single_particle_gradients(
     size_t i,                             // The central particle index
     const int* neighbor_indices,          // Flat array of neighbor indices
     size_t num_neighbors,                 // Number of neighbors
     const FluidStateArrays& system_data,  // Pointers to global SoA
     const Eigen::Matrix3d& B, bool ill_conditioned, double domain_size);
+
+ParticleGradients compute_single_particle_gradients(
+    const ParticleState& p_i, const std::vector<ParticleState>& neighbors,
+    const Eigen::Matrix3d& B, bool ill_conditioned, double condition_number,
+    double domain_size);
 
 // Extrapolates particle states to the face using spatial gradients
 ReconstructedFace compute_face_reconstruction(

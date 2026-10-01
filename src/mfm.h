@@ -189,10 +189,11 @@ class GasParticleSystem {
                               double domain_size, double& out_n,
                               double& out_dn_dh) const;
 
-    // Lightweight BVH walker to check if a given h_guess yields a
-    // well-conditioned matrix
-    double build_matrix_and_compute_condition(size_t particle_idx, double h_guess,
-                                  double domain_size, Eigen::Matrix3d& B) const;
+    // BVH walker to buld a matrix and check if it is well-conditioned
+    double build_matrix_and_compute_condition(size_t particle_idx, double h,
+                                              double domain_size,
+                                              Eigen::Matrix3d& B,
+                                              bool volume_weighted);
 
 #ifdef USE_ADAPTIVE_SOFTENING
     // A tree-walker that computes the zeta gravity correction from a target
