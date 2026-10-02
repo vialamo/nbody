@@ -34,6 +34,7 @@ set(CORE_SOURCES
     src/diagnostics.cpp
     src/engine.cpp
     src/gas.cpp
+    src/hdf5_reader.cpp
     src/hdf5_writer.cpp
     src/ics.cpp
     src/integrator.cpp

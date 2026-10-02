@@ -5,6 +5,7 @@
 
 #include "constants.h"
 #include "cooling.h"
+#include "hdf5_reader.h"
 #include "integrator.h"
 #include "math_utils.h"
 #include "particles.h"
@@ -512,59 +513,164 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
         gas.update_primitive_variables(state.scale_factor);
 
     } else if (config.hydro_method == HydroMethod::MFM) {
-        // Using the 1D particle count to define the left-side resolution
-        int N = config.num_gas_particles_1d;
+        constexpr bool use_glass = true;
 
-        // Spacing: Right side spacing must scale by the cube root of the
-        // density ratio in 3D to maintain equal particle masses across the
-        // domain
-        double dx_L = L / N;
-        double dx_R =
-            dx_L *
-            std::cbrt(rho_L / rho_R);  // For a 4:1 ratio, cbrt(4) ≈ 1.5874
+        if (use_glass) {
+            // Hardcoded path to your generated master glass file
+            constexpr const char* glass_file = "data/glass.hdf5";
 
-        // Since mass is constant, we define it based on the left side
-        double particle_mass = rho_L * (dx_L * dx_L * dx_L);
+            // Extract the relaxed glass coordinates and its original domain
+            // size
+            HDF5Reader reader(glass_file);
+            H5::Group config_group = reader.open_group("/Config");
+            double glass_domain =
+                reader.read_attr_double(config_group, "domain_size");
+            MFMGasSnapshot glass = reader.read_mfm_gas();
 
-        // Calculate starting offsets to ensure L/2.0 is exactly hit by the grid
-        std::vector<double> yz_coords_L;
-        double start_L = std::fmod(L / 2.0, dx_L);
-        if (start_L < 0.0) start_L += dx_L;  // Prevent negative float quirk
-        for (double pos = start_L; pos < L - 1e-5; pos += dx_L) {
-            yz_coords_L.push_back(pos);
-        }
+            // 1. Calculate Target Physics
+            double N_req = std::pow(config.num_gas_particles_1d, 3.0);
+            double half_vol = (L * L * L) / 2.0;
+            double total_mass = (half_vol * rho_L) + (half_vol * rho_R);
+            double particle_mass = total_mass / N_req;
 
-        std::vector<double> yz_coords_R;
-        double start_R = std::fmod(L / 2.0, dx_R);
-        if (start_R < 0.0) start_R += dx_R;
-        for (double pos = start_R; pos < L - 1e-5; pos += dx_R) {
-            yz_coords_R.push_back(pos);
-        }
+            // Target number densities (particles per unit volume)
+            double n_L = rho_L / particle_mass;
+            double n_R = rho_R / particle_mass;
+            double n_glass = glass.num_particles / std::pow(glass_domain, 3.0);
 
-        // LEFT SIDE (High Density, High Pressure)
-        // x goes from 0 to 0.5 * L (X stays unchanged, Y/Z use centered arrays)
-        for (double x = dx_L / 2.0; x < 0.5 * L; x += dx_L) {
-            for (double y : yz_coords_L) {
-                for (double z : yz_coords_L) {
-                    // Keep the smoothing length slightly larger than the
-                    // spacing to ensure overlap
-                    double initial_h = 1.2 * dx_L;
-                    state.mfm_gas->add_particle(x, y, z, v_x, v_y, v_z,
-                                                particle_mass, u_L, initial_h,
-                                                seed_metallicity);
+            // 2. Calculate Spatial Scaling Factors
+            // Scaling coordinates by S changes the volume by S^3, altering
+            // density
+            double S_L = std::cbrt(n_glass / n_L);
+            double S_R = std::cbrt(n_glass / n_R);
+
+            double block_size_L = glass_domain * S_L;
+            double block_size_R = glass_domain * S_R;
+
+            // Estimated smoothing lengths based on the required density
+            double h_L = 1.2 * std::cbrt(1.0 / n_L);
+            double h_R = 1.2 * std::cbrt(1.0 / n_R);
+
+            // ====================================================================
+            // LEFT SIDE (Dense, High Pressure)
+            // ====================================================================
+            // Determine how many blocks we need to cover the left domain.
+            int max_ix_L = std::ceil((L / 2.0) / block_size_L);
+            int max_iy_L = std::ceil(L / block_size_L);
+            int max_iz_L = std::ceil(L / block_size_L);
+
+            for (int ix = 0; ix < max_ix_L; ++ix) {
+                for (int iy = 0; iy < max_iy_L; ++iy) {
+                    for (int iz = 0; iz < max_iz_L; ++iz) {
+                        for (size_t p = 0; p < glass.num_particles; ++p) {
+                            double p_x =
+                                ix * block_size_L + glass.pos_x[p] * S_L;
+                            double p_y =
+                                iy * block_size_L + glass.pos_y[p] * S_L;
+                            double p_z =
+                                iz * block_size_L + glass.pos_z[p] * S_L;
+
+                            // Subsample: Only keep particles strictly within
+                            // the Left boundary
+                            if (p_x < L / 2.0 && p_y < L && p_z < L) {
+                                state.mfm_gas->add_particle(
+                                    p_x, p_y, p_z, v_x, v_y, v_z, particle_mass,
+                                    u_L, h_L, seed_metallicity);
+                            }
+                        }
+                    }
                 }
             }
-        }
 
-        // RIGHT SIDE (Low Density, Low Pressure)
-        // x goes from 0.5 * L to L
-        for (double x = 0.5 * L + dx_R / 2.0; x < L; x += dx_R) {
-            for (double y : yz_coords_R) {
-                for (double z : yz_coords_R) {
-                    double initial_h = 1.2 * dx_R;
-                    state.mfm_gas->add_particle(x, y, z, v_x, v_y, v_z,
-                                                particle_mass, u_R, initial_h,
-                                                seed_metallicity);
+            // ====================================================================
+            // RIGHT SIDE (Sparse, Low Pressure)
+            // ====================================================================
+            // Determine how many blocks we need to cover the right domain.
+            int max_ix_R = std::ceil((L / 2.0) / block_size_R);
+            int max_iy_R = std::ceil(L / block_size_R);
+            int max_iz_R = std::ceil(L / block_size_R);
+
+            for (int ix = 0; ix < max_ix_R; ++ix) {
+                for (int iy = 0; iy < max_iy_R; ++iy) {
+                    for (int iz = 0; iz < max_iz_R; ++iz) {
+                        for (size_t p = 0; p < glass.num_particles; ++p) {
+                            // Shift X by L/2 to place the block grid on the
+                            // right side
+                            double p_x = (L / 2.0) + ix * block_size_R +
+                                         glass.pos_x[p] * S_R;
+                            double p_y =
+                                iy * block_size_R + glass.pos_y[p] * S_R;
+                            double p_z =
+                                iz * block_size_R + glass.pos_z[p] * S_R;
+
+                            // Subsample: Only keep particles strictly within
+                            // the Right boundary
+                            if (p_x < L && p_y < L && p_z < L) {
+                                state.mfm_gas->add_particle(
+                                    p_x, p_y, p_z, v_x, v_y, v_z, particle_mass,
+                                    u_R, h_R, seed_metallicity);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Using the 1D particle count to define the left-side resolution
+            int N = config.num_gas_particles_1d;
+
+            // Spacing: Right side spacing must scale by the cube root of the
+            // density ratio in 3D to maintain equal particle masses across the
+            // domain
+            double dx_L = L / N;
+            double dx_R =
+                dx_L *
+                std::cbrt(rho_L / rho_R);  // For a 4:1 ratio, cbrt(4) ≈ 1.5874
+
+            // Since mass is constant, we define it based on the left side
+            double particle_mass = rho_L * (dx_L * dx_L * dx_L);
+
+            // Calculate starting offsets to ensure L/2.0 is exactly hit by the
+            // grid
+            std::vector<double> yz_coords_L;
+            double start_L = std::fmod(L / 2.0, dx_L);
+            if (start_L < 0.0) start_L += dx_L;  // Prevent negative float quirk
+            for (double pos = start_L; pos < L - 1e-5; pos += dx_L) {
+                yz_coords_L.push_back(pos);
+            }
+
+            std::vector<double> yz_coords_R;
+            double start_R = std::fmod(L / 2.0, dx_R);
+            if (start_R < 0.0) start_R += dx_R;
+            for (double pos = start_R; pos < L - 1e-5; pos += dx_R) {
+                yz_coords_R.push_back(pos);
+            }
+
+            // LEFT SIDE (High Density, High Pressure)
+            // x goes from 0 to 0.5 * L (X stays unchanged, Y/Z use centered
+            // arrays)
+            for (double x = dx_L / 2.0; x < 0.5 * L; x += dx_L) {
+                for (double y : yz_coords_L) {
+                    for (double z : yz_coords_L) {
+                        // Keep the smoothing length slightly larger than the
+                        // spacing to ensure overlap
+                        double initial_h = 1.2 * dx_L;
+                        state.mfm_gas->add_particle(
+                            x, y, z, v_x, v_y, v_z, particle_mass, u_L,
+                            initial_h, seed_metallicity);
+                    }
+                }
+            }
+
+            // RIGHT SIDE (Low Density, Low Pressure)
+            // x goes from 0.5 * L to L
+            for (double x = 0.5 * L + dx_R / 2.0; x < L; x += dx_R) {
+                for (double y : yz_coords_R) {
+                    for (double z : yz_coords_R) {
+                        double initial_h = 1.2 * dx_R;
+                        state.mfm_gas->add_particle(
+                            x, y, z, v_x, v_y, v_z, particle_mass, u_R,
+                            initial_h, seed_metallicity);
+                    }
                 }
             }
         }
@@ -794,14 +900,11 @@ void initialize_glass(SimState& state, const Config& config) {
         config.gas_total_mass / static_cast<double>(total_particles);
     double spacing = config.domain_size / N_part;
 
-    // Provide a safe initial guess for the smoothing length;
-    // the density iteration will correct this on step 0
     double initial_h = 1.2 * spacing;
     double seed_metallicity = 0.0;
 
     const double initial_internal_energy =
-        Cooling::get_internal_energy_from_temp(1e7,
-                                               1.0, config);
+        Cooling::get_internal_energy_from_temp(1e8, 1.0, config);
 
     // Initialize the random number generator
     std::default_random_engine generator(config.seed);

@@ -112,7 +112,7 @@ void Config::compute_derived_data() {
         omega_m = 1.0;
         omega_baryon = 1.0;
         total_mass = 1.0;
-        a_end = 10.0;
+        a_end = std::max(a_end, 10.0);
         individual_particle_timesteps = false;
     }
 

@@ -54,6 +54,13 @@ void signal_handler(int signal) {
     }
 }
 
+std::string generate_directory_name(const Config& config,
+                                    const std::string& timestamp) {
+    std::string base = InitialConfig::to_string(config.initial_setup);
+    std::string run_dir = "outputs/" + base + "_" + timestamp;
+    return run_dir;
+}
+
 int main(int argc, char* argv[]) {
     std::signal(SIGINT, signal_handler);
 
@@ -80,7 +87,7 @@ int main(int argc, char* argv[]) {
 
     // Create the output directories
     std::string timestamp = utils::get_timestamp();
-    std::string run_dir = "outputs/run_" + timestamp;
+    std::string run_dir = generate_directory_name(config, timestamp);
     std::filesystem::create_directories(run_dir);
 
     // Copy the config file into the run directory for reproducibility

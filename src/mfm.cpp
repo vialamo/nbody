@@ -2434,7 +2434,7 @@ double GasParticleSystem::get_active_particles_per_cycle_and_reset(
 }
 
 void GasParticleSystem::reset_velocities() {
-    double damping_factor = 0.95;
+    double damping_factor = 0.9;
 
 #pragma omp parallel for schedule(dynamic, 64)
     for (size_t i = 0; i < num_particles; ++i) {
