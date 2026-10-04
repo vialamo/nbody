@@ -113,13 +113,21 @@ void SimulationEngine::step() {
         is_synchronized = (std::abs(ratio - std::round(ratio)) < 1e-7);
     }
 
+    bool fixed_scale_output =
+        (!config.expanding_universe && cycle_count % 4 == 0);
+    if (config.initial_setup == InitialSetup::Glass) {
+        fixed_scale_output = (cycle_count % 64 == 0);
+    } else if (config.initial_setup == InitialSetup::SedovBlastwave ||
+               config.initial_setup == InitialSetup::SodShockTube) {
+        fixed_scale_output = fixed_scale_output || (cycle_count < 30);
+    }
+
     constexpr double TOLERANCE = 1e-7;
     bool must_save_snapshot =
         is_synchronized &&
-        (state.scale_factor >= (next_output_a - TOLERANCE) ||
-         (!config.expanding_universe && cycle_count % 4 == 0) ||
-         (config.initial_setup == InitialSetup::SedovBlastwave &&
-          cycle_count < 30));
+        (config.expanding_universe &&
+             state.scale_factor >= (next_output_a - TOLERANCE) ||
+         fixed_scale_output);
 
     if (config.save_HDF5_every_delta_a > 0.0 &&
         (!needs_more_cycles || must_save_snapshot)) {

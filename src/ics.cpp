@@ -513,10 +513,10 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
         gas.update_primitive_variables(state.scale_factor);
 
     } else if (config.hydro_method == HydroMethod::MFM) {
-        constexpr bool use_glass = true;
+        constexpr bool use_glass = false;
 
         if (use_glass) {
-            // Hardcoded path to your generated master glass file
+            // Hardcoded path to a master glass file
             constexpr const char* glass_file = "data/glass.hdf5";
 
             // Extract the relaxed glass coordinates and its original domain
@@ -527,7 +527,7 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
                 reader.read_attr_double(config_group, "domain_size");
             MFMGasSnapshot glass = reader.read_mfm_gas();
 
-            // 1. Calculate Target Physics
+            // Calculate Target Physics
             double N_req = std::pow(config.num_gas_particles_1d, 3.0);
             double half_vol = (L * L * L) / 2.0;
             double total_mass = (half_vol * rho_L) + (half_vol * rho_R);
@@ -538,7 +538,7 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
             double n_R = rho_R / particle_mass;
             double n_glass = glass.num_particles / std::pow(glass_domain, 3.0);
 
-            // 2. Calculate Spatial Scaling Factors
+            // Calculate Spatial Scaling Factors
             // Scaling coordinates by S changes the volume by S^3, altering
             // density
             double S_L = std::cbrt(n_glass / n_L);
@@ -547,14 +547,8 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
             double block_size_L = glass_domain * S_L;
             double block_size_R = glass_domain * S_R;
 
-            // Estimated smoothing lengths based on the required density
-            double h_L = 1.2 * std::cbrt(1.0 / n_L);
-            double h_R = 1.2 * std::cbrt(1.0 / n_R);
-
-            // ====================================================================
             // LEFT SIDE (Dense, High Pressure)
-            // ====================================================================
-            // Determine how many blocks we need to cover the left domain.
+            // Determine how many blocks we need to cover the left domain
             int max_ix_L = std::ceil((L / 2.0) / block_size_L);
             int max_iy_L = std::ceil(L / block_size_L);
             int max_iz_L = std::ceil(L / block_size_L);
@@ -570,22 +564,22 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
                             double p_z =
                                 iz * block_size_L + glass.pos_z[p] * S_L;
 
-                            // Subsample: Only keep particles strictly within
-                            // the Left boundary
+                            double p_h = glass.smoothing_length[p] * S_L;
+
+                            // Subsample: keep particles within the Left
+                            // boundary
                             if (p_x < L / 2.0 && p_y < L && p_z < L) {
                                 state.mfm_gas->add_particle(
                                     p_x, p_y, p_z, v_x, v_y, v_z, particle_mass,
-                                    u_L, h_L, seed_metallicity);
+                                    u_L, p_h, seed_metallicity);
                             }
                         }
                     }
                 }
             }
 
-            // ====================================================================
             // RIGHT SIDE (Sparse, Low Pressure)
-            // ====================================================================
-            // Determine how many blocks we need to cover the right domain.
+            // Determine how many blocks we need to cover the right domain
             int max_ix_R = std::ceil((L / 2.0) / block_size_R);
             int max_iy_R = std::ceil(L / block_size_R);
             int max_iz_R = std::ceil(L / block_size_R);
@@ -603,12 +597,14 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
                             double p_z =
                                 iz * block_size_R + glass.pos_z[p] * S_R;
 
-                            // Subsample: Only keep particles strictly within
-                            // the Right boundary
+                            double p_h = glass.smoothing_length[p] * S_R;
+
+                            // Subsample: keep particles within the Right
+                            // boundary
                             if (p_x < L && p_y < L && p_z < L) {
                                 state.mfm_gas->add_particle(
                                     p_x, p_y, p_z, v_x, v_y, v_z, particle_mass,
-                                    u_R, h_R, seed_metallicity);
+                                    u_R, p_h, seed_metallicity);
                             }
                         }
                     }
@@ -972,6 +968,28 @@ SimState initialize_state(Config& config) {
     compute_forces(state, config, dummy_diag);
 
     if (config.hydro_method == HydroMethod::MFM) {
+        //  DIAGNOSTIC: Force pressure consistency
+        if (config.initial_setup == InitialSetup::SodShockTube) {
+            double L = config.domain_size;
+            double gamma = config.gamma;
+            double P_L = 1.0;
+            double P_R = 0.1;
+
+            for (size_t i = 0; i < state.mfm_gas->num_particles; ++i) {
+                double target_P =
+                    (state.mfm_gas->pos_x[i] < L / 2.0) ? P_L : P_R;
+                double final_rho = state.mfm_gas->rho[i];
+                
+                // Calculate the required internal energy
+                double target_u = target_P / ((gamma - 1.0) * final_rho);
+                
+                // Override the master conserved variable!
+                // Since v=0, kinetic energy is 0, so total_energy = internal_energy
+                state.mfm_gas->total_energy[i] = target_u; 
+                state.mfm_gas->u[i] = target_u;
+            }
+        }
+
         // Sync pressure and energies based on the initial density
         state.mfm_gas->update_primitive_variables(config, state.scale_factor);
         state.mfm_gas->compute_gradients(config);

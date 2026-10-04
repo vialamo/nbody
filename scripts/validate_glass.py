@@ -14,12 +14,17 @@ def validate_glass_generation(snapshot_dir):
         print(f"[ERROR] No HDF5 snapshots found in directory: '{snapshot_dir}'")
         return
 
+    #last_file = files[-1]          # Save the absolute last snapshot
+    #files = files[::8]             # Take every 8th snapshot
+    #if files[-1] != last_file:     # Ensure the last snapshot is included
+    #    files.append(last_file)
+
     # Validate config from the first file
     with h5py.File(files[0], 'r') as f:
         config = f['Config'].attrs
         setup_type = config.get('setup', b"").decode('utf-8')
         domain_size = config.get('domain_size', 1.0)
-        
+
         if setup_type != "glass":
             print(f"[WARNING] Expected config attribute 'setup'='glass'. Found: '{setup_type}'")
 
@@ -36,21 +41,21 @@ def validate_glass_generation(snapshot_dir):
         with h5py.File(f_name, 'r') as f:
             t = f['Header'].attrs['simulation_time']
             times.append(t)
-            
+
             gas = f['Gas']
-            
+
             # 1. Velocity Metric
             v_x = gas['velocity_x'][:]
             v_y = gas['velocity_y'][:]
             v_z = gas['velocity_z'][:]
             v_mag = np.sqrt(v_x**2 + v_y**2 + v_z**2)
             max_velocities.append(np.max(v_mag))
-            
+
             # 2. Density Uniformity Metric
             rho = gas['density'][:]
             mean_rho = np.mean(rho)
             std_rho = np.std(rho)
-            
+
             density_covs.append(std_rho / mean_rho)
             density_max.append(np.max(rho) / mean_rho)
             density_min.append(np.min(rho) / mean_rho)
@@ -113,21 +118,21 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate MFM Glass Generation convergence.")
     parser.add_argument("path", type=str, nargs='?', help="Path to snapshot directory.")
     parser.add_argument("-l", "--latest", action="store_true", help="Load latest run_* directory")
-    
+
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(1)
-        
+
     args = parser.parse_args()
-    
+
     target_dir = args.path
     if args.latest:
         # Resolve the latest run directory
         runs = sorted(glob.glob(os.path.join(target_dir if target_dir else ".", "run_*")))
         if runs: target_dir = runs[-1]
-        
+
     if target_dir is None:
         print("[ERROR] No target directory specified and no run_* directories found.")
         sys.exit(1)
-        
+
     validate_glass_generation(target_dir)

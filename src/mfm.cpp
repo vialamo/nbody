@@ -180,6 +180,7 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
         new_t_current(num_particles), new_t_end(num_particles);
     std::vector<uint8_t> new_is_active(num_particles);
     std::vector<uint8_t> new_needs_wakeup(num_particles);
+    std::vector<double> new_v_sig_max(num_particles);
 
     for (size_t i = 0; i < num_particles; ++i) {
         int src = sorted_indices[i];
@@ -225,6 +226,7 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
         new_t_end[i] = t_end[src];
         new_is_active[i] = is_active[src];
         new_needs_wakeup[i] = needs_wakeup[src];
+        new_v_sig_max[i] = v_sig_max[src];
     }
 
     pos_x = std::move(new_px);
@@ -269,6 +271,7 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     t_end = std::move(new_t_end);
     is_active = std::move(new_is_active);
     needs_wakeup = std::move(new_needs_wakeup);
+    v_sig_max = std::move(new_v_sig_max);
 
     active_indices.clear();
     for (size_t i = 0; i < num_particles; ++i) {
