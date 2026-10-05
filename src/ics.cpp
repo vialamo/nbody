@@ -1131,6 +1131,7 @@ SimState initialize_state(Config& config) {
 
     // Compute initial MFM properties before forces are calculated
     if (config.hydro_method == HydroMethod::MFM) {
+        state.mfm_gas->build_lbvh(config);
         state.mfm_gas->compute_density_and_h(config, state.dm);
         state.mfm_gas->bin_and_assign_mass(config);
         state.mfm_gas->update_primitive_variables(config, state.scale_factor);

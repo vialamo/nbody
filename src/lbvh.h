@@ -42,4 +42,10 @@ void build_topology_and_aggregate(
     const std::vector<double>& sorted_mass,
     const std::vector<double>* sorted_h,  // Pass nullptr for DM
     std::vector<uint64_t>& morton_codes, std::vector<BVHNode>& bvh_nodes);
+
+void update_h_and_bboxes(size_t num_particles, const std::vector<double>& pos_x,
+                         const std::vector<double>& pos_y,
+                         const std::vector<double>& pos_z,
+                         const std::vector<double>& h,
+                         std::vector<BVHNode>& bvh_nodes);
 }  // namespace LBVH

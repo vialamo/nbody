@@ -513,15 +513,6 @@ static void update_softening(SimState& state, Config& config) {
 void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
     update_softening(state, config);
 
-    // Build trees
-    {
-        ScopedTimer timer(diag, TimerRegion::Tree);
-        state.dm.build_lbvh(config);
-        if (config.hydro_method == HydroMethod::MFM) {
-            state.mfm_gas->build_lbvh(config);
-        }
-    }
-
     // PM
     {
         ScopedTimer pm_timer(diag, TimerRegion::PM);
@@ -585,12 +576,6 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
         }
     }
 
-    // MFM HYDRODYNAMICS
-    if (config.hydro_method == HydroMethod::MFM) {
-        ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
-        state.mfm_gas->compute_density_and_h(config, state.dm);
-    }
-
     // Finalize
     {
         ScopedTimer pp_timer(diag, TimerRegion::PP);
@@ -646,6 +631,22 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
 
             // apply_gas_particle_drift automatically drifts to global_time
             apply_gas_particle_drift(*state.mfm_gas, dt, config.domain_size);
+        }
+    }
+
+    // Build trees
+    {
+        ScopedTimer timer(diag, TimerRegion::Tree);
+        state.dm.build_lbvh(config);
+        if (config.hydro_method == HydroMethod::MFM) {
+            state.mfm_gas->build_lbvh(config);
+        }
+    }
+
+    if (config.hydro_method == HydroMethod::MFM) {
+        {
+            ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
+
             // These loops skip inactive particles
             state.mfm_gas->compute_density_and_h(config, state.dm);
             state.mfm_gas->hydro_step(config, mid_a, mid_H, dt);

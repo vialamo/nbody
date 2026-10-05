@@ -76,7 +76,7 @@ void build_topology_and_aggregate(size_t num_particles,
         if (code_i == code_j) {
             // Tie-breaker for identical coordinates using the original index.
             // __builtin_clzll(unsigned long long) returns the number of leading
-            // 0-bits starting at the most significant bit position. 
+            // 0-bits starting at the most significant bit position.
             // If arg == 0 the result is undefined
             return 64 + __builtin_clzll(static_cast<unsigned long long>(i ^ j));
         }
@@ -244,6 +244,68 @@ void build_topology_and_aggregate(size_t num_particles,
             bvh_nodes[i].com_x /= bvh_nodes[i].mass;
             bvh_nodes[i].com_y /= bvh_nodes[i].mass;
             bvh_nodes[i].com_z /= bvh_nodes[i].mass;
+        }
+    }
+}
+
+void update_h_and_bboxes(size_t num_particles, const std::vector<double>& pos_x,
+                         const std::vector<double>& pos_y,
+                         const std::vector<double>& pos_z,
+                         const std::vector<double>& h,
+                         std::vector<BVHNode>& bvh_nodes) {
+    if (num_particles == 0) return;
+    const int n = static_cast<int>(num_particles);
+    std::vector<int> atomic_flags(n - 1, 0);
+
+#pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i) {
+        int leaf_idx = n - 1 + i;
+        double px = pos_x[i], py = pos_y[i], pz = pos_z[i];
+        double radius = h[i];
+
+        // Update the Leaf
+        bvh_nodes[leaf_idx].bbox.min_x = px - radius;
+        bvh_nodes[leaf_idx].bbox.max_x = px + radius;
+        bvh_nodes[leaf_idx].bbox.min_y = py - radius;
+        bvh_nodes[leaf_idx].bbox.max_y = py + radius;
+        bvh_nodes[leaf_idx].bbox.min_z = pz - radius;
+        bvh_nodes[leaf_idx].bbox.max_z = pz + radius;
+        bvh_nodes[leaf_idx].max_h = radius;
+
+        // Walk up the tree
+        int curr = bvh_nodes[leaf_idx].parent;
+        while (curr != -1) {
+            int old_flag;
+#pragma omp atomic capture
+            old_flag = atomic_flags[curr]++;
+
+            if (old_flag == 0) {
+                // First thread to arrive. The other child isn't ready yet
+                break;
+            }
+
+            // Second thread to arrive. Both children are ready. Compute parent
+            int left = bvh_nodes[curr].left_child;
+            int right = bvh_nodes[curr].right_child;
+
+            bvh_nodes[curr].bbox.min_x = std::min(bvh_nodes[left].bbox.min_x,
+                                                  bvh_nodes[right].bbox.min_x);
+            bvh_nodes[curr].bbox.max_x = std::max(bvh_nodes[left].bbox.max_x,
+                                                  bvh_nodes[right].bbox.max_x);
+            bvh_nodes[curr].bbox.min_y = std::min(bvh_nodes[left].bbox.min_y,
+                                                  bvh_nodes[right].bbox.min_y);
+            bvh_nodes[curr].bbox.max_y = std::max(bvh_nodes[left].bbox.max_y,
+                                                  bvh_nodes[right].bbox.max_y);
+            bvh_nodes[curr].bbox.min_z = std::min(bvh_nodes[left].bbox.min_z,
+                                                  bvh_nodes[right].bbox.min_z);
+            bvh_nodes[curr].bbox.max_z = std::max(bvh_nodes[left].bbox.max_z,
+                                                  bvh_nodes[right].bbox.max_z);
+
+            bvh_nodes[curr].max_h =
+                std::max(bvh_nodes[left].max_h, bvh_nodes[right].max_h);
+
+            // Move up to the next parent
+            curr = bvh_nodes[curr].parent;
         }
     }
 }

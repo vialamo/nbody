@@ -105,7 +105,6 @@ class GasParticleSystem {
 
     // Spatial Hashing
     std::vector<CIC_Data> cic_data;
-    double max_h = 0.0;
     double max_accel_sq = 0.0;
     std::vector<uint64_t> morton_codes;
     std::vector<int> sorted_indices;
