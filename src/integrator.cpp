@@ -403,10 +403,9 @@ static void apply_gas_particle_hydro_kick(GasParticleSystem& gas, double dt,
                                           double a, const Config& config,
                                           bool is_kick1) {
     const size_t n = gas.num_particles;
-    double step_hydro_exp_work = 0.0;
     double dt_macro = 2.0 * dt;
 
-#pragma omp parallel for reduction(+ : step_hydro_exp_work) schedule(static)
+#pragma omp parallel for schedule(static)
     for (size_t i = 0; i < n; i++) {
         if (config.individual_particle_timesteps) {
             double t_start = gas.t_end[i] - gas.dt_step[i];
@@ -424,12 +423,8 @@ static void apply_gas_particle_hydro_kick(GasParticleSystem& gas, double dt,
         }
 
         double half_dt = gas.dt_step[i] / 2.0;
-        KickWork work = gas.kick_particle_hydro(i, half_dt, config);
-
-        step_hydro_exp_work += work.hydro_exp_work;
+        gas.kick_particle_hydro(i, half_dt, config);
     }
-
-    gas.accumulated_expansion_work -= step_hydro_exp_work;
 }
 
 static void apply_gravity_kick(SimState& state, double dt, double a, double H,
@@ -680,6 +675,16 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
 
     if (config.initial_setup == InitialSetup::Glass) {
         state.mfm_gas->reset_velocities();
+    }
+
+    // SYNCHRONIZATION BEFORE I/O AND DIAGNOSTICS
+    // Force the primitive variables (u, pressure, entropy) to conform
+    // to the kicked conservative variables (total_energy and velocity)
+    if (config.hydro_method == HydroMethod::MFM) {
+        state.mfm_gas->update_primitive_variables(config, state.scale_factor);
+    } else if (config.hydro_method == HydroMethod::Eulerian) {
+        // This must be enabled
+        // state.gas->update_primitive_variables(state.scale_factor);
     }
 
     // Time bin assignment

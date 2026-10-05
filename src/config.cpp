@@ -101,6 +101,19 @@ void Config::compute_derived_data() {
         gamma = 5.0 / 3.0;
         total_mass = 1.0;
         a_end = 0.1;
+    } else if (initial_setup == InitialSetup::SoundWave) {
+        hydro_method = HydroMethod::MFM;
+        expanding_universe = false;
+        enable_cooling = false;
+        use_PM = false;
+        use_PP = false;
+        num_particles_1d = 0;
+        omega_lambda = 0.0;
+        omega_m = 1.0;
+        omega_baryon = 1.0;
+        gamma = 5.0 / 3.0;
+        total_mass = 1.0;
+        a_end = 1.5;
     } else if (initial_setup == InitialSetup::Glass) {
         hydro_method = HydroMethod::MFM;
         expanding_universe = false;
@@ -112,8 +125,6 @@ void Config::compute_derived_data() {
         omega_m = 1.0;
         omega_baryon = 1.0;
         total_mass = 1.0;
-        a_end = std::max(a_end, 10.0);
-        individual_particle_timesteps = false;
     }
 
     cell_size = domain_size / mesh_size;

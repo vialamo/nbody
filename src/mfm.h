@@ -14,7 +14,6 @@ class Cooling;
 struct KickWork {
     double grav_work = 0.0;
     double exp_work = 0.0;
-    double hydro_exp_work = 0.0;
 };
 
 class GasParticleSystem {
@@ -162,7 +161,7 @@ class GasParticleSystem {
     // Reversible single-particle kick physics
     KickWork kick_particle_gravity(size_t i, double dt, double a, double H,
                                    const Config& config);
-    KickWork kick_particle_hydro(size_t i, double dt, const Config& config);
+    void kick_particle_hydro(size_t i, double dt, const Config& config);
 
     void hydro_step(const Config& config, double a, double H, double dt);
 

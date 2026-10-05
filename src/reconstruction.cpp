@@ -9,7 +9,7 @@
 //#define ZEROTH_ORDER_RECONSTRUCTION
 
 #ifndef ZEROTH_ORDER_RECONSTRUCTION
-// #define DISABLE_LIMITER
+#define DISABLE_LIMITER
 
 #ifndef DISABLE_LIMITER
 // Enable to use the limiter explained in the Gizmo paper.

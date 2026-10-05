@@ -310,6 +310,7 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                 write_particle_vec(gas_group, "density", gas.rho);
                 write_particle_vec(gas_group, "pressure", gas.pressure);
                 write_particle_vec(gas_group, "internal_energy", gas.u);
+                write_particle_vec(gas_group, "total_energy", gas.total_energy);
                 write_particle_vec(gas_group, "metal_fraction", gas.metal_frac);
 
                 std::vector<double> temp_vec(gas.num_particles);

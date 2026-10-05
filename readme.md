@@ -197,7 +197,7 @@ Defines the cosmological model of the universe.
 
 Controls the generation of the primordial density field and particle distributions.
 
-* **`setup`**: Initial configuration for gas and DM. Can be "cosmological" for a normal simulation, but also "sod_shock_tube", "adiabatic_expansion" or "sedov_blastwave" to create initial conditions for these specific tests. In these cases, gravity and DM will be automatically disabled and expansion adjusted according to the specific test. If set to "glass", the simulation will use MFM to generate a glass using the gas particles.
+* **`setup`**: Initial configuration for gas and DM. Can be "cosmological" for a normal simulation, but also "sound_wave", "sod_shock_tube", "adiabatic_expansion" or "sedov_blastwave" to create initial conditions for these specific tests. In these cases, gravity and DM will be automatically disabled and expansion adjusted according to the specific test. If set to "glass", the simulation will use MFM to generate a glass using the gas particles.
 * **`initial_gas_temp_k`**: The physical temperature of the baryonic gas at `start_a`, in Kelvin.
 * **`seed_metallicity_solar`**: The initial uniform metallicity mass fraction (Z) of the gas, expressed as a ratio to the present-day solar metallicity ($Z\odot$). Typically set to 0.0.
 * **`fixed_ics`**: Boolean. If `true`, the Zeldovich field is generated with the exact theoretical power amplitude (while keeping random phases). If false, it defaults to traditional Gaussian random amplitudes and phases.

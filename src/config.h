@@ -37,6 +37,7 @@ enum class InitialSetup {
     SodShockTube,
     AdiabaticExpansion,
     SedovBlastwave,
+    SoundWave,
     Glass,
     Count
 };
@@ -51,7 +52,7 @@ template <>
 struct EnumUtils::Traits<InitialSetup> {
     static constexpr const char* names[] = {
         "cosmological", "sod_shock_tube", "adiabatic_expansion",
-        "sedov_blastwave", "glass"};
+        "sedov_blastwave", "sound_wave", "glass"};
     static constexpr InitialSetup default_value = InitialSetup::Cosmological;
 };
 

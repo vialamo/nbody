@@ -2392,6 +2392,40 @@ This test ensures the solver conserves all quantities in the absence of external
     3.  **Total Energy:** $E_{total} = \sum_i E_i L^3$
 * **What it Proves:** This test confirms that the flux calculations are balanced—that any mass, momentum, or energy that leaves one cell correctly enters its neighbor, with no numerical "leaks" or "sources."
 
+### The Linear Soundwave Test
+
+This test is well suited to perform a convergence analysis for a hydrodynamic solver.
+
+* **The Setup:** A sinusoidal soundwave is initialized with a background density of 1 and a small perturbation amplitude of $10^{-4}$. The test utilizes a wavenumber of $k = 2\pi$ and a speed of sound of $c_s = 2/3$. The simulation domain is configured as a box with a length of 1 in the x-direction and 0.75 in both the y and z-directions. The particles are arranged in a perturbed hexagonal close packed (hpc) grid using varying resolutions.
+
+* **The Expected Result:** The wave propagates through the periodic domain.
+
+* **The Validation:** The overall accuracy of the solver is validated by measuring the L1 error norm, calculated as 
+$$\frac{1}{N_{tot}} \sum_{i}^{N_{tot}} \vert{}\rho_i - \rho(x,t)\vert{}$$.
+
+#### Analytical Solution
+
+Because the perturbation is small, an analytical solution exists for all fluid variables. For a left-propagating wave, the phase is determined by $k(x + c_s t)$.
+
+* **Density:** The fluid density evolves according to the equation $\rho(x,t) = \rho_0 + \Delta\rho \sin(k(x + c_s t))$.
+
+* **Velocity:** The velocity perturbation for the left-moving wave is defined as $v_x = -c_s (\Delta\rho / \rho_0) \sin(k(x + c_s t))$.
+
+* **Pressure and Energy:** The pressure perturbation follows $P = P_0 + c_s^2 \Delta\rho \sin(k(x + c_s t))$, and the specific internal energy is defined as $u = P / ((\gamma - 1) \rho)$.
+
+#### Convergence and Error Sources
+
+Evaluating the L1 error across different resolutions reveals the order of convergence for the numerical scheme.
+
+* **Convergence Rate:** While a solver might theoretically be designed for second-order accuracy, the application of a slope-limiter reduces the actual order of convergence. For Meshless Finite Mass (MFM) implementations, this convergence typically falls between first and second order.
+
+* **Dispersion Errors:** Deviations from the expected sound speed are related to dispersion errors, which manifest as a spatial offset compared to the analytical solution.
+
+* **Diffusion Errors:** Errors in the measured amplitude of the soundwave are related to the numerical diffusion introduced by the solver.
+
+* **Scatter:** Scatter errors will also be present in the final density distribution.
+
+
 ### The 1D Shock-Tube
 
 This test has a known analytical solution (the **Sod Shock Tube**, named after Gary A. Sod, is the most famous variant) that validates the code's ability to handle all three fundamental wave structures.

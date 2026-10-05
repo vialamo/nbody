@@ -146,7 +146,7 @@ def validate_sod_shock_interactive(snapshot_dir):
             if 'Gas' in f:
                 gas = f['Gas']
                 
-                # Total Energy summation using explicitly declared method
+                # Total Energy summation
                 if hydro_method == "mfm":
                     if 'mass' in gas and 'internal_energy' in gas and 'velocity_x' in gas:
                         mass = gas['mass'][:]
@@ -155,12 +155,19 @@ def validate_sod_shock_interactive(snapshot_dir):
                         v_y = gas['velocity_y'][:] if 'velocity_y' in gas else 0.0
                         v_z = gas['velocity_z'][:] if 'velocity_z' in gas else 0.0
                         
-                        ke = 0.5 * (v_x**2 + v_y**2 + v_z**2)
-                        E_current = np.sum(mass * (u_ie + ke))
+                        if 'total_energy' in gas:
+                            mass = gas['mass'][:]
+                            e_tot = gas['total_energy'][:]
+                            E_current = np.sum(mass * e_tot)
+                        else:
+                            ke = 0.5 * (v_x**2 + v_y**2 + v_z**2)
+                            E_current = np.sum(mass * (u_ie + ke))
+                        
                     else:
                         E_current = 0.0
                         
                 elif hydro_method == "eulerian":
+                    # [Eulerian calculation remains unchanged]
                     N = config.get('mesh_size_1d', 32)
                     dx = domain_size / N
                     vol = dx**3
@@ -180,7 +187,17 @@ def validate_sod_shock_interactive(snapshot_dir):
                     E0 = E_current
                 
                 if E0 is not None and E0 != 0:
-                    frac_err = (E_current - E0) / E0
+                    delta_e = E_current - E0
+                    
+                    # Read the exact cumulative work accumulators exported by the C++ engine
+                    w_grav = gas.attrs.get('cumulative_gravitational_work', 0.0)
+                    w_exp = gas.attrs.get('cumulative_expansion_work', 0.0)
+                    e_rad = gas.attrs.get('cumulative_radiated_energy', 0.0)
+                    e_heat = gas.attrs.get('cumulative_photoheating_energy', 0.0)
+                    
+                    # Recreate the exact Work-Energy Theorem balance from diagnostics.cpp
+                    absolute_error = delta_e - w_grav + w_exp + e_rad - e_heat
+                    frac_err = absolute_error / abs(E0)
                 else:
                     frac_err = 0.0
                 err_tot.append(frac_err)
@@ -188,7 +205,7 @@ def validate_sod_shock_interactive(snapshot_dir):
                 # Entropy Switch Energy
                 sw_energy = gas.attrs.get('cumulative_entropy_switch_energy', 0.0)
                 if E0 is not None and E0 != 0:
-                    sw_err = sw_energy / E0
+                    sw_err = sw_energy / abs(E0)
                 else:
                     sw_err = 0.0
                 err_sw.append(sw_err)
@@ -339,6 +356,7 @@ def validate_sod_shock_interactive(snapshot_dir):
                 u_v = u[valid_mask]
                 s_v = s[valid_mask]
             
+        fig.canvas.manager.set_window_title(os.path.basename(os.path.normpath(snapshot_dir)))
         fig.suptitle(f"Sod Shock Validation - Snapshot {idx} (t={time:.4f})", fontsize=16)
         
         # Sort arrays strictly by x-coordinate to prevent zig-zag lines

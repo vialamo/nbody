@@ -661,6 +661,30 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
 #endif
     }
 
+    // Renormalization
+/*    {
+        //  Calculate the total simulated volume across ALL particles
+        double total_sim_volume = 0.0;
+#pragma omp parallel for reduction(+ : total_sim_volume) schedule(static)
+        for (size_t j = 0; j < num_particles; ++j) {
+            total_sim_volume += mass[j] / std::max(rho[j], density_floor);
+        }
+
+        // Calculate the global correction factors
+        double box_volume = domain_size * domain_size * domain_size;
+        double C = total_sim_volume / box_volume;
+        double h_factor = std::pow(C, -1.0 / 3.0);
+
+        // Apply the renormalization to ALL particles
+#pragma omp parallel for schedule(static)
+        for (size_t j = 0; j < num_particles; ++j) {
+            //double current_n = rho[j] / mass[j];
+            rho[j] *= C;
+            //h[j] *= h_factor;
+            //n_enc_final[j] = (4.0 / 3.0) * M_PI * pow(h[j], 3) * current_n;
+        }
+    }*/
+
 #pragma omp parallel for schedule(dynamic, 64)
     for (size_t k = 0; k < num_active; ++k) {
         size_t i = active_indices[k];
@@ -982,9 +1006,8 @@ KickWork GasParticleSystem::kick_particle_gravity(size_t i, double dt, double a,
     return work;
 }
 
-KickWork GasParticleSystem::kick_particle_hydro(size_t i, double dt,
-                                                const Config& config) {
-    KickWork work;
+void GasParticleSystem::kick_particle_hydro(size_t i, double dt,
+                                            const Config& config) {
     double gamma_minus_1 = config.gamma - 1.0;
     constexpr double min_energy = 1e-20;
 
@@ -1007,10 +1030,6 @@ KickWork GasParticleSystem::kick_particle_hydro(size_t i, double dt,
     double delta_u = du_dt[i] * dt;
     u[i] += delta_u;
 
-    // Track the "Hydro Expansion Work" for the diagnostics
-    double expected_delta_ke = (de_dt[i] - du_dt[i]) * dt * m;
-    work.hydro_exp_work = (delta_ke - expected_delta_ke);
-
     total_energy[i] += de_dt[i] * dt;
 
     if (u[i] < min_energy) u[i] = min_energy;
@@ -1018,8 +1037,6 @@ KickWork GasParticleSystem::kick_particle_hydro(size_t i, double dt,
 
     entropy[i] = gamma_minus_1 * u[i] / std::pow(rho[i], gamma_minus_1);
     pressure[i] = gamma_minus_1 * rho[i] * u[i];
-
-    return work;
 }
 
 void GasParticleSystem::sync_and_activate(double dt, double a, double H,
@@ -1056,13 +1073,12 @@ void GasParticleSystem::sync_and_activate(double dt, double a, double H,
             // Rewind kicks using negative time
             // Note that we should better compute the a and H which
             // originally kicked the particle
-            KickWork w_hydro = kick_particle_hydro(i, -dt_excess, config);
+            kick_particle_hydro(i, -dt_excess, config);
             KickWork w_grav =
                 kick_particle_gravity(i, -dt_excess, a, H, config);
 
             // Adjust global accumulators (adding negative work subtracts the
             // phantom work)
-            accumulated_expansion_work -= w_hydro.hydro_exp_work;
             accumulated_gravitational_work += w_grav.grav_work;
             accumulated_expansion_work += w_grav.exp_work;
 
