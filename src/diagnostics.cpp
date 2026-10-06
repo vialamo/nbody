@@ -252,6 +252,16 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
         percent_particles_updated =
             gas.get_active_particles_per_cycle_and_reset(config) * 100.0;
         this->MFM_sph_fallback_cases = gas.sph_fallback_cases;
+
+        double total_sim_volume = 0.0;
+#pragma omp parallel for reduction(+ : total_sim_volume)
+        for (size_t i = 0; i < gas.num_particles; ++i) {
+            // Avoid division by zero for vacuum particles
+            total_sim_volume += gas.mass[i] / std::max(gas.rho[i], 1e-12);
+        }
+
+        double box_volume = std::pow(config.domain_size, 3.0);
+        volume_error = (total_sim_volume / box_volume) - 1.0;
     } else {
         this->energy_err = 0.0;
     }

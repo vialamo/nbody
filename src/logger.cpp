@@ -146,6 +146,11 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
               << " | DM Err: " << format_double(diag.dm_energy_err, 1, true)
               << " | Gas Err: " << format_double(diag.energy_err, 1, true)
               << "\n";
+    if (conf.hydro_method == HydroMethod::MFM) {
+        std::cout << "    - Vol Err: "
+                  << format_double(diag.volume_error, 1, true)
+                  << "\n";
+    }
 
     std::cout << "  [Stability]\n";
     std::cout << "    - Timestep (Macro): "

@@ -886,7 +886,9 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
     }
 }
 
-/*void initialize_soundwave(SimState& state, const Config& config) {
+#define REGULAR_LATTICE_FOR_SOUNDWAVE
+#ifdef REGULAR_LATTICE_FOR_SOUNDWAVE
+void initialize_soundwave(SimState& state, const Config& config) {
     if (config.hydro_method != HydroMethod::MFM) return;
 
     double L = config.domain_size;
@@ -953,60 +955,71 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
             }
         }
     }
-}*/
+}
+#else
 void initialize_soundwave(SimState& state, const Config& config) {
     if (config.hydro_method != HydroMethod::MFM) return;
 
     double L = config.domain_size;
     int N_1d = config.num_gas_particles_1d;
 
-    // 1. Calculate HCP Lattice Dimensions
+    // Calculate HCP Lattice Dimensions
     // Target base spacing 'a' defined by the X-axis particle count
     double a = L / static_cast<double>(N_1d);
 
     int N_x = N_1d;
     // Calculate required particles for Y and Z to maintain HCP ratios.
-    // They MUST be rounded to the nearest EVEN integer to preserve cyclic boundary symmetries.
-    int N_y = static_cast<int>(std::round((L / (a * std::sqrt(3.0) / 2.0)) / 2.0)) * 2;
-    int N_z = static_cast<int>(std::round((L / (a * std::sqrt(2.0 / 3.0))) / 2.0)) * 2;
-    
+    // They MUST be rounded to the nearest EVEN integer to preserve cyclic
+    // boundary symmetries
+    int N_y =
+        static_cast<int>(std::round((L / (a * std::sqrt(3.0) / 2.0)) / 2.0)) *
+        2;
+    int N_z =
+        static_cast<int>(std::round((L / (a * std::sqrt(2.0 / 3.0))) / 2.0)) *
+        2;
+
     // Failsafes
     if (N_y < 2) N_y = 2;
     if (N_z < 2) N_z = 2;
 
-    // The actual physical spacings are slightly stretched to perfectly tile the box
+    // The actual physical spacings are slightly stretched to perfectly tile the
+    // box
     double dx = L / N_x;
     double dy = L / N_y;
     double dz = L / N_z;
 
     size_t total_particles = static_cast<size_t>(N_x) * N_y * N_z;
 
-    // 2. OG3 Soundwave Parameters (Groth et al. 2023)
+    // OG3 Soundwave Parameters (Groth et al. 2023)
     double rho_0 = 1.0;
     double delta_rho = 1e-4;
-    double c_s = 2.0 / 3.0; 
-    double gamma = config.gamma; 
-    
-    double P_0 = (c_s * c_s * rho_0) / gamma; 
+    double c_s = 2.0 / 3.0;
+    double gamma = config.gamma;
+
+    double P_0 = (c_s * c_s * rho_0) / gamma;
     double k_wave = 2.0 * M_PI / L;
 
-    // Particle mass is derived exactly from the total particle count to guarantee rho_0
-    double gas_particle_mass = (rho_0 * L * L * L) / static_cast<double>(total_particles);
-    
+    // Particle mass is derived exactly from the total particle count to
+    // guarantee rho_0
+    double gas_particle_mass =
+        (rho_0 * L * L * L) / static_cast<double>(total_particles);
+
     // Dynamic smoothing length based on the actual particle volume
-    double volume_per_particle = (L * L * L) / static_cast<double>(total_particles);
+    double volume_per_particle =
+        (L * L * L) / static_cast<double>(total_particles);
     double effective_spacing = std::cbrt(volume_per_particle);
-    double initial_h = 0.5 * effective_spacing * std::cbrt(config.mfm_target_neighbors);
-    
+    double initial_h =
+        0.5 * effective_spacing * std::cbrt(config.mfm_target_neighbors);
+
     double seed_metallicity = 0.0;
 
-    // 3. Generate the HCP Lattice and inject the wave
+    // Generate the HCP Lattice and inject the wave
     for (int k = 0; k < N_z; ++k) {
         for (int j = 0; j < N_y; ++j) {
             for (int i = 0; i < N_x; ++i) {
-                
-                // --- HCP Lattice Generator ---
-                // Base X shift for alternating rows in the hexagonal plane (Layer A)
+                // HCP Lattice Generator
+                // Base X shift for alternating rows in the hexagonal plane
+                // (Layer A)
                 double shift_x = (j % 2 == 0) ? 0.0 : 0.5;
                 double shift_y = 0.0;
 
@@ -1021,40 +1034,48 @@ void initialize_soundwave(SimState& state, const Config& config) {
                 double qy = (j + shift_y) * dy;
                 double qz = k * dz;
 
-                // Ensure strict bounding inside [0, L)
-                qx = std::fmod(qx, L); if (qx < 0.0) qx += L;
-                qy = std::fmod(qy, L); if (qy < 0.0) qy += L;
-                qz = std::fmod(qz, L); if (qz < 0.0) qz += L;
+                // Ensure bounding inside [0, L)
+                qx = std::fmod(qx, L);
+                if (qx < 0.0) qx += L;
+                qy = std::fmod(qy, L);
+                if (qy < 0.0) qy += L;
+                qz = std::fmod(qz, L);
+                if (qz < 0.0) qz += L;
 
-                // --- Soundwave Application ---
-                // Apply Lagrangian spatial shift to create the geometric density perturbation
-                double p_x = qx + (delta_rho / (k_wave * rho_0)) * std::cos(k_wave * qx);
+                // Soundwave Application
+                // Apply Lagrangian spatial shift to create the geometric
+                // density perturbation
+                double p_x =
+                    qx + (delta_rho / (k_wave * rho_0)) * std::cos(k_wave * qx);
                 double p_y = qy;
                 double p_z = qz;
 
                 // Wrap final displaced coordinates
-                p_x = std::fmod(p_x, L); if (p_x < 0.0) p_x += L;
+                p_x = std::fmod(p_x, L);
+                if (p_x < 0.0) p_x += L;
 
-                // Thermodynamic and kinematic perturbations (evaluated at the unperturbed coordinate qx)
+                // Thermodynamic and kinematic perturbations (evaluated at the
+                // unperturbed coordinate qx)
                 double sin_kqx = std::sin(k_wave * qx);
-                
+
                 // Left-moving wave velocity perturbation
-                double v_x = -c_s * (delta_rho / rho_0) * sin_kqx; 
+                double v_x = -c_s * (delta_rho / rho_0) * sin_kqx;
                 double v_y = 0.0;
                 double v_z = 0.0;
 
                 double P = P_0 + (c_s * c_s) * delta_rho * sin_kqx;
                 double rho_local = rho_0 + delta_rho * sin_kqx;
-                
+
                 double u = P / ((gamma - 1.0) * rho_local);
 
-                state.mfm_gas->add_particle(
-                    p_x, p_y, p_z, v_x, v_y, v_z, 
-                    gas_particle_mass, u, initial_h, seed_metallicity);
+                state.mfm_gas->add_particle(p_x, p_y, p_z, v_x, v_y, v_z,
+                                            gas_particle_mass, u, initial_h,
+                                            seed_metallicity);
             }
         }
     }
 }
+#endif
 
 void initialize_glass(SimState& state, const Config& config) {
     if (config.hydro_method != HydroMethod::MFM) return;

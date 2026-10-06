@@ -10,12 +10,6 @@
 
 #ifndef ZEROTH_ORDER_RECONSTRUCTION
 //#define DISABLE_LIMITER
-
-#ifndef DISABLE_LIMITER
-// Enable to use the limiter explained in the Gizmo paper.
-// Disable to use the limiter used in the Gizmo code
-#define THEORETICAL_LIMITER
-#endif
 #else
 #define DISABLE_LIMITER
 #endif
@@ -24,7 +18,7 @@ namespace Reconstruction {
 
 namespace {  // Anonymous namespace for private helper functions
 
-#ifdef THEORETICAL_LIMITER
+#ifndef DISABLE_LIMITER
 inline double compute_gradient_alpha(double d_phi_max, double d_phi_min,
                                      double d_mid_max, double d_mid_min,
                                      double beta) {
@@ -46,11 +40,11 @@ inline double compute_gradient_alpha(double d_phi_max, double d_phi_min,
 
 inline int math_sign(double x) { return (x > 0.0) ? 1 : ((x < 0.0) ? -1 : 0); }
 
+constexpr double psi_1 = 0.5;
+constexpr double psi_2 = 0.25;
+
 double apply_pairwise_limiter(double phi_L_center, double phi_R_center,
                               double phi_mid_0, double phi_bar) {
-    double psi_1 = 0.5;
-    double psi_2 = 0.25;
-
     double d_phi = std::abs(phi_L_center - phi_R_center);
     if (d_phi < 1e-14) return phi_L_center;
 
@@ -75,35 +69,28 @@ double apply_pairwise_limiter(double phi_L_center, double phi_R_center,
         return std::min(phi_plus, std::max(phi_bar - delta_2, phi_mid_0));
     }
 }
-#else
-#ifndef DISABLE_LIMITER
-inline void scalar_limiter(Eigen::Vector3d& grad, double valmax, double valmin,
-                           double alim, double h, double shoot_tol,
-                           bool pos_preserve, double d_max, double val_cen) {
-    double d_abs = grad.norm();
-    if (d_abs > 0.0) {
-        double cfac = 1.0 / (alim * h * d_abs);
-        double abs_max = std::abs(valmax);
-        double abs_min = std::abs(valmin);
-        if (abs_max < abs_min) std::swap(abs_max, abs_min);
 
-        double f_corr_overshoot =
-            std::min(abs_min + shoot_tol * abs_max, abs_max);
-        cfac *= f_corr_overshoot;
+double apply_pairwise_limiter_velocity(double phi_L_center, double phi_R_center,
+                                       double phi_mid_0, double phi_bar) {
+    double d_phi = std::abs(phi_L_center - phi_R_center);
+    if (d_phi < 1e-14) return phi_L_center;
 
-        if (pos_preserve) {
-            constexpr double MIN_REAL_NUMBER = 1e-30;
-            double fmin = std::min(
-                val_cen,
-                std::max(0.0, std::max(MIN_REAL_NUMBER * val_cen,
-                                       std::min(0.5 * (val_cen + valmin),
-                                                val_cen - f_corr_overshoot))));
-            cfac = std::min((((val_cen - fmin) / d_max) / d_abs), cfac);
-        }
-        if (cfac < 1.0) grad *= cfac;
+    double phi_min = std::min(phi_L_center, phi_R_center);
+    double phi_max = std::max(phi_L_center, phi_R_center);
+
+    double delta_1 = psi_1 * d_phi;
+    double delta_2 = psi_2 * d_phi;
+
+    // Linear bounds for vector components (allows free zero-crossings)
+    double phi_minus = phi_min - delta_1;
+    double phi_plus = phi_max + delta_1;
+
+    if (phi_L_center < phi_R_center) {
+        return std::max(phi_minus, std::min(phi_bar + delta_2, phi_mid_0));
+    } else {
+        return std::min(phi_plus, std::max(phi_bar - delta_2, phi_mid_0));
     }
 }
-#endif
 #endif
 
 Eigen::Vector3d compute_face_area_vector(
@@ -216,7 +203,6 @@ ParticleGradients compute_single_particle_gradients(
         out.grad_vz = B * sum_vz;
 
 #ifndef DISABLE_LIMITER
-#ifdef THEORETICAL_LIMITER
         double phi_mid_max_rho = 0.0, phi_mid_min_rho = 0.0;
         double phi_mid_max_p = 0.0, phi_mid_min_p = 0.0;
         double phi_mid_max_vx = 0.0, phi_mid_min_vx = 0.0;
@@ -258,7 +244,7 @@ ParticleGradients compute_single_particle_gradients(
             phi_mid_min_vz = std::min(phi_mid_min_vz, d_mid_vz);
         }
 
-        double beta = 2.0;  // This was 2.0
+        double beta = 2.0;
         if (data.cond_num[i] > 0.0) {
             constexpr double beta_min = 1.0;
             constexpr double beta_max = 2.0;
@@ -277,22 +263,6 @@ ParticleGradients compute_single_particle_gradients(
             d_vy_max, d_vy_min, phi_mid_max_vy, phi_mid_min_vy, beta);
         out.grad_vz *= compute_gradient_alpha(
             d_vz_max, d_vz_min, phi_mid_max_vz, phi_mid_min_vz, beta);
-#else
-        double alim = 0.5;
-        double h_lim = std::max(data.h[i], r_max);
-        double stol = 0.1;
-
-        scalar_limiter(out.grad_rho, d_rho_max, d_rho_min, alim, h_lim, 0.0,
-                       true, h_lim, data.rho[i]);
-        scalar_limiter(out.grad_p, d_p_max, d_p_min, alim, h_lim, stol, true,
-                       h_lim, data.pressure[i]);
-        scalar_limiter(out.grad_vx, d_vx_max, d_vx_min, alim, h_lim, stol,
-                       false, h_lim, data.vel_x[i]);
-        scalar_limiter(out.grad_vy, d_vy_max, d_vy_min, alim, h_lim, stol,
-                       false, h_lim, data.vel_y[i]);
-        scalar_limiter(out.grad_vz, d_vz_max, d_vz_min, alim, h_lim, stol,
-                       false, h_lim, data.vel_z[i]);
-#endif
 #endif
 #endif
     } else {
@@ -366,7 +336,6 @@ ReconstructedFace compute_face_reconstruction(
     Eigen::Vector3d dx_face_j = -fraction_j * dx_vec;
 
 #ifndef DISABLE_LIMITER
-#ifdef THEORETICAL_LIMITER
     double rho_bar = p_i.rho + fraction_i * (p_j.rho - p_i.rho);
     double p_bar = p_i.pressure + fraction_i * (p_j.pressure - p_i.pressure);
     double vx_bar = p_i.vel.x() + fraction_i * (p_j.vel.x() - p_i.vel.x());
@@ -385,24 +354,24 @@ ReconstructedFace compute_face_reconstruction(
         p_j.pressure, p_i.pressure, p_j.pressure + grad_j.grad_p.dot(dx_face_j),
         p_bar);
 
-    face.v_L.x() = apply_pairwise_limiter(
+    face.v_L.x() = apply_pairwise_limiter_velocity(
         p_i.vel.x(), p_j.vel.x(), p_i.vel.x() + grad_i.grad_vx.dot(dx_face_i),
         vx_bar);
-    face.v_R.x() = apply_pairwise_limiter(
+    face.v_R.x() = apply_pairwise_limiter_velocity(
         p_j.vel.x(), p_i.vel.x(), p_j.vel.x() + grad_j.grad_vx.dot(dx_face_j),
         vx_bar);
 
-    face.v_L.y() = apply_pairwise_limiter(
+    face.v_L.y() = apply_pairwise_limiter_velocity(
         p_i.vel.y(), p_j.vel.y(), p_i.vel.y() + grad_i.grad_vy.dot(dx_face_i),
         vy_bar);
-    face.v_R.y() = apply_pairwise_limiter(
+    face.v_R.y() = apply_pairwise_limiter_velocity(
         p_j.vel.y(), p_i.vel.y(), p_j.vel.y() + grad_j.grad_vy.dot(dx_face_j),
         vy_bar);
 
-    face.v_L.z() = apply_pairwise_limiter(
+    face.v_L.z() = apply_pairwise_limiter_velocity(
         p_i.vel.z(), p_j.vel.z(), p_i.vel.z() + grad_i.grad_vz.dot(dx_face_i),
         vz_bar);
-    face.v_R.z() = apply_pairwise_limiter(
+    face.v_R.z() = apply_pairwise_limiter_velocity(
         p_j.vel.z(), p_i.vel.z(), p_j.vel.z() + grad_j.grad_vz.dot(dx_face_j),
         vz_bar);
 
@@ -410,26 +379,6 @@ ReconstructedFace compute_face_reconstruction(
     face.rho_R = std::max(face.rho_R, density_floor);
     face.p_L = std::max(face.p_L, pressure_floor);
     face.p_R = std::max(face.p_R, pressure_floor);
-
-#else
-    face.rho_L =
-        std::max(p_i.rho + grad_i.grad_rho.dot(dx_face_i), density_floor);
-    face.rho_R =
-        std::max(p_j.rho + grad_j.grad_rho.dot(dx_face_j), density_floor);
-
-    face.p_L =
-        std::max(p_i.pressure + grad_i.grad_p.dot(dx_face_i), pressure_floor);
-    face.p_R =
-        std::max(p_j.pressure + grad_j.grad_p.dot(dx_face_j), pressure_floor);
-
-    face.v_L.x() = p_i.vel.x() + grad_i.grad_vx.dot(dx_face_i);
-    face.v_L.y() = p_i.vel.y() + grad_i.grad_vy.dot(dx_face_i);
-    face.v_L.z() = p_i.vel.z() + grad_i.grad_vz.dot(dx_face_i);
-
-    face.v_R.x() = p_j.vel.x() + grad_j.grad_vx.dot(dx_face_j);
-    face.v_R.y() = p_j.vel.y() + grad_j.grad_vy.dot(dx_face_j);
-    face.v_R.z() = p_j.vel.z() + grad_j.grad_vz.dot(dx_face_j);
-#endif
 #else
 #ifdef ZEROTH_ORDER_RECONSTRUCTION
     face.rho_L = std::max(p_i.rho, density_floor);
@@ -534,7 +483,6 @@ ParticleGradients compute_single_particle_gradients(
         out.grad_vz = B * sum_vz;
 
 #ifndef DISABLE_LIMITER
-#ifdef THEORETICAL_LIMITER
         double phi_mid_max_rho = 0.0, phi_mid_min_rho = 0.0;
         double phi_mid_max_p = 0.0, phi_mid_min_p = 0.0;
         double phi_mid_max_vx = 0.0, phi_mid_min_vx = 0.0;
@@ -593,22 +541,6 @@ ParticleGradients compute_single_particle_gradients(
             d_vy_max, d_vy_min, phi_mid_max_vy, phi_mid_min_vy, beta);
         out.grad_vz *= compute_gradient_alpha(
             d_vz_max, d_vz_min, phi_mid_max_vz, phi_mid_min_vz, beta);
-#else
-        double alim = 0.5;
-        double h_lim = std::max(p_i.h, r_max);
-        double stol = 0.1;
-
-        scalar_limiter(out.grad_rho, d_rho_max, d_rho_min, alim, h_lim, 0.0,
-                       true, h_lim, p_i.rho);
-        scalar_limiter(out.grad_p, d_p_max, d_p_min, alim, h_lim, stol, true,
-                       h_lim, p_i.pressure);
-        scalar_limiter(out.grad_vx, d_vx_max, d_vx_min, alim, h_lim, stol,
-                       false, h_lim, p_i.vel.x());
-        scalar_limiter(out.grad_vy, d_vy_max, d_vy_min, alim, h_lim, stol,
-                       false, h_lim, p_i.vel.y());
-        scalar_limiter(out.grad_vz, d_vz_max, d_vz_min, alim, h_lim, stol,
-                       false, h_lim, p_i.vel.z());
-#endif
 #endif
 #endif
     } else {

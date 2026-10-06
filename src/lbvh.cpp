@@ -180,8 +180,6 @@ void build_topology_and_aggregate(size_t num_particles,
         bvh_nodes[leaf_idx].bbox.min_z = pz - radius;
         bvh_nodes[leaf_idx].bbox.max_z = pz + radius;
 
-        bvh_nodes[leaf_idx].max_h = radius;
-
         bvh_nodes[leaf_idx].mass = sorted_mass[i];
 
         // Store mass-weighted positions temporarily to make summation easy
@@ -219,9 +217,6 @@ void build_topology_and_aggregate(size_t num_particles,
                                                   bvh_nodes[right].bbox.min_z);
             bvh_nodes[curr].bbox.max_z = std::max(bvh_nodes[left].bbox.max_z,
                                                   bvh_nodes[right].bbox.max_z);
-
-            bvh_nodes[curr].max_h =
-                std::max(bvh_nodes[left].max_h, bvh_nodes[right].max_h);
 
             // Sum Mass and mass-weighted positions
             bvh_nodes[curr].mass = bvh_nodes[left].mass + bvh_nodes[right].mass;
@@ -270,7 +265,6 @@ void update_h_and_bboxes(size_t num_particles, const std::vector<double>& pos_x,
         bvh_nodes[leaf_idx].bbox.max_y = py + radius;
         bvh_nodes[leaf_idx].bbox.min_z = pz - radius;
         bvh_nodes[leaf_idx].bbox.max_z = pz + radius;
-        bvh_nodes[leaf_idx].max_h = radius;
 
         // Walk up the tree
         int curr = bvh_nodes[leaf_idx].parent;
@@ -300,9 +294,6 @@ void update_h_and_bboxes(size_t num_particles, const std::vector<double>& pos_x,
                                                   bvh_nodes[right].bbox.min_z);
             bvh_nodes[curr].bbox.max_z = std::max(bvh_nodes[left].bbox.max_z,
                                                   bvh_nodes[right].bbox.max_z);
-
-            bvh_nodes[curr].max_h =
-                std::max(bvh_nodes[left].max_h, bvh_nodes[right].max_h);
 
             // Move up to the next parent
             curr = bvh_nodes[curr].parent;

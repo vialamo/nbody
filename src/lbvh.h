@@ -15,7 +15,6 @@ struct BVHNode {
     int particle_idx;  // -1 if internal node
 
     BoundingBox bbox;
-    double max_h;
 
     double mass;
     double com_x, com_y, com_z;

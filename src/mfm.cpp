@@ -491,7 +491,7 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
                                               const ParticleSystem& dm) {
     if (num_particles == 0) return;
 
-    //build_lbvh(config);
+    // build_lbvh(config);
 
     double domain_size = config.domain_size;
     double target_N = config.mfm_target_neighbors;
@@ -661,30 +661,29 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
 #endif
     }
 
-    // Renormalization
-    /*    {
-            //  Calculate the total simulated volume across ALL particles
-            double total_sim_volume = 0.0;
-    #pragma omp parallel for reduction(+ : total_sim_volume) schedule(static)
-            for (size_t j = 0; j < num_particles; ++j) {
-                total_sim_volume += mass[j] / std::max(rho[j], density_floor);
-            }
+//#define VOLUME_RENORMALIZATION
+#ifdef VOLUME_RENORMALIZATION
+    //  Calculate the total simulated volume across ALL particles
+    double total_sim_volume = 0.0;
+#pragma omp parallel for reduction(+ : total_sim_volume) schedule(static)
+    for (size_t j = 0; j < num_particles; ++j) {
+        total_sim_volume += mass[j] / std::max(rho[j], density_floor);
+    }
 
-            // Calculate the global correction factors
-            double box_volume = domain_size * domain_size * domain_size;
-            double C = total_sim_volume / box_volume;
-            double h_factor = std::pow(C, -1.0 / 3.0);
+    // Calculate the global correction factors
+    double box_volume = domain_size * domain_size * domain_size;
+    double C = total_sim_volume / box_volume;
+    double h_factor = std::pow(C, -1.0 / 3.0);
 
-            // Apply the renormalization to ALL particles
-    #pragma omp parallel for schedule(static)
-            for (size_t j = 0; j < num_particles; ++j) {
-                //double current_n = rho[j] / mass[j];
-                rho[j] *= C;
-                //h[j] *= h_factor;
-                //n_enc_final[j] = (4.0 / 3.0) * M_PI * pow(h[j], 3) *
-    current_n;
-            }
-        }*/
+    // Apply the renormalization to ALL particles
+#pragma omp parallel for schedule(static)
+    for (size_t j = 0; j < num_particles; ++j) {
+        double current_n = rho[j] / mass[j];
+        rho[j] *= C;
+        h[j] *= h_factor;
+        n_enc_final[j] = (4.0 / 3.0) * M_PI * pow(h[j], 3) * current_n;
+    }
+#endif
 
 #pragma omp parallel for schedule(dynamic, 64)
     for (size_t k = 0; k < num_active; ++k) {
@@ -697,8 +696,7 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
     non_converged_h_cases += num_non_converged;
     neighbor_increased_cases += step_neighbor_increased_cases;
 
-    // Refresh the Bounding Boxes and max_h using the final converged smoothing
-    // lengths
+    // Refresh Bounding Boxes using the final converged smoothing lengths
     LBVH::update_h_and_bboxes(num_particles, pos_x, pos_y, pos_z, h, bvh_nodes);
 }
 
@@ -845,8 +843,7 @@ double GasParticleSystem::get_cfl_timestep(double a,
                     min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
                                          domain_size);
 
-                double eff_h = std::max(h_i, node.max_h);
-                if (dist_sq > eff_h * eff_h) continue;
+                if (dist_sq > h_i * h_i) continue;
 
                 if (node.particle_idx != -1) {
                     int j = node.particle_idx;
@@ -1791,8 +1788,7 @@ void GasParticleSystem::compute_gradients(const Config& config) {
                     min_periodic_dist_sq(pos_z[i], node.bbox.min_z,
                                          node.bbox.max_z, domain_size);
 
-                double eff_h = std::max(h[i], node.max_h);
-                if (dist_sq > eff_h * eff_h) continue;
+                if (dist_sq > h[i] * h[i]) continue;
 
                 if (node.particle_idx != -1) {
                     int j = node.particle_idx;
@@ -1973,8 +1969,7 @@ void GasParticleSystem::compute_gradients(const Config& config) {
                     min_periodic_dist_sq(p_i.pos.z(), node.bbox.min_z,
                                          node.bbox.max_z, domain_size);
 
-                double eff_h = std::max(p_i.h, node.max_h);
-                if (dist_sq > eff_h * eff_h) continue;
+                if (dist_sq > p_i.h * p_i.h) continue;
 
                 if (node.particle_idx != -1) {
                     int j = node.particle_idx;
@@ -2284,8 +2279,7 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                 min_periodic_dist_sq(p_i.pos.z(), node.bbox.min_z,
                                      node.bbox.max_z, domain_size);
 
-            double eff_h = std::max(p_i.h, node.max_h);
-            if (dist_sq > eff_h * eff_h) continue;
+            if (dist_sq > p_i.h * p_i.h) continue;
 
             if (node.particle_idx != -1) {
                 int j = node.particle_idx;

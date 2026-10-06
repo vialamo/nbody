@@ -684,7 +684,7 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
     if (config.hydro_method == HydroMethod::MFM) {
         state.mfm_gas->update_primitive_variables(config, state.scale_factor);
     } else if (config.hydro_method == HydroMethod::Eulerian) {
-        // This must be enabled
+        // This must be enabled, but has not been tested
         // state.gas->update_primitive_variables(state.scale_factor);
     }
 
