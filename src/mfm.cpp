@@ -60,6 +60,10 @@ GasParticleSystem::GasParticleSystem(const Config& config)
     cond_num.reserve(config.num_gas_particles);
     n_enc_final.reserve(config.num_gas_particles);
 
+    face_area_sum_x.reserve(config.num_gas_particles);
+    face_area_sum_y.reserve(config.num_gas_particles);
+    face_area_sum_z.reserve(config.num_gas_particles);
+
     time_bin.reserve(config.num_gas_particles);
     dt_step.reserve(config.num_gas_particles);
     t_current.reserve(config.num_gas_particles);
@@ -125,6 +129,10 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
     grad_vy.push_back(Eigen::Vector3d::Zero());
     grad_vz.push_back(Eigen::Vector3d::Zero());
     grad_p.push_back(Eigen::Vector3d::Zero());
+
+    face_area_sum_x.push_back(0.0);
+    face_area_sum_y.push_back(0.0);
+    face_area_sum_z.push_back(0.0);
 
     cond_num.push_back(0);
     n_enc_final.push_back(0);
@@ -491,8 +499,6 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
                                               const ParticleSystem& dm) {
     if (num_particles == 0) return;
 
-    // build_lbvh(config);
-
     double domain_size = config.domain_size;
     double target_N = config.mfm_target_neighbors;
     double tol = config.mfm_neighbor_tolerance;
@@ -661,7 +667,7 @@ void GasParticleSystem::compute_density_and_h(const Config& config,
 #endif
     }
 
-//#define VOLUME_RENORMALIZATION
+// #define VOLUME_RENORMALIZATION
 #ifdef VOLUME_RENORMALIZATION
     //  Calculate the total simulated volume across ALL particles
     double total_sim_volume = 0.0;
@@ -2237,6 +2243,10 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
         du_dt[i] = 0.0;
         de_dt[i] = 0.0;
         v_sig_max[i] = 0.0;
+
+        face_area_sum_x[i] = 0.0;
+        face_area_sum_y[i] = 0.0;
+        face_area_sum_z[i] = 0.0;
     }
 
     size_t step_sph_fallbacks = 0;
@@ -2332,7 +2342,11 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                         step_sph_fallbacks++;
                     }
 
+#ifdef USE_MIDPOINT_QUADRATURE
+                    double fraction_i = 0.5;
+#else
                     double fraction_i = p_i.h / (p_i.h + p_j.h);
+#endif
                     Eigen::Vector3d v_frame =
                         p_i.vel + fraction_i * (p_j.vel - p_i.vel);
 
@@ -2389,6 +2403,13 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
 #pragma omp atomic
                     de_dt[i] += de_dt_i;
 
+#pragma omp atomic
+                    face_area_sum_x[i] += face.area_vec.x();
+#pragma omp atomic
+                    face_area_sum_y[i] += face.area_vec.y();
+#pragma omp atomic
+                    face_area_sum_z[i] += face.area_vec.z();
+
                     // Apply the reverse flux to j if j is ALSO active
                     if (is_active[j]) {
                         double work_j =
@@ -2406,6 +2427,13 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                         du_dt[j] += du_dt_j;
 #pragma omp atomic
                         de_dt[j] += de_dt_j;
+
+#pragma omp atomic
+                        face_area_sum_x[j] -= face.area_vec.x();
+#pragma omp atomic
+                        face_area_sum_y[j] -= face.area_vec.y();
+#pragma omp atomic
+                        face_area_sum_z[j] -= face.area_vec.z();
                     } else if (config.individual_particle_timesteps &&
                                !needs_wakeup[j]) {
                         // OpenGadget3 Wake-up Limiter

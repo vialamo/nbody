@@ -24,7 +24,7 @@ def get_sedov_exact_profile(t, E=1.0, rho_bg=1.0, gamma=5.0/3.0, n_points=500):
         alpha = 1.0  # Fallback approximation
         
     if t <= 1e-8:
-        return np.array([0]), np.array([rho_bg]), np.array([0]), np.array([0]), np.array([0]), np.array([0])
+        return np.array([0]), np.array([rho_bg]), np.array([0]), np.array([0]), np.array([0])
         
     Rs = alpha * (E * (t**2) / rho_bg)**0.2
     D = 0.4 * Rs / t
@@ -66,12 +66,8 @@ def get_sedov_exact_profile(t, E=1.0, rho_bg=1.0, gamma=5.0/3.0, n_points=500):
     valid = rho_exact > 1e-8
     u_exact[valid] = P_exact[valid] / (rho_exact[valid] * (gamma - 1.0))
     u_exact[~valid] = np.nan 
-
-    S_exact = np.zeros_like(P_exact)
-    S_exact[valid] = P_exact[valid] / (rho_exact[valid]**gamma)
-    S_exact[~valid] = np.nan
     
-    return r_exact, rho_exact, v_exact, P_exact, u_exact, S_exact
+    return r_exact, rho_exact, v_exact, P_exact, u_exact
 
 def validate_sedov_interactive(snapshot_dir):
     files = sorted(glob.glob(os.path.join(snapshot_dir, "snapshot_*.hdf5")))
@@ -91,8 +87,6 @@ def validate_sedov_interactive(snapshot_dir):
     times = []
     e_errors = []
     switch_energies = []
-    floor_energies = []
-    clamped_h_counts = []
     E_initial = None
 
     for fname in files:
@@ -110,7 +104,6 @@ def validate_sedov_interactive(snapshot_dir):
 
             if method == "mfm":
                 sw_e = f['Gas'].attrs.get('cumulative_entropy_switch_energy', 0.0)
-                clamp_h = f['Gas'].attrs.get('clamped_h_cases', 0)
                 
                 mass = f['Gas/mass'][:]
                 if 'total_energy' in f['Gas']:
@@ -125,16 +118,12 @@ def validate_sedov_interactive(snapshot_dir):
                     E_tot = np.sum(mass * (u + ke))
             else:
                 sw_e = f['Gas'].attrs.get('cumulative_dual_energy_switch_energy', 0.0)
-                ph_e = f['Gas'].attrs.get('accumulated_photoheating_energy', 0.0)
-                clamp_h = 0
                 energy_dens = f['Gas/energy'][:]
                 N = f['Config'].attrs.get('mesh_size_1d', 32)
                 vol = (domain_size / N)**3
                 E_tot = np.sum(energy_dens) * vol
                 
             switch_energies.append(sw_e)
-            floor_energies.append(ph_e)
-            clamped_h_counts.append(clamp_h)
             
             if E_initial is None:
                 E_initial = E_tot
@@ -148,16 +137,14 @@ def validate_sedov_interactive(snapshot_dir):
     times = np.array(times)
     e_errors = np.array(e_errors)
     switch_energies = np.array(switch_energies)
-    floor_energies = np.array(floor_energies)
-    clamped_h_counts = np.array(clamped_h_counts)
 
     label_prefix = "Eulerian Grid" if hydro_method == "eulerian" else "MFM Particles"
     color_prefix = "darkorange" if hydro_method == "eulerian" else "royalblue"
     
-    # 4x4 Layout
-    fig = plt.figure(figsize=(24, 18))
-    gs = GridSpec(4, 4, width_ratios=[1, 1, 1, 1], height_ratios=[1, 1, 1.1, 1.1], figure=fig)
-    plt.subplots_adjust(bottom=0.08, top=0.94, wspace=0.35, hspace=0.40)
+    # 3x4 Layout (height reduced since we dropped a row)
+    fig = plt.figure(figsize=(24, 14))
+    gs = GridSpec(3, 4, width_ratios=[1, 1, 1, 1], height_ratios=[1, 1, 1.2], figure=fig)
+    plt.subplots_adjust(bottom=0.1, top=0.92, wspace=0.35, hspace=0.40)
     
     # Row 0
     ax_rho   = fig.add_subplot(gs[0, 0])
@@ -168,20 +155,14 @@ def validate_sedov_interactive(snapshot_dir):
     # Row 1
     ax_P     = fig.add_subplot(gs[1, 0])
     ax_u     = fig.add_subplot(gs[1, 1])
-    ax_S     = fig.add_subplot(gs[1, 2])
-    ax_gradP = fig.add_subplot(gs[1, 3])
+    ax_gradP = fig.add_subplot(gs[1, 2])
+    ax_cond  = fig.add_subplot(gs[1, 3])
     
     # Row 2
-    ax_cond  = fig.add_subplot(gs[2, 0])
-    ax_raw   = ax_cond.twinx() 
-    ax_clamp = fig.add_subplot(gs[2, 3])
+    ax_ts    = fig.add_subplot(gs[2, 0])
     
-    # Row 3
-    ax_ts    = fig.add_subplot(gs[3, 0])
-    ax_ts_sw = ax_ts.twinx()
-    
-    # Centerpiece: 2D Slice spans Row 2-3, Col 1-2
-    ax_slice = fig.add_subplot(gs[2:4, 1:3]) 
+    # Centerpiece: 2D Slice spans Row 2, Col 1-3
+    ax_slice = fig.add_subplot(gs[2, 1:4]) 
     
     scatter_kwargs = {'s': 2, 'color': color_prefix, 'alpha': 0.3, 'label': f'{label_prefix} Sim'}
     exact_line_kwargs = {'color': 'black', 'lw': 2.0, 'linestyle': '--', 'label': 'Exact Solution'}
@@ -200,7 +181,6 @@ def validate_sedov_interactive(snapshot_dir):
     ax_h.set_ylabel(r"Smoothing Length ($h$)")
     ax_h.set_title("Smoothing Length Profile")
 
-    # Final N_enc profile
     scat_nenc = ax_nenc.scatter([], [], **scatter_kwargs)
     line_target_nenc = ax_nenc.axhline(-1, color='black', linestyle='--', lw=1.5, label=r'Target $N_{enc}$')
     ax_nenc.set_ylabel(r"Num Neighbors ($N_{enc}$)")
@@ -217,26 +197,18 @@ def validate_sedov_interactive(snapshot_dir):
     ax_u.set_ylabel(r"Internal Energy ($u$)")
     ax_u.set_title("Specific Internal Energy")
 
-    scat_S = ax_S.scatter([], [], **scatter_kwargs)
-    line_S, = ax_S.plot([], [], **exact_line_kwargs)
-    ax_S.set_ylabel(r"Entropy ($P / \rho^\gamma$)")
-    ax_S.set_title("Entropy Profile")
-
     scat_gradP = ax_gradP.scatter([], [], **scatter_kwargs)
     ax_gradP.set_ylabel(r"Grad P Mag ($|\nabla P|$)")
     ax_gradP.set_xlabel("Radius (r)")
     ax_gradP.set_title("Pressure Gradient Magnitude")
 
     scat_cond = ax_cond.scatter([], [], s=2, color='tab:red', alpha=0.5, label='Condition Num')
-    scat_raw  = ax_raw.scatter([], [], s=2, color='tab:purple', alpha=0.5, label='|Raw Sum P|')
     ax_cond.set_ylabel("Condition Number", color='tab:red')
-    ax_raw.set_ylabel(r"Raw Sum (P) Magnitude", color='tab:purple')
     ax_cond.set_xlabel("Radius (r)")
-    ax_cond.set_title("Matrix Condition & Raw Sum")
+    ax_cond.set_title("Matrix Condition")
     ax_cond.tick_params(axis='y', labelcolor='tab:red')
-    ax_raw.tick_params(axis='y', labelcolor='tab:purple')
 
-    plot_axes = [ax_rho, ax_v, ax_h, ax_nenc, ax_P, ax_u, ax_S, ax_gradP, ax_cond]
+    plot_axes = [ax_rho, ax_v, ax_h, ax_nenc, ax_P, ax_u, ax_gradP, ax_cond]
     for ax in plot_axes:
         ax.set_xlim(0, domain_size / 2.0)
         ax.grid(True, linestyle=':', alpha=0.6)
@@ -254,29 +226,14 @@ def validate_sedov_interactive(snapshot_dir):
 
     # Setup Time Series (Energy)
     ax_ts.plot(times, e_errors, color='tab:red', lw=2, label='Unexplained Error')
+    ax_ts.plot(times, switch_energies, color='tab:blue', lw=2, linestyle='--', label='Switch Energy')
     ax_ts.set_xlabel("Time (t)")
-    ax_ts.set_ylabel("Fractional Energy Error", color='tab:red')
-    ax_ts.tick_params(axis='y', labelcolor='tab:red')
+    ax_ts.set_ylabel("Fractional Energy", color='black')
+    ax_ts.tick_params(axis='y', labelcolor='black')
     ax_ts.grid(True, linestyle=':', alpha=0.6)
-    
-    ax_ts_sw.plot(times, switch_energies, color='tab:blue', lw=2, linestyle='--', label='Switch Energy')
-    ax_ts_sw.plot(times, floor_energies, color='tab:green', lw=2, linestyle='-.', label='Floor Heating')
-    ax_ts_sw.set_ylabel("Artificial Energy Injected", color='black')
-    
-    lines_1, labels_1 = ax_ts.get_legend_handles_labels()
-    lines_2, labels_2 = ax_ts_sw.get_legend_handles_labels()
-    ax_ts.legend(lines_1 + lines_2, labels_1 + labels_2, loc='lower right', fontsize=8)
+    ax_ts.legend(loc='upper left', fontsize=8)
     ax_ts.set_title("Global Energy Diagnostics")
     vl_ts = ax_ts.axvline(times[0], color='black', linestyle='-', lw=1.5)
-
-    # Setup Time Series (Clamped h Cases)
-    ax_clamp.plot(times, clamped_h_counts, color='tab:orange', lw=2, label='Clamped $h$ Cases')
-    ax_clamp.set_xlabel("Time (t)")
-    ax_clamp.set_ylabel("Number of Clamped Particles", color='tab:orange')
-    ax_clamp.tick_params(axis='y', labelcolor='tab:orange')
-    ax_clamp.grid(True, linestyle=':', alpha=0.6)
-    ax_clamp.set_title("Smoothing Length Overrides")
-    vl_clamp = ax_clamp.axvline(times[0], color='black', linestyle='-', lw=1.5)
 
     def update(val):
         idx = int(snap_slider.val)
@@ -285,7 +242,6 @@ def validate_sedov_interactive(snapshot_dir):
         with h5py.File(target_file, 'r') as f:
             time = f['Header'].attrs['simulation_time']
             vl_ts.set_xdata([time, time]) 
-            vl_clamp.set_xdata([time, time])
             
             cfg = f['Config'].attrs
             method = cfg.get('hydro_method', b'none').decode('utf-8')
@@ -311,12 +267,10 @@ def validate_sedov_interactive(snapshot_dir):
                 v_z = mom_z_flat / rho_flat
                 v_r_flat = (v_x*(x_full-center) + v_y*(y_full-center) + v_z*(z_full-center)) / np.maximum(r_flat, 1e-8)
                 u_flat = P_flat / (rho_flat * (gamma - 1.0))
-                S_flat = P_flat / (rho_flat**gamma)
                 
                 h_flat = np.full_like(r_flat, np.nan) 
                 gradP_mag_flat = np.full_like(r_flat, np.nan)
                 cond_flat = np.full_like(r_flat, np.nan)
-                raw_mag_flat = np.full_like(r_flat, np.nan)
                 nenc_flat = np.full_like(r_flat, np.nan)
                 
                 mid_idx = N // 2
@@ -339,7 +293,6 @@ def validate_sedov_interactive(snapshot_dir):
                 v_r_flat = (v_x*(x_full-center) + v_y*(y_full-center) + v_z*(z_full-center)) / np.maximum(r_flat, 1e-8)
 
                 h_flat = f['Gas/smoothing_length'][:] if 'smoothing_length' in f['Gas'] else np.full_like(rho_flat, np.nan)
-                S_flat = f['Gas/entropy'][:] if 'entropy' in f['Gas'] else P_flat / (rho_flat**gamma)
                     
                 if 'grad_p' in f['Gas']:
                     grad_p = f['Gas/grad_p'][:]
@@ -351,12 +304,6 @@ def validate_sedov_interactive(snapshot_dir):
                     cond_flat = f['Gas/condition_number'][:]
                 else:
                     cond_flat = np.full_like(rho_flat, np.nan)
-
-                if 'raw_sum_p' in f['Gas']:
-                    raw_sum = f['Gas/raw_sum_p'][:]
-                    raw_mag_flat = np.linalg.norm(raw_sum, axis=1)
-                else:
-                    raw_mag_flat = np.full_like(rho_flat, np.nan)
                     
                 if 'n_enc' in f['Gas']:
                     nenc_flat = f['Gas/n_enc'][:]
@@ -384,7 +331,7 @@ def validate_sedov_interactive(snapshot_dir):
         ax_slice.set_xlim(center - 0.5 * domain_size, center + 0.5 * domain_size)
         ax_slice.set_ylim(center - 0.5 * domain_size, center + 0.5 * domain_size)
 
-        max_points = 15000
+        max_points = 64**3
         if len(r_flat) > max_points:
             sort_idx = np.argsort(r_flat)
             core_idx = sort_idx[:8000]
@@ -397,18 +344,17 @@ def validate_sedov_interactive(snapshot_dir):
             P_plot = P_flat[sample_idx]
             u_plot = u_flat[sample_idx]
             h_plot = h_flat[sample_idx]
-            S_plot = S_flat[sample_idx]
             gradP_plot = gradP_mag_flat[sample_idx]
             cond_plot = cond_flat[sample_idx]
-            raw_plot = raw_mag_flat[sample_idx]
             nenc_plot = nenc_flat[sample_idx]
         else:
             r_plot, rho_plot, v_r_plot = r_flat, rho_flat, v_r_flat
             P_plot, u_plot, h_plot = P_flat, u_flat, h_flat
-            S_plot, gradP_plot = S_flat, gradP_mag_flat
-            cond_plot, raw_plot = cond_flat, raw_mag_flat
+            gradP_plot = gradP_mag_flat
+            cond_plot = cond_flat
             nenc_plot = nenc_flat
             
+        fig.canvas.manager.set_window_title(os.path.basename(os.path.normpath(snapshot_dir)))
         fig.suptitle(f"Sedov Blastwave Validation - Snapshot {idx} (t={time:.4f})", fontsize=16)
         
         scat_rho.set_offsets(np.c_[r_plot, rho_plot])
@@ -417,18 +363,15 @@ def validate_sedov_interactive(snapshot_dir):
         scat_u.set_offsets(np.c_[r_plot, u_plot])
         scat_h.set_offsets(np.c_[r_plot, h_plot])
         scat_nenc.set_offsets(np.c_[r_plot, nenc_plot])
-        scat_S.set_offsets(np.c_[r_plot, S_plot])
         scat_gradP.set_offsets(np.c_[r_plot, gradP_plot])
         scat_cond.set_offsets(np.c_[r_plot, cond_plot])
-        scat_raw.set_offsets(np.c_[r_plot, raw_plot])
 
-        r_ex, rho_ex, v_ex, P_ex, u_ex, S_ex = get_sedov_exact_profile(time, E=1.0, rho_bg=1.0, gamma=gamma)
+        r_ex, rho_ex, v_ex, P_ex, u_ex = get_sedov_exact_profile(time, E=1.0, rho_bg=1.0, gamma=gamma)
         
         line_rho.set_data(r_ex, rho_ex)
         line_v.set_data(r_ex, v_ex)
         line_P.set_data(r_ex, P_ex)
         line_u.set_data(r_ex, u_ex)
-        line_S.set_data(r_ex, S_ex)
 
         if len(r_ex) > 1 and r_ex[-1] > 0:
             ax_rho.set_ylim(-0.2, rho_ex[-1] * 1.3)
@@ -452,12 +395,6 @@ def validate_sedov_interactive(snapshot_dir):
         else:
             ax_nenc.set_ylim(0, 100)
 
-        if np.count_nonzero(~np.isnan(S_plot)) > 0:
-            s_max = np.nanmax(S_plot)
-            ax_S.set_ylim(-0.1, s_max * 1.1)
-        else:
-            ax_S.set_ylim(-0.1, 1.0)
-
         if np.count_nonzero(~np.isnan(gradP_plot)) > 0:
             ax_gradP.set_ylim(-0.1, np.nanmax(gradP_plot) * 1.1)
         else:
@@ -467,11 +404,6 @@ def validate_sedov_interactive(snapshot_dir):
             ax_cond.set_ylim(-0.1, np.nanmax(cond_plot) * 1.1)
         else:
             ax_cond.set_ylim(-0.1, 10.0)
-
-        if np.count_nonzero(~np.isnan(raw_plot)) > 0:
-            ax_raw.set_ylim(0.0, np.nanmax(raw_plot) * 1.1)
-        else:
-            ax_raw.set_ylim(0.0, 10.0)
 
         fig.canvas.draw_idle()
 

@@ -102,6 +102,9 @@ class GasParticleSystem {
     size_t active_particles_num_cycles = 0;
     size_t neighbor_increased_cases = 0;
     size_t sph_fallback_cases = 0;
+    std::vector<double> face_area_sum_x;
+    std::vector<double> face_area_sum_y;
+    std::vector<double> face_area_sum_z;
 
     // Spatial Hashing
     std::vector<CIC_Data> cic_data;

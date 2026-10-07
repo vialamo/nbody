@@ -4,6 +4,8 @@
 
 constexpr double N_cond_crit = 100.0;
 
+//#define USE_MIDPOINT_QUADRATURE
+
 namespace Reconstruction {
 
 struct FluidStateArrays {
@@ -61,10 +63,10 @@ ParticleGradients compute_single_particle_gradients(
     const FluidStateArrays& system_data,  // Pointers to global SoA
     const Eigen::Matrix3d& B, bool ill_conditioned, double domain_size);
 
-ParticleGradients compute_single_particle_gradients(
+/*ParticleGradients compute_single_particle_gradients(
     const ParticleState& p_i, const std::vector<ParticleState>& neighbors,
     const Eigen::Matrix3d& B, bool ill_conditioned, double condition_number,
-    double domain_size);
+    double domain_size);*/
 
 // Extrapolates particle states to the face using spatial gradients
 ReconstructedFace compute_face_reconstruction(

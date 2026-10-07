@@ -6,10 +6,10 @@
 #include "kernels.h"
 #include "math_utils.h"
 
-//#define ZEROTH_ORDER_RECONSTRUCTION
+#define ZEROTH_ORDER_RECONSTRUCTION
 
 #ifndef ZEROTH_ORDER_RECONSTRUCTION
-//#define DISABLE_LIMITER
+// #define DISABLE_LIMITER
 #else
 #define DISABLE_LIMITER
 #endif
@@ -72,6 +72,11 @@ double apply_pairwise_limiter(double phi_L_center, double phi_R_center,
 
 double apply_pairwise_limiter_velocity(double phi_L_center, double phi_R_center,
                                        double phi_mid_0, double phi_bar) {
+// #define FORCE_SIGN_FOR_VELOCITY
+#ifdef FORCE_SIGN_FOR_VELOCITY
+    return apply_pairwise_limiter(phi_L_center, phi_R_center, phi_mid_0,
+                                  phi_bar);
+#else
     double d_phi = std::abs(phi_L_center - phi_R_center);
     if (d_phi < 1e-14) return phi_L_center;
 
@@ -90,6 +95,7 @@ double apply_pairwise_limiter_velocity(double phi_L_center, double phi_R_center,
     } else {
         return std::min(phi_plus, std::max(phi_bar - delta_2, phi_mid_0));
     }
+#endif
 }
 #endif
 
@@ -141,9 +147,8 @@ ParticleGradients compute_single_particle_gradients(
     out.grad_vy = Eigen::Vector3d::Zero();
     out.grad_vz = Eigen::Vector3d::Zero();
     out.ill_conditioned = ill_conditioned;
-
-    if (!ill_conditioned) {
 #ifndef ZEROTH_ORDER_RECONSTRUCTION
+    if (!ill_conditioned) {
         Eigen::Vector3d sum_rho = Eigen::Vector3d::Zero();
         Eigen::Vector3d sum_p = Eigen::Vector3d::Zero();
         Eigen::Vector3d sum_vx = Eigen::Vector3d::Zero();
@@ -155,7 +160,6 @@ ParticleGradients compute_single_particle_gradients(
         double d_vx_max = 0.0, d_vx_min = 0.0;
         double d_vy_max = 0.0, d_vy_min = 0.0;
         double d_vz_max = 0.0, d_vz_min = 0.0;
-        double r_max = 1e-12;
 
         for (size_t n = 0; n < num_neighbors; ++n) {
             int j = neighbor_indices[n];
@@ -169,7 +173,6 @@ ParticleGradients compute_single_particle_gradients(
 
             double r2 = dx * dx + dy * dy + dz * dz;
             double r = std::sqrt(r2);
-            r_max = std::max(r_max, r);
 
             // Track min/max bounds across the entire interaction list
             d_rho_max = std::max(d_rho_max, data.rho[j] - data.rho[i]);
@@ -245,13 +248,13 @@ ParticleGradients compute_single_particle_gradients(
         }
 
         double beta = 2.0;
-        if (data.cond_num[i] > 0.0) {
+        /*if (data.cond_num[i] > 0.0) {
             constexpr double beta_min = 1.0;
             constexpr double beta_max = 2.0;
             beta = std::max(
                 beta_min,
                 beta_max * std::min(1.0, N_cond_crit / data.cond_num[i]));
-        }
+        }*/
 
         out.grad_rho *= compute_gradient_alpha(
             d_rho_max, d_rho_min, phi_mid_max_rho, phi_mid_min_rho, beta);
@@ -263,7 +266,6 @@ ParticleGradients compute_single_particle_gradients(
             d_vy_max, d_vy_min, phi_mid_max_vy, phi_mid_min_vy, beta);
         out.grad_vz *= compute_gradient_alpha(
             d_vz_max, d_vz_min, phi_mid_max_vz, phi_mid_min_vz, beta);
-#endif
 #endif
     } else {
         out.grad_rho.setZero();
@@ -298,6 +300,7 @@ ParticleGradients compute_single_particle_gradients(
             out.grad_vz += V_j * (data.vel_z[j] - data.vel_z[i]) * grad_W_i;
         }
     }
+#endif
 
     return out;
 }
@@ -329,7 +332,11 @@ ReconstructedFace compute_face_reconstruction(
 
     face.n = face.area_vec / A_mag;
 
+#ifdef USE_MIDPOINT_QUADRATURE
+    double fraction_i = 0.5;
+#else
     double fraction_i = p_i.h / (p_i.h + p_j.h);
+#endif
     double fraction_j = 1.0 - fraction_i;
 
     Eigen::Vector3d dx_face_i = fraction_i * dx_vec;
@@ -414,7 +421,7 @@ ReconstructedFace compute_face_reconstruction(
     return face;
 }
 
-ParticleGradients compute_single_particle_gradients(
+/*ParticleGradients compute_single_particle_gradients(
     const ParticleState& p_i, const std::vector<ParticleState>& neighbors,
     const Eigen::Matrix3d& B, bool ill_conditioned, double condition_number,
     double domain_size) {
@@ -426,8 +433,8 @@ ParticleGradients compute_single_particle_gradients(
     out.grad_vz = Eigen::Vector3d::Zero();
     out.ill_conditioned = ill_conditioned;
 
-    if (!out.ill_conditioned) {
 #ifndef ZEROTH_ORDER_RECONSTRUCTION
+    if (!out.ill_conditioned) {
         Eigen::Vector3d sum_rho = Eigen::Vector3d::Zero();
         Eigen::Vector3d sum_p = Eigen::Vector3d::Zero();
         Eigen::Vector3d sum_vx = Eigen::Vector3d::Zero();
@@ -439,7 +446,6 @@ ParticleGradients compute_single_particle_gradients(
         double d_vx_max = 0.0, d_vx_min = 0.0;
         double d_vy_max = 0.0, d_vy_min = 0.0;
         double d_vz_max = 0.0, d_vz_min = 0.0;
-        double r_max = 1e-12;
 
         for (const auto& nj : neighbors) {
             double dx =
@@ -451,7 +457,7 @@ ParticleGradients compute_single_particle_gradients(
 
             double r2 = dx * dx + dy * dy + dz * dz;
             double r = std::sqrt(r2);
-            r_max = std::max(r_max, r);
+
             d_rho_max = std::max(d_rho_max, nj.rho - p_i.rho);
             d_rho_min = std::min(d_rho_min, nj.rho - p_i.rho);
             d_p_max = std::max(d_p_max, nj.pressure - p_i.pressure);
@@ -497,7 +503,11 @@ ParticleGradients compute_single_particle_gradients(
             double dz =
                 periodic_displacement(nj.pos.z() - p_i.pos.z(), domain_size);
 
+#ifdef USE_MIDPOINT_QUADRATURE
+            double fraction_i = 0.5;
+#else
             double fraction_i = p_i.h / (p_i.h + nj.h);
+#endif
             Eigen::Vector3d dx_face_i =
                 fraction_i * Eigen::Vector3d(dx, dy, dz);
 
@@ -542,7 +552,6 @@ ParticleGradients compute_single_particle_gradients(
         out.grad_vz *= compute_gradient_alpha(
             d_vz_max, d_vz_min, phi_mid_max_vz, phi_mid_min_vz, beta);
 #endif
-#endif
     } else {
         out.grad_rho.setZero();
         out.grad_p.setZero();
@@ -573,8 +582,9 @@ ParticleGradients compute_single_particle_gradients(
             out.grad_vz += V_j * (nj.vel.z() - p_i.vel.z()) * grad_W_i;
         }
     }
+#endif
 
     return out;
-}
+}*/
 
 }  // namespace Reconstruction

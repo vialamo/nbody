@@ -149,7 +149,8 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
     if (conf.hydro_method == HydroMethod::MFM) {
         std::cout << "    - Vol Err: "
                   << format_double(diag.volume_error, 1, true)
-                  << "\n";
+                  << " | Closure Err: "
+                  << format_double(diag.max_closure_error, 1, true) << "\n";
     }
 
     std::cout << "  [Stability]\n";
