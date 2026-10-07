@@ -1,7 +1,7 @@
 #include "ics.h"
 
-#include <cassert>
 #include <random>
+#include <iostream>
 
 #include "constants.h"
 #include "cooling.h"
@@ -513,100 +513,73 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
         gas.update_primitive_variables(state.scale_factor);
 
     } else if (config.hydro_method == HydroMethod::MFM) {
-        constexpr bool use_glass = false;
+        constexpr bool use_glass = true;
 
         if (use_glass) {
-            // Hardcoded path to a master glass file
-            constexpr const char* glass_file = "data/glass.hdf5";
+            GlassData glass_L, glass_R;
+            try {
+                // Drop the base resolution by one tier to maintain a normal particle count (~147k total)
+                glass_L = HDF5Reader::read_glass_cube("data/glassCube_32.hdf5");
+                glass_R = HDF5Reader::read_glass_cube("data/glassCube_16.hdf5");
+            } catch (const std::exception& e) {
+                std::cerr << "[Fatal IC Error] Failed to read glass files: " << e.what() << std::endl;
+                exit(EXIT_FAILURE);
+            }
 
-            // Extract the relaxed glass coordinates and its original domain
-            // size
-            HDF5Reader reader(glass_file);
-            H5::Group config_group = reader.open_group("/Config");
-            double glass_domain =
-                reader.read_attr_double(config_group, "domain_size");
-            MFMGasSnapshot glass = reader.read_mfm_gas();
+            // We use a block size of L/2 to tile the L x L x L domain perfectly
+            double B = L / 2.0; 
+            double block_vol = B * B * B;
 
-            // Calculate Target Physics
-            double N_req = std::pow(config.num_gas_particles_1d, 3.0);
-            double half_vol = (L * L * L) / 2.0;
-            double total_mass = (half_vol * rho_L) + (half_vol * rho_R);
-            double particle_mass = total_mass / N_req;
+            // 1. Safe Mass Calculation (Total mass / Total particles)
+            // 1x2x2 blocks = 4 blocks per side
+            double total_mass_L = rho_L * (4.0 * block_vol); 
+            double total_mass_R = rho_R * (4.0 * block_vol); 
+            size_t total_particles = (4 * glass_L.num_particles) + (4 * glass_R.num_particles);
+            
+            double particle_mass = (total_mass_L + total_mass_R) / static_cast<double>(total_particles);
 
-            // Target number densities (particles per unit volume)
-            double n_L = rho_L / particle_mass;
-            double n_R = rho_R / particle_mass;
-            double n_glass = glass.num_particles / std::pow(glass_domain, 3.0);
+            // 2. Safe 'h' Guess Calculation
+            double target_N = config.mfm_target_neighbors;
+            // Radius factor to encapsulate exactly 'target_N' particles geometrically
+            double radius_factor = std::pow((3.0 * target_N) / (4.0 * M_PI), 1.0 / 3.0);
 
-            // Calculate Spatial Scaling Factors
-            // Scaling coordinates by S changes the volume by S^3, altering
-            // density
-            double S_L = std::cbrt(n_glass / n_L);
-            double S_R = std::cbrt(n_glass / n_R);
+            double dx_L = B * std::pow(1.0 / static_cast<double>(glass_L.num_particles), 1.0 / 3.0);
+            double dx_R = B * std::pow(1.0 / static_cast<double>(glass_R.num_particles), 1.0 / 3.0);
+            
+            // This guarantees the solver starts within ~1% of the final converged smoothing length
+            double h_L = dx_L * radius_factor;
+            double h_R = dx_R * radius_factor;
 
-            double block_size_L = glass_domain * S_L;
-            double block_size_R = glass_domain * S_R;
-
-            // LEFT SIDE (Dense, High Pressure)
-            // Determine how many blocks we need to cover the left domain
-            int max_ix_L = std::ceil((L / 2.0) / block_size_L);
-            int max_iy_L = std::ceil(L / block_size_L);
-            int max_iz_L = std::ceil(L / block_size_L);
-
-            for (int ix = 0; ix < max_ix_L; ++ix) {
-                for (int iy = 0; iy < max_iy_L; ++iy) {
-                    for (int iz = 0; iz < max_iz_L; ++iz) {
-                        for (size_t p = 0; p < glass.num_particles; ++p) {
-                            double p_x =
-                                ix * block_size_L + glass.pos_x[p] * S_L;
-                            double p_y =
-                                iy * block_size_L + glass.pos_y[p] * S_L;
-                            double p_z =
-                                iz * block_size_L + glass.pos_z[p] * S_L;
-
-                            double p_h = glass.smoothing_length[p] * S_L;
-
-                            // Subsample: keep particles within the Left
-                            // boundary
-                            if (p_x < L / 2.0 && p_y < L && p_z < L) {
-                                state.mfm_gas->add_particle(
-                                    p_x, p_y, p_z, v_x, v_y, v_z, particle_mass,
-                                    u_L, p_h, seed_metallicity);
-                            }
-                        }
+            // LEFT SIDE (High Density, High Pressure)
+            // Fills x in [0, L/2], y in [0, L], z in [0, L] using 1x2x2 blocks
+            for (int iy = 0; iy < 2; ++iy) {
+                for (int iz = 0; iz < 2; ++iz) {
+                    for (size_t p = 0; p < glass_L.num_particles; ++p) {
+                        double p_x = glass_L.pos_x[p] * B; 
+                        double p_y = (iy * B) + (glass_L.pos_y[p] * B);
+                        double p_z = (iz * B) + (glass_L.pos_z[p] * B);
+                        
+                        state.mfm_gas->add_particle(p_x, p_y, p_z, 
+                                                    v_x, v_y, v_z, 
+                                                    particle_mass, 
+                                                    u_L, h_L, seed_metallicity);
                     }
                 }
             }
 
-            // RIGHT SIDE (Sparse, Low Pressure)
-            // Determine how many blocks we need to cover the right domain
-            int max_ix_R = std::ceil((L / 2.0) / block_size_R);
-            int max_iy_R = std::ceil(L / block_size_R);
-            int max_iz_R = std::ceil(L / block_size_R);
-
-            for (int ix = 0; ix < max_ix_R; ++ix) {
-                for (int iy = 0; iy < max_iy_R; ++iy) {
-                    for (int iz = 0; iz < max_iz_R; ++iz) {
-                        for (size_t p = 0; p < glass.num_particles; ++p) {
-                            // Shift X by L/2 to place the block grid on the
-                            // right side
-                            double p_x = (L / 2.0) + ix * block_size_R +
-                                         glass.pos_x[p] * S_R;
-                            double p_y =
-                                iy * block_size_R + glass.pos_y[p] * S_R;
-                            double p_z =
-                                iz * block_size_R + glass.pos_z[p] * S_R;
-
-                            double p_h = glass.smoothing_length[p] * S_R;
-
-                            // Subsample: keep particles within the Right
-                            // boundary
-                            if (p_x < L && p_y < L && p_z < L) {
-                                state.mfm_gas->add_particle(
-                                    p_x, p_y, p_z, v_x, v_y, v_z, particle_mass,
-                                    u_R, p_h, seed_metallicity);
-                            }
-                        }
+            // RIGHT SIDE (Low Density, Low Pressure)
+            // Fills x in [L/2, L], y in [0, L], z in [0, L] using 1x2x2 blocks
+            for (int iy = 0; iy < 2; ++iy) {
+                for (int iz = 0; iz < 2; ++iz) {
+                    for (size_t p = 0; p < glass_R.num_particles; ++p) {
+                        double p_x = B + (glass_R.pos_x[p] * B); // Shifted by B to the right half
+                        double p_y = (iy * B) + (glass_R.pos_y[p] * B);
+                        double p_z = (iz * B) + (glass_R.pos_z[p] * B);
+                        
+                        state.mfm_gas->add_particle(p_x, p_y, p_z, 
+                                                    v_x, v_y, v_z, 
+                                                    particle_mass, 
+                                                    u_R, h_R, seed_metallicity);
                     }
                 }
             }
@@ -827,6 +800,7 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
         gas.update_primitive_variables(state.scale_factor);
 
     } else if (config.hydro_method == HydroMethod::MFM) {
+#ifdef USE_SEDOV_LATTICE
         // Use a Simple Cubic lattice (regular grid)
         // matching the OpenGadget3 Sedov blastwave setup
         int M = N_res;
@@ -840,9 +814,10 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
 
         // Toggle to replicate OpenGadget3's 8-particle split
         // Set to false to force all energy into 1 particle
-        constexpr bool spread_over_8_particles = true;
+        constexpr bool spread_over_8_particles = false;
 
         int i_min, i_max, num_central;
+        double offset = 0;
 
         if (spread_over_8_particles) {
             // Even grids get the 8 central particles, odd grids get the 1
@@ -850,6 +825,7 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
             i_min = (M % 2 == 0) ? (M / 2) - 1 : (M / 2);
             i_max = M / 2;
             num_central = (M % 2 == 0) ? 8 : 1;
+            offset = 0.5;
         } else {
             // Force 1 central particle at the (M/2) index
             i_min = M / 2;
@@ -864,9 +840,9 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
             for (int j = 0; j < M; ++j) {
                 for (int k = 0; k < M; ++k) {
                     // Place particles at cell centers
-                    double p_x = (i + 0.5) * dx;
-                    double p_y = (j + 0.5) * dx;
-                    double p_z = (k + 0.5) * dx;
+                    double p_x = (i + offset) * dx;
+                    double p_y = (j + offset) * dx;
+                    double p_z = (k + offset) * dx;
 
                     double particle_u = u_bg;
 
@@ -883,6 +859,77 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
                 }
             }
         }
+#else
+        // 1. Read the glass file
+        GlassData glass;
+        try {
+            // Adjust the path as needed for your build directory
+            glass = HDF5Reader::read_glass_cube("data/glassCube_64.hdf5");
+        } catch (const std::exception& e) {
+            return;
+        }
+
+        double vol = L * L * L;
+        double gas_particle_mass =
+            rho_bg * vol / static_cast<double>(glass.num_particles);
+
+        // 2. Find the central N particles
+        int N_inject = 15;  // SWIFT standard for this test
+
+        // Create a list of indices and their squared distances to the center
+        struct ParticleDist {
+            size_t index;
+            double r2;
+        };
+        std::vector<ParticleDist> distances(glass.num_particles);
+
+        for (size_t i = 0; i < glass.num_particles; ++i) {
+            // Assuming the glass file is normalized to a [0, 1] box,
+            // we scale the coordinates to our domain size.
+            double px = glass.pos_x[i] * L;
+            double py = glass.pos_y[i] * L;
+            double pz = glass.pos_z[i] * L;
+
+            double dx = px - center;
+            double dy = py - center;
+            double dz = pz - center;
+
+            distances[i] = {i, dx * dx + dy * dy + dz * dz};
+        }
+
+        // Partially sort to get the N_inject closest particles at the front
+        std::partial_sort(distances.begin(), distances.begin() + N_inject,
+                          distances.end(),
+                          [](const ParticleDist& a, const ParticleDist& b) {
+                              return a.r2 < b.r2;
+                          });
+
+        // Create a fast lookup array for the injected particles
+        std::vector<bool> is_injected(glass.num_particles, false);
+        for (int i = 0; i < N_inject; ++i) {
+            is_injected[distances[i].index] = true;
+        }
+
+        double injected_u = E_total / (N_inject * gas_particle_mass);
+        double dx = L / static_cast<double>(64);
+        double initial_h = 2.0 * dx;
+
+        // 3. Inject particles into the simulation state
+        for (size_t i = 0; i < glass.num_particles; ++i) {
+            double p_x = glass.pos_x[i] * L;
+            double p_y = glass.pos_y[i] * L;
+            double p_z = glass.pos_z[i] * L;
+
+            double particle_u = u_bg;
+            if (is_injected[i]) {
+                particle_u += injected_u;
+            }
+
+            state.mfm_gas->add_particle(p_x, p_y, p_z, 0.0, 0.0, 0.0,
+                                        gas_particle_mass, particle_u, initial_h,
+                                        seed_metallicity);
+        }
+#endif
     }
 }
 

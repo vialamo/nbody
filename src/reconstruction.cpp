@@ -6,7 +6,7 @@
 #include "kernels.h"
 #include "math_utils.h"
 
-#define ZEROTH_ORDER_RECONSTRUCTION
+//#define ZEROTH_ORDER_RECONSTRUCTION
 
 #ifndef ZEROTH_ORDER_RECONSTRUCTION
 // #define DISABLE_LIMITER
@@ -248,13 +248,13 @@ ParticleGradients compute_single_particle_gradients(
         }
 
         double beta = 2.0;
-        /*if (data.cond_num[i] > 0.0) {
+        if (data.cond_num[i] > 0.0) {
             constexpr double beta_min = 1.0;
             constexpr double beta_max = 2.0;
             beta = std::max(
                 beta_min,
                 beta_max * std::min(1.0, N_cond_crit / data.cond_num[i]));
-        }*/
+        }
 
         out.grad_rho *= compute_gradient_alpha(
             d_rho_max, d_rho_min, phi_mid_max_rho, phi_mid_min_rho, beta);

@@ -110,3 +110,56 @@ MFMGasSnapshot HDF5Reader::read_mfm_gas() const {
 
     return gas_data;
 }
+
+GlassData HDF5Reader::read_glass_cube(const std::string& filepath) {
+    GlassData data;
+
+    try {
+        H5::H5File file(filepath, H5F_ACC_RDONLY);
+
+        // Read Coordinates (Assuming shape [N, 3])
+        H5::DataSet pos_dataset = file.openDataSet("/PartType0/Coordinates");
+        H5::DataSpace pos_dataspace = pos_dataset.getSpace();
+        hsize_t dims[2];
+        pos_dataspace.getSimpleExtentDims(dims, NULL);
+
+        data.num_particles = dims[0];
+        std::vector<double> pos_buffer(data.num_particles * 3);
+        pos_dataset.read(pos_buffer.data(), H5::PredType::NATIVE_DOUBLE);
+
+        data.pos_x.reserve(data.num_particles);
+        data.pos_y.reserve(data.num_particles);
+        data.pos_z.reserve(data.num_particles);
+
+        for (size_t i = 0; i < data.num_particles; ++i) {
+            data.pos_x.push_back(pos_buffer[i * 3 + 0]);
+            data.pos_y.push_back(pos_buffer[i * 3 + 1]);
+            data.pos_z.push_back(pos_buffer[i * 3 + 2]);
+        }
+
+        // Read Smoothing Lengths
+        H5::DataSet h_dataset = file.openDataSet("/PartType0/SmoothingLength");
+        data.h.resize(data.num_particles);
+
+        // SWIFT files sometimes use float instead of double for properties,
+        // read into a float buffer if necessary, then cast.
+        if (h_dataset.getFloatType().getSize() == 4) {
+            std::vector<float> h_buffer(data.num_particles);
+            h_dataset.read(h_buffer.data(), H5::PredType::NATIVE_FLOAT);
+            for (size_t i = 0; i < data.num_particles; ++i) {
+                // Apply the SWIFT 0.3 scaling factor directly on read
+                data.h[i] = static_cast<double>(h_buffer[i]) * 0.3;
+            }
+        } else {
+            h_dataset.read(data.h.data(), H5::PredType::NATIVE_DOUBLE);
+            for (size_t i = 0; i < data.num_particles; ++i) {
+                data.h[i] *= 0.3;
+            }
+        }
+
+    } catch (const H5::Exception& e) {
+        throw std::runtime_error("Failed to read glass file: " + filepath);
+    }
+
+    return data;
+}

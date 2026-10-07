@@ -22,6 +22,14 @@ struct MFMGasSnapshot {
     std::vector<double> metal_fraction;
 };
 
+struct GlassData {
+    size_t num_particles;
+    std::vector<double> pos_x;
+    std::vector<double> pos_y;
+    std::vector<double> pos_z;
+    std::vector<double> h;
+};
+
 class HDF5Reader {
    private:
     H5::H5File file;
@@ -48,4 +56,5 @@ class HDF5Reader {
 
     // Extensible high-level helpers
     MFMGasSnapshot read_mfm_gas() const;
+    static GlassData read_glass_cube(const std::string& filepath);
 };

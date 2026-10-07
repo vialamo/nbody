@@ -113,7 +113,7 @@ void Config::compute_derived_data() {
         omega_baryon = 1.0;
         gamma = 5.0 / 3.0;
         total_mass = 1.0;
-        a_end = 1.5;
+        a_end = 100.5;
     } else if (initial_setup == InitialSetup::Glass) {
         hydro_method = HydroMethod::MFM;
         expanding_universe = false;

@@ -139,9 +139,8 @@ def validate_sedov_interactive(snapshot_dir):
     switch_energies = np.array(switch_energies)
 
     label_prefix = "Eulerian Grid" if hydro_method == "eulerian" else "MFM Particles"
-    color_prefix = "darkorange" if hydro_method == "eulerian" else "royalblue"
     
-    # 3x4 Layout (height reduced since we dropped a row)
+    # 3x4 Layout
     fig = plt.figure(figsize=(24, 14))
     gs = GridSpec(3, 4, width_ratios=[1, 1, 1, 1], height_ratios=[1, 1, 1.2], figure=fig)
     plt.subplots_adjust(bottom=0.1, top=0.92, wspace=0.35, hspace=0.40)
@@ -160,59 +159,63 @@ def validate_sedov_interactive(snapshot_dir):
     
     # Row 2
     ax_ts    = fig.add_subplot(gs[2, 0])
-    
-    # Centerpiece: 2D Slice spans Row 2, Col 1-3
     ax_slice = fig.add_subplot(gs[2, 1:4]) 
     
-    scatter_kwargs = {'s': 2, 'color': color_prefix, 'alpha': 0.3, 'label': f'{label_prefix} Sim'}
-    exact_line_kwargs = {'color': 'black', 'lw': 2.0, 'linestyle': '--', 'label': 'Exact Solution'}
+    # Updated scatter kwargs for angle coloring
+    cmap_angle = 'turbo'
+    scatter_kwargs = {'s': 3, 'alpha': 0.6, 'cmap': cmap_angle, 'vmin': 0, 'vmax': 55}
+    exact_line_kwargs = {'color': 'black', 'lw': 2.0, 'linestyle': '--', 'zorder': 10, 'label': 'Exact Solution'}
     
-    scat_rho = ax_rho.scatter([], [], **scatter_kwargs)
+    scat_rho = ax_rho.scatter([], [], c=[], **scatter_kwargs)
     line_rho, = ax_rho.plot([], [], **exact_line_kwargs)
     ax_rho.set_ylabel(r"Density ($\rho$)")
     ax_rho.set_title("Radial Density Profile")
     
-    scat_v = ax_v.scatter([], [], **scatter_kwargs)
+    scat_v = ax_v.scatter([], [], c=[], **scatter_kwargs)
     line_v, = ax_v.plot([], [], **exact_line_kwargs)
     ax_v.set_ylabel(r"Radial Velocity ($v_r$)")
     ax_v.set_title("Radial Velocity Profile")
     
-    scat_h = ax_h.scatter([], [], **scatter_kwargs)
+    scat_h = ax_h.scatter([], [], c=[], **scatter_kwargs)
     ax_h.set_ylabel(r"Smoothing Length ($h$)")
     ax_h.set_title("Smoothing Length Profile")
 
-    scat_nenc = ax_nenc.scatter([], [], **scatter_kwargs)
+    scat_nenc = ax_nenc.scatter([], [], c=[], **scatter_kwargs)
     line_target_nenc = ax_nenc.axhline(-1, color='black', linestyle='--', lw=1.5, label=r'Target $N_{enc}$')
     ax_nenc.set_ylabel(r"Num Neighbors ($N_{enc}$)")
     ax_nenc.set_title("Neighbors per Particle")
-    ax_nenc.legend(loc='upper right', fontsize=9)
 
-    scat_P = ax_P.scatter([], [], **scatter_kwargs)
+    scat_P = ax_P.scatter([], [], c=[], **scatter_kwargs)
     line_P, = ax_P.plot([], [], **exact_line_kwargs)
     ax_P.set_ylabel(r"Pressure ($P$)")
     ax_P.set_title("Pressure Profile")
     
-    scat_u = ax_u.scatter([], [], **scatter_kwargs)
+    scat_u = ax_u.scatter([], [], c=[], **scatter_kwargs)
     line_u, = ax_u.plot([], [], **exact_line_kwargs)
     ax_u.set_ylabel(r"Internal Energy ($u$)")
     ax_u.set_title("Specific Internal Energy")
 
-    scat_gradP = ax_gradP.scatter([], [], **scatter_kwargs)
+    scat_gradP = ax_gradP.scatter([], [], c=[], **scatter_kwargs)
     ax_gradP.set_ylabel(r"Grad P Mag ($|\nabla P|$)")
     ax_gradP.set_xlabel("Radius (r)")
     ax_gradP.set_title("Pressure Gradient Magnitude")
 
-    scat_cond = ax_cond.scatter([], [], s=2, color='tab:red', alpha=0.5, label='Condition Num')
-    ax_cond.set_ylabel("Condition Number", color='tab:red')
+    scat_cond = ax_cond.scatter([], [], c=[], **scatter_kwargs)
+    ax_cond.set_ylabel("Condition Number")
     ax_cond.set_xlabel("Radius (r)")
     ax_cond.set_title("Matrix Condition")
-    ax_cond.tick_params(axis='y', labelcolor='tab:red')
+
+    # Add Colorbar for angles
+    cbar_ax = fig.add_axes([0.91, 0.55, 0.01, 0.35])
+    cbar_angle = fig.colorbar(scat_v, cax=cbar_ax)
+    cbar_angle.set_label('Angle to Nearest Cartesian Axis (deg)')
 
     plot_axes = [ax_rho, ax_v, ax_h, ax_nenc, ax_P, ax_u, ax_gradP, ax_cond]
     for ax in plot_axes:
         ax.set_xlim(0, domain_size / 2.0)
         ax.grid(True, linestyle=':', alpha=0.6)
     ax_rho.legend(loc='upper right', fontsize=9)
+    ax_nenc.legend(loc='upper right', fontsize=9)
     
     # Setup 2D Slice
     ax_slice.set_title("Specific Internal Energy (2D Slice z=0)")
@@ -250,11 +253,15 @@ def validate_sedov_interactive(snapshot_dir):
             
             if method == "eulerian":
                 N = cfg.get('mesh_size_1d', 32)
-                dx = domain_size / float(N)
-                coords = np.linspace(dx/2.0, domain_size - dx/2.0, N)
+                dx_cell = domain_size / float(N)
+                coords = np.linspace(dx_cell/2.0, domain_size - dx_cell/2.0, N)
                 X, Y, Z = np.meshgrid(coords, coords, coords, indexing='ij')
                 x_full, y_full, z_full = X.flatten(), Y.flatten(), Z.flatten()
-                r_flat = np.sqrt((x_full - center)**2 + (y_full - center)**2 + (z_full - center)**2)
+                
+                dx = x_full - center
+                dy = y_full - center
+                dz = z_full - center
+                r_flat = np.sqrt(dx**2 + dy**2 + dz**2)
                 
                 rho_flat = f['Gas/density'][:].flatten()
                 mom_x_flat = f['Gas/momentum_x'][:].flatten()
@@ -265,7 +272,7 @@ def validate_sedov_interactive(snapshot_dir):
                 v_x = mom_x_flat / rho_flat
                 v_y = mom_y_flat / rho_flat
                 v_z = mom_z_flat / rho_flat
-                v_r_flat = (v_x*(x_full-center) + v_y*(y_full-center) + v_z*(z_full-center)) / np.maximum(r_flat, 1e-8)
+                v_r_flat = (v_x*dx + v_y*dy + v_z*dz) / np.maximum(r_flat, 1e-8)
                 u_flat = P_flat / (rho_flat * (gamma - 1.0))
                 
                 h_flat = np.full_like(r_flat, np.nan) 
@@ -289,8 +296,11 @@ def validate_sedov_interactive(snapshot_dir):
                 u_flat = f['Gas/internal_energy'][:]
                 P_flat = rho_flat * u_flat * (gamma - 1.0)
                 
-                r_flat = np.sqrt((x_full - center)**2 + (y_full - center)**2 + (z_full - center)**2)
-                v_r_flat = (v_x*(x_full-center) + v_y*(y_full-center) + v_z*(z_full-center)) / np.maximum(r_flat, 1e-8)
+                dx = x_full - center
+                dy = y_full - center
+                dz = z_full - center
+                r_flat = np.sqrt(dx**2 + dy**2 + dz**2)
+                v_r_flat = (v_x*dx + v_y*dy + v_z*dz) / np.maximum(r_flat, 1e-8)
 
                 h_flat = f['Gas/smoothing_length'][:] if 'smoothing_length' in f['Gas'] else np.full_like(rho_flat, np.nan)
                     
@@ -310,8 +320,8 @@ def validate_sedov_interactive(snapshot_dir):
                 else:
                     nenc_flat = np.full_like(rho_flat, np.nan)
 
-                dz = domain_size * 0.03
-                slice_mask = np.abs(z_full - center) < dz
+                dz_slice = domain_size * 0.03
+                slice_mask = np.abs(z_full - center) < dz_slice
                 x_slice = x_full[slice_mask]
                 y_slice = y_full[slice_mask]
                 u_slice_2d = u_flat[slice_mask]
@@ -320,6 +330,10 @@ def validate_sedov_interactive(snapshot_dir):
                 x_slice = x_slice[sort_slice]
                 y_slice = y_slice[sort_slice]
                 u_slice_2d = u_slice_2d[sort_slice]
+
+        # Calculate angles relative to nearest Cartesian axis for coloring
+        max_dir = np.maximum(np.maximum(np.abs(dx), np.abs(dy)), np.abs(dz))
+        angle_flat = np.degrees(np.arccos(max_dir / np.maximum(r_flat, 1e-8)))
 
         if len(x_slice) > 0:
             scat_slice.set_offsets(np.c_[x_slice, y_slice])
@@ -347,24 +361,45 @@ def validate_sedov_interactive(snapshot_dir):
             gradP_plot = gradP_mag_flat[sample_idx]
             cond_plot = cond_flat[sample_idx]
             nenc_plot = nenc_flat[sample_idx]
+            angle_plot = angle_flat[sample_idx]
         else:
             r_plot, rho_plot, v_r_plot = r_flat, rho_flat, v_r_flat
             P_plot, u_plot, h_plot = P_flat, u_flat, h_flat
             gradP_plot = gradP_mag_flat
             cond_plot = cond_flat
             nenc_plot = nenc_flat
+            angle_plot = angle_flat
             
         fig.canvas.manager.set_window_title(os.path.basename(os.path.normpath(snapshot_dir)))
         fig.suptitle(f"Sedov Blastwave Validation - Snapshot {idx} (t={time:.4f})", fontsize=16)
         
-        scat_rho.set_offsets(np.c_[r_plot, rho_plot])
-        scat_v.set_offsets(np.c_[r_plot, v_r_plot])
-        scat_P.set_offsets(np.c_[r_plot, P_plot])
-        scat_u.set_offsets(np.c_[r_plot, u_plot])
-        scat_h.set_offsets(np.c_[r_plot, h_plot])
-        scat_nenc.set_offsets(np.c_[r_plot, nenc_plot])
-        scat_gradP.set_offsets(np.c_[r_plot, gradP_plot])
-        scat_cond.set_offsets(np.c_[r_plot, cond_plot])
+        # Sort arrays by angle so the high-angle (red) diagonal particles plot on top of the blue ones
+        #sort_by_angle = np.argsort(angle_plot)
+        sort_by_angle = np.argsort(r_flat)
+
+        scat_rho.set_offsets(np.c_[r_plot[sort_by_angle], rho_plot[sort_by_angle]])
+        scat_rho.set_array(angle_plot[sort_by_angle])
+        
+        scat_v.set_offsets(np.c_[r_plot[sort_by_angle], v_r_plot[sort_by_angle]])
+        scat_v.set_array(angle_plot[sort_by_angle])
+        
+        scat_P.set_offsets(np.c_[r_plot[sort_by_angle], P_plot[sort_by_angle]])
+        scat_P.set_array(angle_plot[sort_by_angle])
+        
+        scat_u.set_offsets(np.c_[r_plot[sort_by_angle], u_plot[sort_by_angle]])
+        scat_u.set_array(angle_plot[sort_by_angle])
+        
+        scat_h.set_offsets(np.c_[r_plot[sort_by_angle], h_plot[sort_by_angle]])
+        scat_h.set_array(angle_plot[sort_by_angle])
+        
+        scat_nenc.set_offsets(np.c_[r_plot[sort_by_angle], nenc_plot[sort_by_angle]])
+        scat_nenc.set_array(angle_plot[sort_by_angle])
+        
+        scat_gradP.set_offsets(np.c_[r_plot[sort_by_angle], gradP_plot[sort_by_angle]])
+        scat_gradP.set_array(angle_plot[sort_by_angle])
+        
+        scat_cond.set_offsets(np.c_[r_plot[sort_by_angle], cond_plot[sort_by_angle]])
+        scat_cond.set_array(angle_plot[sort_by_angle])
 
         r_ex, rho_ex, v_ex, P_ex, u_ex = get_sedov_exact_profile(time, E=1.0, rho_bg=1.0, gamma=gamma)
         
