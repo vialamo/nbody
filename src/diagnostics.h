@@ -42,7 +42,8 @@ class Diagnostics {
     size_t MFM_sph_fallback_cases = 0;
     double percent_particles_updated = 0;
     double volume_error = 0.0;
-    double max_closure_error = 0.0;
+    double mfm_flux_error = 0.0;
+    double mfm_flux_momentum_error = 0.0;
 
     // Performance State
     int accumulated_cycles = 0;

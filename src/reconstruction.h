@@ -63,11 +63,6 @@ ParticleGradients compute_single_particle_gradients(
     const FluidStateArrays& system_data,  // Pointers to global SoA
     const Eigen::Matrix3d& B, bool ill_conditioned, double domain_size);
 
-/*ParticleGradients compute_single_particle_gradients(
-    const ParticleState& p_i, const std::vector<ParticleState>& neighbors,
-    const Eigen::Matrix3d& B, bool ill_conditioned, double condition_number,
-    double domain_size);*/
-
 // Extrapolates particle states to the face using spatial gradients
 ReconstructedFace compute_face_reconstruction(
     const ParticleState& p_i, const ParticleGradients& grad_i,

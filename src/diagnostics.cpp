@@ -50,7 +50,6 @@ void Diagnostics::reset_accumulators() {
     accumulated_substeps.fill(0);
     accumulated_prof.fill(0.0);
     accumulated_cycles = 0;
-    max_closure_error = 0.0;
 }
 
 void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
@@ -264,22 +263,9 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
         double box_volume = std::pow(config.domain_size, 3.0);
         volume_error = (total_sim_volume / box_volume) - 1.0;
 
-#pragma omp parallel for reduction(max : max_closure_error)
-        for (size_t i = 0; i < gas.num_particles; ++i) {
-
-            double sum_x = gas.face_area_sum_x[i];
-            double sum_y = gas.face_area_sum_y[i];
-            double sum_z = gas.face_area_sum_z[i];
-
-            double vector_mag =
-                std::sqrt(sum_x * sum_x + sum_y * sum_y + sum_z * sum_z);
-
-            double V_i = gas.mass[i] / gas.rho[i];
-            double expected_area = std::pow(V_i, 2.0 / 3.0);
-
-            double error = vector_mag / expected_area;
-            max_closure_error = std::max(max_closure_error, error);
-        }
+        auto hce = gas.diagnose_hydro_conservation_error();
+        mfm_flux_error = hce.energy_error_rate;
+        mfm_flux_momentum_error = hce.momentum_error_rate.norm();
 
     } else {
         this->energy_err = 0.0;

@@ -8,12 +8,18 @@
 #include "reconstruction.h"
 
 #define USE_ADAPTIVE_SOFTENING
+#define USE_HALF_STEP_PREDICTION
 
 class Cooling;
 
 struct KickWork {
     double grav_work = 0.0;
     double exp_work = 0.0;
+};
+
+struct HydroConservationError {
+    Eigen::Vector3d momentum_error_rate;  // Net un-conserved force
+    double energy_error_rate;             // Net un-conserved power
 };
 
 class GasParticleSystem {
@@ -102,9 +108,6 @@ class GasParticleSystem {
     size_t active_particles_num_cycles = 0;
     size_t neighbor_increased_cases = 0;
     size_t sph_fallback_cases = 0;
-    std::vector<double> face_area_sum_x;
-    std::vector<double> face_area_sum_y;
-    std::vector<double> face_area_sum_z;
 
     // Spatial Hashing
     std::vector<CIC_Data> cic_data;
@@ -124,6 +127,15 @@ class GasParticleSystem {
     std::vector<int> active_indices;
     size_t num_active = 0;
     double global_time = 0.0;
+
+#ifdef USE_HALF_STEP_PREDICTION
+    std::vector<double> vel_x_pred;
+    std::vector<double> vel_y_pred;
+    std::vector<double> vel_z_pred;
+    std::vector<double> pressure_pred;
+
+    void predict_primitive_variables(const Config& config, double a);
+#endif
 
     GasParticleSystem(const Config& config);
 
@@ -182,6 +194,8 @@ class GasParticleSystem {
     double get_active_particles_per_cycle_and_reset(const Config& config);
 
     void reset_velocities();
+
+    HydroConservationError diagnose_hydro_conservation_error() const;
 
    private:
     void sort_arrays(const std::vector<int>& sorted_indices);

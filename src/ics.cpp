@@ -1,7 +1,7 @@
 #include "ics.h"
 
-#include <random>
 #include <iostream>
+#include <random>
 
 #include "constants.h"
 #include "cooling.h"
@@ -518,35 +518,44 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
         if (use_glass) {
             GlassData glass_L, glass_R;
             try {
-                // Drop the base resolution by one tier to maintain a normal particle count (~147k total)
+                // Drop the base resolution by one tier to maintain a normal
+                // particle count (~147k total)
                 glass_L = HDF5Reader::read_glass_cube("data/glassCube_32.hdf5");
                 glass_R = HDF5Reader::read_glass_cube("data/glassCube_16.hdf5");
             } catch (const std::exception& e) {
-                std::cerr << "[Fatal IC Error] Failed to read glass files: " << e.what() << std::endl;
+                std::cerr << "[Fatal IC Error] Failed to read glass files: "
+                          << e.what() << std::endl;
                 exit(EXIT_FAILURE);
             }
 
             // We use a block size of L/2 to tile the L x L x L domain perfectly
-            double B = L / 2.0; 
+            double B = L / 2.0;
             double block_vol = B * B * B;
 
-            // 1. Safe Mass Calculation (Total mass / Total particles)
+            // Mass Calculation (Total mass / Total particles)
             // 1x2x2 blocks = 4 blocks per side
-            double total_mass_L = rho_L * (4.0 * block_vol); 
-            double total_mass_R = rho_R * (4.0 * block_vol); 
-            size_t total_particles = (4 * glass_L.num_particles) + (4 * glass_R.num_particles);
-            
-            double particle_mass = (total_mass_L + total_mass_R) / static_cast<double>(total_particles);
+            double total_mass_L = rho_L * (4.0 * block_vol);
+            double total_mass_R = rho_R * (4.0 * block_vol);
+            size_t total_particles =
+                (4 * glass_L.num_particles) + (4 * glass_R.num_particles);
 
-            // 2. Safe 'h' Guess Calculation
+            double particle_mass = (total_mass_L + total_mass_R) /
+                                   static_cast<double>(total_particles);
+
+            // 'h' Guess Calculation
             double target_N = config.mfm_target_neighbors;
-            // Radius factor to encapsulate exactly 'target_N' particles geometrically
-            double radius_factor = std::pow((3.0 * target_N) / (4.0 * M_PI), 1.0 / 3.0);
+            // Radius factor to encapsulate exactly 'target_N' particles
+            // geometrically
+            double radius_factor =
+                std::pow((3.0 * target_N) / (4.0 * M_PI), 1.0 / 3.0);
 
-            double dx_L = B * std::pow(1.0 / static_cast<double>(glass_L.num_particles), 1.0 / 3.0);
-            double dx_R = B * std::pow(1.0 / static_cast<double>(glass_R.num_particles), 1.0 / 3.0);
-            
-            // This guarantees the solver starts within ~1% of the final converged smoothing length
+            double dx_L =
+                B * std::pow(1.0 / static_cast<double>(glass_L.num_particles),
+                             1.0 / 3.0);
+            double dx_R =
+                B * std::pow(1.0 / static_cast<double>(glass_R.num_particles),
+                             1.0 / 3.0);
+
             double h_L = dx_L * radius_factor;
             double h_R = dx_R * radius_factor;
 
@@ -555,14 +564,13 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
             for (int iy = 0; iy < 2; ++iy) {
                 for (int iz = 0; iz < 2; ++iz) {
                     for (size_t p = 0; p < glass_L.num_particles; ++p) {
-                        double p_x = glass_L.pos_x[p] * B; 
+                        double p_x = glass_L.pos_x[p] * B;
                         double p_y = (iy * B) + (glass_L.pos_y[p] * B);
                         double p_z = (iz * B) + (glass_L.pos_z[p] * B);
-                        
-                        state.mfm_gas->add_particle(p_x, p_y, p_z, 
-                                                    v_x, v_y, v_z, 
-                                                    particle_mass, 
-                                                    u_L, h_L, seed_metallicity);
+
+                        state.mfm_gas->add_particle(p_x, p_y, p_z, v_x, v_y,
+                                                    v_z, particle_mass, u_L,
+                                                    h_L, seed_metallicity);
                     }
                 }
             }
@@ -572,14 +580,14 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
             for (int iy = 0; iy < 2; ++iy) {
                 for (int iz = 0; iz < 2; ++iz) {
                     for (size_t p = 0; p < glass_R.num_particles; ++p) {
-                        double p_x = B + (glass_R.pos_x[p] * B); // Shifted by B to the right half
+                        double p_x = B + (glass_R.pos_x[p] *
+                                          B);  // Shifted by B to the right half
                         double p_y = (iy * B) + (glass_R.pos_y[p] * B);
                         double p_z = (iz * B) + (glass_R.pos_z[p] * B);
-                        
-                        state.mfm_gas->add_particle(p_x, p_y, p_z, 
-                                                    v_x, v_y, v_z, 
-                                                    particle_mass, 
-                                                    u_R, h_R, seed_metallicity);
+
+                        state.mfm_gas->add_particle(p_x, p_y, p_z, v_x, v_y,
+                                                    v_z, particle_mass, u_R,
+                                                    h_R, seed_metallicity);
                     }
                 }
             }
@@ -860,7 +868,7 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
             }
         }
 #else
-        // 1. Read the glass file
+        // Read the glass file
         GlassData glass;
         try {
             // Adjust the path as needed for your build directory
@@ -873,8 +881,8 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
         double gas_particle_mass =
             rho_bg * vol / static_cast<double>(glass.num_particles);
 
-        // 2. Find the central N particles
-        int N_inject = 15;  // SWIFT standard for this test
+        // Find the central N particles
+        int N_inject = 15;
 
         // Create a list of indices and their squared distances to the center
         struct ParticleDist {
@@ -914,7 +922,7 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
         double dx = L / static_cast<double>(64);
         double initial_h = 2.0 * dx;
 
-        // 3. Inject particles into the simulation state
+        // Inject particles into the simulation state
         for (size_t i = 0; i < glass.num_particles; ++i) {
             double p_x = glass.pos_x[i] * L;
             double p_y = glass.pos_y[i] * L;
@@ -926,8 +934,8 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
             }
 
             state.mfm_gas->add_particle(p_x, p_y, p_z, 0.0, 0.0, 0.0,
-                                        gas_particle_mass, particle_u, initial_h,
-                                        seed_metallicity);
+                                        gas_particle_mass, particle_u,
+                                        initial_h, seed_metallicity);
         }
 #endif
     }

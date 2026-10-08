@@ -384,8 +384,6 @@ static void apply_gas_particle_gravity_kick(GasParticleSystem& gas, double dt,
                     do_kick = true;
             }
             if (!do_kick) continue;
-        } else {
-            if (!gas.is_active[i]) continue;
         }
 
         double half_dt = gas.dt_step[i] / 2.0;
@@ -418,8 +416,6 @@ static void apply_gas_particle_hydro_kick(GasParticleSystem& gas, double dt,
                     do_kick = true;
             }
             if (!do_kick) continue;
-        } else {
-            if (!gas.is_active[i]) continue;
         }
 
         double half_dt = gas.dt_step[i] / 2.0;
