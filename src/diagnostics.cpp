@@ -52,6 +52,35 @@ void Diagnostics::reset_accumulators() {
     accumulated_cycles = 0;
 }
 
+struct HydroConservationError {
+    Eigen::Vector3d momentum_error_rate;  // Net un-conserved force
+    double energy_error_rate;             // Net un-conserved power
+};
+
+static HydroConservationError diagnose_hydro_conservation_error(
+    const GasParticleSystem& gas) {
+    double net_fx = 0.0;
+    double net_fy = 0.0;
+    double net_fz = 0.0;
+    double net_edot = 0.0;
+
+    // Summing m * a_hydro gives the aggregate of all Riemann face fluxes
+#pragma omp parallel for reduction(+ : net_fx, net_fy, net_fz, net_edot) \
+    schedule(static)
+    for (size_t i = 0; i < gas.num_particles; ++i) {
+        net_fx += gas.mass[i] * gas.hydro_acc_x[i];
+        net_fy += gas.mass[i] * gas.hydro_acc_y[i];
+        net_fz += gas.mass[i] * gas.hydro_acc_z[i];
+        net_edot += gas.mass[i] * gas.de_dt[i];
+    }
+
+    HydroConservationError error;
+    error.momentum_error_rate = Eigen::Vector3d(net_fx, net_fy, net_fz);
+    error.energy_error_rate = net_edot;
+
+    return error;
+}
+
 void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
                                  const Config& config) {
     this->sim_time = state.total_time;
@@ -263,10 +292,9 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
             config.domain_size.x * config.domain_size.y * config.domain_size.z;
         volume_error = (total_sim_volume / box_volume) - 1.0;
 
-        auto hce = gas.diagnose_hydro_conservation_error();
+        auto hce = diagnose_hydro_conservation_error(gas);
         mfm_flux_energy_error = hce.energy_error_rate;
         mfm_flux_momentum_error = hce.momentum_error_rate.norm();
-
     } else {
         this->energy_err = 0.0;
     }

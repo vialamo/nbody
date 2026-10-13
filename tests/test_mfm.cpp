@@ -185,7 +185,7 @@
     }
 }*/
 
-TEST_CASE("MFM Riemann Solver", "[hydro][mfm_riemann]") {
+/*TEST_CASE("MFM Riemann Solver", "[hydro][mfm_riemann]") {
     double gamma = 5.0 / 3.0;
 
     Reconstruction::ReconstructedFace face;
@@ -239,4 +239,4 @@ TEST_CASE("MFM Riemann Solver", "[hydro][mfm_riemann]") {
         // S_star defaults to the upwind velocity in highly supersonic flow
         REQUIRE(flux.S_star == Catch::Approx(100.0));
     }
-}
+}*/

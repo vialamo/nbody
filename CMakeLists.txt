@@ -31,11 +31,14 @@ set(CORE_SOURCES
     src/cic.cpp
     src/config.cpp
     src/cooling.cpp
+    src/density.cpp
     src/diagnostics.cpp
     src/engine.cpp
     src/gas.cpp
+    src/gravity.cpp
     src/hdf5_reader.cpp
     src/hdf5_writer.cpp
+    src/hydro.cpp
     src/ics.cpp
     src/integrator.cpp
     src/lbvh.cpp

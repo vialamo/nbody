@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "gas.h"
+#include "gravity.h"
 #include "ics.h"
 #include "integrator.h"
 #include "particles.h"
@@ -47,7 +48,8 @@ TimestepInfo SimulationEngine::get_timestep() const {
     double dt_grav_dm = state.dm.get_gravity_timestep(config);
     double dt_grav_mfm = std::numeric_limits<double>::infinity();
     if (config.hydro_method == HydroMethod::MFM) {
-        dt_grav_mfm = state.mfm_gas->get_gravity_timestep(config);
+        dt_grav_mfm =
+            GravitySolver::get_gravity_timestep(*state.mfm_gas, config);
     }
 
     if (config.use_PM || config.use_PP) {
@@ -116,7 +118,7 @@ void SimulationEngine::step() {
     bool fixed_scale_output =
         (!config.expanding_universe && cycle_count % 4 == 0);
     if (config.initial_setup == InitialSetup::SedovBlastwave ||
-               config.initial_setup == InitialSetup::SodShockTube) {
+        config.initial_setup == InitialSetup::SodShockTube) {
         fixed_scale_output = fixed_scale_output || (cycle_count < 30);
     }
 

@@ -7,6 +7,8 @@
 #include "particles.h"
 #include "reconstruction.h"
 
+constexpr double N_cond_crit = 100.0;
+
 #define USE_ADAPTIVE_SOFTENING
 
 class Cooling;
@@ -14,11 +16,6 @@ class Cooling;
 struct KickWork {
     double grav_work = 0.0;
     double exp_work = 0.0;
-};
-
-struct HydroConservationError {
-    Eigen::Vector3d momentum_error_rate;  // Net un-conserved force
-    double energy_error_rate;             // Net un-conserved power
 };
 
 class GasParticleSystem {
@@ -140,26 +137,13 @@ class GasParticleSystem {
                       double vz, double m, double initial_u, double initial_h,
                       double z_metal);
 
-    void compute_density_and_h(const Config& config, const ParticleSystem& dm);
-
-    // Gravity methods
-    void bin_and_assign_mass(const Config& config);
-    void interpolate_cic_forces(const Grid3D& ax_grid, const Grid3D& ay_grid,
-                                const Grid3D& az_grid, const Config& config);
-
-    // Short-range PP Gravity
-    void compute_and_add_pp_forces(double a, const Config& config,
-                                   Diagnostics& diag);
-    void compute_cross_pp_forces(double a, ParticleSystem& dm,
-                                 const Config& config, Diagnostics& diag);
-
     const Grid3D& get_rho() const { return gas_rho; }
 
     void apply_cooling(double dt, double a, const Config& config,
                        Cooling& cooling);
 
     // Time step calculations
-    double get_gravity_timestep(const Config& config) const;
+    /*double get_gravity_timestep(const Config& config) const;*/
     double get_cfl_timestep(double a, const Config& config) const;
     double get_cooling_timestep(double a, const Config& config,
                                 Cooling& cooling) const;
@@ -169,9 +153,6 @@ class GasParticleSystem {
     // Sync the clock, process wakeups, and flag active particles
     void sync_and_activate(double dt, double a, double H, const Config& config);
 
-    // Reversible single-particle kick physics
-    KickWork kick_particle_gravity(size_t i, double dt, double a, double H,
-                                   const Config& config);
     void kick_particle_hydro(size_t i, double dt, const Config& config);
 
     void hydro_step(const Config& config, double a, double H, double dt);
@@ -180,49 +161,22 @@ class GasParticleSystem {
     void update_primitive_variables(const Config& config, double a);
 
     // Compute the least-squares matrix gradients for all primitive variables
-    void compute_gradients(const Config& config);
+    // void compute_gradients(const Config& config);
 
     // Solve the Riemann problem between neighbors and update hydro_acc and
     // du_dt
-    void compute_hydro_forces(const Config& config, double a, double dt);
+    // void compute_hydro_forces(const Config& config, double a, double dt);
 
     void build_lbvh(const Config& config);
 
     double get_active_particles_per_cycle_and_reset(const Config& config);
 
-    HydroConservationError diagnose_hydro_conservation_error() const;
-
    private:
     void sort_arrays(const std::vector<int>& sorted_indices);
-
-    // Walks a tree to compute the smoothed particle number density and its
-    // derivative
-    void evaluate_density_sum(size_t particle_idx, double h_guess,
-                              const Vec3& domain_size, double& out_n,
-                              double& out_dn_dh, int& out_num_neighb) const;
-
-    // BVH walker to buld a matrix and check if it is well-conditioned
-    double build_matrix_and_compute_condition(size_t particle_idx, double h,
-                                              const Vec3& domain_size,
-                                              Eigen::Matrix3d& B,
-                                              bool volume_weighted);
-
-#ifdef USE_ADAPTIVE_SOFTENING
-    // A tree-walker that computes the zeta gravity correction from a target
-    // tree
-    double compute_zeta_contribution(double p1_x, double p1_y, double p1_z,
-                                     double h_i,
-                                     const std::vector<double>& target_x,
-                                     const std::vector<double>& target_y,
-                                     const std::vector<double>& target_z,
-                                     const std::vector<double>& target_mass,
-                                     const std::vector<BVHNode>& target_bvh,
-                                     const Config& config) const;
-#endif
 };
 
 // Output of the Riemann Solver
-struct MFMFaceFlux {
+/*struct MFMFaceFlux {
     Eigen::Vector3d flux_mom;  // Momentum flux density vector (P_star * n)
                                // [PHYSICAL Pressure Units]
     double P_star;  // Resolved face pressure [PHYSICAL Pressure Units]
@@ -236,4 +190,4 @@ struct MFMFaceFlux {
 // OUTPUT: The resolved pressure (P_star) and relative wave speed (S_star).
 // Note that it should get and return physical units
 MFMFaceFlux solve_mfm_riemann(const Reconstruction::ReconstructedFace& face,
-                              const Eigen::Vector3d& v_frame, double gamma);
+                              const Eigen::Vector3d& v_frame, double gamma);*/

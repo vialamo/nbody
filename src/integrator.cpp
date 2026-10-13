@@ -2,6 +2,8 @@
 
 #include <omp.h>
 
+#include "density.h"
+#include "gravity.h"
 #include "math_utils.h"
 #include "particles.h"
 #include "pocketfft_hdronly.h"
@@ -390,7 +392,8 @@ static void apply_gas_particle_gravity_kick(GasParticleSystem& gas, double dt,
         }
 
         double half_dt = gas.dt_step[i] / 2.0;
-        KickWork work = gas.kick_particle_gravity(i, half_dt, a, H, config);
+        KickWork work =
+            GravitySolver::kick_particle_gravity(gas, i, half_dt, a, H, config);
 
         step_grav_work += work.grav_work;
         step_exp_work += work.exp_work;
@@ -520,7 +523,8 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
         state.dm.bin_and_assign_mass(config);
 
         if (config.hydro_method == HydroMethod::MFM) {
-            state.mfm_gas->bin_and_assign_mass(config);
+            // state.mfm_gas->bin_and_assign_mass(config);
+            GravitySolver::bin_and_assign_mass(*state.mfm_gas, config);
             state.total_rho.data =
                 state.dm.get_rho().data + state.mfm_gas->get_rho().data;
         } else if (config.hydro_method == HydroMethod::Eulerian) {
@@ -537,9 +541,9 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
                                             state.pm_gravity_y,
                                             state.pm_gravity_z, config);
             if (config.hydro_method == HydroMethod::MFM) {
-                state.mfm_gas->interpolate_cic_forces(
-                    state.pm_gravity_x, state.pm_gravity_y, state.pm_gravity_z,
-                    config);
+                GravitySolver::interpolate_cic_forces(
+                    *state.mfm_gas, state.pm_gravity_x, state.pm_gravity_y,
+                    state.pm_gravity_z, config);
             }
         } else {
             state.pm_gravity_x.setZero();
@@ -565,11 +569,12 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
                                            diag);  // DM-DM
 
         if (config.hydro_method == HydroMethod::MFM) {
-            state.mfm_gas->compute_and_add_pp_forces(state.scale_factor, config,
+            GravitySolver::compute_and_add_pp_forces(*state.mfm_gas,
+                                                     state.scale_factor, config,
                                                      diag);  // Gas-Gas
-            state.mfm_gas->compute_cross_pp_forces(state.scale_factor, state.dm,
-                                                   config,
-                                                   diag);  // Gas-DM and DM-Gas
+            GravitySolver::compute_cross_pp_forces(
+                *state.mfm_gas, state.scale_factor, state.dm, config,
+                diag);  // Gas-DM and DM-Gas
 
             // Gas pulling on DM
             state.dm.compute_cross_pp_forces(state.scale_factor, *state.mfm_gas,
@@ -647,7 +652,9 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
     if (config.hydro_method == HydroMethod::MFM) {
         {
             ScopedTimer timer(diag, TimerRegion::Density);
-            state.mfm_gas->compute_density_and_h(config, state.dm);
+            // state.mfm_gas->compute_density_and_h(config, state.dm);
+            DensitySolver::compute_density_and_h(*state.mfm_gas, config,
+                                                 state.dm);
         }
         {
             ScopedTimer hydro_timer(diag, TimerRegion::Hydro);

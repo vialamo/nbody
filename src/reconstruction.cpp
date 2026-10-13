@@ -6,6 +6,7 @@
 #include "config.h"
 #include "kernels.h"
 #include "math_utils.h"
+#include "mfm.h"
 
 // #define ZEROTH_ORDER_RECONSTRUCTION
 // #define DISABLE_LIMITER

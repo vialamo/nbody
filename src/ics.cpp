@@ -4,7 +4,10 @@
 
 #include "constants.h"
 #include "cooling.h"
+#include "density.h"
+#include "gravity.h"
 #include "hdf5_reader.h"
+#include "hydro.h"
 #include "integrator.h"
 #include "math_utils.h"
 #include "particles.h"
@@ -1147,8 +1150,8 @@ SimState initialize_state(Config& config) {
     // Compute initial MFM properties before forces are calculated
     if (config.hydro_method == HydroMethod::MFM) {
         state.mfm_gas->build_lbvh(config);
-        state.mfm_gas->compute_density_and_h(config, state.dm);
-        state.mfm_gas->bin_and_assign_mass(config);
+        DensitySolver::compute_density_and_h(*state.mfm_gas, config, state.dm);
+        GravitySolver::bin_and_assign_mass(*state.mfm_gas, config);
         state.mfm_gas->update_primitive_variables(config, state.scale_factor);
     }
 
@@ -1158,8 +1161,10 @@ SimState initialize_state(Config& config) {
     if (config.hydro_method == HydroMethod::MFM) {
         // Sync pressure and energies based on the initial density
         state.mfm_gas->update_primitive_variables(config, state.scale_factor);
-        state.mfm_gas->compute_gradients(config);
-        state.mfm_gas->compute_hydro_forces(config, state.scale_factor, 0.0);
+        // state.mfm_gas->compute_gradients(config);
+        HydroSolver::compute_gradients(*state.mfm_gas, config);
+        HydroSolver::compute_hydro_forces(*state.mfm_gas, config,
+                                          state.scale_factor, 0.0);
     }
 
     return state;
