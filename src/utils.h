@@ -2,5 +2,5 @@
 #include <string>
 
 namespace utils {
-    std::string get_timestamp();
+std::string get_timestamp();
 }

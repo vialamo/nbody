@@ -30,7 +30,7 @@ TEST_CASE("Initial internal energy scales correctly with code units",
         // To safely halve the velocity unit, we halve the box_size_mpc.
         // As seen in init_derived_units, unit_velocity_kms scales linearly with
         // unit_length_mpc, which scales linearly with box_size_mpc.
-        config.box_size_mpc /= 2.0;
+        config.box_size_mpc_1d /= 2.0;
 
         // Force the Config to rebuild the thermodynamics bridge naturally
         config.compute_derived_data();
@@ -67,8 +67,8 @@ TEST_CASE("initialize_state produces physically sound macro-states",
           "[ics][system]") {
     // Manually build the configuration
     Config config;
-    config.mesh_size = 32;
-    config.box_size_mpc = 100.0;
+    config.mesh_size_1d = 32;
+    config.box_size_mpc_1d = 100.0;
     config.num_particles_1d = 32;
     config.use_PM = true;
     config.use_PP = false;
@@ -82,7 +82,7 @@ TEST_CASE("initialize_state produces physically sound macro-states",
         double total_dm_mass = state.dm.num_particles * config.dm_particle_mass;
 
         double total_gas_mass = 0.0;
-        int N3 = config.mesh_size * config.mesh_size * config.mesh_size;
+        int N3 = config.mesh_size.x * config.mesh_size.y * config.mesh_size.z;
         for (int i = 0; i < N3; ++i) {
             // Integrate density over Eulerian volume
             total_gas_mass +=
@@ -103,7 +103,7 @@ TEST_CASE("initialize_state produces physically sound macro-states",
         }
 
         double p_gas_x_density = 0.0;
-        int N3 = config.mesh_size * config.mesh_size * config.mesh_size;
+        int N3 = config.mesh_size.x * config.mesh_size.y * config.mesh_size.z;
         for (int i = 0; i < N3; ++i) {
             p_gas_x_density += state.gas->get_momentum_x().data[i];
         }
@@ -133,8 +133,8 @@ TEST_CASE("initialize_state produces physically sound macro-states",
 TEST_CASE("Zeldovich field amplitudes scale perfectly with sigma_8",
           "[ics][cosmology]") {
     Config config;
-    config.mesh_size = 32;
-    config.box_size_mpc = 100.0;
+    config.mesh_size_1d = 32;
+    config.box_size_mpc_1d = 100.0;
     config.omega_m = 0.3;
     config.omega_lambda = 0.7;
     config.hubble_h = 0.7;
@@ -152,7 +152,7 @@ TEST_CASE("Zeldovich field amplitudes scale perfectly with sigma_8",
     ZeldovichField zf_double = compute_zeldovich_field(start_a, config);
 
     // Verify mathematical linearity cell-by-cell
-    int M3 = config.mesh_size * config.mesh_size * config.mesh_size;
+    int M3 = config.mesh_size.x * config.mesh_size.y * config.mesh_size.z;
     for (int i = 0; i < M3; ++i) {
         REQUIRE(zf_double.dx[i] ==
                 Catch::Approx(2.0 * zf_base.dx[i]).margin(1e-12));
@@ -166,9 +166,9 @@ TEST_CASE("Zeldovich field amplitudes scale perfectly with sigma_8",
 TEST_CASE("Peculiar velocities exactly obey Zel'dovich kinematics",
           "[ics][kinematics]") {
     Config config;
-    config.mesh_size = 16;
+    config.mesh_size_1d = 16;
     config.num_particles_1d = 16;
-    config.box_size_mpc = 100.0;
+    config.box_size_mpc_1d = 100.0;
     config.omega_m = 0.3;
     config.omega_baryon = 0.048;
     config.omega_lambda = 0.7;
@@ -199,18 +199,18 @@ TEST_CASE("Peculiar velocities exactly obey Zel'dovich kinematics",
         // Check that pos = unperturbed_pos + displacement
         // (Taking into account periodic boundary conditions)
         double unperturbed_x =
-            std::fmod(state.dm.pos_x[i] - inferred_dx + config.domain_size,
-                      config.domain_size);
+            std::fmod(state.dm.pos_x[i] - inferred_dx + config.domain_size.x,
+                      config.domain_size.x);
         double unperturbed_y =
-            std::fmod(state.dm.pos_y[i] - inferred_dy + config.domain_size,
-                      config.domain_size);
+            std::fmod(state.dm.pos_y[i] - inferred_dy + config.domain_size.y,
+                      config.domain_size.y);
         double unperturbed_z =
-            std::fmod(state.dm.pos_z[i] - inferred_dz + config.domain_size,
-                      config.domain_size);
+            std::fmod(state.dm.pos_z[i] - inferred_dz + config.domain_size.z,
+                      config.domain_size.z);
 
         // The unperturbed positions should perfectly align with the regular
         // lattice spacing
-        double spacing = config.domain_size / config.num_particles_1d;
+        double spacing = config.domain_size_1d / config.num_particles_1d;
 
         REQUIRE(std::fmod(unperturbed_x, spacing) ==
                 Catch::Approx(0.5 * spacing).margin(1e-7));
@@ -224,8 +224,8 @@ TEST_CASE("Peculiar velocities exactly obey Zel'dovich kinematics",
 TEST_CASE("Zeldovich field has exactly zero mean (k=0 mode is dead)",
           "[ics][math]") {
     Config config;
-    config.mesh_size = 32;
-    config.box_size_mpc = 100.0;
+    config.mesh_size_1d = 32;
+    config.box_size_mpc_1d = 100.0;
     config.omega_m = 0.3;
     config.omega_lambda = 0.7;
     config.hubble_h = 0.7;
@@ -236,7 +236,7 @@ TEST_CASE("Zeldovich field has exactly zero mean (k=0 mode is dead)",
     ZeldovichField zf = compute_zeldovich_field(0.02, config);
 
     double sum_dx = 0.0, sum_dy = 0.0, sum_dz = 0.0;
-    int M3 = config.mesh_size * config.mesh_size * config.mesh_size;
+    int M3 = config.mesh_size.x * config.mesh_size.y * config.mesh_size.z;
 
     for (int i = 0; i < M3; ++i) {
         sum_dx += zf.dx[i];
@@ -248,33 +248,4 @@ TEST_CASE("Zeldovich field has exactly zero mean (k=0 mode is dead)",
     REQUIRE(std::abs(sum_dx / M3) < 1e-14);
     REQUIRE(std::abs(sum_dy / M3) < 1e-14);
     REQUIRE(std::abs(sum_dz / M3) < 1e-14);
-}
-
-TEST_CASE("standing_particles flag explicitly zeroes all initial velocities",
-          "[ics][config]") {
-    Config config;
-    config.mesh_size = 16;
-    config.num_particles_1d = 16;
-    config.hydro_method = HydroMethod::Eulerian;
-
-    // Explicitly set to true
-    config.standing_particles = true;
-    config.compute_derived_data();
-
-    SimState state = initialize_state(config);
-
-    // Check Dark Matter
-    for (size_t i = 0; i < state.dm.num_particles; ++i) {
-        REQUIRE(state.dm.vel_x[i] == 0.0);
-        REQUIRE(state.dm.vel_y[i] == 0.0);
-        REQUIRE(state.dm.vel_z[i] == 0.0);
-    }
-
-    // Check Gas Momentum
-    int N3 = config.mesh_size * config.mesh_size * config.mesh_size;
-    for (int i = 0; i < N3; ++i) {
-        REQUIRE(state.gas->get_momentum_x().data[i] == 0.0);
-        REQUIRE(state.gas->get_momentum_y().data[i] == 0.0);
-        REQUIRE(state.gas->get_momentum_z().data[i] == 0.0);
-    }
 }

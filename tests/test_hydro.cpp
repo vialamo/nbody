@@ -31,7 +31,7 @@ struct RiemannSolverTestAccess {
 TEST_CASE("Dual Energy Switch protects pressure in hypersonic flows",
           "[hydro][dual_energy]") {
     Config conf;
-    conf.mesh_size = 2;
+    conf.mesh_size_1d = 2;
     conf.gamma = 5.0 / 3.0;
     GasGrid grid(conf);
 
@@ -88,7 +88,7 @@ TEST_CASE("Dual Energy Switch protects pressure in hypersonic flows",
 // ---------------------------------------------------------------------
 TEST_CASE("MUSCL PLM applies Minmod limiter to extrema", "[hydro][muscl]") {
     Config conf;
-    conf.mesh_size = 4;
+    conf.mesh_size_1d = 4;
     conf.gamma = 5.0 / 3.0;
     GasGrid grid(conf);
 
@@ -129,7 +129,7 @@ TEST_CASE("HLLC correctly resolves upwind supersonic fluxes", "[hydro][hllc]") {
     // preventing information from physically traveling backward.
 
     Config conf;
-    conf.mesh_size = 4;
+    conf.mesh_size_1d = 4;
     conf.gamma = 5.0 / 3.0;
     GasGrid grid(conf);
 

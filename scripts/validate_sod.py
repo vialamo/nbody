@@ -13,7 +13,6 @@ def get_exact_sod_solution(x, t, gamma=5.0/3.0, x0=0.5):
     Computes the analytical solution for the standard Sod Shock Tube.
     Handles t=0 to return the initial step function.
     """
-    # GADGET/GIZMO Initial States (Hernquist & Katz variant)
     P_L, rho_L, v_L = 1.0, 1.0, 0.0
     P_R, rho_R, v_R = 0.1, 0.125, 0.0
     
@@ -24,20 +23,16 @@ def get_exact_sod_solution(x, t, gamma=5.0/3.0, x0=0.5):
         ie = P / (rho * (gamma - 1.0))
         return rho, v, P, ie
 
-    # Dynamic Riemann Solver for the Star State
     mu2 = (gamma - 1.0) / (gamma + 1.0)
     c_L = np.sqrt(gamma * P_L / rho_L)
     c_R = np.sqrt(gamma * P_R / rho_R)
     
-    # Newton-Raphson iteration to find the intermediate pressure (P_star)
     P_star = 0.5 * (P_L + P_R) 
     for _ in range(100):
-        # Left Rarefaction Wave
         term_L = (P_star / P_L)**((gamma - 1.0) / (2.0 * gamma))
         f_L = (2.0 * c_L / (gamma - 1.0)) * (term_L - 1.0)
         df_L_dP = (c_L / (gamma * P_L)) * (P_star / P_L)**(-(gamma + 1.0) / (2.0 * gamma))
         
-        # Right Shock Wave
         A_R = 2.0 / ((gamma + 1.0) * rho_R)
         B_R = mu2 * P_R
         f_R = (P_star - P_R) * np.sqrt(A_R / (P_star + B_R))
@@ -51,7 +46,6 @@ def get_exact_sod_solution(x, t, gamma=5.0/3.0, x0=0.5):
         if abs(dP) < 1e-8:
             break
 
-    # Calculate intermediate states from P_star
     P_3 = P_star
     u_3 = v_R + (P_star - P_R) * np.sqrt(A_R / (P_star + B_R))
     rho_3 = rho_L * (P_star / P_L)**(1.0 / gamma)
@@ -60,13 +54,11 @@ def get_exact_sod_solution(x, t, gamma=5.0/3.0, x0=0.5):
     c_3 = np.sqrt(gamma * P_3 / rho_3)
     V_shock = v_R + c_R * np.sqrt((gamma + 1.0) / (2.0 * gamma) * (P_star / P_R) + (gamma - 1.0) / (2.0 * gamma))
     
-    # Wave Boundaries
     x_head = x0 - c_L * t
     x_tail = x0 + (u_3 - c_3) * t
     x_contact = x0 + u_3 * t
     x_shock = x0 + V_shock * t
 
-    # Map regions
     rho = np.zeros_like(x)
     P = np.zeros_like(x)
     v = np.zeros_like(x)
@@ -107,80 +99,156 @@ def validate_sod_shock_interactive(snapshot_dir):
             
         gamma = config.get('gamma', 1.4)
         domain_size = config.get('domain_size', 1.0)
+        domain_size_x = config.get('domain_size_x', 1.0)
 
-        # Check Gamma
         if abs(gamma - 1.4) > 1e-5:
             print(f"[WARNING] Expected gamma = 1.4 for this Shock test, but found {gamma:.5f}.")
-            
-        # Check Cosmological Expansion
         if bool(config.get('expanding_universe', 0)):
             print("[ERROR] Sod shock test requires a static box, but 'expanding_universe' is TRUE.")
             sys.exit(1)
-            
-        # Check Radiative Cooling
         if bool(config.get('enable_cooling', 0)):
             print("[ERROR] Sod shock test requires adiabatic gas, but 'enable_cooling' is TRUE.")
             sys.exit(1)
-            
-        # Check Gravity (PM and PP)
-        use_pm = bool(config.get('use_pm', 0))
-        use_pp = bool(config.get('use_pp', 0))
-        if use_pm or use_pp:
+        if bool(config.get('use_pm', 0)) or bool(config.get('use_pp', 0)):
             print(f"[ERROR] Sod shock test must be pure hydrodynamics.")
             sys.exit(1)
 
-    # Styling based on solver method
+    print("Pre-calculating global energy tracking from all snapshots...")
+    times = []
+    err_tot = []
+    err_sw = []
+    E0 = None
+
+    for f_name in files:
+        with h5py.File(f_name, 'r') as f:
+            t = f['Header'].attrs['simulation_time']
+            times.append(t)
+            
+            if 'Gas' in f:
+                gas = f['Gas']
+                if hydro_method == "mfm":
+                    if 'mass' in gas and 'internal_energy' in gas and 'velocity_x' in gas:
+                        mass = gas['mass'][:]
+                        u_ie = gas['internal_energy'][:]
+                        v_x = gas['velocity_x'][:]
+                        v_y = gas['velocity_y'][:] if 'velocity_y' in gas else 0.0
+                        v_z = gas['velocity_z'][:] if 'velocity_z' in gas else 0.0
+                        
+                        if 'total_energy' in gas:
+                            e_tot = gas['total_energy'][:]
+                            E_current = np.sum(mass * e_tot)
+                        else:
+                            ke = 0.5 * (v_x**2 + v_y**2 + v_z**2)
+                            E_current = np.sum(mass * (u_ie + ke))
+                    else:
+                        E_current = 0.0
+                        
+                elif hydro_method == "eulerian":
+                    N = config.get('mesh_size_1d', 32)
+                    dx = domain_size / N
+                    vol = dx**3
+                    rho_g = gas['density'][:]
+                    p_g = gas['pressure'][:]
+                    mom_x = gas['momentum_x'][:]
+                    mom_y = gas['momentum_y'][:] if 'momentum_y' in gas else 0.0
+                    mom_z = gas['momentum_z'][:] if 'momentum_z' in gas else 0.0
+                    
+                    kin = 0.5 * (mom_x**2 + mom_y**2 + mom_z**2) / rho_g
+                    therm = p_g / (gamma - 1.0)
+                    E_current = np.sum((therm + kin) * vol)
+                else:
+                    E_current = 0.0
+
+                if E0 is None and E_current != 0:
+                    E0 = E_current
+                
+                if E0 is not None and E0 != 0:
+                    delta_e = E_current - E0
+                    w_grav = gas.attrs.get('cumulative_gravitational_work', 0.0)
+                    w_exp = gas.attrs.get('cumulative_expansion_work', 0.0)
+                    e_rad = gas.attrs.get('cumulative_radiated_energy', 0.0)
+                    e_heat = gas.attrs.get('cumulative_photoheating_energy', 0.0)
+                    
+                    absolute_error = delta_e - w_grav + w_exp + e_rad - e_heat
+                    frac_err = absolute_error / abs(E0)
+                else:
+                    frac_err = 0.0
+                err_tot.append(frac_err)
+                
+                sw_energy = gas.attrs.get('cumulative_entropy_switch_energy', 0.0)
+                if E0 is not None and E0 != 0:
+                    sw_err = sw_energy / abs(E0)
+                else:
+                    sw_err = 0.0
+                err_sw.append(sw_err)
+            else:
+                err_tot.append(0.0)
+                err_sw.append(0.0)
+
     label_prefix = "Eulerian Grid" if hydro_method == "eulerian" else "MFM Particles"
     color_prefix = "darkorange" if hydro_method == "eulerian" else "royalblue"
     
-    # Plot Setup
-    fig, axs = plt.subplots(2, 2, figsize=(14, 10))
-    plt.subplots_adjust(bottom=0.15) 
+    # GridSpec setup: 3 rows, 2 columns. Bottom row spans both columns and is half the height.
+    fig = plt.figure(figsize=(14, 14))
+    gs = fig.add_gridspec(3, 2, height_ratios=[1, 1, 0.5])
+    plt.subplots_adjust(bottom=0.10, hspace=0.3) 
 
-    axs[0, 0].set_ylim(-0.05, 1.15)
-    axs[0, 1].set_ylim(-0.1, 1.2)  
-    axs[1, 0].set_ylim(-0.05, 1.15) 
+    ax_rho = fig.add_subplot(gs[0, 0])
+    ax_v   = fig.add_subplot(gs[0, 1])
+    ax_P   = fig.add_subplot(gs[1, 0])
+    ax_u   = fig.add_subplot(gs[1, 1])
+    ax_err = fig.add_subplot(gs[2, :])
     
-    scatter_kwargs = {'s': 6 if hydro_method == "eulerian" else 4, 
-                      'color': color_prefix, 'alpha': 0.8, 'label': f'{label_prefix} Sim'}
-    sim_line_kwargs = {'color': color_prefix, 'lw': 1.0 if hydro_method == "eulerian" else 0.5, 'alpha': 0.8}
+    spatial_axes = [ax_rho, ax_v, ax_P, ax_u]
+
+    ax_rho.set_ylim(-0.05, 1.15)
+    ax_v.set_ylim(-0.1, 1.2)  
+    ax_P.set_ylim(-0.05, 1.15) 
+    
+    scatter_kwargs = {'s': 6 if hydro_method == "eulerian" else 4, 'color': color_prefix, 'alpha': 0.8, 'label': f'{label_prefix} Sim'}
     exact_line_kwargs = {'color': 'black', 'lw': 1.5, 'linestyle': '--', 'label': 'Exact Solution'}
     
     # Density
-    line_sim_rho, = axs[0, 0].plot([], [], **sim_line_kwargs)
-    scat_rho = axs[0, 0].scatter([], [], **scatter_kwargs)
-    line_rho, = axs[0, 0].plot([], [], **exact_line_kwargs)
-    axs[0, 0].set_ylabel(r"Density ($\rho$)")
-    axs[0, 0].set_title("Density Profile")
+    scat_rho = ax_rho.scatter([], [], **scatter_kwargs)
+    line_rho, = ax_rho.plot([], [], **exact_line_kwargs)
+    ax_rho.set_ylabel(r"Density ($\rho$)")
+    ax_rho.set_title("Density Profile")
     
     # Velocity
-    line_sim_v, = axs[0, 1].plot([], [], **sim_line_kwargs)
-    scat_v = axs[0, 1].scatter([], [], **scatter_kwargs)
-    line_v, = axs[0, 1].plot([], [], **exact_line_kwargs)
-    axs[0, 1].set_ylabel(r"Velocity ($v_x$)")
-    axs[0, 1].set_title("Velocity Profile")
+    scat_v = ax_v.scatter([], [], **scatter_kwargs)
+    line_v, = ax_v.plot([], [], **exact_line_kwargs)
+    ax_v.set_ylabel(r"Velocity ($v_x$)")
+    ax_v.set_title("Velocity Profile")
     
     # Pressure
-    line_sim_P, = axs[1, 0].plot([], [], **sim_line_kwargs)
-    scat_P = axs[1, 0].scatter([], [], **scatter_kwargs)
-    line_P, = axs[1, 0].plot([], [], **exact_line_kwargs)
-    axs[1, 0].set_ylabel(r"Pressure ($P$)")
-    axs[1, 0].set_xlabel("Position (x)")
-    axs[1, 0].set_title("Pressure Profile")
+    scat_P = ax_P.scatter([], [], **scatter_kwargs)
+    line_P, = ax_P.plot([], [], **exact_line_kwargs)
+    ax_P.set_ylabel(r"Pressure ($P$)")
+    ax_P.set_title("Pressure Profile")
     
     # Internal Energy
-    line_sim_u, = axs[1, 1].plot([], [], **sim_line_kwargs)
-    scat_u = axs[1, 1].scatter([], [], **scatter_kwargs)
-    line_u, = axs[1, 1].plot([], [], **exact_line_kwargs)
-    axs[1, 1].set_ylabel(r"Internal Energy ($u$)")
-    axs[1, 1].set_xlabel("Position (x)")
-    axs[1, 1].set_title("Specific Internal Energy")
+    scat_u = ax_u.scatter([], [], **scatter_kwargs)
+    line_u, = ax_u.plot([], [], **exact_line_kwargs)
+    ax_u.set_ylabel(r"Internal Energy ($u$)")
+    ax_u.set_title("Specific Internal Energy")
 
-    for ax in axs.flat:
-        ax.set_xlim(0, domain_size)
+    # Global Fractional Errors
+    ax_err.plot(times, err_tot, label=r'$\Delta E_{tot} / E_0$', color='black', lw=1.5)
+    ax_err.plot(times, err_sw, label=r'$E_{switch} / E_0$', color='red', lw=1.5, linestyle='-.')
+    vline_time = ax_err.axvline(0, color='gray', linestyle='--', alpha=0.7)
+    if len(times) > 1:
+        ax_err.set_xlim(min(times), max(times))
+    ax_err.set_ylabel("Fractional Error")
+    ax_err.set_xlabel("Time")
+    ax_err.set_title("Global Energy Conservation")
+    ax_err.legend(loc='upper left', fontsize=9)
+
+    # Format bounds/grids
+    for ax in spatial_axes:
+        ax.set_xlim(0, domain_size_x)
         ax.grid(True, linestyle=':', alpha=0.6)
-    axs[0, 0].legend(loc='upper right', fontsize=9)
-
+    ax_err.grid(True, linestyle=':', alpha=0.6)
+    ax_rho.legend(loc='upper right', fontsize=9)
 
     def update(val):
         idx = int(snap_slider.val)
@@ -191,36 +259,20 @@ def validate_sod_shock_interactive(snapshot_dir):
             cfg = f['Config'].attrs
             method = cfg.get('hydro_method', b'none').decode('utf-8')
             
-            c_L = np.sqrt(gamma * 1.0 / 1.0)
-            
-            # Recalculate dynamic V_shock for the gray boundary boxes
-            P_R_plot = 0.1795
-            rho_R_plot = 0.25
-            c_R_plot = np.sqrt(gamma * P_R_plot / rho_R_plot)
-            _, _, P_star_plot, _ = get_exact_sod_solution(np.array([domain_size/2.0]), 1e-8, gamma)
-            V_shock = c_R_plot * np.sqrt((gamma + 1.0) / (2.0 * gamma) * (P_star_plot[0] / P_R_plot) + (gamma - 1.0) / (2.0 * gamma))
-            
-            left_bnd = c_L * time
-            right_bnd = domain_size - (V_shock * time)
+            left_bnd = 0.05 * domain_size_x
+            right_bnd = 0.95 * domain_size_x
             
             if method == "eulerian":
-                # Eulerian: Data is exported as flattened 3D grids. We must reshape them and extract the 1D center slice.
                 N = cfg.get('mesh_size_1d', 32)
                 dx = domain_size / float(N)
                 
-                # Reconstruct coordinates for the cell centers
                 x_all = np.linspace(dx/2.0, domain_size - dx/2.0, N)
-                
-                # Reshape arrays to (N, N, N) where shape is (x, y, z)
                 rho_3d = f['Gas/density'][:].reshape((N, N, N))
                 mom_x_3d = f['Gas/momentum_x'][:].reshape((N, N, N))
                 P_3d = f['Gas/pressure'][:].reshape((N, N, N))
                 
-                # Extract a 1D line exactly through the middle of the Y and Z axes
                 mid = N // 2
                 rho_line = rho_3d[:, mid, mid]
-                
-                # Convert momentum to velocity, and compute specific internal energy
                 v_line = mom_x_3d[:, mid, mid] / rho_line
                 P_line = P_3d[:, mid, mid]
                 u_line = P_line / (rho_line * (gamma - 1.0))
@@ -234,83 +286,70 @@ def validate_sod_shock_interactive(snapshot_dir):
                 
             elif method == "mfm":
                 x = f['Gas/position_x'][:]
-                y = f['Gas/position_y'][:]
-                z = f['Gas/position_z'][:]
                 rho = f['Gas/density'][:]
                 v_x = f['Gas/velocity_x'][:]
                 u = f['Gas/internal_energy'][:]
                 P = rho * u * (gamma - 1.0)
                 
-                safe_y_min, safe_y_max = domain_size * 0.495, domain_size * 0.505
-                safe_z_min, safe_z_max = domain_size * 0.495, domain_size * 0.505
-
-                valid_mask = (x >= left_bnd) & (x <= right_bnd) & \
-                             (y >= safe_y_min) & (y <= safe_y_max) & \
-                             (z >= safe_z_min) & (z <= safe_z_max)
-                
+                valid_mask = (x >= left_bnd) & (x <= right_bnd)
                 x_v = x[valid_mask]
                 rho_v = rho[valid_mask]
                 v_v = v_x[valid_mask]
                 P_v = P[valid_mask]
                 u_v = u[valid_mask]
             
+        fig.canvas.manager.set_window_title(os.path.basename(os.path.normpath(snapshot_dir)))
         fig.suptitle(f"Sod Shock Validation - Snapshot {idx} (t={time:.4f})", fontsize=16)
         
-        # Sort arrays strictly by x-coordinate to prevent zig-zag lines
         sort_idx = np.argsort(x_v)
-        x_sorted = x_v[sort_idx]
+        x_v = x_v[sort_idx]
+        rho_v = rho_v[sort_idx]
+        v_v = v_v[sort_idx]
+        P_v = P_v[sort_idx]
+        u_v = u_v[sort_idx]
         
-        # Update Scatter Points
         scat_rho.set_offsets(np.c_[x_v, rho_v])
         scat_v.set_offsets(np.c_[x_v, v_v])
         scat_P.set_offsets(np.c_[x_v, P_v])
         scat_u.set_offsets(np.c_[x_v, u_v])
 
-        # Thin Connecting Lines (using sorted data)
-        line_sim_rho.set_data(x_sorted, rho_v[sort_idx])
-        line_sim_v.set_data(x_sorted, v_v[sort_idx])
-        line_sim_P.set_data(x_sorted, P_v[sort_idx])
-        line_sim_u.set_data(x_sorted, u_v[sort_idx])
-
-        # Update Analytical Lines
-        x_exact = np.linspace(0, domain_size, 1000)
-        rho_ex, v_ex, P_ex, u_ex = get_exact_sod_solution(x_exact, time, gamma, x0=domain_size/2.0)
+        x_exact = np.linspace(0, domain_size_x, 1000)
+        rho_ex, v_ex, P_ex, u_ex = get_exact_sod_solution(x_exact, time, gamma, x0=domain_size_x/2.0)
         
         line_rho.set_data(x_exact, rho_ex)
         line_v.set_data(x_exact, v_ex)
         line_P.set_data(x_exact, P_ex)
         line_u.set_data(x_exact, u_ex)
 
+        vline_time.set_xdata([time, time])
+
         if len(u_v) > 0:
             current_u_min = min(np.min(u_v), np.min(u_ex))
             current_u_max = max(np.max(u_v), np.max(u_ex))
-            
             u_range = current_u_max - current_u_min
             padding = u_range * 0.15 if u_range > 0 else 0.5
-            
-            axs[1, 1].set_ylim(current_u_min - padding, current_u_max + padding)
+            ax_u.set_ylim(current_u_min - padding, current_u_max + padding)
 
-        for ax in axs.flat:
+        for ax in spatial_axes:
             [p.remove() for p in reversed(ax.patches)]
-            ax.axvspan(0, min(left_bnd, domain_size), color='gray', alpha=0.2)
-            if right_bnd < domain_size:
-                ax.axvspan(max(right_bnd, 0), domain_size, color='gray', alpha=0.2)
+            ax.axvspan(0, min(left_bnd, domain_size_x), color='gray', alpha=0.2)
+            if right_bnd < domain_size_x:
+                ax.axvspan(max(right_bnd, 0), domain_size_x, color='gray', alpha=0.2)
 
         fig.canvas.draw_idle()
 
-    # Slider
-    ax_slider = fig.add_axes([0.15, 0.05, 0.7, 0.03])
+    ax_slider = fig.add_axes([0.15, 0.02, 0.7, 0.03])
     snap_slider = Slider(
         ax=ax_slider,
         label='Snapshot ID',
         valmin=0,
         valmax=len(files) - 1,
-        valinit=0,
+        valinit=len(files) - 1,
         valfmt='%0.0f'
     )
     
     snap_slider.on_changed(update)
-    update(0)
+    update(len(files) - 1)
     plt.show()
 
 if __name__ == "__main__":

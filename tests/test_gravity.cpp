@@ -13,7 +13,7 @@
 TEST_CASE("CIC Density Assignment maps particles to grid correctly",
           "[cic][particles]") {
     Config config;
-    config.mesh_size = 4;
+    config.mesh_size_1d = 4;
     config.compute_derived_data();  // Automatically sets cell_size to 0.25 and
                                     // volume to 0.015625
     config.num_dm_particles = 1;
@@ -21,7 +21,7 @@ TEST_CASE("CIC Density Assignment maps particles to grid correctly",
     auto get_total_grid_mass = [&](const ParticleSystem& sys) {
         double total_mass = 0.0;
         for (int i = 0;
-             i < config.mesh_size * config.mesh_size * config.mesh_size; ++i) {
+             i < config.mesh_size.x * config.mesh_size.y * config.mesh_size.z; ++i) {
             total_mass += sys.get_rho().data[i] * config.cell_volume;
         }
         return total_mass;
@@ -88,12 +88,12 @@ TEST_CASE("CIC Density Assignment maps particles to grid correctly",
 TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
           "[gravity][pp]") {
     Config config;
-    config.mesh_size = 4;
+    config.mesh_size_1d = 4;
     config.cell_size = 0.25;
     config.num_dm_particles = 2;
 
     config.G = 1.0;
-    config.softening_squared = 0.0001;
+    config.softening = 0.01;
 
     Diagnostics dummy_diag;
 
@@ -105,7 +105,7 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
     SECTION("Pure Newtonian PP Force (use_PM = false)") {
         config.use_PM = false;
         config.cutoff_radius_squared =
-            (config.domain_size / 2.0) * (config.domain_size / 2.0);
+            (config.domain_size_1d / 2.0) * (config.domain_size_1d / 2.0);
 
         sys.build_lbvh(config);
         sys.bin_and_assign_mass(config);
@@ -151,7 +151,7 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
 TEST_CASE("PM Poisson Solver calculates accurate grid accelerations",
           "[gravity][pm]") {
     Config config;
-    config.mesh_size = 4;
+    config.mesh_size_1d = 4;
     config.cell_size = 0.25;
     config.num_dm_particles = 1;
     config.G = 1.0;

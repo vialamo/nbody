@@ -8,10 +8,12 @@
 #include <numeric>
 
 #include "math_utils.h"
+#include "types.h"
 
 namespace LBVH {
 
-void compute_morton_and_sort_indices(size_t num_particles, double domain_size,
+void compute_morton_and_sort_indices(size_t num_particles,
+                                     const Vec3& domain_size,
                                      const std::vector<double>& pos_x,
                                      const std::vector<double>& pos_y,
                                      const std::vector<double>& pos_z,
@@ -22,7 +24,9 @@ void compute_morton_and_sort_indices(size_t num_particles, double domain_size,
     morton_codes.resize(num_particles);
     sorted_indices.resize(num_particles);
 
-    double inv_domain = 1.0 / domain_size;
+    double inv_domain_x = 1.0 / domain_size.x;
+    double inv_domain_y = 1.0 / domain_size.y;
+    double inv_domain_z = 1.0 / domain_size.z;
     // We use 21 bits per dimension (2^21 = 2097152) to fit in a 64-bit int
     double bound = 2097152.0;
 
@@ -31,11 +35,11 @@ void compute_morton_and_sort_indices(size_t num_particles, double domain_size,
     for (size_t i = 0; i < num_particles; ++i) {
         // Normalize coordinates to [0, 1) and scale to the 21-bit integer range
         uint32_t x = static_cast<uint32_t>(
-            fmod(pos_x[i] * inv_domain + 1.0, 1.0) * bound);
+            fmod(pos_x[i] * inv_domain_x + 1.0, 1.0) * bound);
         uint32_t y = static_cast<uint32_t>(
-            fmod(pos_y[i] * inv_domain + 1.0, 1.0) * bound);
+            fmod(pos_y[i] * inv_domain_y + 1.0, 1.0) * bound);
         uint32_t z = static_cast<uint32_t>(
-            fmod(pos_z[i] * inv_domain + 1.0, 1.0) * bound);
+            fmod(pos_z[i] * inv_domain_z + 1.0, 1.0) * bound);
 
         morton_codes[i] = morton3D(x, y, z);
     }
@@ -76,7 +80,7 @@ void build_topology_and_aggregate(size_t num_particles,
         if (code_i == code_j) {
             // Tie-breaker for identical coordinates using the original index.
             // __builtin_clzll(unsigned long long) returns the number of leading
-            // 0-bits starting at the most significant bit position. 
+            // 0-bits starting at the most significant bit position.
             // If arg == 0 the result is undefined
             return 64 + __builtin_clzll(static_cast<unsigned long long>(i ^ j));
         }
@@ -180,8 +184,6 @@ void build_topology_and_aggregate(size_t num_particles,
         bvh_nodes[leaf_idx].bbox.min_z = pz - radius;
         bvh_nodes[leaf_idx].bbox.max_z = pz + radius;
 
-        bvh_nodes[leaf_idx].max_h = radius;
-
         bvh_nodes[leaf_idx].mass = sorted_mass[i];
 
         // Store mass-weighted positions temporarily to make summation easy
@@ -220,9 +222,6 @@ void build_topology_and_aggregate(size_t num_particles,
             bvh_nodes[curr].bbox.max_z = std::max(bvh_nodes[left].bbox.max_z,
                                                   bvh_nodes[right].bbox.max_z);
 
-            bvh_nodes[curr].max_h =
-                std::max(bvh_nodes[left].max_h, bvh_nodes[right].max_h);
-
             // Sum Mass and mass-weighted positions
             bvh_nodes[curr].mass = bvh_nodes[left].mass + bvh_nodes[right].mass;
             bvh_nodes[curr].com_x =
@@ -244,6 +243,64 @@ void build_topology_and_aggregate(size_t num_particles,
             bvh_nodes[i].com_x /= bvh_nodes[i].mass;
             bvh_nodes[i].com_y /= bvh_nodes[i].mass;
             bvh_nodes[i].com_z /= bvh_nodes[i].mass;
+        }
+    }
+}
+
+void update_h_and_bboxes(size_t num_particles, const std::vector<double>& pos_x,
+                         const std::vector<double>& pos_y,
+                         const std::vector<double>& pos_z,
+                         const std::vector<double>& h,
+                         std::vector<BVHNode>& bvh_nodes) {
+    if (num_particles == 0) return;
+    const int n = static_cast<int>(num_particles);
+    std::vector<int> atomic_flags(n - 1, 0);
+
+#pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; ++i) {
+        int leaf_idx = n - 1 + i;
+        double px = pos_x[i], py = pos_y[i], pz = pos_z[i];
+        double radius = h[i];
+
+        // Update the Leaf
+        bvh_nodes[leaf_idx].bbox.min_x = px - radius;
+        bvh_nodes[leaf_idx].bbox.max_x = px + radius;
+        bvh_nodes[leaf_idx].bbox.min_y = py - radius;
+        bvh_nodes[leaf_idx].bbox.max_y = py + radius;
+        bvh_nodes[leaf_idx].bbox.min_z = pz - radius;
+        bvh_nodes[leaf_idx].bbox.max_z = pz + radius;
+
+        // Walk up the tree
+        int curr = bvh_nodes[leaf_idx].parent;
+        while (curr != -1) {
+            int old_flag;
+#pragma omp atomic capture
+            old_flag = atomic_flags[curr]++;
+
+            if (old_flag == 0) {
+                // First thread to arrive. The other child isn't ready yet
+                break;
+            }
+
+            // Second thread to arrive. Both children are ready. Compute parent
+            int left = bvh_nodes[curr].left_child;
+            int right = bvh_nodes[curr].right_child;
+
+            bvh_nodes[curr].bbox.min_x = std::min(bvh_nodes[left].bbox.min_x,
+                                                  bvh_nodes[right].bbox.min_x);
+            bvh_nodes[curr].bbox.max_x = std::max(bvh_nodes[left].bbox.max_x,
+                                                  bvh_nodes[right].bbox.max_x);
+            bvh_nodes[curr].bbox.min_y = std::min(bvh_nodes[left].bbox.min_y,
+                                                  bvh_nodes[right].bbox.min_y);
+            bvh_nodes[curr].bbox.max_y = std::max(bvh_nodes[left].bbox.max_y,
+                                                  bvh_nodes[right].bbox.max_y);
+            bvh_nodes[curr].bbox.min_z = std::min(bvh_nodes[left].bbox.min_z,
+                                                  bvh_nodes[right].bbox.min_z);
+            bvh_nodes[curr].bbox.max_z = std::max(bvh_nodes[left].bbox.max_z,
+                                                  bvh_nodes[right].bbox.max_z);
+
+            // Move up to the next parent
+            curr = bvh_nodes[curr].parent;
         }
     }
 }

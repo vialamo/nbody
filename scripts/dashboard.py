@@ -234,6 +234,7 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
     p999_gas_densities, max_gas_densities, max_dm_densities = [], [], []
     p999_temperatures, max_temperatures = [], []
     rho_densest_cell, gas_temp_densest_cell, thermal_timescale_densest = [], [], []
+    h_densest_particle, n_enc_densest_particle = [], []
     dt_hydro = []
     
     # Energy Arrays
@@ -369,13 +370,23 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
                     therm_energies.append(np.sum(gas_mass * u_int) * energy_conv)
                     current_e_code = np.sum(ke_array) + np.sum(gas_mass * u_int)
                     
-                    gx_g, gy_g, gz_g = f['Gas/position_x'][:], f['Gas/position_y'][:], f['Gas/position_z'][:]
-                    d2 = (gx_g - target_pos[0])**2 + (gy_g - target_pos[1])**2 + (gz_g - target_pos[2])**2
-                    closest_idx = np.argmin(d2)
+                    closest_idx = np.argmax(rho)
                     rho_densest_cell.append(rho[closest_idx] * n_H_conv)
                     gas_temp_densest_cell.append(temp[closest_idx])
                     thermal_timescale_densest.append(np.nan) 
                     mean_rho = np.sum(gas_mass) / domain_size**3
+
+                    # Safely extract h and N_enc (with fallbacks just in case)
+                    h_array = f['Gas/smoothing_length'][:] if 'Gas/smoothing_length' in f else f['Gas/h'][:]
+                    if 'Gas/n_enc_final' in f:
+                        n_array = f['Gas/n_enc_final'][:]
+                    elif 'Gas/num_neighbors' in f:
+                        n_array = f['Gas/num_neighbors'][:]
+                    else:
+                        n_array = (4.0 / 3.0) * np.pi * (h_array**3) * (rho / gas_mass)
+                        
+                    h_densest_particle.append(h_array[closest_idx])
+                    n_enc_densest_particle.append(n_array[closest_idx])
 
                     switch_energy_code = f['Gas'].attrs.get('cumulative_entropy_switch_energy', 0.0)
                     switch_energies.append(switch_energy_code)
@@ -627,6 +638,28 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
         
         axs[1, 2].legend(lines_left + lines_temp + lines_time, labels_left + labels_temp + labels_time, loc='upper left', fontsize=8)
         axs[1, 2].set_title('Densest cell (z=0) evolution')
+    elif has_hydro and has_particle_hydro:
+        axs[1, 2].plot(scale_factors, rho_densest_cell, color='blue', lw=2, label='Density')
+        axs[1, 2].set(yscale='log', xlabel='Scale Factor (a)', ylabel=r'Physical Density [$m_p$ cm$^{-3}$]')
+        axs[1, 2].tick_params(axis='y', labelcolor='blue')
+        
+        ax_h = axs[1, 2].twinx()
+        ax_h.plot(scale_factors, h_densest_particle, color='red', lw=2, label='h')
+        ax_h.set(yscale='log', ylabel='Smoothing Length [Code Units]')
+        ax_h.tick_params(axis='y', labelcolor='red')
+
+        ax_n = axs[1, 2].twinx()
+        ax_n.spines['right'].set_position(('outward', 50))
+        ax_n.plot(scale_factors, n_enc_densest_particle, color='green', lw=2, label=r'$N_{enc}$')
+        ax_n.set(ylabel='Enclosed Neighbors')
+        ax_n.tick_params(axis='y', labelcolor='green')
+
+        lines_left, labels_left = axs[1, 2].get_legend_handles_labels()
+        lines_h, labels_h = ax_h.get_legend_handles_labels()
+        lines_n, labels_n = ax_n.get_legend_handles_labels()
+        
+        axs[1, 2].legend(lines_left + lines_h + lines_n, labels_left + labels_h + labels_n, loc='upper left', fontsize=8)
+        axs[1, 2].set_title('Densest Particle Evolution (MFM)')
     else:
         axs[1, 2].text(0.5, 0.5, 'Graph Disabled', ha='center', va='center')
 

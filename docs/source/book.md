@@ -2392,6 +2392,40 @@ This test ensures the solver conserves all quantities in the absence of external
     3.  **Total Energy:** $E_{total} = \sum_i E_i L^3$
 * **What it Proves:** This test confirms that the flux calculations are balanced—that any mass, momentum, or energy that leaves one cell correctly enters its neighbor, with no numerical "leaks" or "sources."
 
+### The Linear Soundwave Test
+
+This test is well suited to perform a convergence analysis for a hydrodynamic solver.
+
+* **The Setup:** A sinusoidal soundwave is initialized with a background density of 1 and a small perturbation amplitude of $10^{-4}$. The test utilizes a wavenumber of $k = 2\pi$ and a speed of sound of $c_s = 2/3$. The simulation domain is configured as a box with a length of 1 in the x-direction and 0.75 in both the y and z-directions. The particles are arranged in a perturbed hexagonal close packed (hpc) grid using varying resolutions.
+
+* **The Expected Result:** The wave propagates through the periodic domain.
+
+* **The Validation:** The overall accuracy of the solver is validated by measuring the L1 error norm, calculated as 
+$$\frac{1}{N_{tot}} \sum_{i}^{N_{tot}} \vert{}\rho_i - \rho(x,t)\vert{}$$.
+
+#### Analytical Solution
+
+Because the perturbation is small, an analytical solution exists for all fluid variables. For a left-propagating wave, the phase is determined by $k(x + c_s t)$.
+
+* **Density:** The fluid density evolves according to the equation $\rho(x,t) = \rho_0 + \Delta\rho \sin(k(x + c_s t))$.
+
+* **Velocity:** The velocity perturbation for the left-moving wave is defined as $v_x = -c_s (\Delta\rho / \rho_0) \sin(k(x + c_s t))$.
+
+* **Pressure and Energy:** The pressure perturbation follows $P = P_0 + c_s^2 \Delta\rho \sin(k(x + c_s t))$, and the specific internal energy is defined as $u = P / ((\gamma - 1) \rho)$.
+
+#### Convergence and Error Sources
+
+Evaluating the L1 error across different resolutions reveals the order of convergence for the numerical scheme.
+
+* **Convergence Rate:** While a solver might theoretically be designed for second-order accuracy, the application of a slope-limiter reduces the actual order of convergence. For Meshless Finite Mass (MFM) implementations, this convergence typically falls between first and second order.
+
+* **Dispersion Errors:** Deviations from the expected sound speed are related to dispersion errors, which manifest as a spatial offset compared to the analytical solution.
+
+* **Diffusion Errors:** Errors in the measured amplitude of the soundwave are related to the numerical diffusion introduced by the solver.
+
+* **Scatter:** Scatter errors will also be present in the final density distribution.
+
+
 ### The 1D Shock-Tube
 
 This test has a known analytical solution (the **Sod Shock Tube**, named after Gary A. Sod, is the most famous variant) that validates the code's ability to handle all three fundamental wave structures.
@@ -2658,7 +2692,6 @@ Almgren, A. S., Bell, J. B., Lijewski, M. J., Lukić, Z., & Van Andel, E. (2013)
 
 Strang, G. (1968). *On the construction and comparison of difference schemes.* SIAM Journal on Numerical Analysis, 5(3), 506-517. Available at [https://www.pas.rochester.edu/astrobear/raw-attachment/blog/shuleli08202013/Strang1968.pdf](https://www.pas.rochester.edu/astrobear/raw-attachment/blog/shuleli08202013/Strang1968.pdf)
 
-
 ## Spatial Partitioning and the LBVH
 
 While the Particle-Mesh (PM) method solves the long-range forces, the P³M algorithm still requires direct Particle-Particle (PP) calculations for close neighbors. Furthermore, the Meshless Finite Mass (MFM) hydrodynamics solver requires gas particles to find their nearest neighbors to partition volume, estimate spatial gradients, and compute Riemann fluxes across effective faces. 
@@ -2872,6 +2905,55 @@ Karras, T. (2012). *Maximizing parallelism in the construction of BVHs, octrees,
 
 **For the Integration of LBVH/Oct-Trees in GPU N-Body Solvers:**  
 Bédorf, J., Gaburov, E., & Portegies Zwart, S. (2012). *A sparse octree gravitational N-body code that runs entirely on the GPU processor*. Journal of Computational Physics, 231(7), 2825-2839. Available at [https://arxiv.org/pdf/1106.1900](https://arxiv.org/pdf/1106.1900)
+
+## Individual particle timesteps
+
+Cosmological simulations are defined by their extreme dynamic range. To solve this, the spatial discretization of the fluid must be matched by a temporal discretization. Particles can be granted individual timesteps determined by their immediate environment.
+
+### Bounding the Local Clock
+
+Before a particle can step forward in time, the system evaluates the absolute maximum time it can safely wait before re-evaluating its surroundings. This "ideal" timestep is defined by several constraints:
+
+1. **The Courant-Friedrichs-Lewy (CFL) Condition:** In a fluid, information propagates at the local signal velocity, which is a combination of the sound speed and the relative velocities of converging gas flows. To prevent fluid volumes from interpenetrating or missing a shock boundary, a particle's timestep is restricted so that physical information cannot cross its smoothing radius in a single leap.
+
+2. **Gravitational Acceleration:** Particles experiencing immense gravitational pulls—such as those falling into a dark matter halo—must integrate their trajectories frequently to accurately resolve the curvature of their orbits. This constraint is tightly coupled to the gravitational softening length to ensure particles do not artificially fling themselves out of bound states.
+
+3. **Radiative Cooling:** When dense gas collapses, it radiates thermal energy rapidly. If a timestep is too large, the numerical solver might artificially drain all of a particle's internal energy in one step, plunging it below the cosmic temperature floor. The clock is therefore restricted so that a particle loses no more than a small fraction (e.g., 10%) of its total internal energy per step.
+
+The smallest of these three values becomes the particle's ideal physical timestep.
+
+### The Power-of-Two Hierarchy
+
+While giving every particle its ideal timestep seems optimal, doing so creates a chaotic, asynchronous timeline. If Particle A has a timestep of 102 years and neighboring Particle B has a timestep of 57 years, calculating the momentum exchange between them becomes complicated because of the misaligned clocks.
+
+Instead, the simulation imposes a quantized hierarchy. The maximum allowable global timestep ($\Delta t_{max}$) acts as the root of the hierarchy. Every particle's ideal timestep is progressively halved until it bounds the physical requirement.
+
+This means a particle's actual timestep is always $\Delta t_{max} / 2^n$, placing it into a specific "time bin". This structure guarantees synchronization. A particle on a small timestep will always land on the synchronization tick of a particle on a larger timestep, allowing them to exchange physical fluxes.
+
+### The Active Timeline and Integration
+
+With the hierarchy established, the simulation scans the timeline for the nearest upcoming synchronization point and advances the master clock to that precise moment.
+
+At this tick, only the particles whose block steps end at the current time are flagged as "active". The rest are considered "sleeping." This division requires a modified approach to the Kick-Drift-Kick (KDK) symplectic integrator:
+
+* **Drifting the Universe:** Because hydrodynamics relies on precise spatial geometries, evaluating the density field requires the true positions of every particle. Therefore, *all* particles—both active and sleeping—are drifted forward in space to the current master clock time.
+
+* **Kicking the Active:** Only the active particles are subjected to the heavy computational lifting. The tree searches, density evaluations, gradient matrix inversions, and Riemann solver flux calculations are executed only for the active subset. Their velocities and internal energies are then "kicked" using the newly computed forces.
+
+### Asymmetric Fluxes and Conservation Trade-offs
+
+When an active particle calculates a fluid interface with a neighbor, a unique scenario arises if that neighbor is currently sleeping. According to Newton's Third Law, if the active particle loses momentum, the sleeping particle must gain it.
+
+However, because the sleeping particle is locked in a much larger time bin, abruptly altering its momentum mid-step corrupts its temporal integration. To resolve this, the system processes the Riemann problem but applies the resulting flux only to the active particle. By deliberately ignoring the reverse flux onto the sleeping particle, the code accepts a microscopic violation of machine-precision energy conservation in exchange for maintaining the mathematical integrity of the hierarchical timeline.
+
+### The Wake-Up Failsafe
+
+A block time-stepping scheme is vulnerable to the approach of a supersonic shockwave. If a cold, quiescent particle in a cosmic void is assigned a massive timestep, it goes to sleep, expecting nothing to happen for millions of years. If a shockwave generated by a distant supernova crosses the void and impacts the sleeping particle mid-step, the particle will be unable to react, leading to numerical instability.
+
+To protect the fluid continuum, the scheme employs a "Wake-Up" failsafe. During the hydrodynamic force evaluation, active particles constantly scan their neighbors. If an active particle detects a sleeping neighbor, it compares their signal velocities. If the active particle's signal velocity exceeds the sleeping neighbor's by a critical threshold (for example a factor of 3), an override is triggered.
+
+The sleeping particle receives a thread-safe wake-up signal. Its massive timestep is truncated to match the time it has actually experienced, and it is flagged as active for the current clock tick. On the subsequent step, the newly awakened particle drops into a smaller power-of-two time bin, correctly resolving the incoming shockwave.
+
 
 ## Analytical Requirements for Resolution and Volume
 

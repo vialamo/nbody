@@ -145,7 +145,7 @@ TEST_CASE("Implicit backward Euler solver is unconditionally stable",
 TEST_CASE("GasGrid correctly extracts radiated energy from BOTH arrays",
           "[cooling][gas]") {
     Config config;
-    config.mesh_size = 2;
+    config.mesh_size_1d = 2;
     config.enable_cooling = true;
     config.compute_derived_data();
     double a = 1.0;

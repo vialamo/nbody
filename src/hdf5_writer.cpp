@@ -39,8 +39,9 @@ void HDF5Writer::set_attr_string(H5::H5Object& obj, const char* attr_name,
 
 void HDF5Writer::write_grid(H5::Group& group, const char* dataset_name,
                             const Grid3D& grid) {
-    hsize_t N = grid.n;
-    hsize_t dims[3] = {N, N, N};
+    hsize_t dims[3] = {static_cast<hsize_t>(grid.nx),
+                       static_cast<hsize_t>(grid.ny),
+                       static_cast<hsize_t>(grid.nz)};
 
     H5::DataSpace dataspace(3, dims);
 
@@ -113,9 +114,12 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         H5::Group config_group = root_group.createGroup("Config");
 
         // [domain]
-        set_attr_double(config_group, "domain_size", config.domain_size);
-        set_attr_double(config_group, "box_size_mpc", config.box_size_mpc);
-        set_attr_int(config_group, "mesh_size_1d", config.mesh_size);
+        set_attr_double(config_group, "domain_size", config.domain_size_1d);
+        set_attr_double(config_group, "domain_size_x", config.domain_size.x);
+        set_attr_double(config_group, "domain_size_y", config.domain_size.y);
+        set_attr_double(config_group, "domain_size_z", config.domain_size.z);
+        set_attr_double(config_group, "box_size_mpc", config.box_size_mpc_1d);
+        set_attr_int(config_group, "mesh_size_1d", config.mesh_size_1d);
         set_attr_int(config_group, "num_particles_1d", config.num_particles_1d);
 
         // [cosmology]
@@ -143,10 +147,9 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         // [initial_conditions]
         set_attr_string(config_group, "setup",
                         InitialConfig::to_string(config.initial_setup));
+        set_attr_bool(config_group, "use_glass", config.use_glass);
         set_attr_bool(config_group, "fixed_ics", config.fixed_ics);
         set_attr_bool(config_group, "invert_phases", config.invert_phases);
-        set_attr_bool(config_group, "standing_particles",
-                      config.standing_particles);
         set_attr_double(config_group, "initial_gas_temp_k",
                         config.initial_gas_temperature_k);
         set_attr_double(config_group, "seed_metallicity_solar",
@@ -172,6 +175,12 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                         config.mfm_neighbor_tolerance);
         set_attr_int(config_group, "mfm_max_iterations",
                      config.mfm_max_iterations);
+        set_attr_double(config_group, "mfm_min_hsml_fraction",
+                        config.mfm_min_hsml_fraction);
+        set_attr_double(config_group, "dual_energy_threshold",
+                        config.dual_energy_threshold);
+        set_attr_bool(config_group, "use_exact_riemann",
+                      config.use_exact_riemann);
 
         // [subgrid]
         set_attr_bool(config_group, "enable_subgrid_clumping",
@@ -186,9 +195,10 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                         config.gravity_accuracy_eta);
         set_attr_double(config_group, "hydro_courant_factor",
                         config.hydro_courant_factor);
-        set_attr_bool(config_group, "use_adaptive_dt", config.use_adaptive_dt);
         set_attr_double(config_group, "a_start", config.a_start);
         set_attr_double(config_group, "a_end", config.a_end);
+        set_attr_bool(config_group, "individual_particle_time",
+                      config.individual_particle_timesteps);
 
         // [HPC]
         set_attr_int(config_group, "num_threads", config.num_threads);
@@ -268,8 +278,8 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                 const Grid3D& rho = gas.get_density();
                 const Grid3D& ie = gas.get_internal_energy();
 
-                int total_cells =
-                    config.mesh_size * config.mesh_size * config.mesh_size;
+                int total_cells = ie.size();
+
                 for (int i = 0; i < total_cells; ++i) {
                     if (rho.data[i] > 1e-12) {
                         double u = ie.data[i] / rho.data[i];
@@ -309,6 +319,7 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                 write_particle_vec(gas_group, "density", gas.rho);
                 write_particle_vec(gas_group, "pressure", gas.pressure);
                 write_particle_vec(gas_group, "internal_energy", gas.u);
+                write_particle_vec(gas_group, "total_energy", gas.total_energy);
                 write_particle_vec(gas_group, "metal_fraction", gas.metal_frac);
 
                 std::vector<double> temp_vec(gas.num_particles);
@@ -322,7 +333,6 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                 write_particle_vec3d(gas_group, "grad_p", gas.grad_p);
                 write_particle_vec(gas_group, "entropy", gas.entropy);
                 write_particle_vec(gas_group, "condition_number", gas.cond_num);
-                write_particle_vec3d(gas_group, "raw_sum_p", gas.raw_sum_p);
                 set_attr_int(gas_group, "clamped_h_cases", gas.clamped_h_cases);
                 write_particle_vec(gas_group, "n_enc", gas.n_enc_final);
             }

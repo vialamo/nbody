@@ -3,6 +3,10 @@
 #include <cctype>
 #include <string>
 
+#include "types.h"
+
+// Simple struct to hold the 3D displacement vectors
+
 namespace EnumUtils {
 template <typename E>
 struct Traits;
@@ -37,6 +41,8 @@ enum class InitialSetup {
     SodShockTube,
     AdiabaticExpansion,
     SedovBlastwave,
+    SoundWave,
+    Glass,
     Count
 };
 
@@ -48,9 +54,9 @@ struct EnumUtils::Traits<HydroMethod> {
 
 template <>
 struct EnumUtils::Traits<InitialSetup> {
-    static constexpr const char* names[] = {"cosmological", "sod_shock_tube",
-                                            "adiabatic_expansion",
-                                            "sedov_blastwave"};
+    static constexpr const char* names[] = {
+        "cosmological",    "sod_shock_tube", "adiabatic_expansion",
+        "sedov_blastwave", "sound_wave",     "glass"};
     static constexpr InitialSetup default_value = InitialSetup::Cosmological;
 };
 
@@ -77,10 +83,10 @@ inline InitialSetup from_string(std::string str) {
 
 struct Config {
     // Domain
-    int mesh_size = 64;
+    double mesh_size_1d = 64;
     int num_particles_1d = 64;
     int num_gas_particles_1d = 64;
-    double box_size_mpc = 96.0;
+    double box_size_mpc_1d = 96.0;
 
     // Cosmology
     double omega_baryon = 0.045;
@@ -101,9 +107,9 @@ struct Config {
 
     // Initial conditions
     InitialSetup initial_setup = InitialSetup::Cosmological;
+    bool use_glass = true;
     bool fixed_ics = false;
     bool invert_phases = false;
-    bool standing_particles = false;
     double initial_gas_temperature_k = 50.0;
     double seed_metallicity_solar = 0.0;
     int seed = 42;
@@ -122,21 +128,22 @@ struct Config {
     double mfm_target_neighbors = 32.0;
     double mfm_neighbor_tolerance = 0.01;
     int mfm_max_iterations = 50;
-    bool disable_hydro_forces = false;
+    double mfm_min_hsml_fraction = 0.25;
+    double dual_energy_threshold = 0.001;
+    bool use_exact_riemann = false;
 
     // Subgrid
     bool enable_subgrid_clumping = true;
     double subgrid_clumping_amplitude = 10.0;
 
     // Time
-    bool enable_subcycling = true;
-    bool use_adaptive_dt = true;
     double max_dt_dynamical_factor = 1e-3;
     double hydro_courant_factor = 0.4;
     double gravity_accuracy_eta = 0.2;
     double a_start = 0.02;
     double a_end = 1.0;
     int max_cycles = 1000000000;
+    bool individual_particle_timesteps = true;
 
     // Output
     double save_HDF5_every_delta_a = 0.005;
@@ -147,14 +154,18 @@ struct Config {
 
     // Derived Parameters
     double G = 0.0;
-    double cell_size = 0.0, cell_volume = 0.0, omega_dm = 0.0;
+    double cell_size = 0.0;
+    double cell_volume = 0.0, omega_dm = 0.0;
     double cutoff_radius_cells = 0;
     double cutoff_radius = 0.0, cutoff_radius_squared = 0.0;
     int num_dm_particles = 0;
     int num_gas_particles = 0;
     double dm_particle_mass = 0.0, gas_total_mass = 0.0;
-    double softening_squared = 0.0;
+    double softening = 0.0;
     double base_comoving_softening = 0.0;
+
+    Vec3 mesh_size;
+    Vec3 box_size_mpc;
 
     double fixed_dt = 0.0;
 
@@ -174,7 +185,8 @@ struct Config {
 
     // Constant Parameters
     double total_mass = 1;
-    static constexpr double domain_size = 1.0;
+    static constexpr double domain_size_1d = 1.0;
+    Vec3 domain_size;
 #ifdef USE_GPU
     static constexpr bool using_GPU = true;
 #else

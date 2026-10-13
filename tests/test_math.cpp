@@ -56,7 +56,7 @@ TEST_CASE("Grid rolling correctly wraps memory boundaries",
     // It's small enough to do the mental math, but large enough to have a
     // distinct middle.
     const int N = 4;
-    Grid3D grid(N);
+    Grid3D grid(Vec3{N, N, N});
 
     // Manually fill the grid with zeros
     for (int i = 0; i < N * N * N; ++i) {

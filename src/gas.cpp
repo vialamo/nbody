@@ -9,7 +9,7 @@
 
 constexpr double density_floor = 1e-12;
 
-RiemannSolver::RiemannSolver(int mesh_size)
+RiemannSolver::RiemannSolver(const Vec3& mesh_size)
     : rho_L(mesh_size),
       p_L(mesh_size),
       vn_L(mesh_size),
@@ -63,7 +63,8 @@ RiemannSolver::RiemannSolver(int mesh_size)
       dq_L(mesh_size),
       dq_R(mesh_size),
       slope(mesh_size) {
-    int total_cells = mesh_size * mesh_size * mesh_size;
+    size_t total_cells =
+        static_cast<size_t>(mesh_size.x) * mesh_size.y * mesh_size.z;
     den_star.resize(total_cells);
     S_star.resize(total_cells);
     omega_L.resize(total_cells);
@@ -322,8 +323,7 @@ GasGrid::GasGrid(const Config& conf)
 }
 
 void GasGrid::update_primitive_variables(double a) {
-    const int total_cells =
-        config.mesh_size * config.mesh_size * config.mesh_size;
+    size_t total_cells = density.size();
 
     const double u_floor =
         Cooling::get_internal_energy_from_temp(config.temp_floor_k, a, config);
@@ -455,8 +455,7 @@ void GasGrid::compute_and_apply_fluxes(double dt, double a) {
         Grid3D dv(config.mesh_size);
         dv.data = v_n->roll(-1, axis).array() - v_n->roll(1, axis).array();
 
-        int total_cells =
-            config.mesh_size * config.mesh_size * config.mesh_size;
+        size_t total_cells = density.size();
 
         double* d_rho = density.array().data();
         double* d_mn = m_n->array().data();
@@ -523,7 +522,7 @@ void GasGrid::hydro_step(double dt, double a) {
     compute_and_apply_fluxes(dt, a);
 
     // Final Averaging
-    int total_cells = config.mesh_size * config.mesh_size * config.mesh_size;
+    size_t total_cells = density.size();
 
     double* d_rho = density.array().data();
     double* d_mx = momentum_x.array().data();
@@ -584,7 +583,7 @@ void GasGrid::apply_cooling(double dt, double a, Cooling& cooling) {
     if (!config.enable_cooling) return;
 
     double u_rad_floor = cooling.get_u_rad_floor(a, config);
-    int total_cells = config.mesh_size * config.mesh_size * config.mesh_size;
+    size_t total_cells = density.size();
 
     const double* d_rho = density.array().data();
     double* d_en = energy.array().data();
@@ -675,7 +674,7 @@ double GasGrid::get_cooling_timestep(double a, Cooling& cooling) const {
     if (!config.enable_cooling) return std::numeric_limits<double>::infinity();
 
     double min_dt_cool = std::numeric_limits<double>::infinity();
-    int total_cells = config.mesh_size * config.mesh_size * config.mesh_size;
+    size_t total_cells = density.size();
 
     const double* d_rho = density.array().data();
     const double* d_ie = internal_energy.array().data();
@@ -716,8 +715,7 @@ Grid3D GasGrid::compute_thermal_timescale(double a,
     const double* d_ie = internal_energy.array().data();
     const double* d_metal = metal_density.array().data();
 
-    const int total_cells =
-        config.mesh_size * config.mesh_size * config.mesh_size;
+    size_t total_cells = density.size();
 
 #pragma omp parallel for schedule(static)
     for (int i = 0; i < total_cells; ++i) {

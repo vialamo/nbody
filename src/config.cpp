@@ -8,7 +8,7 @@
 
 void Config::init_derived_units() {
     // Length
-    unit_length_mpc = box_size_mpc / domain_size;
+    unit_length_mpc = box_size_mpc_1d / domain_size_1d;
 
     // Time
     // Conversion factor to turn the base Hubble constant (100 km/s/Mpc) into
@@ -38,7 +38,7 @@ void Config::init_derived_units() {
     // units of Solar Masses per cubic Megaparsec (M_sun / Mpc^3).
     constexpr double rho_crit_base_msun_mpc3 = 2.775e11;
     double rho_crit = rho_crit_base_msun_mpc3 * (hubble_h * hubble_h);
-    double box_volume_mpc3 = std::pow(box_size_mpc, 3);
+    double box_volume_mpc3 = box_size_mpc.x * box_size_mpc.y * box_size_mpc.z;
     double total_mass_msun = omega_m * rho_crit * box_volume_mpc3;
     unit_mass_msun = total_mass_msun / total_mass;
 
@@ -62,12 +62,19 @@ void Config::init_derived_units() {
 }
 
 void Config::compute_derived_data() {
+    mesh_size.x = mesh_size_1d;
+    mesh_size.y = mesh_size_1d;
+    mesh_size.z = mesh_size_1d;
+
+    box_size_mpc.x = box_size_mpc_1d;
+    box_size_mpc.y = box_size_mpc_1d;
+    box_size_mpc.z = box_size_mpc_1d;
+
     if (hubble_h > 10.0) {
         hubble_h /= 100.0;
     }
 
     if (initial_setup == InitialSetup::SodShockTube) {
-        enable_subcycling = false;
         expanding_universe = false;
         enable_cooling = false;
         use_PM = false;
@@ -78,9 +85,12 @@ void Config::compute_derived_data() {
         omega_baryon = 1.0;
         gamma = 1.4;
         total_mass = 0.5625;
-        a_end = 0.15;
+        a_end = 1.8;
+        domain_size.x *= 8.0;
+        mesh_size.x *= 8.0;
+        box_size_mpc.x *= 8.0;
+
     } else if (initial_setup == InitialSetup::AdiabaticExpansion) {
-        enable_subcycling = false;
         expanding_universe = true;
         enable_cooling = false;
         use_PM = false;
@@ -92,7 +102,6 @@ void Config::compute_derived_data() {
         gamma = 5.0 / 3.0;
         total_mass = 1.0;
     } else if (initial_setup == InitialSetup::SedovBlastwave) {
-        enable_subcycling = false;
         expanding_universe = false;
         enable_cooling = false;
         use_PM = false;
@@ -104,9 +113,37 @@ void Config::compute_derived_data() {
         gamma = 5.0 / 3.0;
         total_mass = 1.0;
         a_end = 0.1;
+    } else if (initial_setup == InitialSetup::SoundWave) {
+        hydro_method = HydroMethod::MFM;
+        expanding_universe = false;
+        enable_cooling = false;
+        use_glass = false;
+        use_PM = false;
+        use_PP = false;
+        num_particles_1d = 0;
+        omega_lambda = 0.0;
+        omega_m = 1.0;
+        omega_baryon = 1.0;
+        gamma = 5.0 / 3.0;
+        total_mass = 1.0;
+        domain_size.x *= 4.0;
+        mesh_size.x *= 4.0;
+        box_size_mpc.x *= 4.0;
+        a_end = 6.0;
+    } else if (initial_setup == InitialSetup::Glass) {
+        hydro_method = HydroMethod::MFM;
+        expanding_universe = false;
+        enable_cooling = false;
+        use_PM = false;
+        use_PP = false;
+        num_particles_1d = 0;
+        omega_lambda = 0.0;
+        omega_m = 1.0;
+        omega_baryon = 1.0;
+        total_mass = 1.0;
     }
 
-    cell_size = domain_size / mesh_size;
+    cell_size = domain_size_1d / mesh_size_1d;
     cell_volume = cell_size * cell_size * cell_size;
     omega_dm = omega_m - omega_baryon;
     cutoff_radius_cells = cutoff_radius_factor * PM_smoothing_cells;
@@ -119,7 +156,7 @@ void Config::compute_derived_data() {
             num_gas_particles_1d * num_gas_particles_1d * num_gas_particles_1d;
     }
 
-    G = std::pow(domain_size, 3) / (6.0 * M_PI * total_mass);
+    G = std::pow(domain_size_1d, 3) / (6.0 * M_PI * total_mass);
 
     const double baryon_fraction = omega_baryon / omega_m;
     const double dm_total_mass = total_mass * (1.0 - baryon_fraction);
@@ -128,59 +165,43 @@ void Config::compute_derived_data() {
     gas_total_mass = total_mass * baryon_fraction;
 
     int active_particles_1d = std::max(num_particles_1d, num_gas_particles_1d);
-    if (active_particles_1d == 0) active_particles_1d = mesh_size;
+    if (active_particles_1d == 0) active_particles_1d = mesh_size_1d;
 
     double mean_interparticle_spacing =
-        domain_size / static_cast<double>(active_particles_1d);
+        domain_size_1d / static_cast<double>(active_particles_1d);
 
     double actual_softening =
         mean_interparticle_spacing * comoving_softening_factor;
 
-    // Automatically detect an oversampled gas grid
-    if (hydro_method == HydroMethod::Eulerian && mesh_size > num_particles_1d) {
-        // Protect gas cells from DM "bullets"
-        double min_softening_for_gas = 1.5 * cell_size;
-        if (min_softening_for_gas > actual_softening) {
-            actual_softening = min_softening_for_gas;
-        }
-
-        // Automatically blur the sparse DM mass on the fine grid
-        double oversample_ratio =
-            static_cast<double>(mesh_size) / num_particles_1d;
-
-        // Dynamically scale it up
-        if (PM_smoothing_cells < 1.25 * oversample_ratio) {
-            PM_smoothing_cells = 1.25 * oversample_ratio;
-        }
-    }
-
     base_comoving_softening = actual_softening;
-    softening_squared = actual_softening * actual_softening;
+    softening = actual_softening;
 
     const double dynamical_time = 1.0 / std::sqrt(G);
-    fixed_dt = max_dt_dynamical_factor * dynamical_time;
-
-    // For now, disable subcycling when using MFM
-    if (hydro_method == HydroMethod::MFM) {
-        enable_subcycling = false;
-    }
+    double raw_fixed_dt = max_dt_dynamical_factor * dynamical_time;
+    // Snap to the nearest lower power of 2
+    fixed_dt = std::pow(2.0, std::floor(std::log2(raw_fixed_dt)));
 
     init_derived_units();
 }
 
-Config::Config() { compute_derived_data(); }
+Config::Config() {
+    domain_size.x = domain_size_1d;
+    domain_size.y = domain_size.x;
+    domain_size.z = domain_size.x;
+    compute_derived_data();
+}
 
 void Config::load(const std::string& filename) {
     ini::Ini config_file;
     config_file.load(filename);
 
-    mesh_size = config_file.get_int("domain", "mesh_size_1d", mesh_size);
+    mesh_size_1d = config_file.get_int("domain", "mesh_size_1d", mesh_size_1d);
     num_particles_1d =
         config_file.get_int("domain", "num_particles_1d", num_particles_1d);
     num_gas_particles_1d = config_file.get_int("domain", "num_gas_particles_1d",
                                                num_gas_particles_1d);
-    box_size_mpc =
-        config_file.get_double("domain", "box_size_mpc", box_size_mpc);
+    box_size_mpc_1d =
+        config_file.get_double("domain", "box_size_mpc", box_size_mpc_1d);
 
     omega_baryon =
         config_file.get_double("cosmology", "omega_baryon", omega_baryon);
@@ -208,12 +229,12 @@ void Config::load(const std::string& filename) {
     std::string ics_str = config_file.get(
         "initial_conditions", "setup", InitialConfig::to_string(initial_setup));
     initial_setup = InitialConfig::from_string(ics_str);
+    use_glass =
+        config_file.get_bool("initial_conditions", "use_glass", use_glass);
     fixed_ics =
         config_file.get_bool("initial_conditions", "fixed_ics", fixed_ics);
     invert_phases = config_file.get_bool("initial_conditions", "invert_phases",
                                          invert_phases);
-    standing_particles = config_file.get_bool(
-        "initial_conditions", "standing_particles", standing_particles);
     initial_gas_temperature_k = config_file.get_double(
         "initial_conditions", "initial_gas_temp_k", initial_gas_temperature_k);
     seed_metallicity_solar = config_file.get_double(
@@ -235,8 +256,6 @@ void Config::load(const std::string& filename) {
         config_file.get_double("hydro", "cooling_cutoff_k", cooling_cutoff_k);
     cooling_table_path =
         config_file.get("hydro", "cooling_table_path", cooling_table_path);
-    disable_hydro_forces = config_file.get_bool("hydro", "disable_hydro_forces",
-                                                disable_hydro_forces);
 
     mfm_target_neighbors = config_file.get_double("mfm", "mfm_target_neighbors",
                                                   mfm_target_neighbors);
@@ -244,14 +263,17 @@ void Config::load(const std::string& filename) {
         "mfm", "mfm_neighbor_tolerance", mfm_neighbor_tolerance);
     mfm_max_iterations =
         config_file.get_int("mfm", "mfm_max_iterations", mfm_max_iterations);
-
+    mfm_min_hsml_fraction = config_file.get_double(
+        "mfm", "mfm_min_hsml_fraction", mfm_min_hsml_fraction);
+    dual_energy_threshold = config_file.get_double(
+        "mfm", "dual_energy_threshold", dual_energy_threshold);
+    use_exact_riemann =
+        config_file.get_bool("mfm", "use_exact_riemann", use_exact_riemann);
     enable_subgrid_clumping = config_file.get_bool(
         "subgrid", "enable_subgrid_clumping", enable_subgrid_clumping);
     subgrid_clumping_amplitude = config_file.get_double(
         "subgrid", "subgrid_clumping_amplitude", subgrid_clumping_amplitude);
 
-    enable_subcycling =
-        config_file.get_bool("time", "enable_subcycling", enable_subcycling);
     max_dt_dynamical_factor = config_file.get_double(
         "time", "max_dt_dynamical_factor", max_dt_dynamical_factor);
     a_start = config_file.get_double("time", "a_start", a_start);
@@ -260,9 +282,9 @@ void Config::load(const std::string& filename) {
         "time", "hydro_courant_factor", hydro_courant_factor);
     gravity_accuracy_eta = config_file.get_double(
         "time", "gravity_accuracy_eta", gravity_accuracy_eta);
-    use_adaptive_dt =
-        config_file.get_bool("time", "use_adaptive_dt", use_adaptive_dt);
     max_cycles = config_file.get_int("time", "max_cycles", max_cycles);
+    individual_particle_timesteps = config_file.get_bool(
+        "time", "individual_particle_time", individual_particle_timesteps);
 
     save_HDF5_every_delta_a = config_file.get_double(
         "output", "save_hdf5_every_delta_a", save_HDF5_every_delta_a);

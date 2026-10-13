@@ -40,7 +40,7 @@ class RiemannSolver {
                                 const Eigen::ArrayXd& S_star, Grid3D& F_out);
 
    public:
-    RiemannSolver(int mesh_size);
+    RiemannSolver(const Vec3& mesh_size);
     void compute_fluxes(const GasGrid& grid, int axis, double gamma);
 
     const Grid3D& get_flux_density() const { return flux_density; }

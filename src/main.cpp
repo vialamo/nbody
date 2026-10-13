@@ -21,11 +21,14 @@ static void print_info(const Config& config) {
               << " Solar Masses\n";
     std::cout << "G = " << config.G << "\n" << std::endl;
 
-    std::cout << "Mesh Size = " << config.mesh_size << "\n";
+    std::cout << "Mesh Size = " << config.mesh_size_1d << "\n";
     std::cout << "Hydro Mode = " << HydroConfig::to_string(config.hydro_method)
               << "\n";
     std::cout << "Initial Setup = "
               << InitialConfig::to_string(config.initial_setup) << "\n";
+    if (config.individual_particle_timesteps) {
+        std::cout << "Base timestep: " << config.fixed_dt << "\n";
+    }
 
     std::cout << "Threads: " << omp_get_max_threads() << " | ";
     int num_devices = omp_get_num_devices();
@@ -49,6 +52,13 @@ void signal_handler(int signal) {
             g_engine->request_stop();
         }
     }
+}
+
+std::string generate_directory_name(const Config& config,
+                                    const std::string& timestamp) {
+    std::string base = InitialConfig::to_string(config.initial_setup);
+    std::string run_dir = "outputs/" + base + "_" + timestamp;
+    return run_dir;
 }
 
 int main(int argc, char* argv[]) {
@@ -77,7 +87,7 @@ int main(int argc, char* argv[]) {
 
     // Create the output directories
     std::string timestamp = utils::get_timestamp();
-    std::string run_dir = "outputs/run_" + timestamp;
+    std::string run_dir = generate_directory_name(config, timestamp);
     std::filesystem::create_directories(run_dir);
 
     // Copy the config file into the run directory for reproducibility
@@ -92,6 +102,8 @@ int main(int argc, char* argv[]) {
     SimulationEngine engine(config, logger, h5_writer, diagnostics);
     g_engine = &engine;
 
+    std::cout << "\nSimulation loop started: " << timestamp << "\n"
+              << std::endl;
     try {
         ExitStatus status = engine.run();
         switch (status) {

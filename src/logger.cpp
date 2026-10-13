@@ -81,9 +81,9 @@ void Logger::write_header() {
         << "dt_cfl,dt_gravity,dt_cool,dt_final,"
         << "max_gas_density,max_gas_pressure,max_gas_velocity,"
         << "wall_time_total,wall_time_pm,wall_time_pp,wall_time_hydro,"
-           "wall_time_cooling,wall_time_io,cumulative_wall_time,"
-           "wall_time_GPU_transf,wall_time_GPU_back,wall_time_GPU_compute,"
-           "memory_peak,memory_current,"
+           "wall_time_cooling,wall_time_tree,wall_time_density,wall_time_io,"
+           "cumulative_wall_time,wall_time_GPU_transf,wall_time_GPU_back,"
+           "wall_time_GPU_compute,memory_peak,memory_current,"
         << "avg_substeps_hydro,avg_substeps_gravity,avg_substeps_cooling\n";
     header_written = true;
 }
@@ -123,6 +123,8 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
                  << diag.get_average(TimerRegion::PP) << ","
                  << diag.get_average(TimerRegion::Hydro) << ","
                  << diag.get_average(TimerRegion::Cool) << ","
+                 << diag.get_average(TimerRegion::Tree) << ","
+                 << diag.get_average(TimerRegion::Density) << ","
                  << diag.get_io_time() << "," << wall_time_s << ","
                  << diag.get_prof_average(ProfRegion::Transf) / 1000.0 << ","
                  << diag.get_prof_average(ProfRegion::Ret) / 1000.0 << ","
@@ -146,6 +148,14 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
               << " | DM Err: " << format_double(diag.dm_energy_err, 1, true)
               << " | Gas Err: " << format_double(diag.energy_err, 1, true)
               << "\n";
+    if (conf.hydro_method == HydroMethod::MFM) {
+        double flux_err = std::max(abs(diag.mfm_flux_energy_error),
+                                   diag.mfm_flux_momentum_error);
+        std::cout << "    - Vol Err: "
+                  << format_double(diag.volume_error, 1, true)
+                  << " | Flux Err: " << format_double(flux_err, 1, true)
+                  << "\n";
+    }
 
     std::cout << "  [Stability]\n";
     std::cout << "    - Timestep (Macro): "
@@ -153,14 +163,10 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
               << " | Grav: " << format_double(diag.dt_gravity, 1, true)
               << " | CFL: " << format_double(diag.dt_cfl, 1, true)
               << " | Cool: " << format_double(diag.dt_cool, 1, true) << "\n";
-    std::cout
-        << "    - Subcycles/step:   Hydro: "
-        << format_double(diag.get_average_substeps(SubstepCounter::Hydro), 1)
-        << " | Gravity: "
-        << format_double(diag.get_average_substeps(SubstepCounter::Gravity), 1)
-        << " | Cooling: "
-        << format_double(diag.get_average_substeps(SubstepCounter::Cool), 1)
-        << "\n";
+    if (conf.individual_particle_timesteps) {
+        std::cout << "    - Particles/step:   "
+                  << format_double(diag.percent_particles_updated, 1) << "%\n";
+    }
 
     std::cout << "  [Performance (ms / cycle)]" << "\n";
     std::cout << "    - Step: "
@@ -173,8 +179,13 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
               << format_double(diag.get_average(TimerRegion::PP) * 1000.0, 0)
               << " | Hydro: "
               << format_double(diag.get_average(TimerRegion::Hydro) * 1000.0, 0)
-              << " | Cooling: "
+              << " | Cool: "
               << format_double(diag.get_average(TimerRegion::Cool) * 1000.0, 0)
+              << " | Tree: "
+              << format_double(diag.get_average(TimerRegion::Tree) * 1000.0, 0)
+              << " | Dens: "
+              << format_double(diag.get_average(TimerRegion::Density) * 1000.0,
+                               0)
               << "\n"
               << "    - I/O Spike: "
               << format_double(diag.get_io_time() * 1000.0, 0) << "\n";
@@ -205,5 +216,13 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
     if (diag.MFM_h_non_converged_cases > 0) {
         std::cout << "  [WARNING] MFM h non converged cases: "
                   << diag.MFM_h_non_converged_cases << "\n";
+    }
+    if (diag.MFM_neighbor_increased_cases > 0) {
+        std::cout << "  [WARNING] MFM neighbor increased cases: "
+                  << diag.MFM_neighbor_increased_cases << "\n";
+    }
+    if (diag.MFM_sph_fallback_cases > 0) {
+        std::cout << "  [WARNING] MFM SPH fallback cases: "
+                  << diag.MFM_sph_fallback_cases << "\n";
     }
 }

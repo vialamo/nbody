@@ -16,4 +16,5 @@ void compute_PM_acceleration(SimState& state, const Config& config);
 
 void compute_forces(SimState& state, Config& config, Diagnostics& diag);
 
-void KDK_step(SimState& state, TimestepInfo& ts, Config& config, Diagnostics& diag);
+void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
+              Diagnostics& diag);

@@ -1,10 +1,10 @@
 #include "ics.h"
 
-#include <cassert>
 #include <random>
 
 #include "constants.h"
 #include "cooling.h"
+#include "hdf5_reader.h"
 #include "integrator.h"
 #include "math_utils.h"
 #include "particles.h"
@@ -70,13 +70,17 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
     // The master normalization constant
     double A = compute_normalization_constant(config);
 
-    int M = config.mesh_size;
-    size_t M3_real = static_cast<size_t>(M) * M * M;
-    size_t M3_complex = static_cast<size_t>(M) * M * (M / 2 + 1);
+    int Mx = config.mesh_size.x;
+    int My = config.mesh_size.y;
+    int Mz = config.mesh_size.z;
 
-    // Convert box size to h^-1 Mpc to match the units of true_pk
-    double box_h_mpc = config.box_size_mpc * config.hubble_h;
-    double box_vol_h = pow(box_h_mpc, 3.0);
+    size_t M3_real = static_cast<size_t>(Mx) * My * Mz;
+    size_t M3_complex = static_cast<size_t>(Mx) * My * (Mz / 2 + 1);
+
+    // Anisotropic volumes
+    double box_vol_h = (config.box_size_mpc.x * config.hubble_h) *
+                       (config.box_size_mpc.y * config.hubble_h) *
+                       (config.box_size_mpc.z * config.hubble_h);
 
     double amplitude_scaling =
         std::sqrt(static_cast<double>(M3_real) / box_vol_h);
@@ -89,13 +93,15 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
         val = distribution(generator);
     }
 
-    pocketfft::shape_t shape_ic = {(size_t)M, (size_t)M, (size_t)M};
+    pocketfft::shape_t shape_ic = {(size_t)Mx, (size_t)My, (size_t)Mz};
     pocketfft::stride_t stride_r_ic = {
-        static_cast<ptrdiff_t>(M * M * sizeof(double)),
-        static_cast<ptrdiff_t>(M * sizeof(double)), sizeof(double)};
+        static_cast<ptrdiff_t>(My * Mz * sizeof(double)),
+        static_cast<ptrdiff_t>(Mz * sizeof(double)), sizeof(double)};
+
     pocketfft::stride_t stride_c_ic = {
-        static_cast<ptrdiff_t>(M * (M / 2 + 1) * sizeof(std::complex<double>)),
-        static_cast<ptrdiff_t>((M / 2 + 1) * sizeof(std::complex<double>)),
+        static_cast<ptrdiff_t>(My * (Mz / 2 + 1) *
+                               sizeof(std::complex<double>)),
+        static_cast<ptrdiff_t>((Mz / 2 + 1) * sizeof(std::complex<double>)),
         sizeof(std::complex<double>)};
 
     std::vector<std::complex<double>> random_k(M3_complex);
@@ -106,9 +112,9 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
     std::vector<std::complex<double>> disp_y_k(M3_complex);
     std::vector<std::complex<double>> disp_z_k(M3_complex);
 
-    for (int i = 0; i < M; ++i) {
-        for (int j = 0; j < M; ++j) {
-            for (int k = 0; k < M / 2 + 1; ++k) {
+    for (int i = 0; i < Mx; ++i) {
+        for (int j = 0; j < My; ++j) {
+            for (int k = 0; k < Mz / 2 + 1; ++k) {
                 if (i == 0 && j == 0 && k == 0) {
                     disp_x_k[0] = {0, 0};
                     disp_y_k[0] = {0, 0};
@@ -116,16 +122,16 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
                     continue;
                 }
 
-                size_t idx = static_cast<size_t>(i) * M * (M / 2 + 1) +
-                             static_cast<size_t>(j) * (M / 2 + 1) +
+                size_t idx = static_cast<size_t>(i) * My * (Mz / 2 + 1) +
+                             static_cast<size_t>(j) * (Mz / 2 + 1) +
                              static_cast<size_t>(k);
 
-                auto kx_freq = static_cast<double>((i < M / 2) ? i : (i - M));
-                auto ky_freq = static_cast<double>((j < M / 2) ? j : (j - M));
+                auto kx_freq = static_cast<double>((i < Mx / 2) ? i : (i - Mx));
+                auto ky_freq = static_cast<double>((j < My / 2) ? j : (j - My));
                 auto kz_freq = static_cast<double>(k);
-                double kx = kx_freq * 2.0 * M_PI / config.box_size_mpc;
-                double ky = ky_freq * 2.0 * M_PI / config.box_size_mpc;
-                double kz = kz_freq * 2.0 * M_PI / config.box_size_mpc;
+                double kx = kx_freq * 2.0 * M_PI / config.box_size_mpc.x;
+                double ky = ky_freq * 2.0 * M_PI / config.box_size_mpc.y;
+                double kz = kz_freq * 2.0 * M_PI / config.box_size_mpc.z;
                 double k_mag = sqrt(kx * kx + ky * ky + kz * kz);
                 double k_h = k_mag / config.hubble_h;
 
@@ -152,7 +158,7 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
                 std::complex<double> delta_k;
                 if (config.fixed_ics) {
                     // Extract the random phase, discard the random magnitude.
-                    // std::abs() on a complex number returns its magnitude.
+                    // std::abs() on a complex number returns its magnitude
                     double mag = std::abs(current_k);
 
                     // Protect against division by zero
@@ -174,9 +180,9 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
 
                 // Convert density contrast to Zel'dovich displacement
                 // potential
-                double code_kx = kx_freq * 2.0 * M_PI / config.domain_size;
-                double code_ky = ky_freq * 2.0 * M_PI / config.domain_size;
-                double code_kz = kz_freq * 2.0 * M_PI / config.domain_size;
+                double code_kx = kx_freq * 2.0 * M_PI / config.domain_size.x;
+                double code_ky = ky_freq * 2.0 * M_PI / config.domain_size.y;
+                double code_kz = kz_freq * 2.0 * M_PI / config.domain_size.z;
                 double code_k2 =
                     code_kx * code_kx + code_ky * code_ky + code_kz * code_kz;
 
@@ -189,9 +195,9 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
 
                 // The CIC interpolation window in Fourier space is sinc^2 per
                 // dimension
-                double sinc_x = sinc(kx_freq, M);
-                double sinc_y = sinc(ky_freq, M);
-                double sinc_z = sinc(kz_freq, M);
+                double sinc_x = sinc(kx_freq, Mx);
+                double sinc_y = sinc(ky_freq, My);
+                double sinc_z = sinc(kz_freq, Mz);
                 double cic_filter =
                     (sinc_x * sinc_x) * (sinc_y * sinc_y) * (sinc_z * sinc_z);
 
@@ -259,16 +265,15 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
     return field;
 }
 
-// Simple struct to hold the 3D displacement vectors
-struct Vec3 {
-    double x, y, z;
-};
-
 // Evaluates the continuous Zel'dovich field at arbitrary coordinates
-// using Cloud-In-Cell (CIC) interpolation.
+// using Cloud-In-Cell (CIC) interpolation
 static Vec3 sample_zeldovich_cic(double qx, double qy, double qz,
                                  const ZeldovichField& zf, double cell_size,
-                                 int M) {
+                                 const Vec3& M) {
+    int Mx = static_cast<int>(M.x);
+    int My = static_cast<int>(M.y);
+    int Mz = static_cast<int>(M.z);
+
     double x_idx = qx / cell_size;
     double y_idx = qy / cell_size;
     double z_idx = qz / cell_size;
@@ -290,19 +295,22 @@ static Vec3 sample_zeldovich_cic(double qx, double qy, double qz,
     double w011 = (1.0 - frac_x) * frac_y * frac_z;
     double w111 = frac_x * frac_y * frac_z;
 
-    int ix0 = (ix + M) % M, ix1 = (ix + 1 + M) % M;
-    int iy0 = (iy + M) % M, iy1 = (iy + 1 + M) % M;
-    int iz0 = (iz + M) % M, iz1 = (iz + 1 + M) % M;
+    int ix0 = (ix + Mx) % Mx, ix1 = (ix + 1 + Mx) % Mx;
+    int iy0 = (iy + My) % My, iy1 = (iy + 1 + My) % My;
+    int iz0 = (iz + Mz) % Mz, iz1 = (iz + 1 + Mz) % Mz;
+
+    int stride_x = static_cast<int>(My * Mz);
+    int stride_y = static_cast<int>(Mz);
 
     auto interp = [&](const std::vector<double>& field) {
-        return field[ix0 * M * M + iy0 * M + iz0] * w000 +
-               field[ix1 * M * M + iy0 * M + iz0] * w100 +
-               field[ix0 * M * M + iy1 * M + iz0] * w010 +
-               field[ix1 * M * M + iy1 * M + iz0] * w110 +
-               field[ix0 * M * M + iy0 * M + iz1] * w001 +
-               field[ix1 * M * M + iy0 * M + iz1] * w101 +
-               field[ix0 * M * M + iy1 * M + iz1] * w011 +
-               field[ix1 * M * M + iy1 * M + iz1] * w111;
+        return field[ix0 * stride_x + iy0 * stride_y + iz0] * w000 +
+               field[ix1 * stride_x + iy0 * stride_y + iz0] * w100 +
+               field[ix0 * stride_x + iy1 * stride_y + iz0] * w010 +
+               field[ix1 * stride_x + iy1 * stride_y + iz0] * w110 +
+               field[ix0 * stride_x + iy0 * stride_y + iz1] * w001 +
+               field[ix1 * stride_x + iy0 * stride_y + iz1] * w101 +
+               field[ix0 * stride_x + iy1 * stride_y + iz1] * w011 +
+               field[ix1 * stride_x + iy1 * stride_y + iz1] * w111;
     };
 
     return {interp(zf.dx), interp(zf.dy), interp(zf.dz)};
@@ -310,36 +318,41 @@ static Vec3 sample_zeldovich_cic(double qx, double qy, double qz,
 
 void initialize_dm(SimState& state, const Config& config,
                    const ZeldovichField& zf) {
-    int M = config.mesh_size;
-    double cell_size = config.domain_size / M;
-    int N_part = config.num_particles_1d;
-    double spacing = config.domain_size / N_part;
+    int M = config.mesh_size_1d;
+    double cell_size = config.domain_size_1d / M;
+    double spacing = config.domain_size_1d / config.num_particles_1d;
 
-    for (int i = 0; i < N_part; ++i) {
-        for (int j = 0; j < N_part; ++j) {
-            for (int k = 0; k < N_part; ++k) {
+    int scale_x =
+        static_cast<int>(config.domain_size.x / config.domain_size_1d);
+    int scale_y =
+        static_cast<int>(config.domain_size.y / config.domain_size_1d);
+    int scale_z =
+        static_cast<int>(config.domain_size.z / config.domain_size_1d);
+
+    int N_part_x = config.num_particles_1d * scale_x;
+    int N_part_y = config.num_particles_1d * scale_y;
+    int N_part_z = config.num_particles_1d * scale_z;
+
+    for (int i = 0; i < N_part_x; ++i) {
+        for (int j = 0; j < N_part_y; ++j) {
+            for (int k = 0; k < N_part_z; ++k) {
                 double qx = (i + 0.5) * spacing;
                 double qy = (j + 0.5) * spacing;
                 double qz = (k + 0.5) * spacing;
 
-                Vec3 d = sample_zeldovich_cic(qx, qy, qz, zf, cell_size, M);
+                Vec3 d = sample_zeldovich_cic(qx, qy, qz, zf, cell_size,
+                                              config.mesh_size);
 
                 double p_x =
-                    fmod(qx + d.x + config.domain_size, config.domain_size);
+                    fmod(qx + d.x + config.domain_size.x, config.domain_size.x);
                 double p_y =
-                    fmod(qy + d.y + config.domain_size, config.domain_size);
+                    fmod(qy + d.y + config.domain_size.y, config.domain_size.y);
                 double p_z =
-                    fmod(qz + d.z + config.domain_size, config.domain_size);
+                    fmod(qz + d.z + config.domain_size.z, config.domain_size.z);
 
-                double v_x = config.standing_particles
-                                 ? 0.0
-                                 : state.hubble_param * d.x * zf.f;
-                double v_y = config.standing_particles
-                                 ? 0.0
-                                 : state.hubble_param * d.y * zf.f;
-                double v_z = config.standing_particles
-                                 ? 0.0
-                                 : state.hubble_param * d.z * zf.f;
+                double v_x = state.hubble_param * d.x * zf.f;
+                double v_y = state.hubble_param * d.y * zf.f;
+                double v_z = state.hubble_param * d.z * zf.f;
 
                 state.dm.add_particle(p_x, p_y, p_z, v_x, v_y, v_z,
                                       config.dm_particle_mass);
@@ -352,7 +365,10 @@ void initialize_gas(SimState& state, const Config& config,
                     const ZeldovichField& zf) {
     if (config.hydro_method == HydroMethod::None) return;
 
-    int M = config.mesh_size;
+    int Mx = static_cast<int>(config.mesh_size.x);
+    int My = static_cast<int>(config.mesh_size.y);
+    int Mz = static_cast<int>(config.mesh_size.z);
+
     double seed_metallicity =
         config.seed_metallicity_solar * constants::Z_SOLAR;
 
@@ -363,13 +379,13 @@ void initialize_gas(SimState& state, const Config& config,
     if (config.hydro_method == HydroMethod::Eulerian) {
         auto& gas = *state.gas;
         double mean_gas_rho =
-            config.gas_total_mass / std::pow(config.domain_size, 3.0);
+            config.gas_total_mass / pow(config.domain_size_1d, 3);
         double inv_2dx = 1.0 / (2.0 * config.cell_size);
 
-        for (int i = 0; i < M; ++i) {
-            for (int j = 0; j < M; ++j) {
-                for (int k = 0; k < M; ++k) {
-                    size_t idx = static_cast<size_t>(i) * M * M + j * M + k;
+        for (int i = 0; i < Mx; ++i) {
+            for (int j = 0; j < My; ++j) {
+                for (int k = 0; k < Mz; ++k) {
+                    size_t idx = static_cast<size_t>(i) * My * Mz + j * Mz + k;
 
                     // Calculate cell center
                     double qx = (i + 0.5) * config.cell_size;
@@ -377,44 +393,52 @@ void initialize_gas(SimState& state, const Config& config,
                     double qz = (k + 0.5) * config.cell_size;
 
                     // Sample local Zel'dovich displacement
-                    Vec3 d = sample_zeldovich_cic(qx, qy, qz, zf,
-                                                  config.cell_size, M);
+                    Vec3 d = sample_zeldovich_cic(
+                        qx, qy, qz, zf, config.cell_size, config.mesh_size);
+
+                    double qx_p =
+                        fmod(qx + config.cell_size, config.domain_size.x);
+                    double qx_m =
+                        fmod(qx - config.cell_size + config.domain_size.x,
+                             config.domain_size.x);
+                    double qy_p =
+                        fmod(qy + config.cell_size, config.domain_size.y);
+                    double qy_m =
+                        fmod(qy - config.cell_size + config.domain_size.y,
+                             config.domain_size.y);
+                    double qz_p =
+                        fmod(qz + config.cell_size, config.domain_size.z);
+                    double qz_m =
+                        fmod(qz - config.cell_size + config.domain_size.z,
+                             config.domain_size.z);
 
                     // Central difference for divergence (sampled at
                     // neighboring cell centers)
                     Vec3 dx_ip1 = sample_zeldovich_cic(
-                        qx + config.cell_size, qy, qz, zf, config.cell_size, M);
+                        qx_p, qy, qz, zf, config.cell_size, config.mesh_size);
                     Vec3 dx_im1 = sample_zeldovich_cic(
-                        qx - config.cell_size, qy, qz, zf, config.cell_size, M);
+                        qx_m, qy, qz, zf, config.cell_size, config.mesh_size);
                     Vec3 dy_jp1 = sample_zeldovich_cic(
-                        qx, qy + config.cell_size, qz, zf, config.cell_size, M);
+                        qx, qy_p, qz, zf, config.cell_size, config.mesh_size);
                     Vec3 dy_jm1 = sample_zeldovich_cic(
-                        qx, qy - config.cell_size, qz, zf, config.cell_size, M);
+                        qx, qy_m, qz, zf, config.cell_size, config.mesh_size);
                     Vec3 dz_kp1 = sample_zeldovich_cic(
-                        qx, qy, qz + config.cell_size, zf, config.cell_size, M);
+                        qx, qy, qz_p, zf, config.cell_size, config.mesh_size);
                     Vec3 dz_km1 = sample_zeldovich_cic(
-                        qx, qy, qz - config.cell_size, zf, config.cell_size, M);
+                        qx, qy, qz_m, zf, config.cell_size, config.mesh_size);
 
                     double div = (dx_ip1.x - dx_im1.x) * inv_2dx +
                                  (dy_jp1.y - dy_jm1.y) * inv_2dx +
                                  (dz_kp1.z - dz_km1.z) * inv_2dx;
 
-                    // Calculate Density
                     double rho = mean_gas_rho * (1.0 - div);
                     double safe_rho = std::max(rho, 1e-12);
                     gas.density.data[idx] = safe_rho;
                     gas.metal_density.data[idx] = safe_rho * seed_metallicity;
 
-                    // Calculate Velocity and Energy
-                    double vx = config.standing_particles
-                                    ? 0.0
-                                    : state.hubble_param * d.x * zf.f;
-                    double vy = config.standing_particles
-                                    ? 0.0
-                                    : state.hubble_param * d.y * zf.f;
-                    double vz = config.standing_particles
-                                    ? 0.0
-                                    : state.hubble_param * d.z * zf.f;
+                    double vx = state.hubble_param * d.x * zf.f;
+                    double vy = state.hubble_param * d.y * zf.f;
+                    double vz = state.hubble_param * d.z * zf.f;
 
                     gas.velocity_x.data[idx] = vx;
                     gas.velocity_y.data[idx] = vy;
@@ -434,32 +458,42 @@ void initialize_gas(SimState& state, const Config& config,
         }
         gas.update_primitive_variables(state.scale_factor);
     } else if (config.hydro_method == HydroMethod::MFM) {
-        int N_part = config.num_gas_particles_1d;
-        double spacing = config.domain_size / N_part;
+        int scale_x =
+            static_cast<int>(config.domain_size.x / config.domain_size_1d);
+        int scale_y =
+            static_cast<int>(config.domain_size.y / config.domain_size_1d);
+        int scale_z =
+            static_cast<int>(config.domain_size.z / config.domain_size_1d);
+
+        int N_part_x = config.num_gas_particles_1d * scale_x;
+        int N_part_y = config.num_gas_particles_1d * scale_y;
+        int N_part_z = config.num_gas_particles_1d * scale_z;
+
+        double spacing = config.domain_size_1d / config.num_gas_particles_1d;
         double gas_particle_mass =
-            config.gas_total_mass / (N_part * N_part * N_part);
+            config.gas_total_mass / pow(config.num_gas_particles_1d, 3);
 
         // Initial guess for smoothing length
-        double initial_h = 1.2 * spacing;
+        double initial_h = 0.5 * spacing * cbrt(config.mfm_target_neighbors);
 
-        for (int i = 0; i < N_part; ++i) {
-            for (int j = 0; j < N_part; ++j) {
-                for (int k = 0; k < N_part; ++k) {
+        for (int i = 0; i < N_part_x; ++i) {
+            for (int j = 0; j < N_part_y; ++j) {
+                for (int k = 0; k < N_part_z; ++k) {
                     // Shift the gas lattice by half a spacing relative to DM to
                     // avoid perfect overlap
                     double qx = i * spacing;
                     double qy = j * spacing;
                     double qz = k * spacing;
 
-                    Vec3 d = sample_zeldovich_cic(qx, qy, qz, zf,
-                                                  config.cell_size, M);
+                    Vec3 d = sample_zeldovich_cic(
+                        qx, qy, qz, zf, config.cell_size, config.mesh_size);
 
-                    double p_x =
-                        fmod(qx + d.x + config.domain_size, config.domain_size);
-                    double p_y =
-                        fmod(qy + d.y + config.domain_size, config.domain_size);
-                    double p_z =
-                        fmod(qz + d.z + config.domain_size, config.domain_size);
+                    double p_x = fmod(qx + d.x + config.domain_size.x,
+                                      config.domain_size.x);
+                    double p_y = fmod(qy + d.y + config.domain_size.y,
+                                      config.domain_size.y);
+                    double p_z = fmod(qz + d.z + config.domain_size.z,
+                                      config.domain_size.z);
 
                     double v_x = state.hubble_param * d.x * zf.f;
                     double v_y = state.hubble_param * d.y * zf.f;
@@ -475,13 +509,20 @@ void initialize_gas(SimState& state, const Config& config,
 }
 
 void initialize_sod_shock_tube(SimState& state, const Config& config) {
-    // GADGET/GIZMO Shock Tube parameters (Hernquist & Katz 1989)
+    // Shock Tube parameters (Hernquist & Katz 1989)
     double rho_L = 1.0;
     double rho_R = 0.125;
     double P_L = 1.0;
     double P_R = 0.1;
 
-    double L = config.domain_size;
+    // Explicit domain dimensions
+    double Lx = config.domain_size.x;
+    double Ly = config.domain_size.y;
+    double Lz = config.domain_size.z;
+
+    // The base 1D reference length for mapping a single glass block
+    double L_base = config.domain_size_1d;
+
     double gamma = config.gamma;
     double u_L = P_L / (rho_L * (gamma - 1.0));
     double u_R = P_R / (rho_R * (gamma - 1.0));
@@ -490,19 +531,21 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
 
     if (config.hydro_method == HydroMethod::Eulerian) {
         auto& gas = *state.gas;
-        int M = config.mesh_size;
 
-        for (int i = 0; i < M; ++i) {
-            for (int j = 0; j < M; ++j) {
-                for (int k = 0; k < M; ++k) {
-                    size_t idx = static_cast<size_t>(i) * M * M + j * M + k;
+        int Mx = static_cast<int>(config.mesh_size.x);
+        int My = static_cast<int>(config.mesh_size.y);
+        int Mz = static_cast<int>(config.mesh_size.z);
 
-                    // Calculate cell center x-coordinate
+        for (int i = 0; i < Mx; ++i) {
+            for (int j = 0; j < My; ++j) {
+                for (int k = 0; k < Mz; ++k) {
+                    size_t idx = static_cast<size_t>(i) * My * Mz + j * Mz + k;
+
                     double x = (i + 0.5) * config.cell_size;
 
-                    // Assign Left or Right state based on the midpoint
-                    double rho = (x < L / 2.0) ? rho_L : rho_R;
-                    double u = (x < L / 2.0) ? u_L : u_R;
+                    // Shock interface is at the domain midpoint
+                    double rho = (x < Lx / 2.0) ? rho_L : rho_R;
+                    double u = (x < Lx / 2.0) ? u_L : u_R;
 
                     gas.density.data[idx] = rho;
                     gas.metal_density.data[idx] = rho * seed_metallicity;
@@ -524,60 +567,375 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
         gas.update_primitive_variables(state.scale_factor);
 
     } else if (config.hydro_method == HydroMethod::MFM) {
-        // Using the 1D particle count to define the left-side resolution
-        int N = config.num_gas_particles_1d;
+        if (config.use_glass) {
+            int target_N = config.num_gas_particles_1d;
+            int N_L = 16;
+            if (target_N >= 96)
+                N_L = 128;
+            else if (target_N >= 48)
+                N_L = 64;
+            else if (target_N >= 24)
+                N_L = 32;
 
-        // Spacing: Right side spacing must scale by the cube root of the
-        // density ratio in 3D to maintain equal particle masses across the
-        // domain.
-        double dx_L = L / N;
-        double dx_R =
-            dx_L *
-            std::cbrt(rho_L / rho_R);  // For a 4:1 ratio, cbrt(4) ≈ 1.5874
+            int N_R = N_L / 2;  // Right side is one tier lower
 
-        // Since mass is constant, we define it based on the left side
-        double particle_mass = rho_L * (dx_L * dx_L * dx_L);
+            std::string file_L =
+                "data/glassCube_" + std::to_string(N_L) + ".hdf5";
+            std::string file_R =
+                "data/glassCube_" + std::to_string(N_R) + ".hdf5";
 
-        // Calculate starting offsets to ensure L/2.0 is exactly hit by the grid
-        std::vector<double> yz_coords_L;
-        double start_L = std::fmod(L / 2.0, dx_L);
-        if (start_L < 0.0) start_L += dx_L;  // Prevent negative float quirk
-        for (double pos = start_L; pos < L - 1e-5; pos += dx_L) {
-            yz_coords_L.push_back(pos);
+            GlassData glass_L, glass_R;
+            try {
+                glass_L = HDF5Reader::read_glass_cube(file_L);
+                glass_R = HDF5Reader::read_glass_cube(file_R);
+            } catch (const std::exception& e) {
+                exit(EXIT_FAILURE);
+            }
+
+            // Particle mass is defined by the density of the base block
+            double particle_mass = rho_L * (L_base * L_base * L_base) /
+                                   static_cast<double>(glass_L.num_particles);
+
+            double target_neighbors = config.mfm_target_neighbors;
+            double radius_factor =
+                std::pow((3.0 * target_neighbors) / (4.0 * M_PI), 1.0 / 3.0);
+
+            // True spacing assuming the glass fills L_base
+            double dx_L =
+                L_base * std::pow(1.0 / glass_L.num_particles, 1.0 / 3.0);
+            double dx_R =
+                L_base * std::pow(1.0 / glass_R.num_particles, 1.0 / 3.0);
+
+            double h_L = dx_L * radius_factor;
+            double h_R = dx_R * radius_factor;
+
+            // Calculate the number of times we must tile the base block
+            int n_tiles_x = static_cast<int>(std::ceil(Lx / L_base));
+            int n_tiles_y = static_cast<int>(std::ceil(Ly / L_base));
+            int n_tiles_z = static_cast<int>(std::ceil(Lz / L_base));
+
+            // LEFT SIDE (High Density, High Pressure)
+            // Only tile up to the domain midpoint
+            int left_tiles_x = static_cast<int>(std::ceil((Lx / 2.0) / L_base));
+            for (int tx = 0; tx < left_tiles_x; ++tx) {
+                for (int ty = 0; ty < n_tiles_y; ++ty) {
+                    for (int tz = 0; tz < n_tiles_z; ++tz) {
+                        for (size_t p = 0; p < glass_L.num_particles; ++p) {
+                            double p_x =
+                                tx * L_base + glass_L.pos_x[p] * L_base;
+                            double p_y =
+                                ty * L_base + glass_L.pos_y[p] * L_base;
+                            double p_z =
+                                tz * L_base + glass_L.pos_z[p] * L_base;
+
+                            // Clip particles crossing the mid-plane or
+                            // extending past Y/Z boundaries
+                            if (p_x < Lx / 2.0 && p_y < Ly && p_z < Lz) {
+                                state.mfm_gas->add_particle(
+                                    p_x, p_y, p_z, v_x, v_y, v_z, particle_mass,
+                                    u_L, h_L, seed_metallicity);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // RIGHT SIDE (Low Density, Low Pressure)
+            // Start tiling from the block intersecting the domain midpoint
+            int start_right_tx =
+                static_cast<int>(std::floor((Lx / 2.0) / L_base));
+            for (int tx = start_right_tx; tx < n_tiles_x; ++tx) {
+                for (int ty = 0; ty < n_tiles_y; ++ty) {
+                    for (int tz = 0; tz < n_tiles_z; ++tz) {
+                        for (size_t p = 0; p < glass_R.num_particles; ++p) {
+                            double p_x =
+                                tx * L_base + glass_R.pos_x[p] * L_base;
+                            double p_y =
+                                ty * L_base + glass_R.pos_y[p] * L_base;
+                            double p_z =
+                                tz * L_base + glass_R.pos_z[p] * L_base;
+
+                            // Clip particles on the left of the mid-plane or
+                            // past the outer boundaries
+                            if (p_x >= Lx / 2.0 && p_x < Lx && p_y < Ly &&
+                                p_z < Lz) {
+                                state.mfm_gas->add_particle(
+                                    p_x, p_y, p_z, v_x, v_y, v_z, particle_mass,
+                                    u_R, h_R, seed_metallicity);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // LATTICE INITIALIZATION
+            double dx_L = L_base / config.num_gas_particles_1d;
+            double dx_R_x = dx_L * std::cbrt(rho_L / rho_R);
+
+            double particle_mass = rho_L * (dx_L * dx_L * dx_L);
+
+            // Pre-calculate valid Y and Z coordinates to fit exactly within Ly
+            // and Lz
+            std::vector<double> y_coords;
+            for (double y = dx_L / 2.0; y < Ly; y += dx_L)
+                y_coords.push_back(y);
+
+            std::vector<double> z_coords;
+            for (double z = dx_L / 2.0; z < Lz; z += dx_L)
+                z_coords.push_back(z);
+
+            // LEFT SIDE
+            for (double x = dx_L / 2.0; x < Lx / 2.0; x += dx_L) {
+                for (double y : y_coords) {
+                    for (double z : z_coords) {
+                        double initial_h = 1.2 * dx_L;
+                        state.mfm_gas->add_particle(
+                            x, y, z, v_x, v_y, v_z, particle_mass, u_L,
+                            initial_h, seed_metallicity);
+                    }
+                }
+            }
+
+            // RIGHT SIDE (X spacing stretches, but Y and Z stay locked to dx_L)
+            for (double x = Lx / 2.0 + dx_R_x / 2.0; x < Lx; x += dx_R_x) {
+                for (double y : y_coords) {
+                    for (double z : z_coords) {
+                        double initial_h = 1.2 * std::max(dx_R_x, dx_L);
+                        state.mfm_gas->add_particle(
+                            x, y, z, v_x, v_y, v_z, particle_mass, u_R,
+                            initial_h, seed_metallicity);
+                    }
+                }
+            }
         }
+    }
+}
 
-        std::vector<double> yz_coords_R;
-        double start_R = std::fmod(L / 2.0, dx_R);
-        if (start_R < 0.0) start_R += dx_R;
-        for (double pos = start_R; pos < L - 1e-5; pos += dx_R) {
-            yz_coords_R.push_back(pos);
-        }
+void initialize_sedov_blastwave(SimState& state, const Config& config) {
+    // Sedov-Taylor parameters
+    double E_total = 1.0;
+    double rho_bg = 1.0;
+    double P_bg = 1e-6;  // Almost zero pressure for the background
+    double gamma = config.gamma;
+    double u_bg = P_bg / (rho_bg * (gamma - 1.0));
+    double seed_metallicity = 0.0;
 
-        // LEFT SIDE (High Density, High Pressure)
-        // x goes from 0 to 0.5 * L (X stays unchanged, Y/Z use centered arrays)
-        for (double x = dx_L / 2.0; x < 0.5 * L; x += dx_L) {
-            for (double y : yz_coords_L) {
-                for (double z : yz_coords_L) {
-                    // Keep the smoothing length slightly larger than the
-                    // spacing to ensure overlap
-                    double initial_h = 1.2 * dx_L;
-                    state.mfm_gas->add_particle(x, y, z, v_x, v_y, v_z,
-                                                particle_mass, u_L, initial_h,
-                                                seed_metallicity);
+    // Explicit domain dimensions
+    double Lx = config.domain_size.x;
+    double Ly = config.domain_size.y;
+    double Lz = config.domain_size.z;
+    double L_base = config.domain_size_1d;
+
+    // True geometric center of the rectangular domain
+    double cx = Lx / 2.0;
+    double cy = Ly / 2.0;
+    double cz = Lz / 2.0;
+
+    int N_res = (config.hydro_method == HydroMethod::Eulerian)
+                    ? config.mesh_size_1d
+                    : config.num_gas_particles_1d;
+    double dx_base = L_base / static_cast<double>(N_res);
+    double R_inj = 2.0 * dx_base;
+
+    if (config.hydro_method == HydroMethod::Eulerian) {
+        auto& gas = *state.gas;
+        int Mx = static_cast<int>(config.mesh_size.x);
+        int My = static_cast<int>(config.mesh_size.y);
+        int Mz = static_cast<int>(config.mesh_size.z);
+
+        // Initialize uniform cold background
+        for (int i = 0; i < Mx; ++i) {
+            for (int j = 0; j < My; ++j) {
+                for (int k = 0; k < Mz; ++k) {
+                    size_t idx = static_cast<size_t>(i) * My * Mz + j * Mz + k;
+                    gas.density.data[idx] = rho_bg;
+                    gas.metal_density.data[idx] = 0.0;
+                    gas.velocity_x.data[idx] = 0.0;
+                    gas.velocity_y.data[idx] = 0.0;
+                    gas.velocity_z.data[idx] = 0.0;
+                    gas.momentum_x.data[idx] = 0.0;
+                    gas.momentum_y.data[idx] = 0.0;
+                    gas.momentum_z.data[idx] = 0.0;
+                    gas.internal_energy.data[idx] = rho_bg * u_bg;
+                    gas.energy.data[idx] = rho_bg * u_bg;
                 }
             }
         }
 
-        // RIGHT SIDE (Low Density, Low Pressure)
-        // x goes from 0.5 * L to L
-        for (double x = 0.5 * L + dx_R / 2.0; x < L; x += dx_R) {
-            for (double y : yz_coords_R) {
-                for (double z : yz_coords_R) {
-                    double initial_h = 1.2 * dx_R;
-                    state.mfm_gas->add_particle(x, y, z, v_x, v_y, v_z,
-                                                particle_mass, u_R, initial_h,
-                                                seed_metallicity);
+        // Inject energy into the central region
+        double cell_vol = dx_base * dx_base * dx_base;
+        double inj_mass = 0.0;
+        std::vector<size_t> inj_indices;
+
+        for (int i = 0; i < Mx; ++i) {
+            for (int j = 0; j < My; ++j) {
+                for (int k = 0; k < Mz; ++k) {
+                    double x = (i + 0.5) * dx_base;
+                    double y = (j + 0.5) * dx_base;
+                    double z = (k + 0.5) * dx_base;
+
+                    // Distance to true rectangular center
+                    double r =
+                        std::sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy) +
+                                  (z - cz) * (z - cz));
+
+                    if (r <= R_inj) {
+                        inj_indices.push_back(static_cast<size_t>(i) * My * Mz +
+                                              j * Mz + k);
+                        inj_mass += rho_bg * cell_vol;
+                    }
                 }
+            }
+        }
+
+        double u_inj = E_total / inj_mass;
+        for (size_t idx : inj_indices) {
+            gas.internal_energy.data[idx] += rho_bg * u_inj;
+            gas.energy.data[idx] += rho_bg * u_inj;
+        }
+        gas.update_primitive_variables(state.scale_factor);
+
+    } else if (config.hydro_method == HydroMethod::MFM) {
+        if (!config.use_glass) {
+            int scale_x = static_cast<int>(std::round(Lx / L_base));
+            int scale_y = static_cast<int>(std::round(Ly / L_base));
+            int scale_z = static_cast<int>(std::round(Lz / L_base));
+
+            int N_x = N_res * scale_x;
+            int N_y = N_res * scale_y;
+            int N_z = N_res * scale_z;
+
+            double gas_particle_mass = rho_bg * (dx_base * dx_base * dx_base);
+            double initial_h = 2.0 * dx_base;
+
+            constexpr bool spread_over_8_particles = false;
+
+            // Calculate center indices per axis
+            auto get_bounds = [](int N, bool spread) {
+                if (spread && N % 2 == 0)
+                    return std::make_pair((N / 2) - 1, N / 2);
+                return std::make_pair(N / 2, N / 2);
+            };
+
+            auto [ix_min, ix_max] = get_bounds(N_x, spread_over_8_particles);
+            auto [iy_min, iy_max] = get_bounds(N_y, spread_over_8_particles);
+            auto [iz_min, iz_max] = get_bounds(N_z, spread_over_8_particles);
+
+            int num_central = (ix_max - ix_min + 1) * (iy_max - iy_min + 1) *
+                              (iz_max - iz_min + 1);
+
+            double offset = spread_over_8_particles ? 0.5 : 0.0;
+            double injected_E = E_total / num_central;
+            double added_u = injected_E / gas_particle_mass;
+
+            for (int i = 0; i < N_x; ++i) {
+                for (int j = 0; j < N_y; ++j) {
+                    for (int k = 0; k < N_z; ++k) {
+                        double p_x = (i + offset) * dx_base;
+                        double p_y = (j + offset) * dx_base;
+                        double p_z = (k + offset) * dx_base;
+
+                        double particle_u = u_bg;
+                        if (i >= ix_min && i <= ix_max && j >= iy_min &&
+                            j <= iy_max && k >= iz_min && k <= iz_max) {
+                            particle_u += added_u;
+                        }
+
+                        state.mfm_gas->add_particle(
+                            p_x, p_y, p_z, 0.0, 0.0, 0.0, gas_particle_mass,
+                            particle_u, initial_h, seed_metallicity);
+                    }
+                }
+            }
+        } else {
+            // Glass Initialization (Two-Pass Approach)
+            GlassData glass;
+            try {
+                glass = HDF5Reader::read_glass_cube("data/glassCube_64.hdf5");
+            } catch (const std::exception& e) {
+                return;
+            }
+
+            double vol_base = L_base * L_base * L_base;
+            double gas_particle_mass =
+                rho_bg * vol_base / static_cast<double>(glass.num_particles);
+
+            // 1. Tile the glass and collect valid coordinates
+            struct ParticleData {
+                Vec3 pos;
+                double r2;
+            };
+            std::vector<ParticleData> tiled_particles;
+
+            int n_tiles_x = static_cast<int>(std::ceil(Lx / L_base));
+            int n_tiles_y = static_cast<int>(std::ceil(Ly / L_base));
+            int n_tiles_z = static_cast<int>(std::ceil(Lz / L_base));
+
+            for (int tx = 0; tx < n_tiles_x; ++tx) {
+                for (int ty = 0; ty < n_tiles_y; ++ty) {
+                    for (int tz = 0; tz < n_tiles_z; ++tz) {
+                        for (size_t p = 0; p < glass.num_particles; ++p) {
+                            double px = tx * L_base + glass.pos_x[p] * L_base;
+                            double py = ty * L_base + glass.pos_y[p] * L_base;
+                            double pz = tz * L_base + glass.pos_z[p] * L_base;
+
+                            if (px < Lx && py < Ly && pz < Lz) {
+                                double dx2 = (px - cx) * (px - cx);
+                                double dy2 = (py - cy) * (py - cy);
+                                double dz2 = (pz - cz) * (pz - cz);
+                                tiled_particles.push_back(
+                                    {{px, py, pz}, dx2 + dy2 + dz2});
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Find the central N_inject particles
+            int N_inject = 15;
+            constexpr bool smooth_injection = true;
+
+            // Ensure we don't try to sort more particles than exist
+            N_inject =
+                std::min(N_inject, static_cast<int>(tiled_particles.size()));
+
+            std::partial_sort(tiled_particles.begin(),
+                              tiled_particles.begin() + N_inject,
+                              tiled_particles.end(),
+                              [](const ParticleData& a, const ParticleData& b) {
+                                  return a.r2 < b.r2;
+                              });
+
+            double r_max = std::sqrt(tiled_particles[N_inject - 1].r2);
+            double sigma = r_max / 2.0;
+            double two_sigma2 = 2.0 * sigma * sigma;
+
+            double total_weight = 0.0;
+            std::vector<double> weights(N_inject, 0.0);
+            for (int i = 0; i < N_inject; ++i) {
+                weights[i] = smooth_injection
+                                 ? std::exp(-tiled_particles[i].r2 / two_sigma2)
+                                 : 1.0 / static_cast<double>(N_inject);
+                total_weight += weights[i];
+            }
+
+            // Map injected energy to a flat array aligned with tiled_particles
+            std::vector<double> injected_u_map(tiled_particles.size(), 0.0);
+            for (int i = 0; i < N_inject; ++i) {
+                double E_i = E_total * (weights[i] / total_weight);
+                injected_u_map[i] = E_i / gas_particle_mass;
+            }
+
+            double dx_grid = L_base / static_cast<double>(64);
+            double initial_h = 2.0 * dx_grid;
+
+            // 3. Push to simulation state
+            for (size_t i = 0; i < tiled_particles.size(); ++i) {
+                double particle_u = u_bg + injected_u_map[i];
+                state.mfm_gas->add_particle(
+                    tiled_particles[i].pos.x, tiled_particles[i].pos.y,
+                    tiled_particles[i].pos.z, 0.0, 0.0, 0.0, gas_particle_mass,
+                    particle_u, initial_h, seed_metallicity);
             }
         }
     }
@@ -593,16 +951,21 @@ void initialize_adiabatic_expansion(SimState& state, const Config& config) {
 
     if (config.hydro_method == HydroMethod::Eulerian) {
         auto& gas = *state.gas;
-        int M = config.mesh_size;
 
-        // Calculate the uniform background density
+        // Extract multi-axis mesh dimensions
+        int Mx = static_cast<int>(config.mesh_size.x);
+        int My = static_cast<int>(config.mesh_size.y);
+        int Mz = static_cast<int>(config.mesh_size.z);
+
+        // Calculate the uniform background density based on the base volume
         double mean_gas_rho =
-            config.gas_total_mass / std::pow(config.domain_size, 3.0);
+            config.gas_total_mass / std::pow(config.domain_size_1d, 3.0);
 
-        for (int i = 0; i < M; ++i) {
-            for (int j = 0; j < M; ++j) {
-                for (int k = 0; k < M; ++k) {
-                    size_t idx = static_cast<size_t>(i) * M * M + j * M + k;
+        for (int i = 0; i < Mx; ++i) {
+            for (int j = 0; j < My; ++j) {
+                for (int k = 0; k < Mz; ++k) {
+                    // Correct 3D flattening for rectangular arrays
+                    size_t idx = static_cast<size_t>(i) * My * Mz + j * Mz + k;
 
                     // Uniform density and metallicity
                     gas.density.data[idx] = mean_gas_rho;
@@ -629,29 +992,43 @@ void initialize_adiabatic_expansion(SimState& state, const Config& config) {
         gas.update_primitive_variables(state.scale_factor);
 
     } else if (config.hydro_method == HydroMethod::MFM) {
-        int N_part = config.num_gas_particles_1d;
-        double spacing = config.domain_size / N_part;
+        // Calculate integer scaling multipliers for each axis
+        int scale_x =
+            static_cast<int>(config.domain_size.x / config.domain_size_1d);
+        int scale_y =
+            static_cast<int>(config.domain_size.y / config.domain_size_1d);
+        int scale_z =
+            static_cast<int>(config.domain_size.z / config.domain_size_1d);
+
+        // Scale the particle loops
+        int N_part_1d = config.num_gas_particles_1d;
+        int N_part_x = N_part_1d * scale_x;
+        int N_part_y = N_part_1d * scale_y;
+        int N_part_z = N_part_1d * scale_z;
+
+        double spacing = config.domain_size_1d / N_part_1d;
+
+        // Particle mass relies solely on the base 1D box setup
         double gas_particle_mass =
-            config.gas_total_mass / (N_part * N_part * N_part);
+            config.gas_total_mass / (N_part_1d * N_part_1d * N_part_1d);
 
         // Initial guess for smoothing length
         double initial_h = 1.2 * spacing;
 
-        for (int i = 0; i < N_part; ++i) {
-            for (int j = 0; j < N_part; ++j) {
-                for (int k = 0; k < N_part; ++k) {
-                    // Shift the gas lattice by half a spacing relative to DM to
-                    // avoid perfect overlap
+        for (int i = 0; i < N_part_x; ++i) {
+            for (int j = 0; j < N_part_y; ++j) {
+                for (int k = 0; k < N_part_z; ++k) {
+                    // Shift the gas lattice by half a spacing relative to DM
                     double qx = i * spacing;
                     double qy = j * spacing;
                     double qz = k * spacing;
 
                     double p_x =
-                        fmod(qx + config.domain_size, config.domain_size);
+                        fmod(qx + config.domain_size.x, config.domain_size.x);
                     double p_y =
-                        fmod(qy + config.domain_size, config.domain_size);
+                        fmod(qy + config.domain_size.y, config.domain_size.y);
                     double p_z =
-                        fmod(qz + config.domain_size, config.domain_size);
+                        fmod(qz + config.domain_size.z, config.domain_size.z);
 
                     state.mfm_gas->add_particle(
                         p_x, p_y, p_z, v_x, v_y, v_z, gas_particle_mass,
@@ -662,137 +1039,135 @@ void initialize_adiabatic_expansion(SimState& state, const Config& config) {
     }
 }
 
-void initialize_sedov_blastwave(SimState& state, const Config& config) {
-    // Sedov-Taylor parameters
-    double E_total = 1.0;
-    double rho_bg = 1.0;
-    double P_bg = 1e-6;  // Almost zero pressure for the background to create a
-                         // strong shock
+void initialize_soundwave(SimState& state, const Config& config) {
+    if (config.hydro_method != HydroMethod::MFM) return;
+
+    // Explicit domain dimensions
+    double Lx = config.domain_size.x;
+    double Ly = config.domain_size.y;
+    double Lz = config.domain_size.z;
+    double L_base = config.domain_size_1d;
+
+    // OG3 Soundwave Parameters (Groth et al. 2023)
+    double rho_0 = 1.0;
+    double delta_rho = 1e-4;
+    double c_s = 2.0 / 3.0;
     double gamma = config.gamma;
-    double u_bg = P_bg / (rho_bg * (gamma - 1.0));
+    double P_0 = (c_s * c_s * rho_0) / gamma;
+
+    // Wavenumber for a single period across the X-axis
+    double k_wave = 2.0 * M_PI / Lx;
     double seed_metallicity = 0.0;
-    double L = config.domain_size;
-    double center = L / 2.0;
 
-    // Define the injection radius
-    int N_res = (config.hydro_method == HydroMethod::Eulerian)
-                    ? config.mesh_size
-                    : config.num_gas_particles_1d;
-    double dx = L / static_cast<double>(N_res);
-    double R_inj = 2.0 * dx;
+    int N_part = config.num_gas_particles_1d;
+    double spacing = L_base / N_part;
 
-    if (config.hydro_method == HydroMethod::Eulerian) {
-        auto& gas = *state.gas;
-        int M = config.mesh_size;
+    // Calculate integer scaling multipliers for each axis
+    int N_x = N_part * static_cast<int>(std::round(Lx / L_base));
+    int N_y = N_part * static_cast<int>(std::round(Ly / L_base));
+    int N_z = N_part * static_cast<int>(std::round(Lz / L_base));
 
-        // Initialize uniform cold background
-        for (int i = 0; i < M; ++i) {
-            for (int j = 0; j < M; ++j) {
-                for (int k = 0; k < M; ++k) {
-                    size_t idx = static_cast<size_t>(i) * M * M + j * M + k;
-                    gas.density.data[idx] = rho_bg;
-                    gas.metal_density.data[idx] = 0.0;
-                    gas.velocity_x.data[idx] = 0.0;
-                    gas.velocity_y.data[idx] = 0.0;
-                    gas.velocity_z.data[idx] = 0.0;
-                    gas.momentum_x.data[idx] = 0.0;
-                    gas.momentum_y.data[idx] = 0.0;
-                    gas.momentum_z.data[idx] = 0.0;
-                    gas.internal_energy.data[idx] = rho_bg * u_bg;
-                    gas.energy.data[idx] = rho_bg * u_bg;
-                }
+    // Constant particle mass based on the unperturbed base background
+    double gas_particle_mass =
+        (rho_0 * L_base * L_base * L_base) / (N_part * N_part * N_part);
+    double initial_h = 1.2 * spacing;
+
+    for (int i = 0; i < N_x; ++i) {
+        for (int j = 0; j < N_y; ++j) {
+            for (int k_idx = 0; k_idx < N_z; ++k_idx) {
+                // Unperturbed Lagrangian coordinates
+                double qx = (i + 0.5) * spacing;
+                double qy = (j + 0.5) * spacing;
+                double qz = (k_idx + 0.5) * spacing;
+
+                // Apply Lagrangian spatial shift
+                double p_x =
+                    qx + (delta_rho / (k_wave * rho_0)) * std::cos(k_wave * qx);
+                double p_y = qy;
+                double p_z = qz;
+
+                // Wrap periodic boundaries along the specific axis
+                p_x = std::fmod(p_x + Lx, Lx);
+                p_y = std::fmod(p_y + Ly, Ly);
+                p_z = std::fmod(p_z + Lz, Lz);
+
+                // Thermodynamic and kinematic perturbations
+                double sin_kqx = std::sin(k_wave * qx);
+
+                // Left-moving wave velocity perturbation
+                double v_x = -c_s * (delta_rho / rho_0) * sin_kqx;
+                double v_y = 0.0;
+                double v_z = 0.0;
+
+                // Pressure perturbation
+                double P = P_0 + (c_s * c_s) * delta_rho * sin_kqx;
+                double rho_local = rho_0 + delta_rho * sin_kqx;
+
+                double u = P / ((gamma - 1.0) * rho_local);
+
+                state.mfm_gas->add_particle(p_x, p_y, p_z, v_x, v_y, v_z,
+                                            gas_particle_mass, u, initial_h,
+                                            seed_metallicity);
             }
         }
+    }
+}
 
-        // Inject energy into the central region
-        double cell_vol = dx * dx * dx;
-        double inj_mass = 0.0;
-        std::vector<size_t> inj_indices;
+void initialize_glass(SimState& state, const Config& config) {
+    if (config.hydro_method != HydroMethod::MFM) return;
 
-        for (int i = 0; i < M; ++i) {
-            for (int j = 0; j < M; ++j) {
-                for (int k = 0; k < M; ++k) {
-                    double x = (i + 0.5) * dx;
-                    double y = (j + 0.5) * dx;
-                    double z = (k + 0.5) * dx;
-                    double r = std::sqrt((x - center) * (x - center) +
-                                         (y - center) * (y - center) +
-                                         (z - center) * (z - center));
+    // Calculate integer scaling multipliers for each axis
+    int scale_x = static_cast<int>(
+        std::round(config.domain_size.x / config.domain_size_1d));
+    int scale_y = static_cast<int>(
+        std::round(config.domain_size.y / config.domain_size_1d));
+    int scale_z = static_cast<int>(
+        std::round(config.domain_size.z / config.domain_size_1d));
 
-                    if (r <= R_inj) {
-                        inj_indices.push_back(static_cast<size_t>(i) * M * M +
-                                              j * M + k);
-                        inj_mass += rho_bg * cell_vol;
-                    }
-                }
-            }
-        }
+    int N_part = config.num_gas_particles_1d;
+    size_t base_particles = static_cast<size_t>(N_part) * N_part * N_part;
 
-        // Distribute specific internal energy
-        double u_inj = E_total / inj_mass;
-        for (size_t idx : inj_indices) {
-            gas.internal_energy.data[idx] += rho_bg * u_inj;
-            gas.energy.data[idx] += rho_bg * u_inj;
-        }
-        gas.update_primitive_variables(state.scale_factor);
+    // Scale total particles so the global density remains exactly the same
+    size_t total_particles = base_particles * scale_x * scale_y * scale_z;
 
-    } else if (config.hydro_method == HydroMethod::MFM) {
-        // Use a Simple Cubic lattice (regular grid)
-        // matching the OpenGadget3 Sedov blastwave setup
-        int M = N_res;
-        if (M < 1) M = 1;
+    // Particle mass relies solely on the base 1D box setup
+    // (ensuring invariant density regardless of rectangular scaling)
+    double gas_particle_mass =
+        config.gas_total_mass / static_cast<double>(base_particles);
 
-        double dx = L / static_cast<double>(M);
-        int total_particles = M * M * M;
-        double gas_particle_mass =
-            rho_bg * (L * L * L) / static_cast<double>(total_particles);
-        double initial_h = 2.0 * dx;
+    double spacing = config.domain_size_1d / N_part;
 
-        // Toggle to replicate OpenGadget3's 8-particle split
-        // Set to false to force all energy into 1 particle
-        constexpr bool spread_over_8_particles = true;
+    double initial_h = 1.2 * spacing;
+    double seed_metallicity = 0.0;
 
-        int i_min, i_max, num_central;
+    const double initial_internal_energy =
+        Cooling::get_internal_energy_from_temp(1e8, 1.0, config);
 
-        if (spread_over_8_particles) {
-            // Even grids get the 8 central particles, odd grids get the 1
-            // center
-            i_min = (M % 2 == 0) ? (M / 2) - 1 : (M / 2);
-            i_max = M / 2;
-            num_central = (M % 2 == 0) ? 8 : 1;
-        } else {
-            // Force 1 central particle at the (M/2) index
-            i_min = M / 2;
-            i_max = M / 2;
-            num_central = 1;
-        }
+    // Initialize the random number generator
+    std::default_random_engine generator(config.seed);
 
-        double injected_E = E_total / num_central;
-        double added_u = injected_E / gas_particle_mass;
+    // Create independent uniform distributions for each axis
+    std::uniform_real_distribution<double> dist_x(0.0, config.domain_size.x);
+    std::uniform_real_distribution<double> dist_y(0.0, config.domain_size.y);
+    std::uniform_real_distribution<double> dist_z(0.0, config.domain_size.z);
 
-        for (int i = 0; i < M; ++i) {
-            for (int j = 0; j < M; ++j) {
-                for (int k = 0; k < M; ++k) {
-                    // Place particles at cell centers
-                    double p_x = (i + 0.5) * dx;
-                    double p_y = (j + 0.5) * dx;
-                    double p_z = (k + 0.5) * dx;
+    for (size_t i = 0; i < total_particles; ++i) {
+        // Sample random coordinates within the true rectangular box
+        double p_x = dist_x(generator);
+        double p_y = dist_y(generator);
+        double p_z = dist_z(generator);
 
-                    double particle_u = u_bg;
+        // Ensure particles are strictly bounded within [0, domain_size)
+        // (uniform_real_distribution can occasionally return the upper bound
+        // due to floating point math)
+        if (p_x >= config.domain_size.x) p_x -= 1e-10;
+        if (p_y >= config.domain_size.y) p_y -= 1e-10;
+        if (p_z >= config.domain_size.z) p_z -= 1e-10;
 
-                    // If the index falls in the central cluster, inject the
-                    // blast energy
-                    if (i >= i_min && i <= i_max && j >= i_min && j <= i_max &&
-                        k >= i_min && k <= i_max) {
-                        particle_u += added_u;
-                    }
-
-                    state.mfm_gas->add_particle(p_x, p_y, p_z, 0.0, 0.0, 0.0,
-                                                gas_particle_mass, particle_u,
-                                                initial_h, seed_metallicity);
-                }
-            }
-        }
+        state.mfm_gas->add_particle(p_x, p_y, p_z, 0.0, 0.0,
+                                    0.0,  // Initial velocity is zero
+                                    gas_particle_mass, initial_internal_energy,
+                                    initial_h, seed_metallicity);
     }
 }
 
@@ -820,6 +1195,10 @@ SimState initialize_state(Config& config) {
         initialize_adiabatic_expansion(state, config);
     } else if (config.initial_setup == InitialSetup::SedovBlastwave) {
         initialize_sedov_blastwave(state, config);
+    } else if (config.initial_setup == InitialSetup::SoundWave) {
+        initialize_soundwave(state, config);
+    } else if (config.initial_setup == InitialSetup::Glass) {
+        initialize_glass(state, config);
     }
 
     config.expanding_universe = prev_expanding_universe;
@@ -827,6 +1206,7 @@ SimState initialize_state(Config& config) {
 
     // Compute initial MFM properties before forces are calculated
     if (config.hydro_method == HydroMethod::MFM) {
+        state.mfm_gas->build_lbvh(config);
         state.mfm_gas->compute_density_and_h(config, state.dm);
         state.mfm_gas->bin_and_assign_mass(config);
         state.mfm_gas->update_primitive_variables(config, state.scale_factor);

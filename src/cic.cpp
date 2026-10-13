@@ -18,7 +18,9 @@ void bin_and_assign_mass(const Config& config, size_t num_particles,
     out_rho_grid.setZero();
     out_cic_data.assign(num_particles, {});
 
-    int N = config.mesh_size;
+    int Nx = config.mesh_size.x;
+    int Ny = config.mesh_size.y;
+    int Nz = config.mesh_size.z;
     double inv_cell_size = 1.0 / config.cell_size;
 
     // Calculate cells & densities
@@ -33,9 +35,12 @@ void bin_and_assign_mass(const Config& config, size_t num_particles,
         double shifted_z = pz - 0.5 * config.cell_size;
 
         // Ensure periodic wrap-around bounds[cite: 13, 15]
-        shifted_x = fmod(shifted_x + config.domain_size, config.domain_size);
-        shifted_y = fmod(shifted_y + config.domain_size, config.domain_size);
-        shifted_z = fmod(shifted_z + config.domain_size, config.domain_size);
+        shifted_x =
+            fmod(shifted_x + config.domain_size.x, config.domain_size.x);
+        shifted_y =
+            fmod(shifted_y + config.domain_size.y, config.domain_size.y);
+        shifted_z =
+            fmod(shifted_z + config.domain_size.z, config.domain_size.z);
 
         int ix = static_cast<int>(shifted_x * inv_cell_size);
         int iy = static_cast<int>(shifted_y * inv_cell_size);
@@ -58,9 +63,9 @@ void bin_and_assign_mass(const Config& config, size_t num_particles,
         out_cic_data[i] = {ix,   iy,   iz,   w000, w100, w010,
                            w110, w001, w101, w011, w111};
 
-        int ix0 = (ix + N) % N, ix1 = (ix + 1 + N) % N;
-        int iy0 = (iy + N) % N, iy1 = (iy + 1 + N) % N;
-        int iz0 = (iz + N) % N, iz1 = (iz + 1 + N) % N;
+        int ix0 = (ix + Nx) % Nx, ix1 = (ix + 1 + Nx) % Nx;
+        int iy0 = (iy + Ny) % Ny, iy1 = (iy + 1 + Ny) % Ny;
+        int iz0 = (iz + Nz) % Nz, iz1 = (iz + 1 + Nz) % Nz;
 
         double m = mass[i];
         out_rho_grid(ix0, iy0, iz0) += m * w000;
@@ -84,15 +89,17 @@ void interpolate_forces(const Config& config, size_t num_particles,
                         std::vector<double>& acc_z) {
     if (num_particles == 0) return;
 
-    const int N = config.mesh_size;
+    const int Nx = config.mesh_size.x;
+    const int Ny = config.mesh_size.y;
+    const int Nz = config.mesh_size.z;
 
 #pragma omp parallel for schedule(static)
     for (size_t i = 0; i < num_particles; ++i) {
         const auto& cd = cic_data[i];
 
-        int ix0 = (cd.ix + N) % N, ix1 = (cd.ix + 1 + N) % N;
-        int iy0 = (cd.iy + N) % N, iy1 = (cd.iy + 1 + N) % N;
-        int iz0 = (cd.iz + N) % N, iz1 = (cd.iz + 1 + N) % N;
+        int ix0 = (cd.ix + Nx) % Nx, ix1 = (cd.ix + 1 + Nx) % Nx;
+        int iy0 = (cd.iy + Ny) % Ny, iy1 = (cd.iy + 1 + Ny) % Ny;
+        int iz0 = (cd.iz + Nz) % Nz, iz1 = (cd.iz + 1 + Nz) % Nz;
 
         // Gather force from the 8 intersecting grid nodes
         auto interp = [&](const Grid3D& grid) {

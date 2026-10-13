@@ -197,12 +197,12 @@ Defines the cosmological model of the universe.
 
 Controls the generation of the primordial density field and particle distributions.
 
-* **`setup`**: Initial configuration for gas and DM. Can be "cosmological" for a normal simulation, but also "sod_shock_tube", "adiabatic_expansion" or "sedov_blastwave" to create initial conditions for these specific tests. In these cases, gravity and DM will be automatically disabled and expansion adjusted according to the specific test.
+* **`setup`**: Initial configuration for gas and DM. Can be "cosmological" for a normal simulation, but also "sound_wave", "sod_shock_tube", "adiabatic_expansion" or "sedov_blastwave" to create initial conditions for these specific tests. In these cases, gravity and DM will be automatically disabled and expansion adjusted according to the specific test. If set to "glass", the simulation will use MFM to generate a glass using the gas particles.
+* **`use_glass`**: Will use glass files to generate the initial conditions when available. These must be located in the `data` folder and can be donwloaded [`here`](https://virgodb.cosma.dur.ac.uk/swift-webstorage/ICs/).
 * **`initial_gas_temp_k`**: The physical temperature of the baryonic gas at `start_a`, in Kelvin.
 * **`seed_metallicity_solar`**: The initial uniform metallicity mass fraction (Z) of the gas, expressed as a ratio to the present-day solar metallicity ($Z\odot$). Typically set to 0.0.
 * **`fixed_ics`**: Boolean. If `true`, the Zeldovich field is generated with the exact theoretical power amplitude (while keeping random phases). If false, it defaults to traditional Gaussian random amplitudes and phases.
 * **`invert_phases`**: Boolean. If `true`, the random phases are inverted when generating the Zeldovich field. Running paired simulations with `fixed_ics = true` and inverted phases eliminates in-box cosmic variance.
-* **`standing_particles`**: Boolean. If `true`, all N-body particles remain completely stationary throughout the entire duration of the simulation. Their positions and velocities are never updated. This is strictly a debugging feature.
 * **`seed`**: Integer seed for the random number generator, ensuring reproducible initial density fields.
 
 ### `[hydro]`
@@ -222,6 +222,8 @@ Configures the fluid dynamics solver for the baryonic gas.
 * **`mfm_target_neighbors`**: The desired effective number of interacting particles enclosed within the smoothing kernel of each gas particle (typically 32).
 * **`mfm_neighbor_tolerance`**: The acceptable deviation from the target number of neighbors (e.g., 0.1). A tighter tolerance improves accuracy but may require more iterations.
 * **`mfm_max_iterations`**: The maximum number of Newton-Raphson iterations the solver is allowed to perform when dynamically adjusting a particle's smoothing length to hit the target number of neighbors.
+* **`dual_energy_threshold`**: Threshold to activate the dual energy formalism. If the internal energy falls below this threshold of the kinetic energy, the fallback is triggered.
+* **`use_exact_riemann`**: Use an exact Riemann solver instead of the default HLLC.
 
 ### `[subgrid]`
 
@@ -239,6 +241,7 @@ Controls the adaptive timestepping and integration limits.
 * **`cfl_safety_factor`**: The Courant-Friedrichs-Lewy (CFL) number. Restricts the hydrodynamics timestep to ensure information does not travel further than one grid cell per step (must be < 1.0, typically `0.3`).
 * **`a_start`**: The scale factor at which the simulation begins (e.g., `0.02` corresponds to redshift z = 49).
 * **`a_end`**: The scale factor at which the simulation terminates. Set to `1.0` to run up to the present day (z = 0).
+* **`individual_particle_time`**: Only when using MFM. Enables individual particle timesteps for gas and dark matter. Particles are binned into a synchronized power-of-two time hierarchy based on their local physics. If disabled, the entire simulation advances on the global macro-step.
 
 ### `[output]`
 

@@ -35,7 +35,8 @@ double Diagnostics::get_io_time() const {
 double Diagnostics::get_average_overhead() const {
     double total_physics =
         get_average(TimerRegion::PM) + get_average(TimerRegion::PP) +
-        get_average(TimerRegion::Hydro) + get_average(TimerRegion::Cool);
+        get_average(TimerRegion::Hydro) + get_average(TimerRegion::Cool) +
+        get_average(TimerRegion::Tree) + get_average(TimerRegion::Density);
     return get_average(TimerRegion::Step) - total_physics;
 }
 
@@ -81,8 +82,7 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
         this->total_momentum_gas.z() =
             gas.get_momentum_z().sum() * config.cell_volume;
 
-        int total_cells =
-            config.mesh_size * config.mesh_size * config.mesh_size;
+        int total_cells = gas.get_density().size();
         Grid3D ke_gas_density(config.mesh_size);
         ke_gas_density.data = 0.5 * (gas.get_momentum_x().array().square() +
                                      gas.get_momentum_y().array().square() +
@@ -161,7 +161,7 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
     // Grid PM potential energy
     double w_code = 0.0;
 
-    int total_cells = config.mesh_size * config.mesh_size * config.mesh_size;
+    int total_cells = state.total_rho.data.size();
     double n3_inv = 1.0 / static_cast<double>(total_cells);
 #pragma omp parallel for reduction(+ : w_code)
     for (int i = 0; i < total_cells; ++i) {
@@ -244,9 +244,29 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
         total_heated_energy = e_heat;
 
         this->MFM_ill_conditioned_cases = gas.ill_conditioned_cases;
-        //gas.ill_conditioned_cases = 0;
+        // gas.ill_conditioned_cases = 0;
         this->MFM_h_non_converged_cases = gas.non_converged_h_cases;
-        //gas.non_converged_h_cases = 0;
+        // gas.non_converged_h_cases = 0;
+        this->MFM_neighbor_increased_cases = gas.neighbor_increased_cases;
+        percent_particles_updated =
+            gas.get_active_particles_per_cycle_and_reset(config) * 100.0;
+        this->MFM_sph_fallback_cases = gas.sph_fallback_cases;
+
+        double total_sim_volume = 0.0;
+#pragma omp parallel for reduction(+ : total_sim_volume)
+        for (size_t i = 0; i < gas.num_particles; ++i) {
+            // Avoid division by zero for vacuum particles
+            total_sim_volume += gas.mass[i] / std::max(gas.rho[i], 1e-12);
+        }
+
+        double box_volume =
+            config.domain_size.x * config.domain_size.y * config.domain_size.z;
+        volume_error = (total_sim_volume / box_volume) - 1.0;
+
+        auto hce = gas.diagnose_hydro_conservation_error();
+        mfm_flux_energy_error = hce.energy_error_rate;
+        mfm_flux_momentum_error = hce.momentum_error_rate.norm();
+
     } else {
         this->energy_err = 0.0;
     }
