@@ -8,7 +8,6 @@
 #include "reconstruction.h"
 
 #define USE_ADAPTIVE_SOFTENING
-#define USE_HALF_STEP_PREDICTION
 
 class Cooling;
 
@@ -128,14 +127,12 @@ class GasParticleSystem {
     size_t num_active = 0;
     double global_time = 0.0;
 
-#ifdef USE_HALF_STEP_PREDICTION
     std::vector<double> vel_x_pred;
     std::vector<double> vel_y_pred;
     std::vector<double> vel_z_pred;
     std::vector<double> pressure_pred;
 
     void predict_primitive_variables(const Config& config, double a);
-#endif
 
     GasParticleSystem(const Config& config);
 

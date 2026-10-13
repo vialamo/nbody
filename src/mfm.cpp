@@ -56,12 +56,10 @@ GasParticleSystem::GasParticleSystem(const Config& config)
     zeta.reserve(config.num_gas_particles);
 #endif
 
-#ifdef USE_HALF_STEP_PREDICTION
     vel_x_pred.reserve(config.num_gas_particles);
     vel_y_pred.reserve(config.num_gas_particles);
     vel_z_pred.reserve(config.num_gas_particles);
     pressure_pred.reserve(config.num_gas_particles);
-#endif
 
     v_sig_max.reserve(config.num_gas_particles);
     cond_num.reserve(config.num_gas_particles);
@@ -123,12 +121,10 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
     zeta.push_back(0.0);
 #endif
 
-#ifdef USE_HALF_STEP_PREDICTION
     vel_x_pred.push_back(vx);
     vel_y_pred.push_back(vy);
     vel_z_pred.push_back(vz);
     pressure_pred.push_back(0.0);
-#endif
 
     v_sig_max.push_back(0.0);
 
@@ -182,11 +178,9 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
 #ifdef USE_ADAPTIVE_SOFTENING
     std::vector<double> new_zeta(num_particles);
 #endif
-
-#ifdef USE_HALF_STEP_PREDICTION
     std::vector<double> new_vxp(num_particles), new_vyp(num_particles),
         new_vzp(num_particles), new_ppred(num_particles);
-#endif
+
     std::vector<double> new_entropy(num_particles);
     std::vector<double> new_max_rel_ke(num_particles);
     std::vector<double> new_delta_E_grav(num_particles);
@@ -234,12 +228,11 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
 #ifdef USE_ADAPTIVE_SOFTENING
         new_zeta[i] = zeta[src];
 #endif
-#ifdef USE_HALF_STEP_PREDICTION
         new_vxp[i] = vel_x_pred[src];
         new_vyp[i] = vel_y_pred[src];
         new_vzp[i] = vel_z_pred[src];
         new_ppred[i] = pressure_pred[src];
-#endif
+
         new_entropy[i] = entropy[src];
         new_max_rel_ke[i] = max_rel_ke[src];
         new_delta_E_grav[i] = delta_E_grav[src];
@@ -285,12 +278,12 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
 #ifdef USE_ADAPTIVE_SOFTENING
     zeta = std::move(new_zeta);
 #endif
-#ifdef USE_HALF_STEP_PREDICTION
+
     vel_x_pred = std::move(new_vxp);
     vel_y_pred = std::move(new_vyp);
     vel_z_pred = std::move(new_vzp);
     pressure_pred = std::move(new_ppred);
-#endif
+
     entropy = std::move(new_entropy);
     max_rel_ke = std::move(new_max_rel_ke);
     delta_E_grav = std::move(new_delta_E_grav);
@@ -1706,9 +1699,9 @@ void GasParticleSystem::compute_cross_pp_forces(double a, ParticleSystem& dm,
 void GasParticleSystem::hydro_step(const Config& config, double a, double H,
                                    double dt) {
     update_primitive_variables(config, a);
-#ifdef USE_HALF_STEP_PREDICTION
+
     predict_primitive_variables(config, a);
-#endif
+
     compute_gradients(config);
     compute_hydro_forces(config, a, dt);
 }
@@ -1799,7 +1792,6 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
     accumulated_entropy_switch_energy += step_entropy_switch;
 }
 
-#ifdef USE_HALF_STEP_PREDICTION
 void GasParticleSystem::predict_primitive_variables(const Config& config,
                                                     double a) {
     if (num_active == 0) return;
@@ -1827,7 +1819,6 @@ void GasParticleSystem::predict_primitive_variables(const Config& config,
         pressure_pred[i] = gamma_minus_1 * rho[i] * u_pred_i;
     }
 }
-#endif
 
 void GasParticleSystem::compute_gradients(const Config& config) {
     if (num_particles == 0) return;
@@ -1836,18 +1827,11 @@ void GasParticleSystem::compute_gradients(const Config& config) {
 
     if (num_active == 0) return;
 
-#ifdef USE_HALF_STEP_PREDICTION
     Reconstruction::FluidStateArrays system_data{
         pos_x.data(),      pos_y.data(),      pos_z.data(),
         vel_x_pred.data(), vel_y_pred.data(), vel_z_pred.data(),
         mass.data(),       rho.data(),        pressure_pred.data(),
         h.data(),          cond_num.data()};
-#else
-    Reconstruction::FluidStateArrays system_data{
-        pos_x.data(),    pos_y.data(), pos_z.data(),   vel_x.data(),
-        vel_y.data(),    vel_z.data(), mass.data(),    rho.data(),
-        pressure.data(), h.data(),     cond_num.data()};
-#endif
 
     bool debug_printed = false;
 
@@ -2247,13 +2231,8 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
         p_i.mass = mass[i];
         p_i.rho = rho[i];
         p_i.h = h[i];
-#ifdef USE_HALF_STEP_PREDICTION
         p_i.vel = Eigen::Vector3d(vel_x_pred[i], vel_y_pred[i], vel_z_pred[i]);
         p_i.pressure = pressure_pred[i];
-#else
-        p_i.vel = Eigen::Vector3d(vel_x[i], vel_y[i], vel_z[i]);
-        p_i.pressure = pressure[i];
-#endif
 
         Reconstruction::ParticleGradients grad_i;
         grad_i.grad_rho = grad_rho[i];
@@ -2308,14 +2287,9 @@ void GasParticleSystem::compute_hydro_forces(const Config& config, double a,
                     p_j.mass = mass[j];
                     p_j.rho = rho[j];
                     p_j.h = h[j];
-#ifdef USE_HALF_STEP_PREDICTION
                     p_j.vel = Eigen::Vector3d(vel_x_pred[j], vel_y_pred[j],
                                               vel_z_pred[j]);
                     p_j.pressure = pressure_pred[j];
-#else
-                    p_j.vel = Eigen::Vector3d(vel_x[j], vel_y[j], vel_z[j]);
-                    p_j.pressure = pressure[j];
-#endif
 
                     Reconstruction::ParticleGradients grad_j;
                     grad_j.grad_rho = grad_rho[j];
