@@ -115,9 +115,7 @@ void SimulationEngine::step() {
 
     bool fixed_scale_output =
         (!config.expanding_universe && cycle_count % 4 == 0);
-    if (config.initial_setup == InitialSetup::Glass) {
-        fixed_scale_output = (cycle_count % 64 == 0);
-    } else if (config.initial_setup == InitialSetup::SedovBlastwave ||
+    if (config.initial_setup == InitialSetup::SedovBlastwave ||
                config.initial_setup == InitialSetup::SodShockTube) {
         fixed_scale_output = fixed_scale_output || (cycle_count < 30);
     }

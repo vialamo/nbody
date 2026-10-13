@@ -676,10 +676,6 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
                                       state.scale_factor, config, false);
     }
 
-    if (config.initial_setup == InitialSetup::Glass) {
-        state.mfm_gas->reset_velocities();
-    }
-
     // SYNCHRONIZATION BEFORE I/O AND DIAGNOSTICS
     // Force the primitive variables (u, pressure, entropy) to conform
     // to the kicked conservative variables (total_energy and velocity)

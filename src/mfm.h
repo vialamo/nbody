@@ -193,8 +193,6 @@ class GasParticleSystem {
 
     double get_active_particles_per_cycle_and_reset(const Config& config);
 
-    void reset_velocities();
-
     HydroConservationError diagnose_hydro_conservation_error() const;
 
    private:

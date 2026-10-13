@@ -2481,17 +2481,6 @@ double GasParticleSystem::get_active_particles_per_cycle_and_reset(
     return percent_particles_updated;
 }
 
-void GasParticleSystem::reset_velocities() {
-    double damping_factor = 0.9;
-
-#pragma omp parallel for schedule(dynamic, 64)
-    for (size_t i = 0; i < num_particles; ++i) {
-        vel_x[i] *= damping_factor;
-        vel_y[i] *= damping_factor;
-        vel_z[i] *= damping_factor;
-    }
-}
-
 HydroConservationError GasParticleSystem::diagnose_hydro_conservation_error()
     const {
     double net_fx = 0.0;

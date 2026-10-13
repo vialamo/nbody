@@ -130,17 +130,6 @@ void Config::compute_derived_data() {
         mesh_size.x *= 4.0;
         box_size_mpc.x *= 4.0;
         a_end = 6.0;
-    } else if (initial_setup == InitialSetup::Glass) {
-        hydro_method = HydroMethod::MFM;
-        expanding_universe = false;
-        enable_cooling = false;
-        use_PM = false;
-        use_PP = false;
-        num_particles_1d = 0;
-        omega_lambda = 0.0;
-        omega_m = 1.0;
-        omega_baryon = 1.0;
-        total_mass = 1.0;
     }
 
     cell_size = domain_size_1d / mesh_size_1d;

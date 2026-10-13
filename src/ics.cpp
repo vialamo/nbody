@@ -1113,64 +1113,6 @@ void initialize_soundwave(SimState& state, const Config& config) {
     }
 }
 
-void initialize_glass(SimState& state, const Config& config) {
-    if (config.hydro_method != HydroMethod::MFM) return;
-
-    // Calculate integer scaling multipliers for each axis
-    int scale_x = static_cast<int>(
-        std::round(config.domain_size.x / config.domain_size_1d));
-    int scale_y = static_cast<int>(
-        std::round(config.domain_size.y / config.domain_size_1d));
-    int scale_z = static_cast<int>(
-        std::round(config.domain_size.z / config.domain_size_1d));
-
-    int N_part = config.num_gas_particles_1d;
-    size_t base_particles = static_cast<size_t>(N_part) * N_part * N_part;
-
-    // Scale total particles so the global density remains exactly the same
-    size_t total_particles = base_particles * scale_x * scale_y * scale_z;
-
-    // Particle mass relies solely on the base 1D box setup
-    // (ensuring invariant density regardless of rectangular scaling)
-    double gas_particle_mass =
-        config.gas_total_mass / static_cast<double>(base_particles);
-
-    double spacing = config.domain_size_1d / N_part;
-
-    double initial_h = 1.2 * spacing;
-    double seed_metallicity = 0.0;
-
-    const double initial_internal_energy =
-        Cooling::get_internal_energy_from_temp(1e8, 1.0, config);
-
-    // Initialize the random number generator
-    std::default_random_engine generator(config.seed);
-
-    // Create independent uniform distributions for each axis
-    std::uniform_real_distribution<double> dist_x(0.0, config.domain_size.x);
-    std::uniform_real_distribution<double> dist_y(0.0, config.domain_size.y);
-    std::uniform_real_distribution<double> dist_z(0.0, config.domain_size.z);
-
-    for (size_t i = 0; i < total_particles; ++i) {
-        // Sample random coordinates within the true rectangular box
-        double p_x = dist_x(generator);
-        double p_y = dist_y(generator);
-        double p_z = dist_z(generator);
-
-        // Ensure particles are strictly bounded within [0, domain_size)
-        // (uniform_real_distribution can occasionally return the upper bound
-        // due to floating point math)
-        if (p_x >= config.domain_size.x) p_x -= 1e-10;
-        if (p_y >= config.domain_size.y) p_y -= 1e-10;
-        if (p_z >= config.domain_size.z) p_z -= 1e-10;
-
-        state.mfm_gas->add_particle(p_x, p_y, p_z, 0.0, 0.0,
-                                    0.0,  // Initial velocity is zero
-                                    gas_particle_mass, initial_internal_energy,
-                                    initial_h, seed_metallicity);
-    }
-}
-
 SimState initialize_state(Config& config) {
     SimState state(config);
     state.total_time = 0;
@@ -1197,8 +1139,6 @@ SimState initialize_state(Config& config) {
         initialize_sedov_blastwave(state, config);
     } else if (config.initial_setup == InitialSetup::SoundWave) {
         initialize_soundwave(state, config);
-    } else if (config.initial_setup == InitialSetup::Glass) {
-        initialize_glass(state, config);
     }
 
     config.expanding_universe = prev_expanding_universe;
