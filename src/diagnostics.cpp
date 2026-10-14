@@ -47,7 +47,6 @@ double Diagnostics::get_prof_average(ProfRegion region) const {
 
 void Diagnostics::reset_accumulators() {
     accumulated_times.fill(0.0);
-    accumulated_substeps.fill(0);
     accumulated_prof.fill(0.0);
     accumulated_cycles = 0;
 }

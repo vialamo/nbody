@@ -92,7 +92,6 @@ class GasGrid {
     friend void initialize_sedov_blastwave(SimState& state,
                                            const Config& config);
 
-    void update_primitive_variables(double a);
     void compute_and_apply_fluxes(double dt, double a);
 
    public:
@@ -142,4 +141,6 @@ class GasGrid {
     void add_expansion_work(double w) { accumulated_expansion_work += w; }
 
     Grid3D compute_thermal_timescale(double a, const Cooling& cooling) const;
+    
+    void update_primitive_variables(double a);
 };

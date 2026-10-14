@@ -83,8 +83,7 @@ void Logger::write_header() {
         << "wall_time_total,wall_time_pm,wall_time_pp,wall_time_hydro,"
            "wall_time_cooling,wall_time_tree,wall_time_density,wall_time_io,"
            "cumulative_wall_time,wall_time_GPU_transf,wall_time_GPU_back,"
-           "wall_time_GPU_compute,memory_peak,memory_current,"
-        << "avg_substeps_hydro,avg_substeps_gravity,avg_substeps_cooling\n";
+           "wall_time_GPU_compute,memory_peak,memory_current\n";
     header_written = true;
 }
 
@@ -129,10 +128,7 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
                  << diag.get_prof_average(ProfRegion::Transf) / 1000.0 << ","
                  << diag.get_prof_average(ProfRegion::Ret) / 1000.0 << ","
                  << diag.get_prof_average(ProfRegion::Compute) / 1000.0 << ","
-                 << peak_mem << "," << curr_mem << ","
-                 << diag.get_average_substeps(SubstepCounter::Hydro) << ","
-                 << diag.get_average_substeps(SubstepCounter::Gravity) << ","
-                 << diag.get_average_substeps(SubstepCounter::Cool) << "\n";
+                 << peak_mem << "," << curr_mem << "\n";
     }
 
     // Write to stdout (console)

@@ -3,7 +3,7 @@
 #include <H5Cpp.h>
 
 #include <algorithm>  // For std::max, std::min
-#include <atomic>
+//#include <atomic>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>

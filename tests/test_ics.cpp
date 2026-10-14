@@ -221,7 +221,7 @@ TEST_CASE("Peculiar velocities exactly obey Zel'dovich kinematics",
     }
 }
 
-TEST_CASE("Zeldovich field has exactly zero mean (k=0 mode is dead)",
+TEST_CASE("Zeldovich field has zero mean (k=0 mode is dead)",
           "[ics][math]") {
     Config config;
     config.mesh_size_1d = 32;

@@ -3,11 +3,11 @@
 #include <chrono>
 #include <iostream>
 
-#include "cic.h"
 #include "constants.h"
 #include "diagnostics.h"
 #include "gravity.h"
 #include "hydro.h"
+#include "integrator.h"
 #include "kernels.h"
 #include "math_utils.h"
 
@@ -323,7 +323,7 @@ void GasParticleSystem::build_lbvh(const Config& config) {
                                        &h, morton_codes, bvh_nodes);
 }
 
-void GasParticleSystem::apply_cooling(double dt, double a, const Config& config,
+void GasParticleSystem::apply_cooling(double a, const Config& config,
                                       Cooling& cooling) {
     if (!config.enable_cooling) return;
 
@@ -548,39 +548,6 @@ double GasParticleSystem::get_cooling_timestep(double a, const Config& config,
     }
 }
 
-void GasParticleSystem::kick_particle_hydro(size_t i, double dt,
-                                            const Config& config) {
-    double gamma_minus_1 = config.gamma - 1.0;
-    constexpr double min_energy = 1e-20;
-
-    double m = mass[i];
-    double vx_old = vel_x[i];
-    double vy_old = vel_y[i];
-    double vz_old = vel_z[i];
-    double ke_old =
-        0.5 * m * (vx_old * vx_old + vy_old * vy_old + vz_old * vz_old);
-
-    vel_x[i] += hydro_acc_x[i] * dt;
-    vel_y[i] += hydro_acc_y[i] * dt;
-    vel_z[i] += hydro_acc_z[i] * dt;
-
-    double ke_new =
-        0.5 * m *
-        (vel_x[i] * vel_x[i] + vel_y[i] * vel_y[i] + vel_z[i] * vel_z[i]);
-    double delta_ke = ke_new - ke_old;
-
-    double delta_u = du_dt[i] * dt;
-    u[i] += delta_u;
-
-    total_energy[i] += de_dt[i] * dt;
-
-    if (u[i] < min_energy) u[i] = min_energy;
-    if (total_energy[i] < min_energy) total_energy[i] = min_energy;
-
-    entropy[i] = gamma_minus_1 * u[i] / std::pow(rho[i], gamma_minus_1);
-    pressure[i] = gamma_minus_1 * rho[i] * u[i];
-}
-
 void GasParticleSystem::sync_and_activate(double dt, double a, double H,
                                           const Config& config) {
     if (!config.individual_particle_timesteps) {
@@ -615,8 +582,8 @@ void GasParticleSystem::sync_and_activate(double dt, double a, double H,
             // Rewind kicks using negative time
             // Note that we should better compute the a and H which
             // originally kicked the particle
-            kick_particle_hydro(i, -dt_excess, config);
-            KickWork w_grav = GravitySolver::kick_particle_gravity(
+            kick_single_gas_particle_hydro(*this, i, -dt_excess, config);
+            KickWork w_grav = kick_single_gas_particle_gravity(
                 *this, i, -dt_excess, a, H, config);
 
             // Adjust global accumulators (adding negative work subtracts the
@@ -745,14 +712,13 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
     }
 }
 
-void GasParticleSystem::hydro_step(const Config& config, double a, double H,
-                                   double dt) {
+void GasParticleSystem::hydro_step(const Config& config, double a) {
     update_primitive_variables(config, a);
 
     predict_primitive_variables(config, a);
 
     HydroSolver::compute_gradients(*this, config);
-    HydroSolver::compute_hydro_forces(*this, config, a, dt);
+    HydroSolver::compute_hydro_forces(*this, config, a);
 }
 
 void GasParticleSystem::update_primitive_variables(const Config& config,

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "cosmology.h"
 #include "gas.h"
 #include "gravity.h"
 #include "ics.h"
@@ -45,7 +46,8 @@ TimestepInfo SimulationEngine::get_timestep() const {
         ts.dt_hydro = std::numeric_limits<double>::infinity();
     }
 
-    double dt_grav_dm = state.dm.get_gravity_timestep(config);
+    double dt_grav_dm = GravitySolver::get_gravity_timestep(
+        state.dm, config);  // state.dm.get_gravity_timestep(config);
     double dt_grav_mfm = std::numeric_limits<double>::infinity();
     if (config.hydro_method == HydroMethod::MFM) {
         dt_grav_mfm =

@@ -13,11 +13,6 @@ constexpr double N_cond_crit = 100.0;
 
 class Cooling;
 
-struct KickWork {
-    double grav_work = 0.0;
-    double exp_work = 0.0;
-};
-
 class GasParticleSystem {
    public:
     size_t num_particles = 0;
@@ -139,11 +134,9 @@ class GasParticleSystem {
 
     const Grid3D& get_rho() const { return gas_rho; }
 
-    void apply_cooling(double dt, double a, const Config& config,
-                       Cooling& cooling);
+    void apply_cooling(double a, const Config& config, Cooling& cooling);
 
     // Time step calculations
-    /*double get_gravity_timestep(const Config& config) const;*/
     double get_cfl_timestep(double a, const Config& config) const;
     double get_cooling_timestep(double a, const Config& config,
                                 Cooling& cooling) const;
@@ -153,19 +146,10 @@ class GasParticleSystem {
     // Sync the clock, process wakeups, and flag active particles
     void sync_and_activate(double dt, double a, double H, const Config& config);
 
-    void kick_particle_hydro(size_t i, double dt, const Config& config);
-
-    void hydro_step(const Config& config, double a, double H, double dt);
+    void hydro_step(const Config& config, double a);
 
     // Sync tracked internal energy, total energy, and compute pressure
     void update_primitive_variables(const Config& config, double a);
-
-    // Compute the least-squares matrix gradients for all primitive variables
-    // void compute_gradients(const Config& config);
-
-    // Solve the Riemann problem between neighbors and update hydro_acc and
-    // du_dt
-    // void compute_hydro_forces(const Config& config, double a, double dt);
 
     void build_lbvh(const Config& config);
 
@@ -174,20 +158,3 @@ class GasParticleSystem {
    private:
     void sort_arrays(const std::vector<int>& sorted_indices);
 };
-
-// Output of the Riemann Solver
-/*struct MFMFaceFlux {
-    Eigen::Vector3d flux_mom;  // Momentum flux density vector (P_star * n)
-                               // [PHYSICAL Pressure Units]
-    double P_star;  // Resolved face pressure [PHYSICAL Pressure Units]
-    double S_star;  // Resolved relative contact wave speed [PHYSICAL Velocity
-                    // Units]
-};
-
-// Solves the HLLC Riemann problem at the moving face between particles.
-// INPUT: Reconstructed face states, relative frame velocity (v_frame), and
-// adiabatic index.
-// OUTPUT: The resolved pressure (P_star) and relative wave speed (S_star).
-// Note that it should get and return physical units
-MFMFaceFlux solve_mfm_riemann(const Reconstruction::ReconstructedFace& face,
-                              const Eigen::Vector3d& v_frame, double gamma);*/

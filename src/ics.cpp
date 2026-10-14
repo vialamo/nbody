@@ -4,6 +4,7 @@
 
 #include "constants.h"
 #include "cooling.h"
+#include "cosmology.h"
 #include "density.h"
 #include "gravity.h"
 #include "hdf5_reader.h"
@@ -11,6 +12,7 @@
 #include "integrator.h"
 #include "math_utils.h"
 #include "particles.h"
+#include "pm.h"
 #include "pocketfft_hdronly.h"
 
 // The pure shape of the BBKS power spectrum (Unnormalized)
@@ -518,7 +520,6 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
     double P_L = 1.0;
     double P_R = 0.1;
 
-    // Explicit domain dimensions
     double Lx = config.domain_size.x;
     double Ly = config.domain_size.y;
     double Lz = config.domain_size.z;
@@ -863,7 +864,7 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
             double gas_particle_mass =
                 rho_bg * vol_base / static_cast<double>(glass.num_particles);
 
-            // 1. Tile the glass and collect valid coordinates
+            // Tile the glass and collect valid coordinates
             struct ParticleData {
                 Vec3 pos;
                 double r2;
@@ -894,7 +895,7 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
                 }
             }
 
-            // 2. Find the central N_inject particles
+            // Find the central N_inject particles
             int N_inject = 15;
             constexpr bool smooth_injection = true;
 
@@ -932,7 +933,7 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
             double dx_grid = L_base / static_cast<double>(64);
             double initial_h = 2.0 * dx_grid;
 
-            // 3. Push to simulation state
+            // Push to simulation state
             for (size_t i = 0; i < tiled_particles.size(); ++i) {
                 double particle_u = u_bg + injected_u_map[i];
                 state.mfm_gas->add_particle(
@@ -1127,12 +1128,7 @@ SimState initialize_state(Config& config) {
         ZeldovichField z_field =
             compute_zeldovich_field(state.scale_factor, config);
 
-        // Dark Matter Step
         initialize_dm(state, config, z_field);
-        state.dm.build_lbvh(config);
-        state.dm.bin_and_assign_mass(config);
-
-        // Gas Step
         initialize_gas(state, config, z_field);
     } else if (config.initial_setup == InitialSetup::SodShockTube) {
         initialize_sod_shock_tube(state, config);
@@ -1147,25 +1143,8 @@ SimState initialize_state(Config& config) {
     config.expanding_universe = prev_expanding_universe;
     update_cosmology(state, config);
 
-    // Compute initial MFM properties before forces are calculated
-    if (config.hydro_method == HydroMethod::MFM) {
-        state.mfm_gas->build_lbvh(config);
-        DensitySolver::compute_density_and_h(*state.mfm_gas, config, state.dm);
-        GravitySolver::bin_and_assign_mass(*state.mfm_gas, config);
-        state.mfm_gas->update_primitive_variables(config, state.scale_factor);
-    }
-
     Diagnostics dummy_diag;
     compute_forces(state, config, dummy_diag);
-
-    if (config.hydro_method == HydroMethod::MFM) {
-        // Sync pressure and energies based on the initial density
-        state.mfm_gas->update_primitive_variables(config, state.scale_factor);
-        // state.mfm_gas->compute_gradients(config);
-        HydroSolver::compute_gradients(*state.mfm_gas, config);
-        HydroSolver::compute_hydro_forces(*state.mfm_gas, config,
-                                          state.scale_factor, 0.0);
-    }
 
     return state;
 }
