@@ -9,7 +9,7 @@
 
 constexpr double N_cond_crit = 100.0;
 
-#define USE_ADAPTIVE_SOFTENING
+//#define USE_ADAPTIVE_SOFTENING
 
 class Cooling;
 

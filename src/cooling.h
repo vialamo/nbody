@@ -61,9 +61,10 @@ class Cooling {
                          const Config& config) const;
 
     double solve_cooling_implicit(double u_old, double rho_code, double Z,
-                                  double a, double dt, double u_rad_floor,
-                                  const Config& config,
+                                  double a, double dt, double u_cutoff,
+                                  double u_floor, const Config& config,
                                   int& iterations_taken) const;
 
-    double get_u_rad_floor(double a, const Config& config) const;
+    double get_u_floor(double a, const Config& config) const;
+    double get_u_cutoff(double a, const Config& config) const;
 };

@@ -60,7 +60,7 @@ TEST_CASE("Cooling rate behaves physically", "[cooling][physics]") {
             Cooling::get_internal_energy_from_temp(cold_temp, a, config);
 
         double u_new = cooling.solve_cooling_implicit(
-            u_cold, rho, Z, a, dt, u_cold, config, iterations);
+            u_cold, rho, Z, a, dt, u_cold, u_cold, config, iterations);
 
         // The solver should return immediately without altering the energy
         REQUIRE(u_new == u_cold);
@@ -82,7 +82,7 @@ TEST_CASE("Cooling rate behaves physically", "[cooling][physics]") {
         // With a massive dt, it will attempt to cool well below floor
         double massive_dt = 1e15;
         double u_new = cooling.solve_cooling_implicit(
-            u_hot, rho, Z, a, massive_dt, target_u_floor, config, iterations);
+            u_hot, rho, Z, a, massive_dt, target_u_floor, target_u_floor, config, iterations);
 
         // The solver must intercept the overshoot and clamp exactly to the
         // threshold
@@ -123,7 +123,7 @@ TEST_CASE("Implicit backward Euler solver is unconditionally stable",
         double u_floor =
             Cooling::get_internal_energy_from_temp(expected_floor_k, a, config);
         double u_final = cooling.solve_cooling_implicit(
-            u_initial, rho, Z, a, dt_massive, u_floor, config, iters);
+            u_initial, rho, Z, a, dt_massive, u_floor, u_floor, config, iters);
         double T_final =
             Cooling::get_temp_from_internal_energy(u_final, a, config);
 
@@ -135,7 +135,7 @@ TEST_CASE("Implicit backward Euler solver is unconditionally stable",
     SECTION("A normal timestep cools the gas a physical amount") {
         double dt_normal = 0.001;
         double u_final = cooling.solve_cooling_implicit(
-            u_initial, rho, Z, a, dt_normal, u_initial * 0.1, config, iters);
+            u_initial, rho, Z, a, dt_normal, u_initial * 0.1, u_initial * 0.1, config, iters);
 
         REQUIRE(u_final < u_initial);
         REQUIRE(u_final > 0.0);

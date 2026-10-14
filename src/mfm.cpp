@@ -327,7 +327,9 @@ void GasParticleSystem::apply_cooling(double a, const Config& config,
                                       Cooling& cooling) {
     if (!config.enable_cooling) return;
 
-    double u_rad_floor = cooling.get_u_rad_floor(a, config);
+    double u_cutoff = cooling.get_u_cutoff(a, config);
+    double u_floor = cooling.get_u_floor(a, config);
+    
     double total_radiated = 0.0;
     double total_photoheated = 0.0;
     size_t non_converged_count = 0;
@@ -351,7 +353,7 @@ void GasParticleSystem::apply_cooling(double a, const Config& config,
                 // Solve cooling implicitly across the FULL macro-step in one go
                 double u_current = cooling.solve_cooling_implicit(
                     u_initial, local_rho, local_Z_frac, a, dt_particle,
-                    u_rad_floor, config, iters);
+                    u_cutoff, u_floor, config, iters);
 
                 if (iters >= Cooling::MAX_ITER) {
                     non_converged_count++;
@@ -525,12 +527,12 @@ double GasParticleSystem::get_cooling_timestep(double a, const Config& config,
         return std::numeric_limits<double>::infinity();
     } else {
         double min_dt_cool = std::numeric_limits<double>::infinity();
-        double u_rad_floor = cooling.get_u_rad_floor(a, config);
+        double u_cutoff = cooling.get_u_cutoff(a, config);
 
 #pragma omp parallel for reduction(min : min_dt_cool)
         for (size_t i = 0; i < num_particles; ++i) {
             if (rho[i] > 1e-12) {
-                if (u[i] <= u_rad_floor) continue;
+                if (u[i] <= u_cutoff) continue;
 
                 double du_dt_val = cooling.compute_du_dt(
                     u[i], rho[i], metal_frac[i], a, config);
@@ -647,8 +649,8 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
         return;
     }
 
-    double u_rad_floor =
-        config.enable_cooling ? cooling.get_u_rad_floor(a, config) : 0.0;
+    double u_floor =
+        config.enable_cooling ? cooling.get_u_floor(a, config) : 0.0;
     double epsilon = config.softening;
 
     if (num_active == 0) return;
@@ -731,7 +733,7 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
 
     // Calculate the physical internal energy floor
     const double u_floor =
-        Cooling::get_internal_energy_from_temp(config.temp_floor_k, a, config);
+        Cooling::get_internal_energy_from_temp(config.temp_floor_k / a, a, config);
 
     double alpha_kin = config.dual_energy_threshold;
     double alpha_grav = config.dual_energy_threshold;

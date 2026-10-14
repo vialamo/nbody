@@ -362,15 +362,16 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
                 step_ill_conditioned++;
                 if (!debug_printed) {
                     debug_printed = true;
-                    /*std::cout << "\n=== ILL-CONDITIONED MATRIX "
-                                 "DIAGNOSTIC ===\n";
+                    std::cout
+                        << "\n=== ILL-CONDITIONED MATRIX DIAGNOSTIC ===\n";
                     std::cout << "Particle Index: " << i << "\n";
-                    std::cout << "Pos: (" << pos_x[i] << ", " << pos_y[i]
-                              << ", " << pos_z[i] << ")\n";
-                    std::cout << "h_i: " << h[i] << " | rho_i: " << rho[i]
+                    std::cout << "Pos: (" << gas.pos_x[i] << ", "
+                              << gas.pos_y[i] << ", " << gas.pos_z[i] << ")\n";
+                    std::cout << "h_i: " << gas.h[i]
+                              << " | rho_i: " << gas.rho[i] << "\n";
+                    std::cout << "n_enc: " << gas.n_enc_final[i] << "\n";
+                    std::cout << "Condition Number: " << gas.cond_num[i]
                               << "\n";
-                    std::cout << "n_enc: " << n_enc_final[i] << "\n";
-                    std::cout << "Condition Number: " << cond_num[i] << "\n";
                     std::cout
                         << "Number of neighbors found: " << neighbors.size()
                         << "\n";
@@ -381,12 +382,12 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
                     std::cout << "Neighbor distances:\n";
                     for (size_t n = 0; n < neighbors.size(); ++n) {
                         int j = neighbors[n];
-                        double dx = periodic_displacement(pos_x[j] - pos_x[i],
-                                                          domain_size.x);
-                        double dy = periodic_displacement(pos_y[j] - pos_y[i],
-                                                          domain_size.y);
-                        double dz = periodic_displacement(pos_z[j] - pos_z[i],
-                                                          domain_size.z);
+                        double dx = periodic_displacement(
+                            gas.pos_x[j] - gas.pos_x[i], domain_size.x);
+                        double dy = periodic_displacement(
+                            gas.pos_y[j] - gas.pos_y[i], domain_size.y);
+                        double dz = periodic_displacement(
+                            gas.pos_z[j] - gas.pos_z[i], domain_size.z);
                         double r = std::sqrt(dx * dx + dy * dy + dz * dz);
 
                         std::cout << "  N[" << n << "] (Idx: " << j
@@ -395,8 +396,9 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
 
                         if (r < 1e-12)
                             exact_overlaps++;
-                        else if (r < 0.05 * h[i])
-                            extremely_close++;*/
+                        else if (r < 0.05 * gas.h[i])
+                            extremely_close++;
+                    }
                 }
             }
         }

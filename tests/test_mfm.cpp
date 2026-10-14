@@ -2,118 +2,21 @@
 #include <catch2/catch_test_macros.hpp>
 #include <vector>
 
+#include "config.h"
+#include "density.h"
+#include "hydro.h"
+#include "kernels.h"
 #include "mfm.h"
+#include "particles.h"
+#include "reconstruction.h"
 
-//constexpr double density_floor = 1e-12;
-
-/*TEST_CASE("MFM Gradient Estimator", "[hydro][mfm_gradients]") {
-    // Grid Setup
-    double spacing = 0.4;
-    double cell_volume = spacing * spacing * spacing;
-    double domain_size = 10.0;
-
-    // Setup Central Particle
-    Reconstruction::ParticleState p_i;
-    p_i.pos = Eigen::Vector3d(5.0, 5.0, 5.0);
-    p_i.h = 0.7;
-
-    // Evaluate fields at central position for baseline
-    // Rho: 10.0 + 2x + 3y + 4z
-    // P:   20.0 - 1x + 5y - 2z
-    // Vx:  3.0x
-    p_i.rho = 10.0 + 2.0 * 5.0 + 3.0 * 5.0 + 4.0 * 5.0;
-    p_i.pressure = 20.0 - 1.0 * 5.0 + 5.0 * 5.0 - 2.0 * 5.0;
-    p_i.vel = Eigen::Vector3d(3.0 * 5.0, 0.0, 0.0);
-
-    p_i.mass = p_i.rho * cell_volume;
-
-    SECTION("Exact linear field recovery in a uniform 3D distribution") {
-        std::vector<Reconstruction::ParticleState> neighbors;
-
-        for (int i = -1; i <= 1; ++i) {
-            for (int j = -1; j <= 1; ++j) {
-                for (int k = -1; k <= 1; ++k) {
-                    if (i == 0 && j == 0 && k == 0) continue;  // Skip self
-
-                    Reconstruction::ParticleState nj;
-                    nj.pos = p_i.pos + Eigen::Vector3d(i * spacing, j * spacing,
-                                                       k * spacing);
-                    nj.h = 1.0;
-
-                    // Assign properties based on the linear field
-                    nj.rho = 10.0 + 2.0 * nj.pos.x() + 3.0 * nj.pos.y() +
-                             4.0 * nj.pos.z();
-                    nj.pressure = 20.0 - 1.0 * nj.pos.x() + 5.0 * nj.pos.y() -
-                                  2.0 * nj.pos.z();
-                    nj.vel = Eigen::Vector3d(3.0 * nj.pos.x(), 0.0, 0.0);
-
-                    // Mass must be consistent with density and spacing
-                    nj.mass = nj.rho * cell_volume;
-
-                    neighbors.push_back(nj);
-                }
-            }
-        }
-
-        Reconstruction::ParticleGradients grads =
-            compute_single_particle_gradients(p_i, neighbors, domain_size);
-
-        // E matrix should be successfully inverted
-        REQUIRE(grads.B_matrix.norm() > 0.0);
-
-        // Density Gradient should exactly equal (2, 3, 4)
-        REQUIRE(grads.grad_rho.x() == Catch::Approx(2.0).margin(1e-12));
-        REQUIRE(grads.grad_rho.y() == Catch::Approx(3.0).margin(1e-12));
-        REQUIRE(grads.grad_rho.z() == Catch::Approx(4.0).margin(1e-12));
-
-        // Pressure Gradient should exactly equal (-1, 5, -2)
-        REQUIRE(grads.grad_p.x() == Catch::Approx(-1.0).margin(1e-12));
-        REQUIRE(grads.grad_p.y() == Catch::Approx(5.0).margin(1e-12));
-        REQUIRE(grads.grad_p.z() == Catch::Approx(-2.0).margin(1e-12));
-
-        // Vx Gradient should exactly equal (3, 0, 0)
-        REQUIRE(grads.grad_vx.x() == Catch::Approx(3.0).margin(1e-12));
-        REQUIRE(grads.grad_vx.y() == Catch::Approx(0.0).margin(1e-12));
-        REQUIRE(grads.grad_vx.z() == Catch::Approx(0.0).margin(1e-12));
-    }
-
-    SECTION("Safely falls back to SPH gradients for pathological geometries") {
-        std::vector<Reconstruction::ParticleState> neighbors;
-
-        extern double g_pressure_floor;
-        g_pressure_floor = 1e-16;
-
-        // Only insert neighbors aligned on the X-axis (1D line)
-        for (int i = -1; i <= 1; i += 2) {
-            Reconstruction::ParticleState nj = p_i;  // Copy base state
-            nj.pos.x() += i * spacing;
-            nj.rho = 10.0 + 2.0 * nj.pos.x();  // Still linear
-            nj.mass = nj.rho * cell_volume;
-            neighbors.push_back(nj);
-        }
-
-        Reconstruction::ParticleGradients grads =
-            compute_single_particle_gradients(p_i, neighbors, domain_size);
-
-        // The SPH fallback should compute an X-gradient,
-        // so we only assert that the Y and Z gradients remain zero.
-        REQUIRE(grads.grad_rho.y() == 0.0);
-        REQUIRE(grads.grad_rho.z() == 0.0);
-
-        REQUIRE(grads.grad_p.y() == 0.0);
-        REQUIRE(grads.grad_p.z() == 0.0);
-
-        REQUIRE(grads.grad_vx.y() == 0.0);
-        REQUIRE(grads.grad_vx.z() == 0.0);
-    }
-}*/
-
-/*TEST_CASE("MFM Face Reconstruction and Limiting",
-          "[hydro][mfm_reconstruction]") {
-    extern double g_pressure_floor;
-    g_pressure_floor = 1e-16;
-
-    double domain_size = 10.0;
+// ---------------------------------------------------------------------
+// MFM Face Reconstruction and Limiting
+// ---------------------------------------------------------------------
+TEST_CASE("MFM Face Reconstruction and Limiting", "[hydro][mfm_reconstruction]") {
+    Vec3 domain_size{10.0, 10.0, 10.0};
+    double density_floor = 1e-12;
+    double pressure_floor = 1e-16;
 
     // Setup Particle i (Left)
     Reconstruction::ParticleState p_i;
@@ -121,7 +24,8 @@
     p_i.rho = 1.0;
     p_i.pressure = 2.0;
     p_i.vel = Eigen::Vector3d::Zero();
-    p_i.h = 0.5;
+    p_i.h = 2.5;
+    p_i.mass = 1.0;
 
     Reconstruction::ParticleGradients grad_i;
     grad_i.grad_rho = Eigen::Vector3d::Zero();
@@ -129,6 +33,7 @@
     grad_i.grad_vx = Eigen::Vector3d::Zero();
     grad_i.grad_vy = Eigen::Vector3d::Zero();
     grad_i.grad_vz = Eigen::Vector3d::Zero();
+    grad_i.ill_conditioned = false;
 
     // Setup Particle j (Right)
     Reconstruction::ParticleState p_j;
@@ -136,16 +41,19 @@
     p_j.rho = 2.0;
     p_j.pressure = 4.0;
     p_j.vel = Eigen::Vector3d::Zero();
-    p_j.h = 0.5;
+    p_j.h = 2.5;
+    p_j.mass = 2.0;
 
     Reconstruction::ParticleGradients grad_j = grad_i;  // Copy zeros
+
+    Eigen::Matrix3d B_identity = Eigen::Matrix3d::Identity();
 
     SECTION("First-order fallback (Zero Gradients)") {
         // With zero gradients, the extrapolated face states should simply equal
         // the base particle states
-        Reconstruction::ReconstructedFace face =
-            compute_face_reconstruction(p_i, grad_i, p_j, grad_j, domain_size,
-                                        density_floor - 12, g_pressure_floor);
+        Reconstruction::ReconstructedFace face = Reconstruction::compute_face_reconstruction(
+            p_i, grad_i, p_j, grad_j, B_identity, B_identity, domain_size,
+            density_floor, pressure_floor);
 
         REQUIRE(face.is_valid == true);
         REQUIRE(face.r == Catch::Approx(2.0));
@@ -157,86 +65,186 @@
 
     SECTION("Smooth second-order extrapolation") {
         // Set gradients pointing along the correct slope
-        // dx_half is 1.0. delta_rho is 1.0.
-        grad_i.grad_rho.x() =
-            0.5;  // Will extrapolate i's density by +0.5 to 1.5
-        grad_j.grad_rho.x() =
-            0.5;  // Will extrapolate j's density by -0.5 to 1.5
+        // distance dx = 2.0, midpoint is at dx=1.0 from each particle
+        grad_i.grad_rho.x() = 0.5;  // Extrapolate i's density by +0.5 to 1.5
+        grad_j.grad_rho.x() = 0.5;  // Extrapolate j's density by -0.5 to 1.5
 
-        Reconstruction::ReconstructedFace face =
-            compute_face_reconstruction(p_i, grad_i, p_j, grad_j, domain_size,
-                                        density_floor - 12, g_pressure_floor);
+        Reconstruction::ReconstructedFace face = Reconstruction::compute_face_reconstruction(
+            p_i, grad_i, p_j, grad_j, B_identity, B_identity, domain_size,
+            density_floor, pressure_floor);
 
-        // They should meet in the middle
+        // They should meet perfectly in the middle
         REQUIRE(face.rho_L == Catch::Approx(1.5));
         REQUIRE(face.rho_R == Catch::Approx(1.5));
     }
 
     SECTION("Vacuum flooring protects against negative states") {
-        // Set negative pressure
-        p_i.pressure = -5.0;
+        p_i.pressure = -5.0; // Unphysical negative pressure
 
-        Reconstruction::ReconstructedFace face =
-            compute_face_reconstruction(p_i, grad_i, p_j, grad_j, domain_size,
-                                        density_floor - 12, g_pressure_floor);
+        Reconstruction::ReconstructedFace face = Reconstruction::compute_face_reconstruction(
+            p_i, grad_i, p_j, grad_j, B_identity, B_identity, domain_size,
+            density_floor, pressure_floor);
 
-        // Should catch the negative pressure and clamp it to 1e-16
-        REQUIRE(face.p_L == Catch::Approx(1e-16));
+        // Should catch the negative pressure and clamp it to the floor
+        REQUIRE(face.p_L == Catch::Approx(pressure_floor));
     }
-}*/
+}
 
-/*TEST_CASE("MFM Riemann Solver", "[hydro][mfm_riemann]") {
-    double gamma = 5.0 / 3.0;
-
-    Reconstruction::ReconstructedFace face;
-    face.n = Eigen::Vector3d(1.0, 0.0, 0.0);
-    face.is_valid = true;
-
-    // Default Face Frame Velocity
-    Eigen::Vector3d v_frame = Eigen::Vector3d::Zero();
-
-    SECTION("Sod Shock Tube Contact Wave (Subsonic)") {
-        // High pressure left, low pressure right, initially at rest
-        face.rho_L = 1.0;
-        face.p_L = 1.0;
-        face.v_L = Eigen::Vector3d::Zero();
-        face.rho_R = 0.125;
-        face.p_R = 0.1;
-        face.v_R = Eigen::Vector3d::Zero();
-
-        MFMFaceFlux flux = solve_mfm_riemann(face, v_frame, gamma);
-
-        // P_star must resolve strictly between P_R (0.1) and P_L (1.0).
-        REQUIRE(flux.P_star > 0.1);
-        REQUIRE(flux.P_star < 1.0);
-
-        // Momentum flux is P_star * n.
-        REQUIRE(flux.flux_mom.x() == Catch::Approx(flux.P_star));
-        REQUIRE(flux.flux_mom.y() == 0.0);
-        REQUIRE(flux.flux_mom.z() == 0.0);
-
-        // Since the high pressure pushes right, the contact wave (S_star) is
-        // positive.
-        REQUIRE(flux.S_star > 0.0);
+// ---------------------------------------------------------------------
+// MFM Gradient Estimator
+// ---------------------------------------------------------------------
+TEST_CASE("MFM Gradient Estimator recovers linear fields", "[hydro][mfm_gradients]") {
+    Config config;
+    config.domain_size = {10.0, 10.0, 10.0};
+    config.num_gas_particles = 27;
+    config.compute_derived_data();
+    
+    GasParticleSystem gas(config);
+    double spacing = 0.4;
+    double cell_volume = spacing * spacing * spacing;
+    
+    // Create a 3x3x3 grid of particles
+    for (int i = -1; i <= 1; ++i) {
+        for (int j = -1; j <= 1; ++j) {
+            for (int k = -1; k <= 1; ++k) {
+                double px = 5.0 + i * spacing;
+                double py = 5.0 + j * spacing;
+                double pz = 5.0 + k * spacing;
+                // Add dummy particle, properties overridden below
+                gas.add_particle(px, py, pz, 0, 0, 0, 1.0, 1.0, 0.7, 0.0);
+            }
+        }
     }
-
-    SECTION("Supersonic flow exclusively trusts Upwind State") {
-        // Both states moving to the right (Mach 10+)
-        face.rho_L = 1.0;
-        face.p_L = 1.0;
-        face.v_L = Eigen::Vector3d(100.0, 0.0, 0.0);
-        face.rho_R = 1.0;
-        face.p_R = 2.0;
-        face.v_R = Eigen::Vector3d(100.0, 0.0, 0.0);
-
-        MFMFaceFlux flux = solve_mfm_riemann(face, v_frame, gamma);
-
-        // Because flow is supersonic to the right, S_L > 0.
-        // Solver MUST pick the Left state (Upwinding)
-        REQUIRE(flux.P_star == Catch::Approx(1.0));  // P_star = P_L = 1.0
-        REQUIRE(flux.flux_mom.x() == Catch::Approx(1.0));
-
-        // S_star defaults to the upwind velocity in highly supersonic flow
-        REQUIRE(flux.S_star == Catch::Approx(100.0));
+    
+    // Build the BVH to establish neighbors
+    gas.build_lbvh(config);
+    
+    // Manually impose a linear field
+    int central_idx = -1;
+    for (size_t i = 0; i < gas.num_particles; ++i) {
+        double px = gas.pos_x[i], py = gas.pos_y[i], pz = gas.pos_z[i];
+        
+        // Rho: 10.0 + 2x + 3y + 4z
+        // P:   20.0 - 1x + 5y - 2z
+        // Vx:  3.0x
+        gas.rho[i] = 10.0 + 2.0 * px + 3.0 * py + 4.0 * pz;
+        gas.pressure[i] = 20.0 - 1.0 * px + 5.0 * py - 2.0 * pz;
+        gas.vel_x[i] = 3.0 * px;
+        
+        gas.mass[i] = gas.rho[i] * cell_volume;
+        gas.cond_num[i] = 1.0;
+        
+        if (std::abs(px - 5.0) < 1e-5 && std::abs(py - 5.0) < 1e-5 && std::abs(pz - 5.0) < 1e-5) {
+            central_idx = i;
+        }
     }
-}*/
+    
+    REQUIRE(central_idx != -1);
+
+    // Compute the exact B_matrix for each particle to mock the DensitySolver
+    for (size_t i = 0; i < gas.num_particles; ++i) {
+        Eigen::Matrix3d E = Eigen::Matrix3d::Zero();
+        for (size_t j = 0; j < gas.num_particles; ++j) {
+            if (i == j) continue;
+            
+            double dx = gas.pos_x[j] - gas.pos_x[i];
+            double dy = gas.pos_y[j] - gas.pos_y[i];
+            double dz = gas.pos_z[j] - gas.pos_z[i];
+            
+            // Periodic wrap
+            if (dx > 5.0) dx -= 10.0; else if (dx < -5.0) dx += 10.0;
+            if (dy > 5.0) dy -= 10.0; else if (dy < -5.0) dy += 10.0;
+            if (dz > 5.0) dz -= 10.0; else if (dz < -5.0) dz += 10.0;
+            
+            double r = std::sqrt(dx*dx + dy*dy + dz*dz);
+            
+            if (r < gas.h[i] && r > 1e-12) {
+                double W;
+                Kernels::cubic_spline_value(r, gas.h[i], W);
+                double V_j = gas.mass[j] / gas.rho[j];
+                double weight = W * V_j;
+                
+                E(0,0) += dx * dx * weight;
+                E(0,1) += dx * dy * weight;
+                E(0,2) += dx * dz * weight;
+                E(1,1) += dy * dy * weight;
+                E(1,2) += dy * dz * weight;
+                E(2,2) += dz * dz * weight;
+            }
+        }
+        E(1,0) = E(0,1);
+        E(2,0) = E(0,2);
+        E(2,1) = E(1,2);
+        
+        gas.B_matrix[i] = E.inverse();
+    }
+    
+    // Compute gradients globally
+    HydroSolver::compute_gradients(gas, config);
+    
+    // Density Gradient should exactly equal (2, 3, 4)
+    REQUIRE(gas.grad_rho[central_idx].x() == Catch::Approx(2.0).margin(1e-12));
+    REQUIRE(gas.grad_rho[central_idx].y() == Catch::Approx(3.0).margin(1e-12));
+    REQUIRE(gas.grad_rho[central_idx].z() == Catch::Approx(4.0).margin(1e-12));
+
+    // Pressure Gradient should exactly equal (-1, 5, -2)
+    REQUIRE(gas.grad_p[central_idx].x() == Catch::Approx(-1.0).margin(1e-12));
+    REQUIRE(gas.grad_p[central_idx].y() == Catch::Approx(5.0).margin(1e-12));
+    REQUIRE(gas.grad_p[central_idx].z() == Catch::Approx(-2.0).margin(1e-12));
+
+    // Vx Gradient should exactly equal (3, 0, 0)
+    REQUIRE(gas.grad_vx[central_idx].x() == Catch::Approx(3.0).margin(1e-12));
+    REQUIRE(gas.grad_vx[central_idx].y() == Catch::Approx(0.0).margin(1e-12));
+    REQUIRE(gas.grad_vx[central_idx].z() == Catch::Approx(0.0).margin(1e-12));
+}
+
+// ---------------------------------------------------------------------
+// MFM Hydrodynamic Forces and Conservation
+// ---------------------------------------------------------------------
+TEST_CASE("MFM Hydro Solver conserves momentum and energy", "[hydro][mfm_forces]") {
+    Config config;
+    config.domain_size = {10.0, 10.0, 10.0};
+    config.num_gas_particles = 2;
+    config.compute_derived_data();
+    
+    GasParticleSystem gas(config);
+    
+    // Particle 0 (Left)
+    gas.add_particle(4.8, 5.0, 5.0, 10.0, 0.0, 0.0, 1.0, 5.0, 0.5, 0.0);
+    // Particle 1 (Right)
+    gas.add_particle(5.2, 5.0, 5.0, -10.0, 0.0, 0.0, 1.0, 5.0, 0.5, 0.0);
+    
+    gas.build_lbvh(config);
+    
+    // Impose an arbitrary pressure/density differential
+    gas.rho[0] = 1.0; gas.pressure[0] = 2.0;
+    gas.rho[1] = 0.5; gas.pressure[1] = 1.0;
+    
+    // Mock the density solver dependencies
+    for (size_t i = 0; i < 2; ++i) {
+        gas.B_matrix[i] = Eigen::Matrix3d::Identity();
+        gas.cond_num[i] = 1.0;
+        gas.vel_x_pred[i] = gas.vel_x[i];
+        gas.pressure_pred[i] = gas.pressure[i];
+    }
+    
+    // We must run gradients first to prepare the arrays
+    HydroSolver::compute_gradients(gas, config);
+    
+    // Run the Riemann solver and flux exchange
+    double a = 1.0;
+    HydroSolver::compute_hydro_forces(gas, config, a);
+    
+    // Momentum Conservation: m0 * a0 = -m1 * a1
+    double force_x_0 = gas.mass[0] * gas.hydro_acc_x[0];
+    double force_x_1 = gas.mass[1] * gas.hydro_acc_x[1];
+    REQUIRE(force_x_0 == Catch::Approx(-force_x_1).margin(1e-14));
+    
+    // Ensure forces are actually being applied (particles are crashing into each other)
+    REQUIRE(std::abs(force_x_0) > 0.0);
+    
+    // Energy Conservation: Rate of change of total energy must balance
+    double power_0 = gas.mass[0] * gas.de_dt[0];
+    double power_1 = gas.mass[1] * gas.de_dt[1];
+    REQUIRE(power_0 == Catch::Approx(-power_1).margin(1e-14));
+}

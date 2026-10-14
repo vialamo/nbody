@@ -3,7 +3,7 @@
 #include <H5Cpp.h>
 
 #include <algorithm>  // For std::max, std::min
-//#include <atomic>
+// #include <atomic>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -293,6 +293,10 @@ double Cooling::compute_du_dt(double u_code, double rho_code, double Z,
         return compute_tabulated_cooling(u_code, rho_code, Z, a,
                                          clumping_factor, config);
     } else {
+        double u_cutoff = get_u_cutoff(a, config);
+        // Stop analytical radiation if we are below the cutoff
+        if (u_code <= u_cutoff) return 0.0;
+        
         double T = get_temp_from_internal_energy(u_code, a, config);
 
         // Convert code density to CGS
@@ -310,41 +314,44 @@ double Cooling::compute_du_dt(double u_code, double rho_code, double Z,
     }
 }
 
-double Cooling::get_u_rad_floor(double a, const Config& config) const {
-    double target_floor_k = 0.0;
-    if (use_table) {
-        // The table handles real physics. Only enforce the CMB and absolute
-        // hydro floor
-        double t_cmb = 2.7315 / a;
-        target_floor_k = std::max(config.temp_floor_k, t_cmb);
-    } else {
-        // The analytical model uses the cutoff to fake the UVB
-        target_floor_k = std::max(config.cooling_cutoff_k, config.temp_floor_k);
-    }
+double Cooling::get_u_floor(double a, const Config& config) const {
+    double u_floor =
+        get_internal_energy_from_temp(config.temp_floor_k, a, config);
+    return u_floor;
+}
 
-    double u_rad_floor =
-        get_internal_energy_from_temp(target_floor_k, a, config);
-    return u_rad_floor;
+double Cooling::get_u_cutoff(double a, const Config& config) const {
+    if (use_table) {
+        // Tables inherently handle physics, so they only stop at the absolute floor
+        return get_u_floor(a, config);
+    } else {
+        // Analytical model stops radiating at the cutoff
+        return get_internal_energy_from_temp(config.cooling_cutoff_k, a, config);
+    }
 }
 
 double Cooling::solve_cooling_implicit(double u_old, double rho_code, double Z,
-                                       double a, double dt, double u_rad_floor,
+                                       double a, double dt, double u_cutoff, double u_floor,
                                        const Config& config,
                                        int& iterations_taken) const {
     double du_dt_initial = compute_du_dt(u_old, rho_code, Z, a, config);
     if (du_dt_initial == 0.0) return u_old;
 
-    if (u_old <= u_rad_floor && du_dt_initial < 0.0) {
-        iterations_taken = 0;
-        return u_rad_floor;
-    }
-
     double u_low, u_high;
 
     // Negative means cooling, positive means heating
     if (du_dt_initial < 0.0) {
+        // We cannot cool below the radiative cutoff or the absolute floor
+        double effective_cooling_floor = std::max(u_cutoff, u_floor);
+
+        // If we are already below the effective floor, stop cooling
+        if (u_old <= effective_cooling_floor) {
+            iterations_taken = 0;
+            return u_old;
+        }
+        
         // Cooling: u_new must be less than u_old
-        u_low = u_rad_floor;
+        u_low = effective_cooling_floor;
         u_high = u_old;
 
         // Verify the bracket
@@ -356,7 +363,7 @@ double Cooling::solve_cooling_implicit(double u_old, double rho_code, double Z,
         // below the radiation floor. Just clamp to the floor
         if (f_low >= 0.0) {
             iterations_taken = 0;
-            return u_rad_floor;
+            return effective_cooling_floor;
         }
     } else {
         // Heating: u_new must be greater than u_old
@@ -401,5 +408,5 @@ double Cooling::solve_cooling_implicit(double u_old, double rho_code, double Z,
     }
 
     iterations_taken = iter;
-    return std::max(u_guess, u_rad_floor);
+    return std::max(u_guess, u_floor);
 }
