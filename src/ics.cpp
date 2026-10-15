@@ -323,44 +323,112 @@ static Vec3 sample_zeldovich_cic(double qx, double qy, double qz,
 
 void initialize_dm(SimState& state, const Config& config,
                    const ZeldovichField& zf) {
-    int M = config.mesh_size_1d;
-    double cell_size = config.domain_size_1d / M;
-    double spacing = config.domain_size_1d / config.num_particles_1d;
+    if (config.use_glass) {
+        // Force domain size components to be exact multiples of the minimum one
+        double L_base = std::min(
+            {config.domain_size.x, config.domain_size.y, config.domain_size.z});
+        int n_tiles_x =
+            static_cast<int>(std::round(config.domain_size.x / L_base));
+        int n_tiles_y =
+            static_cast<int>(std::round(config.domain_size.y / L_base));
+        int n_tiles_z =
+            static_cast<int>(std::round(config.domain_size.z / L_base));
 
-    int scale_x =
-        static_cast<int>(config.domain_size.x / config.domain_size_1d);
-    int scale_y =
-        static_cast<int>(config.domain_size.y / config.domain_size_1d);
-    int scale_z =
-        static_cast<int>(config.domain_size.z / config.domain_size_1d);
+        // Force the number of 1D particles to be an exact power of 2
+        int N_glass = std::max(
+            16, static_cast<int>(std::pow(
+                    2, std::ceil(std::log2(config.num_particles_1d)))));
+        N_glass = std::min(
+            N_glass, 128);  // Max available glass file based on existing code
 
-    int N_part_x = config.num_particles_1d * scale_x;
-    int N_part_y = config.num_particles_1d * scale_y;
-    int N_part_z = config.num_particles_1d * scale_z;
+        std::string file_glass =
+            "data/glassCube_" + std::to_string(N_glass) + ".hdf5";
+        GlassData glass;
+        try {
+            glass = HDF5Reader::read_glass_cube(file_glass);
+        } catch (const std::exception& e) {
+            exit(EXIT_FAILURE);
+        }
 
-    for (int i = 0; i < N_part_x; ++i) {
-        for (int j = 0; j < N_part_y; ++j) {
-            for (int k = 0; k < N_part_z; ++k) {
-                double qx = (i + 0.5) * spacing;
-                double qy = (j + 0.5) * spacing;
-                double qz = (k + 0.5) * spacing;
+        double dm_total_mass =
+            config.num_dm_particles * config.dm_particle_mass;
 
-                Vec3 d = sample_zeldovich_cic(qx, qy, qz, zf, cell_size,
-                                              config.mesh_size);
+        // Derive actual particle mass from the tiled glass
+        double total_dm_particles =
+            glass.num_particles * n_tiles_x * n_tiles_y * n_tiles_z;
+        double dm_particle_mass = dm_total_mass / total_dm_particles;
 
-                double p_x =
-                    fmod(qx + d.x + config.domain_size.x, config.domain_size.x);
-                double p_y =
-                    fmod(qy + d.y + config.domain_size.y, config.domain_size.y);
-                double p_z =
-                    fmod(qz + d.z + config.domain_size.z, config.domain_size.z);
+        double cell_size = config.domain_size.x / config.mesh_size.x;
 
-                double v_x = state.hubble_param * d.x * zf.f;
-                double v_y = state.hubble_param * d.y * zf.f;
-                double v_z = state.hubble_param * d.z * zf.f;
+        for (int tx = 0; tx < n_tiles_x; ++tx) {
+            for (int ty = 0; ty < n_tiles_y; ++ty) {
+                for (int tz = 0; tz < n_tiles_z; ++tz) {
+                    for (size_t p = 0; p < glass.num_particles; ++p) {
+                        // Unperturbed glass coordinates for DM
+                        double qx = tx * L_base + glass.pos_x[p] * L_base;
+                        double qy = ty * L_base + glass.pos_y[p] * L_base;
+                        double qz = tz * L_base + glass.pos_z[p] * L_base;
 
-                state.dm.add_particle(p_x, p_y, p_z, v_x, v_y, v_z,
-                                      config.dm_particle_mass);
+                        Vec3 d = sample_zeldovich_cic(qx, qy, qz, zf, cell_size,
+                                                      config.mesh_size);
+
+                        double p_x = std::fmod(qx + d.x + config.domain_size.x,
+                                               config.domain_size.x);
+                        double p_y = std::fmod(qy + d.y + config.domain_size.y,
+                                               config.domain_size.y);
+                        double p_z = std::fmod(qz + d.z + config.domain_size.z,
+                                               config.domain_size.z);
+
+                        double v_x = state.hubble_param * d.x * zf.f;
+                        double v_y = state.hubble_param * d.y * zf.f;
+                        double v_z = state.hubble_param * d.z * zf.f;
+
+                        state.dm.add_particle(p_x, p_y, p_z, v_x, v_y, v_z,
+                                              dm_particle_mass);
+                    }
+                }
+            }
+        }
+    } else {
+        int M = config.mesh_size_1d;
+        double cell_size = config.domain_size_1d / M;
+        double spacing = config.domain_size_1d / config.num_particles_1d;
+
+        int scale_x =
+            static_cast<int>(config.domain_size.x / config.domain_size_1d);
+        int scale_y =
+            static_cast<int>(config.domain_size.y / config.domain_size_1d);
+        int scale_z =
+            static_cast<int>(config.domain_size.z / config.domain_size_1d);
+
+        int N_part_x = config.num_particles_1d * scale_x;
+        int N_part_y = config.num_particles_1d * scale_y;
+        int N_part_z = config.num_particles_1d * scale_z;
+
+        for (int i = 0; i < N_part_x; ++i) {
+            for (int j = 0; j < N_part_y; ++j) {
+                for (int k = 0; k < N_part_z; ++k) {
+                    double qx = (i + 0.5) * spacing;
+                    double qy = (j + 0.5) * spacing;
+                    double qz = (k + 0.5) * spacing;
+
+                    Vec3 d = sample_zeldovich_cic(qx, qy, qz, zf, cell_size,
+                                                  config.mesh_size);
+
+                    double p_x = fmod(qx + d.x + config.domain_size.x,
+                                      config.domain_size.x);
+                    double p_y = fmod(qy + d.y + config.domain_size.y,
+                                      config.domain_size.y);
+                    double p_z = fmod(qz + d.z + config.domain_size.z,
+                                      config.domain_size.z);
+
+                    double v_x = state.hubble_param * d.x * zf.f;
+                    double v_y = state.hubble_param * d.y * zf.f;
+                    double v_z = state.hubble_param * d.z * zf.f;
+
+                    state.dm.add_particle(p_x, p_y, p_z, v_x, v_y, v_z,
+                                          config.dm_particle_mass);
+                }
             }
         }
     }
@@ -463,50 +531,138 @@ void initialize_gas(SimState& state, const Config& config,
         }
         gas.update_primitive_variables(state.scale_factor);
     } else if (config.hydro_method == HydroMethod::MFM) {
-        int scale_x =
-            static_cast<int>(config.domain_size.x / config.domain_size_1d);
-        int scale_y =
-            static_cast<int>(config.domain_size.y / config.domain_size_1d);
-        int scale_z =
-            static_cast<int>(config.domain_size.z / config.domain_size_1d);
+        if (config.use_glass) {
+            double L_base =
+                std::min({config.domain_size.x, config.domain_size.y,
+                          config.domain_size.z});
+            int n_tiles_x =
+                static_cast<int>(std::round(config.domain_size.x / L_base));
+            int n_tiles_y =
+                static_cast<int>(std::round(config.domain_size.y / L_base));
+            int n_tiles_z =
+                static_cast<int>(std::round(config.domain_size.z / L_base));
 
-        int N_part_x = config.num_gas_particles_1d * scale_x;
-        int N_part_y = config.num_gas_particles_1d * scale_y;
-        int N_part_z = config.num_gas_particles_1d * scale_z;
+            int N_glass = std::max(
+                16, static_cast<int>(std::pow(
+                        2, std::ceil(std::log2(config.num_gas_particles_1d)))));
+            N_glass = std::min(N_glass, 128);
 
-        double spacing = config.domain_size_1d / config.num_gas_particles_1d;
-        double gas_particle_mass =
-            config.gas_total_mass / pow(config.num_gas_particles_1d, 3);
+            std::string file_glass =
+                "data/glassCube_" + std::to_string(N_glass) + ".hdf5";
+            GlassData glass;
+            try {
+                glass = HDF5Reader::read_glass_cube(file_glass);
+            } catch (const std::exception& e) {
+                exit(EXIT_FAILURE);
+            }
 
-        // Initial guess for smoothing length
-        double initial_h = 0.5 * spacing * cbrt(config.mfm_target_neighbors);
+            double total_gas_particles =
+                glass.num_particles * n_tiles_x * n_tiles_y * n_tiles_z;
+            double gas_particle_mass =
+                config.gas_total_mass / total_gas_particles;
 
-        for (int i = 0; i < N_part_x; ++i) {
-            for (int j = 0; j < N_part_y; ++j) {
-                for (int k = 0; k < N_part_z; ++k) {
-                    // Shift the gas lattice by half a spacing relative to DM to
-                    // avoid perfect overlap
-                    double qx = i * spacing;
-                    double qy = j * spacing;
-                    double qz = k * spacing;
+            // Shift the gas glass by half a spacing relative to DM to avoid
+            // overlap
+            double spacing = L_base / N_glass;
+            double shift = 0.5 * spacing;
 
-                    Vec3 d = sample_zeldovich_cic(
-                        qx, qy, qz, zf, config.cell_size, config.mesh_size);
+            double initial_h =
+                0.5 * spacing * std::cbrt(config.mfm_target_neighbors);
+            double cell_size = config.domain_size.x / config.mesh_size.x;
 
-                    double p_x = fmod(qx + d.x + config.domain_size.x,
-                                      config.domain_size.x);
-                    double p_y = fmod(qy + d.y + config.domain_size.y,
-                                      config.domain_size.y);
-                    double p_z = fmod(qz + d.z + config.domain_size.z,
-                                      config.domain_size.z);
+            for (int tx = 0; tx < n_tiles_x; ++tx) {
+                for (int ty = 0; ty < n_tiles_y; ++ty) {
+                    for (int tz = 0; tz < n_tiles_z; ++tz) {
+                        for (size_t p = 0; p < glass.num_particles; ++p) {
+                            // Unperturbed glass coordinates for Gas (Shifted
+                            // with local block wrapping)
+                            double qx =
+                                tx * L_base +
+                                std::fmod(glass.pos_x[p] * L_base + shift,
+                                          L_base);
+                            double qy =
+                                ty * L_base +
+                                std::fmod(glass.pos_y[p] * L_base + shift,
+                                          L_base);
+                            double qz =
+                                tz * L_base +
+                                std::fmod(glass.pos_z[p] * L_base + shift,
+                                          L_base);
 
-                    double v_x = state.hubble_param * d.x * zf.f;
-                    double v_y = state.hubble_param * d.y * zf.f;
-                    double v_z = state.hubble_param * d.z * zf.f;
+                            Vec3 d = sample_zeldovich_cic(
+                                qx, qy, qz, zf, cell_size, config.mesh_size);
 
-                    state.mfm_gas->add_particle(
-                        p_x, p_y, p_z, v_x, v_y, v_z, gas_particle_mass,
-                        initial_internal_energy, initial_h, seed_metallicity);
+                            double p_x =
+                                std::fmod(qx + d.x + config.domain_size.x,
+                                          config.domain_size.x);
+                            double p_y =
+                                std::fmod(qy + d.y + config.domain_size.y,
+                                          config.domain_size.y);
+                            double p_z =
+                                std::fmod(qz + d.z + config.domain_size.z,
+                                          config.domain_size.z);
+
+                            double v_x = state.hubble_param * d.x * zf.f;
+                            double v_y = state.hubble_param * d.y * zf.f;
+                            double v_z = state.hubble_param * d.z * zf.f;
+
+                            state.mfm_gas->add_particle(
+                                p_x, p_y, p_z, v_x, v_y, v_z, gas_particle_mass,
+                                initial_internal_energy, initial_h,
+                                seed_metallicity);
+                        }
+                    }
+                }
+            }
+        } else {
+            int scale_x =
+                static_cast<int>(config.domain_size.x / config.domain_size_1d);
+            int scale_y =
+                static_cast<int>(config.domain_size.y / config.domain_size_1d);
+            int scale_z =
+                static_cast<int>(config.domain_size.z / config.domain_size_1d);
+
+            int N_part_x = config.num_gas_particles_1d * scale_x;
+            int N_part_y = config.num_gas_particles_1d * scale_y;
+            int N_part_z = config.num_gas_particles_1d * scale_z;
+
+            double spacing =
+                config.domain_size_1d / config.num_gas_particles_1d;
+            double gas_particle_mass =
+                config.gas_total_mass / pow(config.num_gas_particles_1d, 3);
+
+            // Initial guess for smoothing length
+            double initial_h =
+                0.5 * spacing * cbrt(config.mfm_target_neighbors);
+
+            for (int i = 0; i < N_part_x; ++i) {
+                for (int j = 0; j < N_part_y; ++j) {
+                    for (int k = 0; k < N_part_z; ++k) {
+                        // Shift the gas lattice by half a spacing relative to
+                        // DM to avoid perfect overlap
+                        double qx = i * spacing;
+                        double qy = j * spacing;
+                        double qz = k * spacing;
+
+                        Vec3 d = sample_zeldovich_cic(
+                            qx, qy, qz, zf, config.cell_size, config.mesh_size);
+
+                        double p_x = fmod(qx + d.x + config.domain_size.x,
+                                          config.domain_size.x);
+                        double p_y = fmod(qy + d.y + config.domain_size.y,
+                                          config.domain_size.y);
+                        double p_z = fmod(qz + d.z + config.domain_size.z,
+                                          config.domain_size.z);
+
+                        double v_x = state.hubble_param * d.x * zf.f;
+                        double v_y = state.hubble_param * d.y * zf.f;
+                        double v_z = state.hubble_param * d.z * zf.f;
+
+                        state.mfm_gas->add_particle(
+                            p_x, p_y, p_z, v_x, v_y, v_z, gas_particle_mass,
+                            initial_internal_energy, initial_h,
+                            seed_metallicity);
+                    }
                 }
             }
         }

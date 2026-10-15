@@ -131,6 +131,11 @@ TEST_CASE("MFM Gradient Estimator recovers linear fields", "[hydro][mfm_gradient
         gas.pressure[i] = 20.0 - 1.0 * px + 5.0 * py - 2.0 * pz;
         gas.vel_x[i] = 3.0 * px;
         
+        gas.pressure_pred[i] = gas.pressure[i];
+        gas.vel_x_pred[i] = gas.vel_x[i];
+        gas.vel_y_pred[i] = 0.0;
+        gas.vel_z_pred[i] = 0.0;
+        
         gas.mass[i] = gas.rho[i] * cell_volume;
         gas.cond_num[i] = 1.0;
         
@@ -141,7 +146,7 @@ TEST_CASE("MFM Gradient Estimator recovers linear fields", "[hydro][mfm_gradient
     
     REQUIRE(central_idx != -1);
 
-    // Compute the exact B_matrix for each particle to mock the DensitySolver
+    // Compute the B_matrix for each particle to mock the DensitySolver
     for (size_t i = 0; i < gas.num_particles; ++i) {
         Eigen::Matrix3d E = Eigen::Matrix3d::Zero();
         for (size_t j = 0; j < gas.num_particles; ++j) {
@@ -182,17 +187,17 @@ TEST_CASE("MFM Gradient Estimator recovers linear fields", "[hydro][mfm_gradient
     // Compute gradients globally
     HydroSolver::compute_gradients(gas, config);
     
-    // Density Gradient should exactly equal (2, 3, 4)
+    // Density Gradient should equal (2, 3, 4)
     REQUIRE(gas.grad_rho[central_idx].x() == Catch::Approx(2.0).margin(1e-12));
     REQUIRE(gas.grad_rho[central_idx].y() == Catch::Approx(3.0).margin(1e-12));
     REQUIRE(gas.grad_rho[central_idx].z() == Catch::Approx(4.0).margin(1e-12));
 
-    // Pressure Gradient should exactly equal (-1, 5, -2)
+    // Pressure Gradient should equal (-1, 5, -2)
     REQUIRE(gas.grad_p[central_idx].x() == Catch::Approx(-1.0).margin(1e-12));
     REQUIRE(gas.grad_p[central_idx].y() == Catch::Approx(5.0).margin(1e-12));
     REQUIRE(gas.grad_p[central_idx].z() == Catch::Approx(-2.0).margin(1e-12));
 
-    // Vx Gradient should exactly equal (3, 0, 0)
+    // Vx Gradient should equal (3, 0, 0)
     REQUIRE(gas.grad_vx[central_idx].x() == Catch::Approx(3.0).margin(1e-12));
     REQUIRE(gas.grad_vx[central_idx].y() == Catch::Approx(0.0).margin(1e-12));
     REQUIRE(gas.grad_vx[central_idx].z() == Catch::Approx(0.0).margin(1e-12));

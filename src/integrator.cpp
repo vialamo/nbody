@@ -563,15 +563,6 @@ void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
     // KICK 2 (Half step)
     apply_kick(state, dt / 2.0, config, false);
 
-    // SYNCHRONIZATION BEFORE I/O AND DIAGNOSTICS
-    // Force the primitive variables (u, pressure, entropy) to conform
-    // to the kicked conservative variables (total_energy and velocity)
-    if (config.hydro_method == HydroMethod::MFM) {
-        state.mfm_gas->update_primitive_variables(config, state.scale_factor);
-    } else if (config.hydro_method == HydroMethod::Eulerian) {
-        state.gas->update_primitive_variables(state.scale_factor);
-    }
-
     // Time bin assignment
     state.dm.update_particle_timesteps(config.fixed_dt, config);
     if (config.hydro_method == HydroMethod::MFM) {

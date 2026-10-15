@@ -29,8 +29,8 @@ static double get_current_memory_usage_MB() {
     }
 
     long virtual_size, rss_pages;
-    // The first value is total virtual memory, the second is current RSS in
-    // pages
+    // The first value is total virtual memory,
+    // the second is current RSS in pages
     statm >> virtual_size >> rss_pages;
     statm.close();
 
@@ -214,8 +214,13 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
                   << diag.MFM_h_non_converged_cases << "\n";
     }
     if (diag.MFM_neighbor_increased_cases > 0) {
+        double cases_per_cycle =
+            static_cast<double>(diag.MFM_neighbor_increased_cases) /
+            std::max(1, diag.accumulated_cycles);
+        double percent_cases =
+            100.0 * cases_per_cycle / pow(conf.num_gas_particles_1d, 3);
         std::cout << "  [WARNING] MFM neighbor increased cases: "
-                  << diag.MFM_neighbor_increased_cases << "\n";
+                  << format_double(percent_cases, 1) << "%\n";
     }
     if (diag.MFM_sph_fallback_cases > 0) {
         std::cout << "  [WARNING] MFM SPH fallback cases: "

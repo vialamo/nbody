@@ -72,6 +72,7 @@ TEST_CASE("initialize_state produces physically sound macro-states",
     config.num_particles_1d = 32;
     config.use_PM = true;
     config.use_PP = false;
+    config.use_glass = false;
 
     config.compute_derived_data();
 
@@ -176,6 +177,7 @@ TEST_CASE("Peculiar velocities exactly obey Zel'dovich kinematics",
     config.a_start = 0.02;
     config.sigma_8 = 0.81;
     config.seed = 123;
+    config.use_glass = false;
     config.compute_derived_data();
 
     // Generate state and grab the Zeldovich field growth rate

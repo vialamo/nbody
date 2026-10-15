@@ -1,5 +1,6 @@
 #pragma once
 #include <Eigen/Dense>
+#include <tuple>
 #include <vector>
 
 #include "config.h"
@@ -7,9 +8,10 @@
 #include "particles.h"
 #include "reconstruction.h"
 
-constexpr double N_cond_crit = 100.0;
+constexpr double N_cond_crit = 1000.0;
+constexpr double N_cond_crit_hard = 50.0;
 
-//#define USE_ADAPTIVE_SOFTENING
+// #define USE_ADAPTIVE_SOFTENING
 
 class Cooling;
 
@@ -154,6 +156,12 @@ class GasParticleSystem {
     void build_lbvh(const Config& config);
 
     double get_active_particles_per_cycle_and_reset(const Config& config);
+
+    // Computes synced snapshot arrays (u, P, S, E_tot) without modifying the
+    // state
+    std::tuple<std::vector<double>, std::vector<double>, std::vector<double>,
+               std::vector<double>>
+    compute_snapshot_primitives(const Config& config, double a) const;
 
    private:
     void sort_arrays(const std::vector<int>& sorted_indices);

@@ -627,8 +627,8 @@ void GasGrid::apply_cooling(double dt, double a, Cooling& cooling) {
                 // Run the implicit solver for this tiny step
                 int iters = 0;
                 u_current = cooling.solve_cooling_implicit(
-                    u_current, local_rho, local_Z_frac, a, dt_cell, u_cutoff, u_floor,
-                    config, iters);
+                    u_current, local_rho, local_Z_frac, a, dt_cell, u_cutoff,
+                    u_floor, config, iters);
 
                 if (iters >= Cooling::MAX_ITER) {
                     cell_non_converged++;

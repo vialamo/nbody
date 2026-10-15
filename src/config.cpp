@@ -159,11 +159,10 @@ void Config::compute_derived_data() {
     double mean_interparticle_spacing =
         domain_size_1d / static_cast<double>(active_particles_1d);
 
-    double actual_softening =
+    base_comoving_softening =
         mean_interparticle_spacing * comoving_softening_factor;
 
-    base_comoving_softening = actual_softening;
-    softening = actual_softening;
+    softening = base_comoving_softening;
 
     const double dynamical_time = 1.0 / std::sqrt(G);
     double raw_fixed_dt = max_dt_dynamical_factor * dynamical_time;

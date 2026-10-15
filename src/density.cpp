@@ -3,7 +3,6 @@
 #include <omp.h>
 
 #include <cmath>
-#include <iostream>
 
 #include "kernels.h"
 #include "math_utils.h"
@@ -225,11 +224,7 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
     double tol = config.mfm_neighbor_tolerance;
     int max_iter = config.mfm_max_iterations;
 
-    const double min_h_cap =
-#ifdef USE_ADAPTIVE_SOFTENING
-        2.8 *
-#endif
-        config.mfm_min_hsml_fraction * config.softening;
+    const double min_h_cap = config.mfm_min_hsml_fraction * config.softening;
 
     const double max_h_cap = 0.5 * config.domain_size_1d;
 
@@ -255,13 +250,14 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
         double current_dn_dh = 0.0;
         int current_num_neighb = 0;
 
-        bool matrix_converged = false;
         int matrix_iters = 0;
+        bool matrix_converged = false;
         bool h_clamped = false;
         bool is_converged = false;
+        bool neighbors_increased = false;
 
         // OUTER LOOP: Matrix Regularization via Target Expansion
-        while (!matrix_converged && matrix_iters < 10 && h_guess < max_h_cap) {
+        while (!matrix_converged && matrix_iters < 20 && h_guess < max_h_cap) {
             int nr_iter = 0;
             is_converged = false;
             h_clamped = false;
@@ -340,9 +336,9 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
                 gas, i, h_guess, domain_size, gas.B_matrix[i], false);
 
             constexpr int min_num_neighb = 20;
-            if ((cond < 0.0 || cond > N_cond_crit ||
+            if ((cond < 0.0 || cond > N_cond_crit_hard ||
                  current_num_neighb < min_num_neighb) &&
-                current_target_N < 3.0 * target_N) {
+                current_target_N < 8.0 * target_N) {
                 // Find more neighbors
                 current_target_N *= 1.2;
 
@@ -350,7 +346,7 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
                 h_low = h_guess;
                 h_high = std::numeric_limits<double>::infinity();
                 matrix_iters++;
-                step_neighbor_increased_cases++;
+                neighbors_increased = true;
             } else {
                 matrix_converged = true;
             }
@@ -365,6 +361,7 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
 
         if (h_clamped) num_h_clamped++;
         if (!is_converged) num_non_converged++;
+        if (neighbors_increased) step_neighbor_increased_cases++;
     }
 
 // #define VOLUME_RENORMALIZATION

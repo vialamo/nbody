@@ -1,8 +1,5 @@
 #include "mfm.h"
 
-#include <chrono>
-#include <iostream>
-
 #include "constants.h"
 #include "diagnostics.h"
 #include "gravity.h"
@@ -329,7 +326,7 @@ void GasParticleSystem::apply_cooling(double a, const Config& config,
 
     double u_cutoff = cooling.get_u_cutoff(a, config);
     double u_floor = cooling.get_u_floor(a, config);
-    
+
     double total_radiated = 0.0;
     double total_photoheated = 0.0;
     size_t non_converged_count = 0;
@@ -365,6 +362,7 @@ void GasParticleSystem::apply_cooling(double a, const Config& config,
                     total_energy[i] += delta_u;
                     entropy[i] =
                         gamma_minus_1 * u[i] / std::pow(rho[i], gamma_minus_1);
+                    pressure[i] = gamma_minus_1 * rho[i] * u[i];
 
                     double delta_E = delta_u * mass[i];
                     if (delta_u < 0.0) {
@@ -382,9 +380,6 @@ void GasParticleSystem::apply_cooling(double a, const Config& config,
     this->cooling_failed_cells = non_converged_count;
     this->accumulated_radiated_energy += total_radiated;
     this->accumulated_photoheating_energy += total_photoheated;
-
-    // Resynchronize pressure and dual-energy arrays using the ie
-    update_primitive_variables(config, a);
 }
 
 double GasParticleSystem::get_cfl_timestep(double a,
@@ -732,8 +727,8 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
     const double gamma_minus_1 = config.gamma - 1.0;
 
     // Calculate the physical internal energy floor
-    const double u_floor =
-        Cooling::get_internal_energy_from_temp(config.temp_floor_k / a, a, config);
+    const double u_floor = Cooling::get_internal_energy_from_temp(
+        config.temp_floor_k / a, a, config);
 
     double alpha_kin = config.dual_energy_threshold;
     double alpha_grav = config.dual_energy_threshold;
@@ -835,6 +830,66 @@ void GasParticleSystem::predict_primitive_variables(const Config& config,
 
         pressure_pred[i] = gamma_minus_1 * rho[i] * u_pred_i;
     }
+}
+
+std::tuple<std::vector<double>, std::vector<double>, std::vector<double>,
+           std::vector<double>>
+GasParticleSystem::compute_snapshot_primitives(const Config& config,
+                                               double a) const {
+    std::vector<double> u_snap(num_particles);
+    std::vector<double> p_snap(num_particles);
+    std::vector<double> s_snap(num_particles);
+    std::vector<double> e_snap(num_particles);
+
+    const double gamma_minus_1 = config.gamma - 1.0;
+
+    // Calculate the evolving CMB temperature floor
+    double t_cmb = 2.7315 / a;
+    double target_floor_k = std::max(config.temp_floor_k, t_cmb);
+    const double u_floor =
+        Cooling::get_internal_energy_from_temp(target_floor_k, a, config);
+
+    double alpha_kin = config.dual_energy_threshold;
+    double alpha_grav = config.dual_energy_threshold;
+
+#pragma omp parallel for schedule(static)
+    for (size_t i = 0; i < num_particles; ++i) {
+        double local_rho = std::max(rho[i], density_floor);
+
+        // Calculate specific kinetic energy
+        double ke = 0.5 * (vel_x[i] * vel_x[i] + vel_y[i] * vel_y[i] +
+                           vel_z[i] * vel_z[i]);
+
+        // Calculate the conserved internal energy
+        double u_cons = total_energy[i] - ke;
+
+        double threshold_truncation = alpha_kin * ke;
+        double threshold_kin = alpha_kin * (max_rel_ke[i] + u[i]);
+        double threshold_grav = alpha_grav * delta_E_grav[i];
+
+        double u_final;
+        if (u_cons < threshold_truncation || u[i] < threshold_kin ||
+            u[i] < threshold_grav) {
+            // FALLBACK: Use entropy-based adiabatic evolution
+            u_final =
+                entropy[i] * std::pow(local_rho, gamma_minus_1) / gamma_minus_1;
+        } else {
+            // NORMAL REGIME: Trust the conservative internal energy
+            u_final = u_cons;
+        }
+
+        // Enforce thermodynamic floor
+        u_final = std::max(u_final, u_floor);
+
+        u_snap[i] = u_final;
+        p_snap[i] = gamma_minus_1 * local_rho * u_final;
+        s_snap[i] =
+            gamma_minus_1 * u_final / std::pow(local_rho, gamma_minus_1);
+        e_snap[i] = u_final + ke;  // Synchronize total energy
+    }
+
+    return {std::move(u_snap), std::move(p_snap), std::move(s_snap),
+            std::move(e_snap)};
 }
 
 double GasParticleSystem::get_active_particles_per_cycle_and_reset(

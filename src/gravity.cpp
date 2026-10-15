@@ -22,19 +22,6 @@ void update_softening(SimState& state, Config& config) {
     config.softening = current_comoving_softening;
 }
 
-double get_gravity_timestep(const GasParticleSystem& gas,
-                            const Config& config) {
-    if (gas.num_particles == 0) return std::numeric_limits<double>::infinity();
-    if (config.individual_particle_timesteps) {
-        return std::numeric_limits<double>::infinity();
-    } else {
-        double epsilon = config.softening;
-        double a_max = std::sqrt(gas.max_accel_sq);
-        double dt_grav = std::sqrt(epsilon / a_max);
-        return dt_grav * config.gravity_accuracy_eta;
-    }
-}
-
 void compute_and_add_gas_pp_forces(GasParticleSystem& gas, double a,
                                    const Config& config, Diagnostics& diag) {
     if (gas.num_particles == 0) return;
@@ -167,7 +154,7 @@ void compute_and_add_gas_pp_forces(GasParticleSystem& gas, double a,
                      (zeta_j * dW_dr_j) / m_j) /
                     r;
 #else
-                // Standard TreePM PP Force
+                // TreePM PP Force
                 double dphi_dr, dummy_dphi_dh;
                 Kernels::gravity_derivatives(r, epsilon, dphi_dr,
                                              dummy_dphi_dh);
@@ -247,7 +234,6 @@ static void compute_gas_cross_pp_forces(GasParticleSystem& gas, double a,
     const double search_sq =
         use_pm ? cutoff_sq : std::numeric_limits<double>::infinity();
     const double base_soft = config.softening;
-    const double spline_equivalent_h = 2.8 * base_soft;
 
     double* d_gas_px = gas.pos_x.data();
     double* d_gas_py = gas.pos_y.data();
@@ -366,14 +352,14 @@ static void compute_gas_cross_pp_forces(GasParticleSystem& gas, double a,
                 double dphi_dr_i, dW_dr_i, dphi_dr_j, dummy_dphi_dh;
                 Kernels::adaptive_gravity_terms(r, h_i, dphi_dr_i, dW_dr_i);
                 // DM kernel derivatives
-                Kernels::gravity_derivatives(r, spline_equivalent_h, dphi_dr_j,
+                Kernels::gravity_derivatives(r, base_soft, dphi_dr_j,
                                              dummy_dphi_dh);
                 // Force magnitude
                 double force_mag_over_r =
                     (G / 2.0) *
                     ((dphi_dr_i + dphi_dr_j) + (zeta_i * dW_dr_i) / m_gas) / r;
 #else
-                // Standard TreePM PP Force
+                // TreePM PP Force
                 double dphi_dr, dummy_dphi_dh;
                 Kernels::gravity_derivatives(r, base_soft, dphi_dr,
                                              dummy_dphi_dh);
@@ -450,7 +436,6 @@ void compute_and_add_dm_pp_forces(ParticleSystem& dm, double a,
     const bool use_pm = config.use_PM;
     const size_t num_nodes = 2 * n_parts - 1;
     const double base_soft = config.softening;
-    const double spline_h = 2.8 * base_soft;
 
     const double search_sq =
         use_pm ? cutoff_sq : std::numeric_limits<double>::infinity();
@@ -544,7 +529,7 @@ void compute_and_add_dm_pp_forces(ParticleSystem& dm, double a,
                 // Cubic Spline Gravity
                 double dphi_dr, dummy_dphi_dh;
 #ifdef USE_ADAPTIVE_SOFTENING
-                Kernels::gravity_derivatives(r, spline_h, dphi_dr,
+                Kernels::gravity_derivatives(r, base_soft, dphi_dr,
                                              dummy_dphi_dh);
 #else
                 Kernels::gravity_derivatives(r, base_soft, dphi_dr,
@@ -627,7 +612,6 @@ static void compute_dm_cross_pp_forces(ParticleSystem& dm,
     const double search_sq =
         use_pm ? cutoff_sq : std::numeric_limits<double>::infinity();
     const double base_soft = config.softening;
-    const double spline_equivalent_h = 2.8 * base_soft;
 
     // Extract DM pointers
     double* d_dm_px = dm.pos_x.data();
@@ -701,7 +685,7 @@ static void compute_dm_cross_pp_forces(ParticleSystem& dm,
                 min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
                                      domain_size.z);
 
-            if (aabb_dist_sq > search_sq) continue;  // Prune branch completely
+            if (aabb_dist_sq > search_sq) continue;  // Prune branch
 
             if (node.particle_idx != -1) {
                 // Exact P-P interaction at the leaf
@@ -743,7 +727,7 @@ static void compute_dm_cross_pp_forces(ParticleSystem& dm,
                 double dphi_dr_i, dummy_dphi_dh, dphi_dr_j, dW_dr_j;
 
                 // DM kernel derivatives (particle i)
-                Kernels::gravity_derivatives(r, spline_equivalent_h, dphi_dr_i,
+                Kernels::gravity_derivatives(r, base_soft, dphi_dr_i,
                                              dummy_dphi_dh);
 
                 // Gas kernel derivatives (particle j)
@@ -757,7 +741,7 @@ static void compute_dm_cross_pp_forces(ParticleSystem& dm,
                     r;
 
 #else
-                // OG3 / Standard TreePM P-P Force
+                // TreePM PP Force
                 double dphi_dr, dummy_dphi_dh;
                 Kernels::gravity_derivatives(r, base_soft, dphi_dr,
                                              dummy_dphi_dh);
@@ -834,6 +818,19 @@ void compute_gas_dm_cross_pp_forces(ParticleSystem& dm, GasParticleSystem& gas,
 
     // Gas pulling on DM
     compute_dm_cross_pp_forces(dm, gas, a, config, diag);
+}
+
+double get_gravity_timestep(const GasParticleSystem& gas,
+                            const Config& config) {
+    if (gas.num_particles == 0) return std::numeric_limits<double>::infinity();
+    if (config.individual_particle_timesteps) {
+        return std::numeric_limits<double>::infinity();
+    } else {
+        double epsilon = config.softening;
+        double a_max = std::sqrt(gas.max_accel_sq);
+        double dt_grav = std::sqrt(epsilon / a_max);
+        return dt_grav * config.gravity_accuracy_eta;
+    }
 }
 
 double get_gravity_timestep(const ParticleSystem& dm, const Config& config) {

@@ -3,7 +3,6 @@
 #include <H5Cpp.h>
 
 #include <algorithm>  // For std::max, std::min
-// #include <atomic>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -293,10 +292,6 @@ double Cooling::compute_du_dt(double u_code, double rho_code, double Z,
         return compute_tabulated_cooling(u_code, rho_code, Z, a,
                                          clumping_factor, config);
     } else {
-        double u_cutoff = get_u_cutoff(a, config);
-        // Stop analytical radiation if we are below the cutoff
-        if (u_code <= u_cutoff) return 0.0;
-        
         double T = get_temp_from_internal_energy(u_code, a, config);
 
         // Convert code density to CGS
@@ -322,17 +317,19 @@ double Cooling::get_u_floor(double a, const Config& config) const {
 
 double Cooling::get_u_cutoff(double a, const Config& config) const {
     if (use_table) {
-        // Tables inherently handle physics, so they only stop at the absolute floor
+        // Tables inherently handle physics, so they only stop at the absolute
+        // floor
         return get_u_floor(a, config);
     } else {
         // Analytical model stops radiating at the cutoff
-        return get_internal_energy_from_temp(config.cooling_cutoff_k, a, config);
+        return get_internal_energy_from_temp(config.cooling_cutoff_k, a,
+                                             config);
     }
 }
 
 double Cooling::solve_cooling_implicit(double u_old, double rho_code, double Z,
-                                       double a, double dt, double u_cutoff, double u_floor,
-                                       const Config& config,
+                                       double a, double dt, double u_cutoff,
+                                       double u_floor, const Config& config,
                                        int& iterations_taken) const {
     double du_dt_initial = compute_du_dt(u_old, rho_code, Z, a, config);
     if (du_dt_initial == 0.0) return u_old;
@@ -349,7 +346,7 @@ double Cooling::solve_cooling_implicit(double u_old, double rho_code, double Z,
             iterations_taken = 0;
             return u_old;
         }
-        
+
         // Cooling: u_new must be less than u_old
         u_low = effective_cooling_floor;
         u_high = u_old;
@@ -358,7 +355,7 @@ double Cooling::solve_cooling_implicit(double u_old, double rho_code, double Z,
         double f_low =
             u_low - u_old - dt * compute_du_dt(u_low, rho_code, Z, a, config);
 
-        // If f_low is positive, the root lies below u_rad_floor.
+        // If f_low is positive, the root lies below u_floor.
         // This happens when rapid cooling + a large dt push the target
         // below the radiation floor. Just clamp to the floor
         if (f_low >= 0.0) {

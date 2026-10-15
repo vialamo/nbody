@@ -258,19 +258,11 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
 
     if (gas.num_active == 0) return;
 
-#ifdef USE_HALF_STEP_PREDICTION
     Reconstruction::FluidStateArrays system_data{
         gas.pos_x.data(),      gas.pos_y.data(),      gas.pos_z.data(),
         gas.vel_x_pred.data(), gas.vel_y_pred.data(), gas.vel_z_pred.data(),
         gas.mass.data(),       gas.rho.data(),        gas.pressure_pred.data(),
         gas.h.data(),          gas.cond_num.data()};
-#else
-    Reconstruction::FluidStateArrays system_data{
-        gas.pos_x.data(), gas.pos_y.data(),   gas.pos_z.data(),
-        gas.vel_x.data(), gas.vel_y.data(),   gas.vel_z.data(),
-        gas.mass.data(),  gas.rho.data(),     gas.pressure.data(),
-        gas.h.data(),     gas.cond_num.data()};
-#endif
 
     bool debug_printed = false;
 
@@ -360,7 +352,7 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
 
             if (ill_conditioned) {
                 step_ill_conditioned++;
-                if (!debug_printed) {
+                /*if (!debug_printed) {
                     debug_printed = true;
                     std::cout
                         << "\n=== ILL-CONDITIONED MATRIX DIAGNOSTIC ===\n";
@@ -399,7 +391,7 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
                         else if (r < 0.05 * gas.h[i])
                             extremely_close++;
                     }
-                }
+                }*/
             }
         }
     }
@@ -494,16 +486,10 @@ void compute_hydro_forces(GasParticleSystem& gas, const Config& config,
                     p_j.mass = gas.mass[j];
                     p_j.rho = gas.rho[j];
                     p_j.h = gas.h[j];
-#ifdef USE_HALF_STEP_PREDICTION
                     p_j.vel =
                         Eigen::Vector3d(gas.vel_x_pred[j], gas.vel_y_pred[j],
                                         gas.vel_z_pred[j]);
                     p_j.pressure = gas.pressure_pred[j];
-#else
-                    p_j.vel = Eigen::Vector3d(gas.vel_x[j], gas.vel_y[j],
-                                              gas.vel_z[j]);
-                    p_j.pressure = gas.pressure[j];
-#endif
 
                     Reconstruction::ParticleGradients grad_j;
                     grad_j.grad_rho = gas.grad_rho[j];
