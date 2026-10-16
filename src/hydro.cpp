@@ -245,11 +245,55 @@ static inline void update_signal_velocities(
     atomic_update_max(&v_sig_max_j, v_sig_ij_phys);
 }
 
-}  // end anonymous namespace
+static void print_ill_conditioned_diagnostic(bool& debug_printed, size_t i,
+                                             const GasParticleSystem& gas,
+                                             const std::vector<int>& neighbors,
+                                             const Vec3& domain_size) {
+    if (!debug_printed) {
+        debug_printed = true;
+        std::cout << "\n=== ILL-CONDITIONED MATRIX DIAGNOSTIC ===\n";
+        std::cout << "Particle Index: " << i << "\n";
+        std::cout << "Pos: (" << gas.pos_x[i] << ", " << gas.pos_y[i] << ", "
+                  << gas.pos_z[i] << ")\n";
+        std::cout << "h_i: " << gas.h[i] << " | rho_i: " << gas.rho[i] << "\n";
+        std::cout << "n_enc: " << gas.n_enc_final[i] << "\n";
+        std::cout << "Condition Number: " << gas.cond_num[i] << "\n";
+        std::cout << "Condition Number (conv): " << gas.cond_num_convergence[i]
+                  << "\n";
+        std::cout << "Number of neighbors found: " << neighbors.size() << "\n";
 
-// --------------------------------------------------------------------------------
-// Public Entry Points
-// --------------------------------------------------------------------------------
+        int exact_overlaps = 0;
+        int extremely_close = 0;
+
+        std::cout << "Neighbor distances:\n";
+        for (size_t n = 0; n < neighbors.size(); ++n) {
+            int j = neighbors[n];
+            double dx = periodic_displacement(gas.pos_x[j] - gas.pos_x[i],
+                                              domain_size.x);
+            double dy = periodic_displacement(gas.pos_y[j] - gas.pos_y[i],
+                                              domain_size.y);
+            double dz = periodic_displacement(gas.pos_z[j] - gas.pos_z[i],
+                                              domain_size.z);
+            double r = std::sqrt(dx * dx + dy * dy + dz * dz);
+
+            std::cout << "  N[" << n << "] (Idx: " << j << ") r = " << r
+                      << " | dx: " << dx << " dy: " << dy << " dz: " << dz
+                      << "\n";
+
+            if (r < 1e-12)
+                exact_overlaps++;
+            else if (r < 0.05 * gas.h[i])
+                extremely_close++;
+        }
+        std::cout << "Diagnostics:\n";
+        std::cout << "  Exact overlaps (r < 1e-12): " << exact_overlaps << "\n";
+        std::cout << "  Highly clumped (r < 0.05*h): " << extremely_close
+                  << "\n";
+        std::cout << "=========================================\n";
+    }
+}
+
+}  // end anonymous namespace
 
 void compute_gradients(GasParticleSystem& gas, const Config& config) {
     if (gas.num_particles == 0) return;
@@ -352,46 +396,8 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
 
             if (ill_conditioned) {
                 step_ill_conditioned++;
-                /*if (!debug_printed) {
-                    debug_printed = true;
-                    std::cout
-                        << "\n=== ILL-CONDITIONED MATRIX DIAGNOSTIC ===\n";
-                    std::cout << "Particle Index: " << i << "\n";
-                    std::cout << "Pos: (" << gas.pos_x[i] << ", "
-                              << gas.pos_y[i] << ", " << gas.pos_z[i] << ")\n";
-                    std::cout << "h_i: " << gas.h[i]
-                              << " | rho_i: " << gas.rho[i] << "\n";
-                    std::cout << "n_enc: " << gas.n_enc_final[i] << "\n";
-                    std::cout << "Condition Number: " << gas.cond_num[i]
-                              << "\n";
-                    std::cout
-                        << "Number of neighbors found: " << neighbors.size()
-                        << "\n";
-
-                    int exact_overlaps = 0;
-                    int extremely_close = 0;
-
-                    std::cout << "Neighbor distances:\n";
-                    for (size_t n = 0; n < neighbors.size(); ++n) {
-                        int j = neighbors[n];
-                        double dx = periodic_displacement(
-                            gas.pos_x[j] - gas.pos_x[i], domain_size.x);
-                        double dy = periodic_displacement(
-                            gas.pos_y[j] - gas.pos_y[i], domain_size.y);
-                        double dz = periodic_displacement(
-                            gas.pos_z[j] - gas.pos_z[i], domain_size.z);
-                        double r = std::sqrt(dx * dx + dy * dy + dz * dz);
-
-                        std::cout << "  N[" << n << "] (Idx: " << j
-                                  << ") r = " << r << " | dx: " << dx
-                                  << " dy: " << dy << " dz: " << dz << "\n";
-
-                        if (r < 1e-12)
-                            exact_overlaps++;
-                        else if (r < 0.05 * gas.h[i])
-                            extremely_close++;
-                    }
-                }*/
+                print_ill_conditioned_diagnostic(debug_printed, i, gas,
+                                                 neighbors, domain_size);
             }
         }
     }

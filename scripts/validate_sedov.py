@@ -424,12 +424,12 @@ def validate_sedov_interactive(snapshot_dir):
         label='Snapshot ID',
         valmin=0,
         valmax=len(files) - 1,
-        valinit=0,
+        valinit=len(files) - 1,
         valfmt='%0.0f'
     )
     
     snap_slider.on_changed(update)
-    update(0)
+    update(len(files) - 1)
     plt.show()
 
 if __name__ == "__main__":
@@ -445,7 +445,7 @@ if __name__ == "__main__":
     target_dir = args.path
     
     if args.latest:
-        runs = sorted(glob.glob(os.path.join(target_dir, "run_*")))
+        runs = sorted(glob.glob(os.path.join(target_dir, "sedov_blastwave_*")))
         if runs: target_dir = runs[-1]
         
     validate_sedov_interactive(target_dir)

@@ -271,12 +271,14 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
         total_radiated_energy = e_rad;
         total_heated_energy = e_heat;
 
+        this->MFM_total_particles = gas.num_particles;
         this->MFM_ill_conditioned_cases = gas.ill_conditioned_cases;
         // gas.ill_conditioned_cases = 0;
         this->MFM_h_non_converged_cases = gas.non_converged_h_cases;
         // gas.non_converged_h_cases = 0;
         this->MFM_neighbor_increased_cases = gas.neighbor_increased_cases;
         gas.neighbor_increased_cases = 0;
+        this->MFM_not_enough_nbg_cases = gas.not_enough_neighbors_cases;
         percent_particles_updated =
             gas.get_active_particles_per_cycle_and_reset(config) * 100.0;
         this->MFM_sph_fallback_cases = gas.sph_fallback_cases;

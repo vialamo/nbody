@@ -62,6 +62,7 @@ GasParticleSystem::GasParticleSystem(const Config& config)
 
     v_sig_max.reserve(config.num_gas_particles);
     cond_num.reserve(config.num_gas_particles);
+    cond_num_convergence.reserve(config.num_gas_particles);
     n_enc_final.reserve(config.num_gas_particles);
 
     time_bin.reserve(config.num_gas_particles);
@@ -137,6 +138,7 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
     grad_p.push_back(Eigen::Vector3d::Zero());
 
     cond_num.push_back(0);
+    cond_num_convergence.push_back(0);
     n_enc_final.push_back(0);
 
     time_bin.push_back(0);
@@ -185,6 +187,7 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     std::vector<double> new_delta_E_grav(num_particles);
 
     std::vector<double> new_cond_num(num_particles);
+    std::vector<double> new_cond_num_conv(num_particles);
     std::vector<double> new_n_enc_final(num_particles);
 
     std::vector<int> new_time_bin(num_particles);
@@ -236,6 +239,7 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
         new_max_rel_ke[i] = max_rel_ke[src];
         new_delta_E_grav[i] = delta_E_grav[src];
         new_cond_num[i] = cond_num[src];
+        new_cond_num_conv[i] = cond_num_convergence[src];
         new_n_enc_final[i] = n_enc_final[src];
         new_time_bin[i] = time_bin[src];
         new_dt_step[i] = dt_step[src];
@@ -287,6 +291,7 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     max_rel_ke = std::move(new_max_rel_ke);
     delta_E_grav = std::move(new_delta_E_grav);
     cond_num = std::move(new_cond_num);
+    cond_num_convergence = std::move(new_cond_num_conv);
     n_enc_final = std::move(new_n_enc_final);
     time_bin = std::move(new_time_bin);
     dt_step = std::move(new_dt_step);

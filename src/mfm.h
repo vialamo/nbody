@@ -9,9 +9,10 @@
 #include "reconstruction.h"
 
 constexpr double N_cond_crit = 1000.0;
-constexpr double N_cond_crit_hard = 50.0;
+constexpr double N_cond_crit_hard = 10.0;
 
 // #define USE_ADAPTIVE_SOFTENING
+// #define USE_GEOMETRIC_MATRIX
 
 class Cooling;
 
@@ -56,6 +57,7 @@ class GasParticleSystem {
         B_matrix;  // Geometric inverse matrix [1 / Code Length^2]
 
     std::vector<double> cond_num;
+    std::vector<double> cond_num_convergence;
 
     std::vector<double>
         entropy;  // Entropic function (S = P / rho^gamma)
@@ -94,6 +96,7 @@ class GasParticleSystem {
     size_t ill_conditioned_cases = 0;
     size_t clamped_h_cases = 0;
     size_t non_converged_h_cases = 0;
+    size_t not_enough_neighbors_cases = 0;
 
     // Debugging
     std::vector<double> n_enc_final;

@@ -48,7 +48,9 @@ class Diagnostics {
     size_t MFM_ill_conditioned_cases = 0;
     size_t MFM_h_non_converged_cases = 0;
     size_t MFM_neighbor_increased_cases = 0;
+    size_t MFM_not_enough_nbg_cases = 0;
     size_t MFM_sph_fallback_cases = 0;
+    size_t MFM_total_particles = 0;
     double percent_particles_updated = 0;
     double volume_error = 0.0;
     double mfm_flux_energy_error = 0.0;

@@ -287,7 +287,7 @@ if __name__ == "__main__":
     target_dir = args.path
     
     if args.latest:
-        runs = sorted(glob.glob(os.path.join(target_dir, "run_*")))
+        runs = sorted(glob.glob(os.path.join(target_dir, "sound*")))
         if runs: target_dir = runs[-1]
         
     validate_soundwave_interactive(target_dir)

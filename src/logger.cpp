@@ -218,9 +218,13 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
             static_cast<double>(diag.MFM_neighbor_increased_cases) /
             std::max(1, diag.accumulated_cycles);
         double percent_cases =
-            100.0 * cases_per_cycle / pow(conf.num_gas_particles_1d, 3);
+            100.0 * cases_per_cycle / diag.MFM_total_particles;
         std::cout << "  [WARNING] MFM neighbor increased cases: "
-                  << format_double(percent_cases, 1) << "%\n";
+                  << format_double(percent_cases, 1, false) << "%\n";
+    }
+    if (diag.MFM_not_enough_nbg_cases > 0) {
+        std::cout << "  [WARNING] MFM not enough neighbor cases: "
+                  << diag.MFM_not_enough_nbg_cases << "\n";
     }
     if (diag.MFM_sph_fallback_cases > 0) {
         std::cout << "  [WARNING] MFM SPH fallback cases: "

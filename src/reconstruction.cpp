@@ -88,8 +88,13 @@ Eigen::Vector3d compute_face_area_vector(
     Kernels::cubic_spline_value(r, p_i.h, W_i);
     Kernels::cubic_spline_value(r, p_j.h, W_j);
 
+#ifdef USE_GEOMETRIC_MATRIX
+    Eigen::Vector3d Area_vec = (V_j * W_i * (B_matrix_i * dx_vec)) +
+                               (V_i * W_j * (B_matrix_j * dx_vec));
+#else
     Eigen::Vector3d Area_vec = (V_i * V_j * W_i * (B_matrix_i * dx_vec)) +
                                (V_i * V_j * W_j * (B_matrix_j * dx_vec));
+#endif
 
     double facenormal_dot_dp = Area_vec.dot(dx_vec);
 
@@ -98,11 +103,7 @@ Eigen::Vector3d compute_face_area_vector(
         double dW_dr_i, dW_dr_j, dummy_phi;
         Kernels::adaptive_gravity_terms(r, p_i.h, dummy_phi, dW_dr_i);
         Kernels::adaptive_gravity_terms(r, p_j.h, dummy_phi, dW_dr_j);
-        double face_area_mag =
-            /*-(p_i.mass * p_j.mass) *
-            (dW_dr_i / (p_i.rho * p_i.rho) + dW_dr_j / (p_j.rho * p_j.rho)) /
-            r;*/
-            -(V_i * V_i * dW_dr_i + V_j * V_j * dW_dr_j) / r;
+        double face_area_mag = -(V_i * V_i * dW_dr_i + V_j * V_j * dW_dr_j) / r;
         return face_area_mag * dx_vec;
     }
 
@@ -165,7 +166,11 @@ ParticleGradients compute_single_particle_gradients(
             Kernels::cubic_spline_value(r, data.h[i], W);
             Eigen::Vector3d dx_vec(dx, dy, dz);
             double V_j = data.mass[j] / data.rho[j];
+#ifdef USE_GEOMETRIC_MATRIX
+            double weight = W;
+#else
             double weight = W * V_j;
+#endif
 
             sum_rho += (data.rho[j] - data.rho[i]) * dx_vec * weight;
             sum_p += (data.pressure[j] - data.pressure[i]) * dx_vec * weight;

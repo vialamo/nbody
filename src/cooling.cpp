@@ -41,7 +41,7 @@ static std::vector<double> read_hdf5_attribute(const H5::H5File& file,
 }
 
 void Cooling::load_cooling_tables(const Config& config) {
-    if (config.cooling_table_path.empty()) {
+    if (config.cooling_table_path.empty() || !config.enable_cooling) {
         use_table = false;
         return;
     }
