@@ -3,8 +3,9 @@
 #include <array>
 #include <chrono>
 
-#include "config.h"
-#include "state.h"
+struct Config;
+struct SimState;
+struct TimestepInfo;
 
 enum class TimerRegion {
     Step,
@@ -47,6 +48,7 @@ class Diagnostics {
     bool dm_energy_initialized = false;
     size_t MFM_ill_conditioned_cases = 0;
     size_t MFM_h_non_converged_cases = 0;
+    size_t MFM_h_clamped_cases = 0;
     size_t MFM_neighbor_increased_cases = 0;
     size_t MFM_not_enough_nbg_cases = 0;
     size_t MFM_sph_fallback_cases = 0;

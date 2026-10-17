@@ -1,5 +1,8 @@
 #include "diagnostics.h"
 
+#include "mfm.h"
+#include "state.h"
+
 ScopedTimer::ScopedTimer(Diagnostics& d, TimerRegion r) : diag(d), region(r) {
     start_time = std::chrono::high_resolution_clock::now();
 }
@@ -276,6 +279,7 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
         // gas.ill_conditioned_cases = 0;
         this->MFM_h_non_converged_cases = gas.non_converged_h_cases;
         // gas.non_converged_h_cases = 0;
+        this->MFM_h_clamped_cases = gas.clamped_h_cases;
         this->MFM_neighbor_increased_cases = gas.neighbor_increased_cases;
         gas.neighbor_increased_cases = 0;
         this->MFM_not_enough_nbg_cases = gas.not_enough_neighbors_cases;

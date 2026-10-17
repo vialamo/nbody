@@ -1,8 +1,8 @@
 #include "mfm.h"
 
 #include "constants.h"
+#include "cooling.h"
 #include "diagnostics.h"
-#include "gravity.h"
 #include "hydro.h"
 #include "integrator.h"
 #include "kernels.h"
@@ -723,6 +723,64 @@ void GasParticleSystem::hydro_step(const Config& config, double a) {
     HydroSolver::compute_hydro_forces(*this, config, a);
 }
 
+inline void GasParticleSystem::evaluate_particle_thermodynamics(
+    size_t i, double u_floor, double alpha_kin, double alpha_grav,
+    double gamma_minus_1, double& out_u, double& out_p, double& out_s,
+    double& out_e_tot, double& out_injected_u, double& out_switch_energy) {
+    out_injected_u = 0.0;
+    out_switch_energy = 0.0;
+
+    double local_rho = std::max(rho[i], density_floor);
+
+    // Calculate specific kinetic energy
+    double ke =
+        0.5 * (vel_x[i] * vel_x[i] + vel_y[i] * vel_y[i] + vel_z[i] * vel_z[i]);
+
+    // Calculate the conserved internal energy
+    double u_cons = total_energy[i] - ke;
+
+    double threshold_kin = alpha_kin * (max_rel_ke[i] + u[i]);
+    double threshold_grav = alpha_grav * delta_E_grav[i];
+
+    double u_temp = u[i];
+    double s_temp = entropy[i];
+    double e_tot_temp = total_energy[i];
+
+    if (u_temp < threshold_kin || u_temp < threshold_grav) {
+        // FALLBACK TRIGGERED: Extreme Mach number detected.
+        // Discard the 'u' updated by the Riemann solver and use entropy-based
+        // adiabatic evolution
+        double u_new =
+            s_temp * std::pow(local_rho, gamma_minus_1) / gamma_minus_1;
+
+        out_switch_energy = (u_new - u_temp) * mass[i];
+        u_temp = u_new;
+        e_tot_temp = u_temp + ke;
+    } else {
+        // NORMAL REGIME: Trust the conservative internal energy.
+        // Re-sync the entropy array to match the shock-heated state
+        u_temp = u_cons;
+        s_temp = gamma_minus_1 * u_temp / std::pow(local_rho, gamma_minus_1);
+    }
+
+    // Enforce thermodynamic floor
+    if (u_temp < u_floor) {
+        // Track the added energy
+        double injected_u = u_floor - u_temp;
+        out_injected_u = injected_u * mass[i];
+
+        u_temp = u_floor;
+        s_temp = gamma_minus_1 * u_temp / std::pow(local_rho, gamma_minus_1);
+        e_tot_temp += injected_u;
+    }
+
+    // Assign final computed variables to the output references
+    out_u = u_temp;
+    out_p = gamma_minus_1 * local_rho * u_temp;
+    out_s = s_temp;
+    out_e_tot = e_tot_temp;
+}
+
 void GasParticleSystem::update_primitive_variables(const Config& config,
                                                    double a) {
     if (num_particles == 0) return;
@@ -732,8 +790,8 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
     const double gamma_minus_1 = config.gamma - 1.0;
 
     // Calculate the physical internal energy floor
-    const double u_floor = Cooling::get_internal_energy_from_temp(
-        config.temp_floor_k / a, a, config);
+    const double u_floor =
+        Cooling::get_internal_energy_from_temp(config.temp_floor_k, a, config);
 
     double alpha_kin = config.dual_energy_threshold;
     double alpha_grav = config.dual_energy_threshold;
@@ -747,60 +805,20 @@ void GasParticleSystem::update_primitive_variables(const Config& config,
         for (size_t k = 0; k < num_active; ++k) {
             size_t i = active_indices[k];
 
+            double local_injected_u = 0.0;
+            double local_switch_energy = 0.0;
+
+            // Update the class arrays directly by passing them as references
+            evaluate_particle_thermodynamics(
+                i, u_floor, alpha_kin, alpha_grav, gamma_minus_1, u[i],
+                pressure[i], entropy[i], total_energy[i], local_injected_u,
+                local_switch_energy);
+
             rho[i] = std::max(rho[i], density_floor);
-
-            // Calculate specific kinetic energy
-            double ke = 0.5 * (vel_x[i] * vel_x[i] + vel_y[i] * vel_y[i] +
-                               vel_z[i] * vel_z[i]);
-
-            // Calculate the conserved internal energy
-            double u_cons = total_energy[i] - ke;
-
-            double threshold_kin = alpha_kin * (max_rel_ke[i] + u[i]);
-            double threshold_grav = alpha_grav * delta_E_grav[i];
-
-            if (u[i] < threshold_kin || u[i] < threshold_grav) {
-                // FALLBACK TRIGGERED: Extreme Mach number detected.
-                // Discard the 'u' updated by the Riemann solver and use
-                // entropy-based adiabatic evolution. S = (gamma-1) * u /
-                // rho^(gamma-1) -> u = S * rho^(gamma-1) / (gamma-1)
-                double u_new = entropy[i] * std::pow(rho[i], gamma_minus_1) /
-                               gamma_minus_1;
-
-                // Track the energy injected (or removed) by the switch
-                step_entropy_switch += (u_new - u[i]) * mass[i];
-                u[i] = u_new;
-
-                // Because we abandoned the conservative branch, we must sync
-                // the total energy to reflect the new, trusted internal energy
-                total_energy[i] = u[i] + ke;
-            } else {
-                // NORMAL REGIME: Trust the conservative internal energy.
-                // Re-sync the entropy array to match the shock-heated state
-                u[i] = u_cons;
-                entropy[i] =
-                    gamma_minus_1 * u[i] / std::pow(rho[i], gamma_minus_1);
-            }
-
-            // Enforce thermodynamic floor
-            if (u[i] < u_floor) {
-                // Track the added energy
-                double injected_u = u_floor - u[i];
-                step_floor_heating += injected_u * mass[i];
-
-                u[i] = u_floor;
-                // Sync the entropy array again if we hit the temperature floor
-                entropy[i] =
-                    gamma_minus_1 * u[i] / std::pow(rho[i], gamma_minus_1);
-
-                // If the floor modifies the internal energy, total energy must
-                // absorb it
-                total_energy[i] += injected_u;
-            }
-
-            // Calculate pressure based on 'u'
-            pressure[i] = gamma_minus_1 * rho[i] * u[i];
             metal_frac[i] = std::max(0.0, std::min(metal_frac[i], 1.0));
+
+            step_floor_heating += local_injected_u;
+            step_entropy_switch += local_switch_energy;
         }
     }
     num_cycles++;
@@ -839,8 +857,7 @@ void GasParticleSystem::predict_primitive_variables(const Config& config,
 
 std::tuple<std::vector<double>, std::vector<double>, std::vector<double>,
            std::vector<double>>
-GasParticleSystem::compute_snapshot_primitives(const Config& config,
-                                               double a) const {
+GasParticleSystem::compute_snapshot_primitives(const Config& config, double a) {
     std::vector<double> u_snap(num_particles);
     std::vector<double> p_snap(num_particles);
     std::vector<double> s_snap(num_particles);
@@ -848,49 +865,20 @@ GasParticleSystem::compute_snapshot_primitives(const Config& config,
 
     const double gamma_minus_1 = config.gamma - 1.0;
 
-    // Calculate the evolving CMB temperature floor
-    double t_cmb = 2.7315 / a;
-    double target_floor_k = std::max(config.temp_floor_k, t_cmb);
     const double u_floor =
-        Cooling::get_internal_energy_from_temp(target_floor_k, a, config);
+        Cooling::get_internal_energy_from_temp(config.temp_floor_k, a, config);
 
     double alpha_kin = config.dual_energy_threshold;
     double alpha_grav = config.dual_energy_threshold;
 
 #pragma omp parallel for schedule(static)
     for (size_t i = 0; i < num_particles; ++i) {
-        double local_rho = std::max(rho[i], density_floor);
+        double dummy_injected = 0.0;
+        double dummy_switch = 0.0;
 
-        // Calculate specific kinetic energy
-        double ke = 0.5 * (vel_x[i] * vel_x[i] + vel_y[i] * vel_y[i] +
-                           vel_z[i] * vel_z[i]);
-
-        // Calculate the conserved internal energy
-        double u_cons = total_energy[i] - ke;
-
-        double threshold_truncation = alpha_kin * ke;
-        double threshold_kin = alpha_kin * (max_rel_ke[i] + u[i]);
-        double threshold_grav = alpha_grav * delta_E_grav[i];
-
-        double u_final;
-        if (u_cons < threshold_truncation || u[i] < threshold_kin ||
-            u[i] < threshold_grav) {
-            // FALLBACK: Use entropy-based adiabatic evolution
-            u_final =
-                entropy[i] * std::pow(local_rho, gamma_minus_1) / gamma_minus_1;
-        } else {
-            // NORMAL REGIME: Trust the conservative internal energy
-            u_final = u_cons;
-        }
-
-        // Enforce thermodynamic floor
-        u_final = std::max(u_final, u_floor);
-
-        u_snap[i] = u_final;
-        p_snap[i] = gamma_minus_1 * local_rho * u_final;
-        s_snap[i] =
-            gamma_minus_1 * u_final / std::pow(local_rho, gamma_minus_1);
-        e_snap[i] = u_final + ke;  // Synchronize total energy
+        evaluate_particle_thermodynamics(
+            i, u_floor, alpha_kin, alpha_grav, gamma_minus_1, u_snap[i],
+            p_snap[i], s_snap[i], e_snap[i], dummy_injected, dummy_switch);
     }
 
     return {std::move(u_snap), std::move(p_snap), std::move(s_snap),

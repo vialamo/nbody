@@ -213,6 +213,10 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
         std::cout << "  [WARNING] MFM h non converged cases: "
                   << diag.MFM_h_non_converged_cases << "\n";
     }
+    if (diag.MFM_h_clamped_cases > 0) {
+        std::cout << "  [WARNING] MFM h clamped cases: "
+                  << diag.MFM_h_clamped_cases << "\n";
+    }
     if (diag.MFM_neighbor_increased_cases > 0) {
         double cases_per_cycle =
             static_cast<double>(diag.MFM_neighbor_increased_cases) /

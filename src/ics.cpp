@@ -5,14 +5,11 @@
 #include "constants.h"
 #include "cooling.h"
 #include "cosmology.h"
-#include "density.h"
-#include "gravity.h"
+#include "diagnostics.h"
 #include "hdf5_reader.h"
-#include "hydro.h"
 #include "integrator.h"
 #include "math_utils.h"
 #include "particles.h"
-#include "pm.h"
 #include "pocketfft_hdronly.h"
 
 // The pure shape of the BBKS power spectrum (Unnormalized)
@@ -830,7 +827,9 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
         } else {
             // LATTICE INITIALIZATION
             double dx_L = L_base / config.num_gas_particles_1d;
-            double dx_R_x = dx_L * std::cbrt(rho_L / rho_R);
+
+            // Stretch ONLY the X-axis by the full 1D density ratio
+            double dx_R_x = dx_L * (rho_L / rho_R);
 
             double particle_mass = rho_L * (dx_L * dx_L * dx_L);
 
@@ -856,10 +855,13 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
                 }
             }
 
-            // RIGHT SIDE (X spacing stretches, but Y and Z stay locked to dx_L)
+            // RIGHT SIDE (X spacing stretches by a factor of 8, Y/Z stay
+            // locked)
             for (double x = Lx / 2.0 + dx_R_x / 2.0; x < Lx; x += dx_R_x) {
                 for (double y : y_coords) {
                     for (double z : z_coords) {
+                        // The smoothing length must encompass the stretched
+                        // X-axis
                         double initial_h = 1.2 * std::max(dx_R_x, dx_L);
                         state.mfm_gas->add_particle(
                             x, y, z, v_x, v_y, v_z, particle_mass, u_R,

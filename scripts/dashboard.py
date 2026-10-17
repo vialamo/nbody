@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import camb
 from scipy.spatial import cKDTree
+from matplotlib.colors import LogNorm
+from matplotlib.widgets import Slider
 
 # Physics & Cosmological Constants
 M_P_CGS = 1.67262192e-24
@@ -680,11 +682,83 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
         else:
             c_min, c_max = 1e-10, 1.0
             
-        h = axs[2, 0].hist2d(x_data, y_data, bins=[x_bins, y_bins], weights=weights, 
+        h_plot = axs[2, 0].hist2d(x_data, y_data, bins=[x_bins, y_bins], weights=weights, 
                              norm=LogNorm(vmin=c_min, vmax=c_max), cmap='plasma')
         
-        axs[2, 0].set(xscale='log', yscale='log', xlabel=r'Gas Overdensity ($\rho / \bar{\rho}$)', ylabel='Temperature [K]', title='Phase Diagram (Final Snapshot)')
-        fig.colorbar(h[3], ax=axs[2, 0], label='Total Gas Mass (Code Units)')
+        axs[2, 0].set(xscale='log', yscale='log', xlabel=r'Gas Overdensity ($\rho / \bar{\rho}$)', ylabel='Temperature [K]', title=f'Phase Diagram (a={scale_factors[-1]:.3f})')
+        cb = fig.colorbar(h_plot[3], ax=axs[2, 0], label='Total Gas Mass (Code Units)')
+
+        # Initialize vertical tracking lines on the other plots
+        vline_energy = axs[1, 0].axvline(x=scale_factors[-1], color='gray', linestyle=':', lw=2, alpha=0.7)
+        vline_extreme = axs[1, 1].axvline(x=scale_factors[-1], color='gray', linestyle=':', lw=2, alpha=0.7)
+
+        # Interactive Slider Implementation
+        if len(files) > 1:
+            ax_slider = fig.add_axes([0.15, 0.015, 0.7, 0.02])
+            snapshot_slider = Slider(
+                ax=ax_slider,
+                label='Snapshot',
+                valmin=0,
+                valmax=len(files) - 1,
+                valinit=len(files) - 1,
+                valfmt='%0.0f',
+                valstep=1
+            )
+
+            def update_phase(val):
+                idx = int(snapshot_slider.val)
+                f_path = files[idx]
+                current_a = scale_factors[idx]
+                
+                with h5py.File(f_path, 'r') as f:
+                    if 'Gas/density' not in f:
+                        return
+                    rho_snap = f['Gas/density'][:]
+                    temp_snap = get_temperature(f)
+                    
+                    if has_eulerian_hydro:
+                        mean_rho_snap = np.mean(rho_snap)
+                        weights_snap = (rho_snap * cell_vol_code).flatten()
+                    else:
+                        gas_mass_snap = f['Gas/mass'][:]
+                        mean_rho_snap = np.sum(gas_mass_snap) / domain_size**3
+                        weights_snap = gas_mass_snap.flatten()
+                        
+                    x_snap = (rho_snap / mean_rho_snap).flatten()
+                    y_snap = temp_snap.flatten()
+                
+                # Dynamically calculate bins for the current snapshot
+                max_x_snap = max(np.max(x_snap), 1.01e-2)
+                max_y_snap = max(np.max(y_snap), 10.1)
+                x_bins_snap = np.logspace(-2, np.log10(max_x_snap), 100)
+                y_bins_snap = np.logspace(1, np.log10(max_y_snap), 100)
+                
+                axs[2, 0].clear()
+                counts_snap, _, _ = np.histogram2d(x_snap, y_snap, bins=[x_bins_snap, y_bins_snap], weights=weights_snap)
+                valid_counts_snap = counts_snap[counts_snap > 0]
+                
+                if len(valid_counts_snap) > 0:
+                    c_min_snap, c_max_snap = np.min(valid_counts_snap), np.max(valid_counts_snap)
+                    if c_min_snap == c_max_snap:
+                        c_min_snap = c_max_snap * 0.1
+                else:
+                    c_min_snap, c_max_snap = 1e-10, 1.0
+                    
+                h_new = axs[2, 0].hist2d(x_snap, y_snap, bins=[x_bins_snap, y_bins_snap], weights=weights_snap, 
+                                     norm=LogNorm(vmin=c_min_snap, vmax=c_max_snap), cmap='plasma')
+                
+                axs[2, 0].set(xscale='log', yscale='log', xlabel=r'Gas Overdensity ($\rho / \bar{\rho}$)', ylabel='Temperature [K]', title=f'Phase Diagram (a={current_a:.3f})')
+                cb.update_normal(h_new[3])
+                
+                # Update vertical lines
+                vline_energy.set_xdata([current_a, current_a])
+                vline_extreme.set_xdata([current_a, current_a])
+                
+                fig.canvas.draw_idle()
+
+            snapshot_slider.on_changed(update_phase)
+            fig.snapshot_slider = snapshot_slider  
+
     else:
         axs[2, 0].text(0.5, 0.5, 'Hydro Disabled', ha='center', va='center')
 
@@ -717,7 +791,8 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
     axs[2, 2].text(0.5, 0.5, info_text, fontsize=12, color='black', va='center', ha='center', multialignment='left',
                    bbox=dict(boxstyle='round,pad=1.0', facecolor='#f8f9fa', alpha=1.0, edgecolor='#cccccc'), family='monospace')
 
-    plt.tight_layout(rect=[0, 0.01, 1, 0.99], h_pad=2.2, w_pad=2.0)
+    bottom_pad = 0.06 if (has_hydro and len(files) > 1) else 0.01
+    plt.tight_layout(rect=[0, bottom_pad, 1, 0.99], h_pad=2.2, w_pad=2.0)
     plt.show()
 
 if __name__ == "__main__":

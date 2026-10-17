@@ -2,6 +2,8 @@
 
 #include <omp.h>
 
+#include "config.h"
+
 ParticleSystem::ParticleSystem(const Config& config)
     : dm_rho(config.mesh_size),
       cic_data(config.num_dm_particles),

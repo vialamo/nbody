@@ -5,7 +5,7 @@
 
 #include "kernels.h"
 #include "math_utils.h"
-#include "pm.h"
+#include "state.h"
 
 namespace GravitySolver {
 

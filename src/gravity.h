@@ -1,11 +1,10 @@
 #pragma once
 
-#include "config.h"
-#include "diagnostics.h"
-#include "mfm.h"
-#include "particles.h"
-
+struct Config;
+struct Diagnostics;
 struct SimState;
+class GasParticleSystem;
+class ParticleSystem;
 
 namespace GravitySolver {
 

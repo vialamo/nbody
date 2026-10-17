@@ -9,7 +9,7 @@
 #include "reconstruction.h"
 
 constexpr double N_cond_crit = 1000.0;
-constexpr double N_cond_crit_hard = 10.0;
+constexpr double N_cond_crit_hard = 100.0;
 
 // #define USE_ADAPTIVE_SOFTENING
 // #define USE_GEOMETRIC_MATRIX
@@ -164,8 +164,13 @@ class GasParticleSystem {
     // state
     std::tuple<std::vector<double>, std::vector<double>, std::vector<double>,
                std::vector<double>>
-    compute_snapshot_primitives(const Config& config, double a) const;
+    compute_snapshot_primitives(const Config& config, double a);
 
    private:
     void sort_arrays(const std::vector<int>& sorted_indices);
+
+    inline void evaluate_particle_thermodynamics(
+        size_t i, double u_floor, double alpha_kin, double alpha_grav,
+        double gamma_minus_1, double& out_u, double& out_p, double& out_s,
+        double& out_e_tot, double& out_injected_u, double& out_switch_energy);
 };

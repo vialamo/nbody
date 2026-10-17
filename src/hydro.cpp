@@ -396,8 +396,8 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
 
             if (ill_conditioned) {
                 step_ill_conditioned++;
-                print_ill_conditioned_diagnostic(debug_printed, i, gas,
-                                                 neighbors, domain_size);
+                /*print_ill_conditioned_diagnostic(debug_printed, i, gas,
+                                                 neighbors, domain_size);*/
             }
         }
     }

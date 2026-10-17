@@ -1,10 +1,10 @@
 #pragma once
 #include <vector>
 
-#include "config.h"
 #include "lbvh.h"
 #include "types.h"
 
+struct Config;
 class Diagnostics;
 class GasParticleSystem;
 
