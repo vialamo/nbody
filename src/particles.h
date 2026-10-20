@@ -1,25 +1,23 @@
 #pragma once
 #include <vector>
 
-#include "config.h"
 #include "lbvh.h"
 #include "types.h"
 
-class Diagnostics;
-class GasParticleSystem;
+struct Config;
 
 class ParticleSystem {
    private:
-    std::vector<CIC_Data> cic_data;
-
     friend struct ParticleTestAccess;
 
    public:
+    std::vector<CIC_Data> cic_data;
+
     std::vector<uint64_t> morton_codes;
     std::vector<int> sorted_indices;
     std::vector<BVHNode> bvh_nodes;
 
-    Grid3D dm_rho;
+    Grid3D grid_rho;
 
     size_t num_particles = 0;
 
@@ -38,8 +36,6 @@ class ParticleSystem {
 
     std::vector<double> mass;
 
-    double max_accel_sq;
-
     double accumulated_gravitational_work = 0.0;
     double accumulated_expansion_work = 0.0;
 
@@ -55,25 +51,12 @@ class ParticleSystem {
     ParticleSystem(const Config& config);
 
     void build_lbvh(const Config& config);
-    void bin_and_assign_mass(const Config& config);
-
-    void interpolate_cic_forces(const Grid3D& ax_grid, const Grid3D& ay_grid,
-                                const Grid3D& az_grid, const Config& config);
-
-    void compute_and_add_pp_forces(double a, const Config& config,
-                                   Diagnostics& diag);
-
-    double get_gravity_timestep(const Config& config) const;
-
-    const Grid3D& get_rho() const { return dm_rho; }
 
     void add_particle(double px, double py, double pz, double vx, double vy,
                       double vz, double m);
 
     void update_particle_timesteps(double dt_max, const Config& config);
     void sync_and_activate(double dt, const Config& config);
-    void compute_cross_pp_forces(double a, const GasParticleSystem& gas,
-                                 const Config& config, Diagnostics& diag);
 
    private:
     void sort_arrays(const std::vector<int>& sorted_indices);

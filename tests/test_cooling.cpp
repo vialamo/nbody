@@ -4,6 +4,7 @@
 #include "config.h"
 #include "cooling.h"
 #include "gas.h"
+#include "thermodynamics.h"
 
 // Helper proxy to inject values into the GasGrid
 struct GasGridTestAccess {
@@ -23,9 +24,9 @@ TEST_CASE("Thermodynamic conversions are perfectly reversible",
 
     // Convert to code units and back
     double u_code =
-        Cooling::get_internal_energy_from_temp(original_T, a, config);
+        Thermodynamics::get_internal_energy_from_temp(original_T, a, config);
     double recovered_T =
-        Cooling::get_temp_from_internal_energy(u_code, a, config);
+        Thermodynamics::get_temp_from_internal_energy(u_code, a, config);
 
     REQUIRE(recovered_T == Catch::Approx(original_T));
 }
@@ -44,7 +45,7 @@ TEST_CASE("Cooling rate behaves physically", "[cooling][physics]") {
     SECTION("compute_du_dt acts as a continuous mathematical curve") {
         double cold_temp = 50.0;
         double u_cold =
-            Cooling::get_internal_energy_from_temp(cold_temp, a, config);
+            Thermodynamics::get_internal_energy_from_temp(cold_temp, a, config);
 
         double du_dt = cooling.compute_du_dt(u_cold, rho, Z, a, config);
 
@@ -57,10 +58,10 @@ TEST_CASE("Cooling rate behaves physically", "[cooling][physics]") {
         "Implicit solver pre-check blocks cooling for cold primordial gas") {
         double cold_temp = config.cooling_cutoff_k;
         double u_cold =
-            Cooling::get_internal_energy_from_temp(cold_temp, a, config);
+            Thermodynamics::get_internal_energy_from_temp(cold_temp, a, config);
 
         double u_new = cooling.solve_cooling_implicit(
-            u_cold, rho, Z, a, dt, u_cold, config, iterations);
+            u_cold, rho, Z, a, dt, u_cold, u_cold, config, iterations);
 
         // The solver should return immediately without altering the energy
         REQUIRE(u_new == u_cold);
@@ -73,16 +74,16 @@ TEST_CASE("Cooling rate behaves physically", "[cooling][physics]") {
         double expected_floor_k = std::max(config.cooling_cutoff_k, config.temp_floor_k);
         double hot_temp = expected_floor_k + 10.0;  // Just above the floor
         double u_hot =
-            Cooling::get_internal_energy_from_temp(hot_temp, a, config);
+            Thermodynamics::get_internal_energy_from_temp(hot_temp, a, config);
 
         // Target physical floor defined in the solver
         double target_u_floor =
-            Cooling::get_internal_energy_from_temp(expected_floor_k, a, config);
+            Thermodynamics::get_internal_energy_from_temp(expected_floor_k, a, config);
 
         // With a massive dt, it will attempt to cool well below floor
         double massive_dt = 1e15;
         double u_new = cooling.solve_cooling_implicit(
-            u_hot, rho, Z, a, massive_dt, target_u_floor, config, iterations);
+            u_hot, rho, Z, a, massive_dt, target_u_floor, target_u_floor, config, iterations);
 
         // The solver must intercept the overshoot and clamp exactly to the
         // threshold
@@ -90,7 +91,7 @@ TEST_CASE("Cooling rate behaves physically", "[cooling][physics]") {
     }
 
     SECTION("Cooling scales with density squared (Bremsstrahlung)") {
-        double u_hot = Cooling::get_internal_energy_from_temp(1e6, a, config);
+        double u_hot = Thermodynamics::get_internal_energy_from_temp(1e6, a, config);
 
         double du_dt_base = cooling.compute_du_dt(u_hot, rho, Z, a, config);
         double du_dt_double_rho =
@@ -110,7 +111,7 @@ TEST_CASE("Implicit backward Euler solver is unconditionally stable",
     Cooling cooling(config);
 
     double u_initial =
-        Cooling::get_internal_energy_from_temp(1e7, 1.0, config);  // Very hot
+        Thermodynamics::get_internal_energy_from_temp(1e7, 1.0, config);  // Very hot
     double rho = 100.0;                                            // Dense
     double a = 1.0;
     double Z = 0.0;
@@ -121,11 +122,11 @@ TEST_CASE("Implicit backward Euler solver is unconditionally stable",
 
         double expected_floor_k = std::max(config.cooling_cutoff_k, config.temp_floor_k);
         double u_floor =
-            Cooling::get_internal_energy_from_temp(expected_floor_k, a, config);
+            Thermodynamics::get_internal_energy_from_temp(expected_floor_k, a, config);
         double u_final = cooling.solve_cooling_implicit(
-            u_initial, rho, Z, a, dt_massive, u_floor, config, iters);
+            u_initial, rho, Z, a, dt_massive, u_floor, u_floor, config, iters);
         double T_final =
-            Cooling::get_temp_from_internal_energy(u_final, a, config);
+            Thermodynamics::get_temp_from_internal_energy(u_final, a, config);
 
         REQUIRE(u_final > 0.0);
         // It should have safely caught itself at the floor
@@ -135,7 +136,7 @@ TEST_CASE("Implicit backward Euler solver is unconditionally stable",
     SECTION("A normal timestep cools the gas a physical amount") {
         double dt_normal = 0.001;
         double u_final = cooling.solve_cooling_implicit(
-            u_initial, rho, Z, a, dt_normal, u_initial * 0.1, config, iters);
+            u_initial, rho, Z, a, dt_normal, u_initial * 0.1, u_initial * 0.1, config, iters);
 
         REQUIRE(u_final < u_initial);
         REQUIRE(u_final > 0.0);

@@ -5,8 +5,6 @@
 
 #include "types.h"
 
-// Simple struct to hold the 3D displacement vectors
-
 namespace EnumUtils {
 template <typename E>
 struct Traits;
@@ -42,7 +40,6 @@ enum class InitialSetup {
     AdiabaticExpansion,
     SedovBlastwave,
     SoundWave,
-    Glass,
     Count
 };
 
@@ -54,9 +51,9 @@ struct EnumUtils::Traits<HydroMethod> {
 
 template <>
 struct EnumUtils::Traits<InitialSetup> {
-    static constexpr const char* names[] = {
-        "cosmological",    "sod_shock_tube", "adiabatic_expansion",
-        "sedov_blastwave", "sound_wave",     "glass"};
+    static constexpr const char* names[] = {"cosmological", "sod_shock_tube",
+                                            "adiabatic_expansion",
+                                            "sedov_blastwave", "sound_wave"};
     static constexpr InitialSetup default_value = InitialSetup::Cosmological;
 };
 

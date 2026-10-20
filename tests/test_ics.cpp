@@ -5,6 +5,7 @@
 #include "constants.h"
 #include "cooling.h"
 #include "ics.h"
+#include "thermodynamics.h"
 
 // ---------------------------------------------------------------------
 // Thermodynamics & Initial Conditions Tests
@@ -25,7 +26,7 @@ TEST_CASE("Initial internal energy scales correctly with code units",
         // Get the base energy using the default box size (default velocity
         // unit)
         double u_code_base =
-            Cooling::get_internal_energy_from_temp(T_kelvin, a, config);
+            Thermodynamics::get_internal_energy_from_temp(T_kelvin, a, config);
 
         // To safely halve the velocity unit, we halve the box_size_mpc.
         // As seen in init_derived_units, unit_velocity_kms scales linearly with
@@ -37,7 +38,7 @@ TEST_CASE("Initial internal energy scales correctly with code units",
 
         // Calculate the new energy
         double u_code_half_v =
-            Cooling::get_internal_energy_from_temp(T_kelvin, a, config);
+            Thermodynamics::get_internal_energy_from_temp(T_kelvin, a, config);
 
         // Because V is squared in the denominator of the conversion,
         // halving V (via the box size) must exactly quadruple the code energy.
@@ -46,7 +47,7 @@ TEST_CASE("Initial internal energy scales correctly with code units",
 
     SECTION("Expected mathematical output is physically accurate") {
         double u_code =
-            Cooling::get_internal_energy_from_temp(T_kelvin, a, config);
+            Thermodynamics::get_internal_energy_from_temp(T_kelvin, a, config);
 
         // Calculate the exact physical specific internal energy (in erg/g)
         double u_phys_cgs =
@@ -72,6 +73,7 @@ TEST_CASE("initialize_state produces physically sound macro-states",
     config.num_particles_1d = 32;
     config.use_PM = true;
     config.use_PP = false;
+    config.use_glass = false;
 
     config.compute_derived_data();
 
@@ -176,6 +178,7 @@ TEST_CASE("Peculiar velocities exactly obey Zel'dovich kinematics",
     config.a_start = 0.02;
     config.sigma_8 = 0.81;
     config.seed = 123;
+    config.use_glass = false;
     config.compute_derived_data();
 
     // Generate state and grab the Zeldovich field growth rate
@@ -221,7 +224,7 @@ TEST_CASE("Peculiar velocities exactly obey Zel'dovich kinematics",
     }
 }
 
-TEST_CASE("Zeldovich field has exactly zero mean (k=0 mode is dead)",
+TEST_CASE("Zeldovich field has zero mean (k=0 mode is dead)",
           "[ics][math]") {
     Config config;
     config.mesh_size_1d = 32;

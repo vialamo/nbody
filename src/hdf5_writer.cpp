@@ -2,7 +2,11 @@
 
 #include <iostream>
 
+#include "config.h"
 #include "cooling.h"
+#include "state.h"
+#include "thermodynamics.h"
+#include "types.h"
 
 void HDF5Writer::set_attr_double(H5::H5Object& obj, const char* attr_name,
                                  double value) {
@@ -284,7 +288,7 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                     if (rho.data[i] > 1e-12) {
                         double u = ie.data[i] / rho.data[i];
                         temp_grid.data[i] =
-                            Cooling::get_temp_from_internal_energy(
+                            Thermodynamics::get_temp_from_internal_energy(
                                 u, state.scale_factor, config);
                     } else {
                         temp_grid.data[i] = 10.0;  // Floor
@@ -303,6 +307,7 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                                 gas.accumulated_expansion_work);
                 set_attr_double(gas_group, "cumulative_entropy_switch_energy",
                                 gas.accumulated_entropy_switch_energy);
+                set_attr_double(gas_group, "critical_condition_N", N_cond_crit);
 
                 write_particle_vec(gas_group, "position_x", gas.pos_x);
                 write_particle_vec(gas_group, "position_y", gas.pos_y);
@@ -313,25 +318,29 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                 write_particle_vec(gas_group, "acceleration_x", gas.acc_x);
                 write_particle_vec(gas_group, "acceleration_y", gas.acc_y);
                 write_particle_vec(gas_group, "acceleration_z", gas.acc_z);
-
                 write_particle_vec(gas_group, "mass", gas.mass);
                 write_particle_vec(gas_group, "smoothing_length", gas.h);
                 write_particle_vec(gas_group, "density", gas.rho);
-                write_particle_vec(gas_group, "pressure", gas.pressure);
-                write_particle_vec(gas_group, "internal_energy", gas.u);
-                write_particle_vec(gas_group, "total_energy", gas.total_energy);
+
+                auto [u_snap, p_snap, s_snap, e_sna] =
+                    Thermodynamics::compute_snapshot_primitives(
+                        gas, config, state.scale_factor);
+
+                write_particle_vec(gas_group, "pressure", p_snap);
+                write_particle_vec(gas_group, "internal_energy", u_snap);
+                write_particle_vec(gas_group, "entropy", s_snap);
+                write_particle_vec(gas_group, "total_energy", e_sna);
                 write_particle_vec(gas_group, "metal_fraction", gas.metal_frac);
 
                 std::vector<double> temp_vec(gas.num_particles);
                 for (size_t i = 0; i < gas.num_particles; ++i) {
-                    temp_vec[i] = Cooling::get_temp_from_internal_energy(
-                        gas.u[i], state.scale_factor, config);
+                    temp_vec[i] = Thermodynamics::get_temp_from_internal_energy(
+                        u_snap[i], state.scale_factor, config);
                 }
                 write_particle_vec(gas_group, "temperature", temp_vec);
 
                 // Debugging
                 write_particle_vec3d(gas_group, "grad_p", gas.grad_p);
-                write_particle_vec(gas_group, "entropy", gas.entropy);
                 write_particle_vec(gas_group, "condition_number", gas.cond_num);
                 set_attr_int(gas_group, "clamped_h_cases", gas.clamped_h_cases);
                 write_particle_vec(gas_group, "n_enc", gas.n_enc_final);

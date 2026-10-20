@@ -1,10 +1,7 @@
 #pragma once
 #include <Eigen/Dense>
-#include <vector>
 
 struct Vec3;
-
-constexpr double N_cond_crit = 100.0;
 
 // #define USE_MIDPOINT_QUADRATURE
 

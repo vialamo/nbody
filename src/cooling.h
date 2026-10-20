@@ -1,8 +1,9 @@
 #pragma once
-#include <string>
+#include <stddef.h>
 #include <vector>
 
-#include "config.h"
+struct Config;
+class GasParticleSystem;
 
 class Cooling {
    private:
@@ -41,29 +42,18 @@ class Cooling {
    public:
     static constexpr int MAX_ITER = 50;
 
-    // Constructor replaces the old initialize() function
     Cooling(const Config& config);
 
-    // Inline conversion helpers
-    static inline double get_temp_from_internal_energy(double u_code, double a,
-                                                       const Config& config) {
-        return u_code * (a * a) * config.factor_u_to_t;
-    }
-
-    static inline double get_internal_energy_from_temp(double T_kelvin,
-                                                       double a,
-                                                       const Config& config) {
-        return (T_kelvin * config.factor_t_to_u) / (a * a);
-    }
-
-    // Main public interfaces
     double compute_du_dt(double u_code, double rho_code, double Z, double a,
                          const Config& config) const;
 
     double solve_cooling_implicit(double u_old, double rho_code, double Z,
-                                  double a, double dt, double u_rad_floor,
-                                  const Config& config,
+                                  double a, double dt, double u_cutoff,
+                                  double u_floor, const Config& config,
                                   int& iterations_taken) const;
+                                  
+    // Public interface
+    void apply_cooling(GasParticleSystem& gas, const Config& config, double a);
 
-    double get_u_rad_floor(double a, const Config& config) const;
+    double get_u_cutoff(double a, const Config& config) const;
 };

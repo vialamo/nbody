@@ -1,6 +1,5 @@
 #pragma once
 #include <Eigen/Dense>
-#include <vector>
 
 struct Vec3 {
     double x, y, z;

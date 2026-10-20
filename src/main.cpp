@@ -1,11 +1,13 @@
-#include <atomic>
 #include <csignal>
 #include <filesystem>
 #include <iostream>
 #include <string>
 
 #include "config.h"
+#include "diagnostics.h"
 #include "engine.h"
+#include "hdf5_writer.h"
+#include "logger.h"
 #include "utils.h"
 
 SimulationEngine* g_engine = nullptr;

@@ -1,11 +1,12 @@
 #pragma once
 #include <chrono>
 
-#include "config.h"
-#include "diagnostics.h"
-#include "hdf5_writer.h"
-#include "logger.h"
 #include "state.h"
+
+struct Config;
+struct Diagnostics;
+class HDF5Writer;
+class Logger;
 
 enum class ExitStatus { ReachedMaxScaleFactor, ReachedMaxCycles, UserAborted };
 

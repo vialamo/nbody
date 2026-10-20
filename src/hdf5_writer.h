@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <Eigen/Dense>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -11,9 +12,10 @@
 #pragma warning(pop)
 #endif
 
-#include "config.h"
-#include "state.h"
-#include "types.h"
+struct Config;
+struct SimState;
+struct TimestepInfo;
+struct Grid3D;
 
 class HDF5Writer {
    private:

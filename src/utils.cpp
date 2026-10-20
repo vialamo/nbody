@@ -2,7 +2,6 @@
 
 #include <ctime>
 #include <iomanip>
-#include <iostream>
 #include <sstream>
 
 std::string utils::get_timestamp() {

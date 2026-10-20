@@ -130,17 +130,6 @@ void Config::compute_derived_data() {
         mesh_size.x *= 4.0;
         box_size_mpc.x *= 4.0;
         a_end = 6.0;
-    } else if (initial_setup == InitialSetup::Glass) {
-        hydro_method = HydroMethod::MFM;
-        expanding_universe = false;
-        enable_cooling = false;
-        use_PM = false;
-        use_PP = false;
-        num_particles_1d = 0;
-        omega_lambda = 0.0;
-        omega_m = 1.0;
-        omega_baryon = 1.0;
-        total_mass = 1.0;
     }
 
     cell_size = domain_size_1d / mesh_size_1d;
@@ -170,11 +159,10 @@ void Config::compute_derived_data() {
     double mean_interparticle_spacing =
         domain_size_1d / static_cast<double>(active_particles_1d);
 
-    double actual_softening =
+    base_comoving_softening =
         mean_interparticle_spacing * comoving_softening_factor;
 
-    base_comoving_softening = actual_softening;
-    softening = actual_softening;
+    softening = base_comoving_softening;
 
     const double dynamical_time = 1.0 / std::sqrt(G);
     double raw_fixed_dt = max_dt_dynamical_factor * dynamical_time;

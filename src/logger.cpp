@@ -29,8 +29,8 @@ static double get_current_memory_usage_MB() {
     }
 
     long virtual_size, rss_pages;
-    // The first value is total virtual memory, the second is current RSS in
-    // pages
+    // The first value is total virtual memory,
+    // the second is current RSS in pages
     statm >> virtual_size >> rss_pages;
     statm.close();
 
@@ -83,8 +83,7 @@ void Logger::write_header() {
         << "wall_time_total,wall_time_pm,wall_time_pp,wall_time_hydro,"
            "wall_time_cooling,wall_time_tree,wall_time_density,wall_time_io,"
            "cumulative_wall_time,wall_time_GPU_transf,wall_time_GPU_back,"
-           "wall_time_GPU_compute,memory_peak,memory_current,"
-        << "avg_substeps_hydro,avg_substeps_gravity,avg_substeps_cooling\n";
+           "wall_time_GPU_compute,memory_peak,memory_current\n";
     header_written = true;
 }
 
@@ -129,13 +128,10 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
                  << diag.get_prof_average(ProfRegion::Transf) / 1000.0 << ","
                  << diag.get_prof_average(ProfRegion::Ret) / 1000.0 << ","
                  << diag.get_prof_average(ProfRegion::Compute) / 1000.0 << ","
-                 << peak_mem << "," << curr_mem << ","
-                 << diag.get_average_substeps(SubstepCounter::Hydro) << ","
-                 << diag.get_average_substeps(SubstepCounter::Gravity) << ","
-                 << diag.get_average_substeps(SubstepCounter::Cool) << "\n";
+                 << peak_mem << "," << curr_mem << "\n";
     }
 
-    // Write to stdout (console)
+    // Write to stdout
     std::cout << "[Cycle " << diag.cycle << "] "
               << "Mem (peak/curr MB): " << peak_mem << ", " << curr_mem << " | "
               << "Wall: " << format_double(wall_time_s, 1) << "s | "
@@ -149,20 +145,23 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
               << " | Gas Err: " << format_double(diag.energy_err, 1, true)
               << "\n";
     if (conf.hydro_method == HydroMethod::MFM) {
-        double flux_err = std::max(abs(diag.mfm_flux_energy_error),
-                                   diag.mfm_flux_momentum_error);
+        double flux_err = std::max(abs(diag.MFM_flux_energy_error),
+                                   diag.MFM_flux_momentum_error);
         std::cout << "    - Vol Err: "
                   << format_double(diag.volume_error, 1, true)
                   << " | Flux Err: " << format_double(flux_err, 1, true)
-                  << "\n";
+                  << " | Ill: " << format_double(diag.MFM_ill_percent, 1, false)
+                  << "% | Clamp: "
+                  << format_double(diag.MFM_clamp_percent, 1, false)
+                  << "% | Incr: "
+                  << format_double(diag.MFM_inc_percent, 1, false) << "%\n";
     }
 
     std::cout << "  [Stability]\n";
     std::cout << "    - Timestep (Macro): "
               << format_double(diag.dt_final, 1, true)
               << " | Grav: " << format_double(diag.dt_gravity, 1, true)
-              << " | CFL: " << format_double(diag.dt_cfl, 1, true)
-              << " | Cool: " << format_double(diag.dt_cool, 1, true) << "\n";
+              << " | CFL: " << format_double(diag.dt_cfl, 1, true) << "\n";
     if (conf.individual_particle_timesteps) {
         std::cout << "    - Particles/step:   "
                   << format_double(diag.percent_particles_updated, 1) << "%\n";
@@ -209,20 +208,16 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
         std::cout << "  [WARNING] Cooling solver failed to converge in "
                   << diag.non_converged_cooling_cells << " cells\n";
     }
-    if (diag.MFM_ill_conditioned_cases > 0) {
-        std::cout << "  [WARNING] MFM ill conditioned cases: "
-                  << diag.MFM_ill_conditioned_cases << "\n";
-    }
     if (diag.MFM_h_non_converged_cases > 0) {
         std::cout << "  [WARNING] MFM h non converged cases: "
                   << diag.MFM_h_non_converged_cases << "\n";
     }
-    if (diag.MFM_neighbor_increased_cases > 0) {
-        std::cout << "  [WARNING] MFM neighbor increased cases: "
-                  << diag.MFM_neighbor_increased_cases << "\n";
+    if (diag.MFM_not_enough_nbg_cases > 0) {
+        std::cout << "  [WARNING] MFM not enough neighbor cases: "
+                  << diag.MFM_not_enough_nbg_cases << "\n";
     }
-    if (diag.MFM_sph_fallback_cases > 0) {
-        std::cout << "  [WARNING] MFM SPH fallback cases: "
-                  << diag.MFM_sph_fallback_cases << "\n";
+    if (diag.MFM_riemann_failed_cases > 0) {
+        std::cout << "  [WARNING] MFM Riemann failed cases: "
+                  << diag.MFM_riemann_failed_cases << "\n";
     }
 }

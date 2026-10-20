@@ -1,6 +1,7 @@
 #pragma once
 #include <memory>
 
+#include "config.h"
 #include "cooling.h"
 #include "gas.h"
 #include "mfm.h"

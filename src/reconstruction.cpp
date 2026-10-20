@@ -6,6 +6,7 @@
 #include "config.h"
 #include "kernels.h"
 #include "math_utils.h"
+#include "mfm.h"
 
 // #define ZEROTH_ORDER_RECONSTRUCTION
 // #define DISABLE_LIMITER
@@ -87,8 +88,13 @@ Eigen::Vector3d compute_face_area_vector(
     Kernels::cubic_spline_value(r, p_i.h, W_i);
     Kernels::cubic_spline_value(r, p_j.h, W_j);
 
+#ifdef USE_GEOMETRIC_MATRIX
+    Eigen::Vector3d Area_vec = (V_j * W_i * (B_matrix_i * dx_vec)) +
+                               (V_i * W_j * (B_matrix_j * dx_vec));
+#else
     Eigen::Vector3d Area_vec = (V_i * V_j * W_i * (B_matrix_i * dx_vec)) +
                                (V_i * V_j * W_j * (B_matrix_j * dx_vec));
+#endif
 
     double facenormal_dot_dp = Area_vec.dot(dx_vec);
 
@@ -97,11 +103,7 @@ Eigen::Vector3d compute_face_area_vector(
         double dW_dr_i, dW_dr_j, dummy_phi;
         Kernels::adaptive_gravity_terms(r, p_i.h, dummy_phi, dW_dr_i);
         Kernels::adaptive_gravity_terms(r, p_j.h, dummy_phi, dW_dr_j);
-        double face_area_mag =
-            /*-(p_i.mass * p_j.mass) *
-            (dW_dr_i / (p_i.rho * p_i.rho) + dW_dr_j / (p_j.rho * p_j.rho)) /
-            r;*/
-            -(V_i * V_i * dW_dr_i + V_j * V_j * dW_dr_j) / r;
+        double face_area_mag = -(V_i * V_i * dW_dr_i + V_j * V_j * dW_dr_j) / r;
         return face_area_mag * dx_vec;
     }
 
@@ -164,7 +166,11 @@ ParticleGradients compute_single_particle_gradients(
             Kernels::cubic_spline_value(r, data.h[i], W);
             Eigen::Vector3d dx_vec(dx, dy, dz);
             double V_j = data.mass[j] / data.rho[j];
+#ifdef USE_GEOMETRIC_MATRIX
+            double weight = W;
+#else
             double weight = W * V_j;
+#endif
 
             sum_rho += (data.rho[j] - data.rho[i]) * dx_vec * weight;
             sum_p += (data.pressure[j] - data.pressure[i]) * dx_vec * weight;
@@ -248,7 +254,7 @@ ParticleGradients compute_single_particle_gradients(
         out.grad_vy.setZero();
         out.grad_vz.setZero();
 
-        for (size_t n = 0; n < num_neighbors; ++n) {
+        /*for (size_t n = 0; n < num_neighbors; ++n) {
             int j = neighbor_indices[n];
 
             double dx = periodic_displacement(data.pos_x[j] - data.pos_x[i],
@@ -272,7 +278,7 @@ ParticleGradients compute_single_particle_gradients(
             out.grad_vx += V_j * (data.vel_x[j] - data.vel_x[i]) * grad_W_i;
             out.grad_vy += V_j * (data.vel_y[j] - data.vel_y[i]) * grad_W_i;
             out.grad_vz += V_j * (data.vel_z[j] - data.vel_z[i]) * grad_W_i;
-        }
+        }*/
     }
 #endif
 
@@ -305,6 +311,21 @@ ReconstructedFace compute_face_reconstruction(
     if (A_mag < 1e-20) return face;
 
     face.n = face.area_vec / A_mag;
+
+    // Zeroth order
+    if (face.used_sph_fallback) {
+        face.rho_L = std::max(p_i.rho, density_floor);
+        face.rho_R = std::max(p_j.rho, density_floor);
+
+        face.p_L = std::max(p_i.pressure, pressure_floor);
+        face.p_R = std::max(p_j.pressure, pressure_floor);
+
+        face.v_L = p_i.vel;
+        face.v_R = p_j.vel;
+
+        face.is_valid = true;
+        return face;
+    }
 
 #ifdef USE_MIDPOINT_QUADRATURE
     double fraction_i = 0.5;

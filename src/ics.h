@@ -1,5 +1,4 @@
 #pragma once
-#include "config.h"
 #include "state.h"
 
 SimState initialize_state(Config& config);

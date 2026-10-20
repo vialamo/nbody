@@ -1,11 +1,26 @@
 #include "engine.h"
 
-#include <algorithm>
-
+#include "cosmology.h"
+#include "diagnostics.h"
 #include "gas.h"
+#include "gravity.h"
+#include "hdf5_writer.h"
 #include "ics.h"
 #include "integrator.h"
-#include "particles.h"
+#include "logger.h"
+
+static double get_next_sync_dt(const std::vector<double>& t_end,
+                               size_t num_particles, double global_time) {
+    double next_time = std::numeric_limits<double>::infinity();
+    for (size_t i = 0; i < num_particles; ++i) {
+        if (t_end[i] > global_time + 1e-10) {
+            next_time = std::min(next_time, t_end[i]);
+        }
+    }
+    return (next_time - global_time > 1e-10)
+               ? (next_time - global_time)
+               : std::numeric_limits<double>::infinity();
+}
 
 SimulationEngine::SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5,
                                    Diagnostics& diag)
@@ -27,12 +42,29 @@ SimulationEngine::SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5,
         h5_writer.save_snapshot(snapshot_count, cycle_count, state, config,
                                 current_ts);
         snapshot_count++;
-        next_output_a = config.a_start + config.save_HDF5_every_delta_a;
+        if (config.expanding_universe) {
+            next_output_a = config.a_start + config.save_HDF5_every_delta_a;
+        } else {
+            next_output_a = config.save_HDF5_every_delta_a;
+        }
     }
 }
 
 TimestepInfo SimulationEngine::get_timestep() const {
     TimestepInfo ts = {0};
+
+    if (config.individual_particle_timesteps) {
+        double dt_gas = std::numeric_limits<double>::infinity();
+        if (config.hydro_method == HydroMethod::MFM) {
+            dt_gas = get_next_sync_dt(state.mfm_gas->t_end,
+                                      state.mfm_gas->num_particles,
+                                      state.total_time);
+        }
+        double dt_dm = get_next_sync_dt(state.dm.t_end, state.dm.num_particles,
+                                        state.total_time);
+        ts.dt_macro = std::min(dt_gas, dt_dm);
+        return ts;
+    }
 
     // Get raw physics constraints
     if (config.hydro_method == HydroMethod::Eulerian) {
@@ -44,21 +76,15 @@ TimestepInfo SimulationEngine::get_timestep() const {
         ts.dt_hydro = std::numeric_limits<double>::infinity();
     }
 
-    double dt_grav_dm = state.dm.get_gravity_timestep(config);
-    double dt_grav_mfm = std::numeric_limits<double>::infinity();
-    if (config.hydro_method == HydroMethod::MFM) {
-        dt_grav_mfm = state.mfm_gas->get_gravity_timestep(config);
-    }
-
     if (config.use_PM || config.use_PP) {
+        double dt_grav_dm = GravitySolver::get_timestep(state.dm, config);
+        double dt_grav_mfm = std::numeric_limits<double>::infinity();
+        if (config.hydro_method == HydroMethod::MFM) {
+            dt_grav_mfm = GravitySolver::get_timestep(*state.mfm_gas, config);
+        }
         ts.dt_grav = std::min(dt_grav_dm, dt_grav_mfm);
     } else {
         ts.dt_grav = std::numeric_limits<double>::infinity();
-    }
-
-    if (config.individual_particle_timesteps) {
-        ts.dt_macro = std::min(ts.dt_hydro, ts.dt_grav);
-        return ts;
     }
 
     // Cosmological Expansion Limiter
@@ -72,9 +98,11 @@ TimestepInfo SimulationEngine::get_timestep() const {
 
     // Force the simulation to land on the next output target
     if (config.save_HDF5_every_delta_a > 0.0 && config.expanding_universe) {
-        double t_start = get_time_from_scale_factor(config.a_start, config);
+        double t_start =
+            Cosmology::get_time_from_scale_factor(config.a_start, config);
         double current_t = t_start + state.total_time;
-        double target_t = get_time_from_scale_factor(next_output_a, config);
+        double target_t =
+            Cosmology::get_time_from_scale_factor(next_output_a, config);
 
         double dt_snapshot = target_t - current_t;
         const double MIN_VALID_DT = 1e-10;
@@ -89,7 +117,7 @@ TimestepInfo SimulationEngine::get_timestep() const {
 void SimulationEngine::step() {
     {
         ScopedTimer step_timer(diagnostics, TimerRegion::Step);
-        KDK_step(state, current_ts, config, diagnostics);
+        Integrator::KDK_step(state, current_ts, config, diagnostics);
     }
 
     diagnostics.increment_cycle();
@@ -113,21 +141,12 @@ void SimulationEngine::step() {
         is_synchronized = (std::abs(ratio - std::round(ratio)) < 1e-7);
     }
 
-    bool fixed_scale_output =
-        (!config.expanding_universe && cycle_count % 4 == 0);
-    if (config.initial_setup == InitialSetup::Glass) {
-        fixed_scale_output = (cycle_count % 64 == 0);
-    } else if (config.initial_setup == InitialSetup::SedovBlastwave ||
-               config.initial_setup == InitialSetup::SodShockTube) {
-        fixed_scale_output = fixed_scale_output || (cycle_count < 30);
-    }
-
     constexpr double TOLERANCE = 1e-7;
+    double next_out = next_output_a - TOLERANCE;
     bool must_save_snapshot =
         is_synchronized &&
-        (config.expanding_universe &&
-             state.scale_factor >= (next_output_a - TOLERANCE) ||
-         fixed_scale_output);
+        ((config.expanding_universe && state.scale_factor >= next_out) ||
+         (!config.expanding_universe && state.total_time >= next_out));
 
     if (config.save_HDF5_every_delta_a > 0.0 &&
         (!needs_more_cycles || must_save_snapshot)) {
@@ -136,8 +155,15 @@ void SimulationEngine::step() {
                                 current_ts);
 
         snapshot_count++;
-        while (next_output_a <= state.scale_factor) {
-            next_output_a += config.save_HDF5_every_delta_a;
+
+        if (config.expanding_universe) {
+            while (next_output_a <= state.scale_factor) {
+                next_output_a += config.save_HDF5_every_delta_a;
+            }
+        } else {
+            while (next_output_a <= state.total_time) {
+                next_output_a += config.save_HDF5_every_delta_a;
+            }
         }
     }
 
@@ -151,9 +177,6 @@ void SimulationEngine::step() {
         if (config.hydro_method == HydroMethod::Eulerian) {
             current_ts.dt_cool = state.gas->get_cooling_timestep(
                 state.scale_factor, state.cooling);
-        } else if (config.hydro_method == HydroMethod::MFM) {
-            current_ts.dt_cool = state.mfm_gas->get_cooling_timestep(
-                state.scale_factor, config, state.cooling);
         } else {
             current_ts.dt_cool = std::numeric_limits<double>::infinity();
         }

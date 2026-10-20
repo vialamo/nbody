@@ -2,10 +2,9 @@
 
 #include <omp.h>
 
-#include <iostream>
-
-#include "cmath"
+#include "config.h"
 #include "cooling.h"
+#include "thermodynamics.h"
 
 constexpr double density_floor = 1e-12;
 
@@ -318,15 +317,16 @@ GasGrid::GasGrid(const Config& conf)
       accumulated_dual_energy_switch_energy(0.0),
       pressure_floor(0.0),
       config(conf) {
-    double u_code_1K = Cooling::get_internal_energy_from_temp(1.0, 1.0, config);
+    double u_code_1K =
+        Thermodynamics::get_internal_energy_from_temp(1.0, 1.0, config);
     pressure_floor = (config.gamma - 1.0) * density_floor * u_code_1K;
 }
 
 void GasGrid::update_primitive_variables(double a) {
     size_t total_cells = density.size();
 
-    const double u_floor =
-        Cooling::get_internal_energy_from_temp(config.temp_floor_k, a, config);
+    const double u_floor = Thermodynamics::get_internal_energy_from_temp(
+        config.temp_floor_k, a, config);
 
     // Pre-calculate constants to avoid doing it inside the loop
     const double gamma_minus_1 = config.gamma - 1.0;
@@ -582,7 +582,8 @@ double GasGrid::get_cfl_timestep() const {
 void GasGrid::apply_cooling(double dt, double a, Cooling& cooling) {
     if (!config.enable_cooling) return;
 
-    double u_rad_floor = cooling.get_u_rad_floor(a, config);
+    double u_floor = Thermodynamics::get_u_floor(a, config);
+    double u_cutoff = cooling.get_u_cutoff(a, config);
     size_t total_cells = density.size();
 
     const double* d_rho = density.array().data();
@@ -626,8 +627,8 @@ void GasGrid::apply_cooling(double dt, double a, Cooling& cooling) {
                 // Run the implicit solver for this tiny step
                 int iters = 0;
                 u_current = cooling.solve_cooling_implicit(
-                    u_current, local_rho, local_Z_frac, a, dt_cell, u_rad_floor,
-                    config, iters);
+                    u_current, local_rho, local_Z_frac, a, dt_cell, u_cutoff,
+                    u_floor, config, iters);
 
                 if (iters >= Cooling::MAX_ITER) {
                     cell_non_converged++;
@@ -681,14 +682,14 @@ double GasGrid::get_cooling_timestep(double a, Cooling& cooling) const {
     const double* d_metal = metal_density.array().data();
 
     // Calculate the physical cooling floor
-    double u_rad_floor = cooling.get_u_rad_floor(a, config);
+    double u_cutoff = cooling.get_u_cutoff(a, config);
 
 #pragma omp parallel for reduction(min : min_dt_cool)
     for (int i = 0; i < total_cells; ++i) {
         if (d_rho[i] > density_floor) {
             double u = d_ie[i] / d_rho[i];
 
-            if (u <= u_rad_floor) continue;
+            if (u <= u_cutoff) continue;
 
             double Z_frac = d_metal[i] / d_rho[i];
             double du_dt =

@@ -365,7 +365,7 @@ if __name__ == "__main__":
     target_dir = args.path
     
     if args.latest:
-        runs = sorted(glob.glob(os.path.join(target_dir, "run_*")))
+        runs = sorted(glob.glob(os.path.join(target_dir, "sod_shock_tube_*")))
         if runs: target_dir = runs[-1]
         
     validate_sod_shock_interactive(target_dir)

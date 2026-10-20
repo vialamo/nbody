@@ -3,8 +3,13 @@
 #include <array>
 #include <chrono>
 
-#include "config.h"
-#include "state.h"
+struct Config;
+struct SimState;
+struct TimestepInfo;
+struct Grid3D;
+class GasGrid;
+class GasParticleSystem;
+class ParticleSystem;
 
 enum class TimerRegion {
     Step,
@@ -17,7 +22,6 @@ enum class TimerRegion {
     Density,
     NUM_REGIONS
 };
-enum class SubstepCounter { Hydro, Gravity, Cool, NUM_COUNTERS };
 enum class ProfRegion { Transf, Ret, Compute, NUM_PROF_REGIONS };
 
 class Diagnostics {
@@ -46,23 +50,34 @@ class Diagnostics {
     double initial_dm_energy = 0.0;
     bool energy_initialized = false;
     bool dm_energy_initialized = false;
-    size_t MFM_ill_conditioned_cases = 0;
     size_t MFM_h_non_converged_cases = 0;
-    size_t MFM_neighbor_increased_cases = 0;
+    size_t MFM_not_enough_nbg_cases = 0;
     size_t MFM_sph_fallback_cases = 0;
+    size_t MFM_total_particles = 0;
+    size_t MFM_riemann_failed_cases = 0;
+    double MFM_ill_percent = 0.0;
+    double MFM_clamp_percent = 0.0;
+    double MFM_inc_percent = 0.0;
+    double MFM_flux_energy_error = 0.0;
+    double MFM_flux_momentum_error = 0.0;
     double percent_particles_updated = 0;
     double volume_error = 0.0;
-    double mfm_flux_energy_error = 0.0;
-    double mfm_flux_momentum_error = 0.0;
 
     // Performance State
     int accumulated_cycles = 0;
     std::array<double, static_cast<size_t>(TimerRegion::NUM_REGIONS)>
         accumulated_times{};
-    std::array<int, static_cast<size_t>(SubstepCounter::NUM_COUNTERS)>
-        accumulated_substeps{};
     std::array<double, static_cast<size_t>(ProfRegion::NUM_PROF_REGIONS)>
         accumulated_prof{};
+
+    void compute_dm_metrics(const ParticleSystem& dm);
+    double calculate_hydro_energy_error(double current_energy, double w_grav,
+                                        double w_exp, double e_rad,
+                                        double e_heat);
+    void compute_eulerian_metrics(const GasGrid& gas, const Config& config);
+    void compute_mfm_metrics(GasParticleSystem& gas, const Config& config);
+    double compute_potential_energy(const Grid3D& total_rho, const Grid3D& phi,
+                                    const Config& config);
 
     friend class Logger;
 
@@ -81,17 +96,6 @@ class Diagnostics {
 
     void update_physics(const SimState& state, const TimestepInfo& ts,
                         const Config& config);
-
-    void add_substeps(SubstepCounter counter, int count = 1) {
-        accumulated_substeps[static_cast<size_t>(counter)] += count;
-    }
-
-    double get_average_substeps(SubstepCounter counter) const {
-        if (accumulated_cycles == 0) return 0.0;
-        return static_cast<double>(
-                   accumulated_substeps[static_cast<size_t>(counter)]) /
-               accumulated_cycles;
-    }
 };
 
 class ScopedTimer {

@@ -3,13 +3,16 @@
 #include <H5Cpp.h>
 
 #include <algorithm>  // For std::max, std::min
-#include <atomic>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 
+#include "config.h"
 #include "constants.h"
 #include "math_utils.h"  // Needed for QuadraticInterpolator
+#include "mfm.h"
+#include "thermodynamics.h"
 
 // Helper function to read an entire HDF5 dataset into a flattened 1D
 // std::vector
@@ -42,7 +45,7 @@ static std::vector<double> read_hdf5_attribute(const H5::H5File& file,
 }
 
 void Cooling::load_cooling_tables(const Config& config) {
-    if (config.cooling_table_path.empty()) {
+    if (config.cooling_table_path.empty() || !config.enable_cooling) {
         use_table = false;
         return;
     }
@@ -150,9 +153,6 @@ Cooling::Cooling(const Config& config) {
     double resolution = config.box_size_mpc_1d / config.mesh_size_1d;
     double default_clumping_A =
         std::max(0.0, (use_table ? 0.12 : 1.0) * A_curve.evaluate(resolution));
-    if (config.hydro_method == HydroMethod::MFM) {
-        // default_clumping_A *= 0.2;
-    }
 
     subgrid_clumping_A = config.subgrid_clumping_amplitude < 0
                              ? default_clumping_A
@@ -175,7 +175,7 @@ double Cooling::trilinear_interpolate(const std::vector<double>& data, double z,
     int id = get_index(log_nH, cooling_data.density);
     int it = get_index(log_T, cooling_data.temperature);
 
-    // Ensure indices never reach the last element, so index + 1 is always safe.
+    // Ensure indices never reach the last element, so index + 1 is safe
     iz = std::max(0, std::min(iz, static_cast<int>(cooling_data.Nz - 2)));
     id = std::max(0, std::min(id, static_cast<int>(cooling_data.Nd - 2)));
     it = std::max(0, std::min(it, static_cast<int>(cooling_data.Nt - 2)));
@@ -232,7 +232,8 @@ double Cooling::compute_tabulated_cooling(double u_code, double rho_code,
                                           double clumping_factor,
                                           const Config& config) const {
     // Values for the axes
-    double T_kelvin = get_temp_from_internal_energy(u_code, a, config);
+    double T_kelvin =
+        Thermodynamics::get_temp_from_internal_energy(u_code, a, config);
     double log_T = std::log10(T_kelvin);
 
     double rho_cgs = (rho_code * config.unit_density_cgs) / (a * a * a);
@@ -293,7 +294,8 @@ double Cooling::compute_du_dt(double u_code, double rho_code, double Z,
         return compute_tabulated_cooling(u_code, rho_code, Z, a,
                                          clumping_factor, config);
     } else {
-        double T = get_temp_from_internal_energy(u_code, a, config);
+        double T =
+            Thermodynamics::get_temp_from_internal_energy(u_code, a, config);
 
         // Convert code density to CGS
         double rho_cgs = (rho_code * config.unit_density_cgs) / (a * a * a);
@@ -310,53 +312,52 @@ double Cooling::compute_du_dt(double u_code, double rho_code, double Z,
     }
 }
 
-double Cooling::get_u_rad_floor(double a, const Config& config) const {
-    double target_floor_k = 0.0;
+double Cooling::get_u_cutoff(double a, const Config& config) const {
     if (use_table) {
-        // The table handles real physics. Only enforce the CMB and absolute
-        // hydro floor
-        double t_cmb = 2.7315 / a;
-        target_floor_k = std::max(config.temp_floor_k, t_cmb);
+        // Tables inherently handle physics, so they only stop at the absolute
+        // floor
+        return Thermodynamics::get_u_floor(a, config);
     } else {
-        // The analytical model uses the cutoff to fake the UVB
-        target_floor_k = std::max(config.cooling_cutoff_k, config.temp_floor_k);
+        // Analytical model stops radiating at the cutoff
+        return Thermodynamics::get_internal_energy_from_temp(
+            config.cooling_cutoff_k, a, config);
     }
-
-    double u_rad_floor =
-        get_internal_energy_from_temp(target_floor_k, a, config);
-    return u_rad_floor;
 }
 
 double Cooling::solve_cooling_implicit(double u_old, double rho_code, double Z,
-                                       double a, double dt, double u_rad_floor,
-                                       const Config& config,
+                                       double a, double dt, double u_cutoff,
+                                       double u_floor, const Config& config,
                                        int& iterations_taken) const {
     double du_dt_initial = compute_du_dt(u_old, rho_code, Z, a, config);
     if (du_dt_initial == 0.0) return u_old;
-
-    if (u_old <= u_rad_floor && du_dt_initial < 0.0) {
-        iterations_taken = 0;
-        return u_rad_floor;
-    }
 
     double u_low, u_high;
 
     // Negative means cooling, positive means heating
     if (du_dt_initial < 0.0) {
+        // We cannot cool below the radiative cutoff or the absolute floor
+        double effective_cooling_floor = std::max(u_cutoff, u_floor);
+
+        // If we are already below the effective floor, stop cooling
+        if (u_old <= effective_cooling_floor) {
+            iterations_taken = 0;
+            return u_old;
+        }
+
         // Cooling: u_new must be less than u_old
-        u_low = u_rad_floor;
+        u_low = effective_cooling_floor;
         u_high = u_old;
 
         // Verify the bracket
         double f_low =
             u_low - u_old - dt * compute_du_dt(u_low, rho_code, Z, a, config);
 
-        // If f_low is positive, the root lies below u_rad_floor.
+        // If f_low is positive, the root lies below u_floor.
         // This happens when rapid cooling + a large dt push the target
         // below the radiation floor. Just clamp to the floor
         if (f_low >= 0.0) {
             iterations_taken = 0;
-            return u_rad_floor;
+            return effective_cooling_floor;
         }
     } else {
         // Heating: u_new must be greater than u_old
@@ -401,5 +402,67 @@ double Cooling::solve_cooling_implicit(double u_old, double rho_code, double Z,
     }
 
     iterations_taken = iter;
-    return std::max(u_guess, u_rad_floor);
+    return std::max(u_guess, u_floor);
+}
+
+void Cooling::apply_cooling(GasParticleSystem& gas, const Config& config,
+                            double a) {
+    if (!config.enable_cooling) return;
+
+    double u_cutoff = get_u_cutoff(a, config);
+    double u_floor = Thermodynamics::get_u_floor(a, config);
+
+    double total_radiated = 0.0;
+    double total_photoheated = 0.0;
+    size_t non_converged_count = 0;
+    size_t total_cycles = 0;
+
+    double gamma_minus_1 = config.gamma - 1.0;
+
+    if (gas.num_active != 0) {
+#pragma omp parallel for schedule(static) \
+    reduction(+ : total_radiated, total_photoheated, non_converged_count)
+        for (size_t k = 0; k < gas.num_active; ++k) {
+            size_t i = gas.active_indices[k];
+
+            double local_rho = gas.rho[i];
+            if (local_rho > 1e-12) {  // Skip vacuum particles
+                double local_Z_frac = gas.metal_frac[i];
+                double u_initial = gas.u[i];
+                double dt_particle = gas.dt_step[i];
+
+                int iters = 0;
+                // Solve cooling implicitly across the FULL macro-step in one go
+                double u_current = solve_cooling_implicit(
+                    u_initial, local_rho, local_Z_frac, a, dt_particle,
+                    u_cutoff, u_floor, config, iters);
+
+                if (iters >= Cooling::MAX_ITER) {
+                    non_converged_count++;
+                }
+
+                double delta_u = u_current - u_initial;
+                if (std::abs(delta_u) > 0.0) {
+                    gas.u[i] = u_current;
+                    gas.total_energy[i] += delta_u;
+                    gas.entropy[i] = gamma_minus_1 * gas.u[i] /
+                                     std::pow(gas.rho[i], gamma_minus_1);
+                    gas.pressure[i] = gamma_minus_1 * gas.rho[i] * gas.u[i];
+
+                    double delta_E = delta_u * gas.mass[i];
+                    if (delta_u < 0.0) {
+                        total_radiated -= delta_E;
+                    } else {
+                        total_photoheated += delta_E;
+                    }
+                }
+            }
+        }
+    }
+
+    gas.cooling_total_cycles =
+        gas.num_particles > 0 ? (total_cycles / gas.num_particles) : 0;
+    gas.cooling_failed_cells = non_converged_count;
+    gas.accumulated_radiated_energy += total_radiated;
+    gas.accumulated_photoheating_energy += total_photoheated;
 }
