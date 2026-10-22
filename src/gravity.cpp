@@ -24,23 +24,22 @@ void update_softening(SimState& state, Config& config) {
 }
 
 #ifdef GRAVITY_OWN_MEMORY
-void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
-                  const Config& config, Diagnostics& diag) {
+static std::vector<double> u_px, u_py, u_pz, u_m, u_h, u_ax, u_ay, u_az;
+static std::vector<double> t_px, t_py, t_pz, t_m, t_h;
+static std::vector<int> u_original_idx, t_original_idx;
+static std::vector<uint8_t> u_type, t_type;
+static std::vector<uint64_t> u_morton;
+static std::vector<int> u_sorted_indices;
+static std::vector<int> u_active_indices;
+static std::vector<BVHNode> u_bvh;
+
+void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
+                    const Config& config) {
     size_t n_dm = dm.num_particles;
     size_t n_gas = gas ? gas->num_particles : 0;
     size_t n_total = n_dm + n_gas;
 
     if (n_total == 0) return;
-
-    // Static allocations to avoid reallocation overhead
-    static std::vector<double> u_px, u_py, u_pz, u_m, u_h, u_ax, u_ay, u_az;
-    static std::vector<double> t_px, t_py, t_pz, t_m, t_h;
-    static std::vector<int> u_original_idx, t_original_idx;
-    static std::vector<uint8_t> u_type, t_type;
-    static std::vector<uint64_t> u_morton;
-    static std::vector<int> u_sorted_indices;
-    static std::vector<int> u_active_indices;
-    static std::vector<BVHNode> u_bvh;
 
     // Resize global arrays
     u_px.resize(n_total);
@@ -125,6 +124,35 @@ void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
             (u_type[i] == 0) ? dm.is_active[orig] : gas->is_active[orig];
         if (is_active) u_active_indices.push_back(i);
     }
+}
+
+// Map accelerations back to native structures
+void map_results(ParticleSystem& dm, GasParticleSystem* gas) {
+    size_t n_dm = dm.num_particles;
+    size_t n_gas = gas ? gas->num_particles : 0;
+    size_t n_total = n_dm + n_gas;
+#pragma omp parallel for schedule(static)
+    for (size_t i = 0; i < n_total; ++i) {
+        int orig = u_original_idx[i];
+        if (u_type[i] == 0) {
+            dm.acc_x[orig] += u_ax[i];
+            dm.acc_y[orig] += u_ay[i];
+            dm.acc_z[orig] += u_az[i];
+        } else {
+            gas->acc_x[orig] += u_ax[i];
+            gas->acc_y[orig] += u_ay[i];
+            gas->acc_z[orig] += u_az[i];
+        }
+    }
+}
+
+void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
+                  const Config& config, Diagnostics& diag) {
+    size_t n_dm = dm.num_particles;
+    size_t n_gas = gas ? gas->num_particles : 0;
+    size_t n_total = n_dm + n_gas;
+
+    if (n_total == 0) return;
 
     size_t n_active = u_active_indices.size();
     if (n_active == 0) return;
@@ -270,21 +298,6 @@ void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
                            end_return - start_return)
                            .count());
 #endif
-
-// Map accelerations back to native structures
-#pragma omp parallel for schedule(static)
-    for (size_t i = 0; i < n_total; ++i) {
-        int orig = u_original_idx[i];
-        if (u_type[i] == 0) {
-            dm.acc_x[orig] += u_ax[i];
-            dm.acc_y[orig] += u_ay[i];
-            dm.acc_z[orig] += u_az[i];
-        } else {
-            gas->acc_x[orig] += u_ax[i];
-            gas->acc_y[orig] += u_ay[i];
-            gas->acc_z[orig] += u_az[i];
-        }
-    }
 }
 
 #else
