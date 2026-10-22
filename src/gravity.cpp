@@ -303,7 +303,9 @@ void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
 #else
 void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
                   const Config& config, Diagnostics& diag) {
-    if (dm.num_particles == 0 && gas.num_particles == 0) return;
+    if (dm.num_particles == 0 &&
+        (gas == nullptr || (gas && gas->num_particles == 0)))
+        return;
 
     const Vec3& domain_size = config.domain_size;
     const double G = config.G / (a * a * a);

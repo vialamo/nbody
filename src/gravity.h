@@ -6,7 +6,7 @@ struct SimState;
 class GasParticleSystem;
 class ParticleSystem;
 
-#define GRAVITY_OWN_MEMORY
+//#define GRAVITY_OWN_MEMORY
 
 namespace GravitySolver {
 

@@ -353,7 +353,7 @@ static void reset_all_accels(SimState& state, Config& config) {
 }
 
 #ifdef USE_GPU
-#define GPU_CPU_PARALLEL_EXECUTION
+// #define GPU_CPU_PARALLEL_EXECUTION
 #endif
 void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
     // Update softening
@@ -436,8 +436,14 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
     // PP
     if (config.use_PP) {
         ScopedTimer pp_timer(diag, TimerRegion::PP);
+#ifdef GRAVITY_OWN_MEMORY
+        GravitySolver::prepare_arrays(state.dm, state.mfm_gas.get(), config);
+#endif
         GravitySolver::add_pp_accel(state.dm, state.mfm_gas.get(),
                                     state.scale_factor, config, diag);
+#ifdef GRAVITY_OWN_MEMORY
+        GravitySolver::map_results(state.dm, state.mfm_gas.get());
+#endif
     }
 #endif
 }
