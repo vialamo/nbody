@@ -8,7 +8,6 @@
 constexpr double N_cond_crit = 5.0;
 constexpr double density_floor = 1e-12;
 
-// #define USE_ADAPTIVE_SOFTENING
 // #define USE_GEOMETRIC_MATRIX
 
 struct Config;
@@ -55,7 +54,6 @@ class GasParticleSystem {
         B_matrix;  // Geometric inverse matrix [1 / Code Length^2]
 
     std::vector<double> cond_num;
-    std::vector<double> cond_num_convergence;
 
     std::vector<double>
         entropy;  // Entropic function (S = P / rho^gamma)
@@ -73,13 +71,6 @@ class GasParticleSystem {
     std::vector<Eigen::Vector3d> grad_vy;
     std::vector<Eigen::Vector3d> grad_vz;
     std::vector<Eigen::Vector3d> grad_p;  // [Pressure / Code Length]
-
-#ifdef USE_ADAPTIVE_SOFTENING
-    std::vector<double> zeta;  // Correction term for adaptive gravity softening
-#endif
-
-    Grid3D grid_rho;  // Gridded comoving gas density for PM gravity/diagnostics
-                     // [Code Mass / Code Length^3]
 
     std::vector<double> v_sig_max;  // Cached maximum signal velocity
 

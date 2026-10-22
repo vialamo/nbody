@@ -5,7 +5,6 @@
 struct Config;
 struct Diagnostics;
 struct SimState;
-struct TimestepInfo;
 class GasParticleSystem;
 
 namespace Integrator {
@@ -13,7 +12,7 @@ namespace Integrator {
 void compute_forces(SimState& state, Config& config, Diagnostics& diag);
 void update_timesteps(SimState& state, const Config& config);
 
-void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
+void KDK_step(SimState& state, double dt, Config& config,
               Diagnostics& diag);
 
 struct KickWork {

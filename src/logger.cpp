@@ -159,12 +159,13 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
 
     std::cout << "  [Stability]\n";
     std::cout << "    - Timestep (Macro): "
-              << format_double(diag.dt_final, 1, true)
-              << " | Grav: " << format_double(diag.dt_gravity, 1, true)
-              << " | CFL: " << format_double(diag.dt_cfl, 1, true) << "\n";
+              << format_double(diag.dt_final, 1, true);
     if (conf.individual_particle_timesteps) {
-        std::cout << "    - Particles/step:   "
+        std::cout << " | Particles/step: "
                   << format_double(diag.percent_particles_updated, 1) << "%\n";
+    } else {
+        std::cout << " | Grav: " << format_double(diag.dt_gravity, 1, true)
+                  << " | CFL: " << format_double(diag.dt_cfl, 1, true) << "\n";
     }
 
     std::cout << "  [Performance (ms / cycle)]" << "\n";

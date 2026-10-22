@@ -340,10 +340,6 @@ static void apply_gas_drift(GasParticleSystem& gas, double dt,
 }
 
 static void reset_all_accels(SimState& state, Config& config) {
-    state.pm_gravity_x.setZero();
-    state.pm_gravity_y.setZero();
-    state.pm_gravity_z.setZero();
-
     std::fill(state.dm.acc_x.begin(), state.dm.acc_x.end(), 0.0);
     std::fill(state.dm.acc_y.begin(), state.dm.acc_y.end(), 0.0);
     std::fill(state.dm.acc_z.begin(), state.dm.acc_z.end(), 0.0);
@@ -362,7 +358,9 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
     // Build trees
     {
         ScopedTimer timer(diag, TimerRegion::Tree);
+#ifndef GRAVITY_OWN_MEMORY
         state.dm.build_lbvh(config);
+#endif
         if (config.hydro_method == HydroMethod::MFM) {
             state.mfm_gas->build_lbvh(config);
         }
@@ -372,8 +370,7 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
     if (config.hydro_method == HydroMethod::MFM) {
         {
             ScopedTimer timer(diag, TimerRegion::Density);
-            DensitySolver::compute_density_and_h(*state.mfm_gas, config,
-                                                 state.dm);
+            DensitySolver::compute_density_and_h(*state.mfm_gas, config);
         }
         {
             ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
@@ -389,34 +386,20 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
     // PM
     {
         ScopedTimer pm_timer(diag, TimerRegion::PM);
-        PM::bin_and_assign_mass(state, config);
-
         if (config.use_PM) {
-            PM::compute_acceleration(state, config);
-            PM::interpolate_forces(state, config);
+            state.pm.bin_and_assign_mass(state, config);
+            state.pm.compute_acceleration(state, config);
+            state.pm.interpolate_forces(state, config);
         } else {
             reset_all_accels(state, config);
         }
     }
 
     // PP
-    {
+    if (config.use_PP) {
         ScopedTimer pp_timer(diag, TimerRegion::PP);
-        if (config.use_PP) {
-            // DM-DM
-            GravitySolver::compute_and_add_dm_pp_forces(
-                state.dm, state.scale_factor, config, diag);
-
-            if (config.hydro_method == HydroMethod::MFM) {
-                // Gas-Gas
-                GravitySolver::compute_and_add_gas_pp_forces(
-                    *state.mfm_gas, state.scale_factor, config, diag);
-
-                // Gas-DM
-                GravitySolver::compute_gas_dm_cross_pp_forces(
-                    state.dm, *state.mfm_gas, state.scale_factor, config, diag);
-            }
-        }
+        GravitySolver::add_pp_accel(state.dm, state.mfm_gas.get(),
+                                    state.scale_factor, config, diag);
     }
 }
 
@@ -441,10 +424,9 @@ static void apply_kick(SimState& state, double dt, const Config& config,
                   is_kick1);
 
     if (config.hydro_method == HydroMethod::Eulerian) {
-        apply_mesh_gas_gravity_kick(*state.gas, state.pm_gravity_x,
-                                    state.pm_gravity_y, state.pm_gravity_z, dt,
-                                    state.scale_factor, state.hubble_param,
-                                    config);
+        apply_mesh_gas_gravity_kick(*state.gas, state.pm.acc_x, state.pm.acc_y,
+                                    state.pm.acc_z, dt, state.scale_factor,
+                                    state.hubble_param, config);
     } else if (config.hydro_method == HydroMethod::MFM) {
         apply_gas_kick(*state.mfm_gas, dt, state.scale_factor,
                        state.hubble_param, config, is_kick1);
@@ -470,10 +452,7 @@ void update_timesteps(SimState& state, const Config& config) {
     }
 }
 
-void KDK_step(SimState& state, TimestepInfo& ts, Config& config,
-              Diagnostics& diag) {
-    double dt = ts.dt_macro;
-
+void KDK_step(SimState& state, double dt, Config& config, Diagnostics& diag) {
     // Clock sync and wake-ups
     state.dm.sync_and_activate(dt, config);
     if (config.hydro_method == HydroMethod::MFM) {

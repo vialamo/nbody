@@ -1,25 +1,73 @@
 #include "pm.h"
 
+#include <fftw3.h>
 #include <omp.h>
 
 #include <vector>
 
 #include "config.h"
-#include "pocketfft_hdronly.h"
 #include "state.h"
 
-namespace PM {
+static std::vector<std::complex<double>> rho_k;
+static std::vector<std::complex<double>> phi_k;
+static fftw_plan forward_plan = nullptr;
+static fftw_plan backward_plan = nullptr;
 
-static void bin_and_assign_mass(const Config& config, size_t num_particles,
-                                const std::vector<double>& pos_x,
-                                const std::vector<double>& pos_y,
-                                const std::vector<double>& pos_z,
-                                const std::vector<double>& mass,
-                                std::vector<CIC_Data>& out_cic_data,
-                                Grid3D& out_rho_grid) {
+PM::PM(const Config& config)
+    : rho(config.mesh_size),
+      phi(config.mesh_size),
+      acc_x(config.mesh_size),
+      acc_y(config.mesh_size),
+      acc_z(config.mesh_size) {
+    acc_x.setZero();
+    acc_y.setZero();
+    acc_z.setZero();
+
+    if (config.use_PM) {
+        int Nx = config.mesh_size.x;
+        int Ny = config.mesh_size.y;
+        int Nz = config.mesh_size.z;
+
+        // Allocate complex frequency-domain arrays
+        size_t complex_size = static_cast<size_t>(Nx) * Ny * (Nz / 2 + 1);
+        rho_k.resize(complex_size);
+        phi_k.resize(complex_size);
+
+        // Initialize FFTW OpenMP/Thread support
+        fftw_init_threads();
+        fftw_plan_with_nthreads(omp_get_max_threads());
+
+        fftw_complex* rho_k_fftw =
+            reinterpret_cast<fftw_complex*>(rho_k.data());
+        fftw_complex* phi_k_fftw =
+            reinterpret_cast<fftw_complex*>(phi_k.data());
+
+        // Create the plans and bind them to the grid memory addresses
+        forward_plan = fftw_plan_dft_r2c_3d(Nx, Ny, Nz,
+                                            const_cast<double*>(rho.raw_data()),
+                                            rho_k_fftw, FFTW_ESTIMATE);
+
+        backward_plan = fftw_plan_dft_c2r_3d(
+            Nx, Ny, Nz, phi_k_fftw, const_cast<double*>(phi.raw_data()),
+            FFTW_ESTIMATE);
+    }
+}
+
+PM::~PM() {
+    if (forward_plan) fftw_destroy_plan(forward_plan);
+    if (backward_plan) fftw_destroy_plan(backward_plan);
+    fftw_cleanup_threads();
+}
+
+static void bin_and_add_mass(const Config& config, size_t num_particles,
+                             const std::vector<double>& pos_x,
+                             const std::vector<double>& pos_y,
+                             const std::vector<double>& pos_z,
+                             const std::vector<double>& mass,
+                             std::vector<CIC_Data>& out_cic_data,
+                             Grid3D& out_rho_grid) {
     if (num_particles == 0) return;
 
-    out_rho_grid.setZero();
     out_cic_data.assign(num_particles, {});
 
     int Nx = config.mesh_size.x;
@@ -81,29 +129,25 @@ static void bin_and_assign_mass(const Config& config, size_t num_particles,
         out_rho_grid(ix0, iy1, iz1) += m * w011;
         out_rho_grid(ix1, iy1, iz1) += m * w111;
     }
-
-    out_rho_grid.data /= config.cell_volume;
 }
 
-void bin_and_assign_mass(SimState& state, const Config& config) {
+void PM::bin_and_assign_mass(SimState& state, const Config& config) {
+    rho.setZero();
+
     ParticleSystem& dm = state.dm;
-    bin_and_assign_mass(config, dm.num_particles, dm.pos_x, dm.pos_y, dm.pos_z,
-                        dm.mass, dm.cic_data, dm.grid_rho);
+    bin_and_add_mass(config, dm.num_particles, dm.pos_x, dm.pos_y, dm.pos_z,
+                     dm.mass, dm.cic_data, rho);
 
     if (config.hydro_method == HydroMethod::MFM) {
         GasParticleSystem& gas = *state.mfm_gas;
-        bin_and_assign_mass(config, gas.num_particles, gas.pos_x, gas.pos_y,
-                            gas.pos_z, gas.mass, gas.cic_data, gas.grid_rho);
+        bin_and_add_mass(config, gas.num_particles, gas.pos_x, gas.pos_y,
+                         gas.pos_z, gas.mass, gas.cic_data, rho);
     }
 
-    if (config.hydro_method == HydroMethod::MFM) {
-        state.total_rho.data =
-            state.dm.grid_rho.data + state.mfm_gas->grid_rho.data;
-    } else if (config.hydro_method == HydroMethod::Eulerian) {
-        state.total_rho.data =
-            state.dm.grid_rho.data + state.gas->get_density().data;
-    } else {
-        state.total_rho.data = state.dm.grid_rho.data;
+    rho.data /= config.cell_volume;
+
+    if (config.hydro_method == HydroMethod::Eulerian) {
+        rho.data += state.gas->get_density().data;
     }
 }
 
@@ -146,65 +190,29 @@ static void interpolate_forces(const Config& config, size_t num_particles,
     }
 }
 
-void interpolate_forces(SimState& state, const Config& config) {
+void PM::interpolate_forces(SimState& state, const Config& config) {
     ParticleSystem& dm = state.dm;
-    interpolate_forces(config, dm.num_particles, dm.cic_data,
-                       state.pm_gravity_x, state.pm_gravity_y,
-                       state.pm_gravity_z, dm.acc_x, dm.acc_y, dm.acc_z);
+    ::interpolate_forces(config, dm.num_particles, dm.cic_data, acc_x, acc_y,
+                         acc_z, dm.acc_x, dm.acc_y, dm.acc_z);
 
     if (config.hydro_method == HydroMethod::MFM) {
         GasParticleSystem& gas = *state.mfm_gas;
-        interpolate_forces(config, gas.num_particles, gas.cic_data,
-                           state.pm_gravity_x, state.pm_gravity_y,
-                           state.pm_gravity_z, gas.acc_x, gas.acc_y, gas.acc_z);
+        ::interpolate_forces(config, gas.num_particles, gas.cic_data, acc_x,
+                             acc_y, acc_z, gas.acc_x, gas.acc_y, gas.acc_z);
     }
 }
 
-void compute_acceleration(SimState& state, const Config& config) {
+void PM::compute_acceleration(SimState& state, const Config& config) {
     int Nx = config.mesh_size.x;
     int Ny = config.mesh_size.y;
     int Nz = config.mesh_size.z;
 
-    const GasGrid& gas = *state.gas;
-    const Grid3D& dm_rho = state.dm.grid_rho;
-    Grid3D& total_rho = state.total_rho;
-    Grid3D& acc_x = state.pm_gravity_x;
-    Grid3D& acc_y = state.pm_gravity_y;
-    Grid3D& acc_z = state.pm_gravity_z;
-    Grid3D& phi = state.phi;
-
-    if (config.hydro_method == HydroMethod::MFM) {
-        total_rho.data = dm_rho.data + state.mfm_gas->grid_rho.data;
-    } else if (config.hydro_method == HydroMethod::Eulerian) {
-        total_rho.data = dm_rho.data + gas.get_density().data;
-    } else {
-        total_rho.data = dm_rho.data;
-    }
-
-    // Anisotropic PocketFFT Shape and Strides
-    const pocketfft::shape_t shape = {(size_t)Nx, (size_t)Ny, (size_t)Nz};
-
-    const pocketfft::stride_t stride_r = {
-        static_cast<ptrdiff_t>((size_t)Ny * Nz * sizeof(double)),
-        static_cast<ptrdiff_t>(Nz * sizeof(double)), sizeof(double)};
-
-    // The Z-axis is cut roughly in half for Real-to-Complex transforms
-    const pocketfft::stride_t stride_c = {
-        static_cast<ptrdiff_t>((size_t)Ny * (Nz / 2 + 1) *
-                               sizeof(std::complex<double>)),
-        static_cast<ptrdiff_t>((Nz / 2 + 1) * sizeof(std::complex<double>)),
-        sizeof(std::complex<double>)};
-
-    size_t complex_size = (size_t)Nx * Ny * (Nz / 2 + 1);
-    std::vector<std::complex<double>> rho_k(complex_size);
-
-    pocketfft::r2c(shape, stride_r, stride_c, {0, 1, 2}, true,
-                   total_rho.raw_data(), rho_k.data(), 1.0, 0);
-
-    std::vector<std::complex<double>> phi_k(complex_size);
+    // Forward Transform
+    fftw_execute(forward_plan);
 
     const double r_s = config.PM_smoothing_cells * config.cell_size;
 
+    // Compute Frequencies in k-space
 #pragma omp parallel for collapse(3)
     for (int i = 0; i < Nx; ++i) {
         for (int j = 0; j < Ny; ++j) {
@@ -214,14 +222,12 @@ void compute_acceleration(SimState& state, const Config& config) {
                     continue;
                 }
 
-                // Frequencies rely on their specific axis sizes
                 double kx_freq =
                     static_cast<double>((i < Nx / 2) ? i : (i - Nx));
                 double ky_freq =
                     static_cast<double>((j < Ny / 2) ? j : (j - Ny));
                 double kz_freq = static_cast<double>(k);
 
-                // K-vectors rely on their specific physical domain sizes
                 double kx = kx_freq * 2.0 * M_PI / config.domain_size.x;
                 double ky = ky_freq * 2.0 * M_PI / config.domain_size.y;
                 double kz = kz_freq * 2.0 * M_PI / config.domain_size.z;
@@ -239,7 +245,6 @@ void compute_acceleration(SimState& state, const Config& config) {
                     return std::sin(arg) / arg;
                 };
 
-                // CIC filter deconvolves using the explicit mesh sizes
                 double sinc_x = sinc(kx_freq, Nx);
                 double sinc_y = sinc(ky_freq, Ny);
                 double sinc_z = sinc(kz_freq, Nz);
@@ -251,8 +256,8 @@ void compute_acceleration(SimState& state, const Config& config) {
         }
     }
 
-    pocketfft::c2r(shape, stride_c, stride_r, {0, 1, 2}, false, phi_k.data(),
-                   const_cast<double*>(phi.raw_data()), 1.0, 0);
+    // Backward Transform
+    fftw_execute(backward_plan);
 
     // Normalization and gradients
     double norm = 1.0 / ((double)Nx * Ny * Nz);
@@ -280,5 +285,3 @@ void compute_acceleration(SimState& state, const Config& config) {
         }
     }
 }
-
-}  // namespace PM

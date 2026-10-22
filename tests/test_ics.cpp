@@ -15,6 +15,7 @@ TEST_CASE("Initial internal energy scales correctly with code units",
     Config config;
     config.gamma = 5.0 / 3.0;
     config.primordial_mu = 1.22;
+    config.box_size_mpc_1d = 1.0;
 
     // Let the config initialize its derived units naturally
     config.compute_derived_data();
@@ -30,10 +31,10 @@ TEST_CASE("Initial internal energy scales correctly with code units",
 
         // To safely halve the velocity unit, we halve the box_size_mpc.
         // As seen in init_derived_units, unit_velocity_kms scales linearly with
-        // unit_length_mpc, which scales linearly with box_size_mpc.
+        // unit_length_mpc, which scales linearly with box_size_mpc
         config.box_size_mpc_1d /= 2.0;
 
-        // Force the Config to rebuild the thermodynamics bridge naturally
+        // Force the Config to rebuild the thermodynamics
         config.compute_derived_data();
 
         // Calculate the new energy
@@ -74,6 +75,7 @@ TEST_CASE("initialize_state produces physically sound macro-states",
     config.use_PM = true;
     config.use_PP = false;
     config.use_glass = false;
+    config.hydro_method = HydroMethod::Eulerian;
 
     config.compute_derived_data();
 

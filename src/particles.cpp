@@ -5,7 +5,7 @@
 #include "config.h"
 
 ParticleSystem::ParticleSystem(const Config& config)
-    : grid_rho(config.mesh_size), cic_data(config.num_dm_particles) {
+    : cic_data(config.num_dm_particles) {
     pos_x.reserve(config.num_dm_particles);
     pos_y.reserve(config.num_dm_particles);
     pos_z.reserve(config.num_dm_particles);

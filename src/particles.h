@@ -17,8 +17,6 @@ class ParticleSystem {
     std::vector<int> sorted_indices;
     std::vector<BVHNode> bvh_nodes;
 
-    Grid3D grid_rho;
-
     size_t num_particles = 0;
 
     std::vector<double> pos_x;

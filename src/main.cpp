@@ -66,7 +66,7 @@ std::string generate_directory_name(const Config& config,
 int main(int argc, char* argv[]) {
     std::signal(SIGINT, signal_handler);
 
-    std::string config_filename = "simulation.ini";
+    std::string config_filename = "config.ini";
     if (argc >= 2) {
         config_filename = argv[1];
     }
@@ -94,7 +94,7 @@ int main(int argc, char* argv[]) {
 
     // Copy the config file into the run directory for reproducibility
     std::filesystem::copy_file(
-        config_filename, run_dir + "/simulation.ini",
+        config_filename, run_dir + "/config.ini",
         std::filesystem::copy_options::overwrite_existing);
 
     HDF5Writer h5_writer(run_dir, config);

@@ -295,7 +295,7 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
     // Compute Independent Physics Domains
     compute_dm_metrics(state.dm);
     this->pe_total =
-        compute_potential_energy(state.total_rho, state.phi, config);
+        compute_potential_energy(state.pm.rho, state.pm.phi, config);
 
     // Compute Solver-Specific Hydro Metrics
     if (config.hydro_method == HydroMethod::Eulerian) {

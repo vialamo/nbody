@@ -1,11 +1,4 @@
-/*
- * A simple, single-header C++ INI parser.
- * Based on ini.h by rxi (https://github.com/rxi/ini)
- * Adapted for C++ std::map and std::string.
- */
-
-#ifndef INI_H
-#define INI_H
+#pragma once
 
 #include <string>
 #include <map>
@@ -13,8 +6,6 @@
 #include <sstream>
 #include <algorithm>
 #include <stdexcept>
-
-namespace ini {
 
 class Ini {
 public:
@@ -92,7 +83,3 @@ private:
         return str.substr(first, (last - first + 1));
     }
 };
-
-} // namespace ini
-
-#endif

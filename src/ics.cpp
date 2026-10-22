@@ -1,5 +1,7 @@
 #include "ics.h"
 
+#include <fftw3.h>
+
 #include <random>
 
 #include "constants.h"
@@ -10,7 +12,6 @@
 #include "integrator.h"
 #include "math_utils.h"
 #include "particles.h"
-#include "pocketfft_hdronly.h"
 #include "thermodynamics.h"
 
 // The pure shape of the BBKS power spectrum (Unnormalized)
@@ -96,20 +97,22 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
         val = distribution(generator);
     }
 
-    pocketfft::shape_t shape_ic = {(size_t)Mx, (size_t)My, (size_t)Mz};
-    pocketfft::stride_t stride_r_ic = {
-        static_cast<ptrdiff_t>(My * Mz * sizeof(double)),
-        static_cast<ptrdiff_t>(Mz * sizeof(double)), sizeof(double)};
-
-    pocketfft::stride_t stride_c_ic = {
-        static_cast<ptrdiff_t>(My * (Mz / 2 + 1) *
-                               sizeof(std::complex<double>)),
-        static_cast<ptrdiff_t>((Mz / 2 + 1) * sizeof(std::complex<double>)),
-        sizeof(std::complex<double>)};
-
     std::vector<std::complex<double>> random_k(M3_complex);
-    pocketfft::r2c(shape_ic, stride_r_ic, stride_c_ic, {0, 1, 2}, true,
-                   real_space_random_field.data(), random_k.data(), 1.0);
+
+    // Initialize FFTW threads
+    fftw_init_threads();
+    fftw_plan_with_nthreads(omp_get_max_threads());
+
+    fftw_complex* random_k_fftw =
+        reinterpret_cast<fftw_complex*>(random_k.data());
+
+    // Create and execute forward plan
+    fftw_plan forward_plan =
+        fftw_plan_dft_r2c_3d(Mx, My, Mz, real_space_random_field.data(),
+                             random_k_fftw, FFTW_ESTIMATE);
+
+    fftw_execute(forward_plan);
+    fftw_destroy_plan(forward_plan);
 
     std::vector<std::complex<double>> disp_x_k(M3_complex);
     std::vector<std::complex<double>> disp_y_k(M3_complex);
@@ -226,12 +229,29 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
     field.dy.resize(M3_real);
     field.dz.resize(M3_real);
 
-    pocketfft::c2r(shape_ic, stride_c_ic, stride_r_ic, {0, 1, 2}, false,
-                   disp_x_k.data(), field.dx.data(), 1.0);
-    pocketfft::c2r(shape_ic, stride_c_ic, stride_r_ic, {0, 1, 2}, false,
-                   disp_y_k.data(), field.dy.data(), 1.0);
-    pocketfft::c2r(shape_ic, stride_c_ic, stride_r_ic, {0, 1, 2}, false,
-                   disp_z_k.data(), field.dz.data(), 1.0);
+    fftw_complex* disp_x_k_fftw =
+        reinterpret_cast<fftw_complex*>(disp_x_k.data());
+    fftw_complex* disp_y_k_fftw =
+        reinterpret_cast<fftw_complex*>(disp_y_k.data());
+    fftw_complex* disp_z_k_fftw =
+        reinterpret_cast<fftw_complex*>(disp_z_k.data());
+
+    fftw_plan backward_plan_x = fftw_plan_dft_c2r_3d(
+        Mx, My, Mz, disp_x_k_fftw, field.dx.data(), FFTW_ESTIMATE);
+    fftw_plan backward_plan_y = fftw_plan_dft_c2r_3d(
+        Mx, My, Mz, disp_y_k_fftw, field.dy.data(), FFTW_ESTIMATE);
+    fftw_plan backward_plan_z = fftw_plan_dft_c2r_3d(
+        Mx, My, Mz, disp_z_k_fftw, field.dz.data(), FFTW_ESTIMATE);
+
+    fftw_execute(backward_plan_x);
+    fftw_execute(backward_plan_y);
+    fftw_execute(backward_plan_z);
+
+    fftw_destroy_plan(backward_plan_x);
+    fftw_destroy_plan(backward_plan_y);
+    fftw_destroy_plan(backward_plan_z);
+
+    fftw_cleanup_threads();
 
     // Calculate the exact linear growth suppression factor g(a) = D(a)/a at z=0
     // (a=1) Using the Carroll, Press, and Turner (1992) fitting formula
@@ -322,22 +342,25 @@ static Vec3 sample_zeldovich_cic(double qx, double qy, double qz,
 void initialize_dm(SimState& state, const Config& config,
                    const ZeldovichField& zf) {
     if (config.use_glass) {
-        // Force domain size components to be exact multiples of the minimum one
+        // Find largest power-of-two divisor to tile the particles
+        int N_1d = config.num_particles_1d;
+        int N_glass = 1;
+        while (N_1d % (N_glass * 2) == 0 && N_glass * 2 <= 128) {
+            N_glass *= 2;
+        }
+        N_glass = std::max(8, N_glass);
+
         double L_base = std::min(
             {config.domain_size.x, config.domain_size.y, config.domain_size.z});
-        int n_tiles_x =
-            static_cast<int>(std::round(config.domain_size.x / L_base));
-        int n_tiles_y =
-            static_cast<int>(std::round(config.domain_size.y / L_base));
-        int n_tiles_z =
-            static_cast<int>(std::round(config.domain_size.z / L_base));
+        int sub_tiles = N_1d / N_glass;
+        double L_block = L_base / sub_tiles;
 
-        // Force the number of 1D particles to be an exact power of 2
-        int N_glass = std::max(
-            16, static_cast<int>(std::pow(
-                    2, std::ceil(std::log2(config.num_particles_1d)))));
-        N_glass = std::min(
-            N_glass, 128);  // Max available glass file based on existing code
+        int n_tiles_x =
+            static_cast<int>(std::round(config.domain_size.x / L_block));
+        int n_tiles_y =
+            static_cast<int>(std::round(config.domain_size.y / L_block));
+        int n_tiles_z =
+            static_cast<int>(std::round(config.domain_size.z / L_block));
 
         std::string file_glass =
             "data/glassCube_" + std::to_string(N_glass) + ".hdf5";
@@ -363,9 +386,9 @@ void initialize_dm(SimState& state, const Config& config,
                 for (int tz = 0; tz < n_tiles_z; ++tz) {
                     for (size_t p = 0; p < glass.num_particles; ++p) {
                         // Unperturbed glass coordinates for DM
-                        double qx = tx * L_base + glass.pos_x[p] * L_base;
-                        double qy = ty * L_base + glass.pos_y[p] * L_base;
-                        double qz = tz * L_base + glass.pos_z[p] * L_base;
+                        double qx = tx * L_block + glass.pos_x[p] * L_block;
+                        double qy = ty * L_block + glass.pos_y[p] * L_block;
+                        double qz = tz * L_block + glass.pos_z[p] * L_block;
 
                         Vec3 d = sample_zeldovich_cic(qx, qy, qz, zf, cell_size,
                                                       config.mesh_size);
@@ -530,20 +553,25 @@ void initialize_gas(SimState& state, const Config& config,
         gas.update_primitive_variables(state.scale_factor);
     } else if (config.hydro_method == HydroMethod::MFM) {
         if (config.use_glass) {
+            int N_1d = config.num_gas_particles_1d;
+            int N_glass = 1;
+            while (N_1d % (N_glass * 2) == 0 && N_glass * 2 <= 128) {
+                N_glass *= 2;
+            }
+            N_glass = std::max(8, N_glass);
+
             double L_base =
                 std::min({config.domain_size.x, config.domain_size.y,
                           config.domain_size.z});
-            int n_tiles_x =
-                static_cast<int>(std::round(config.domain_size.x / L_base));
-            int n_tiles_y =
-                static_cast<int>(std::round(config.domain_size.y / L_base));
-            int n_tiles_z =
-                static_cast<int>(std::round(config.domain_size.z / L_base));
+            int sub_tiles = N_1d / N_glass;
+            double L_block = L_base / sub_tiles;
 
-            int N_glass = std::max(
-                16, static_cast<int>(std::pow(
-                        2, std::ceil(std::log2(config.num_gas_particles_1d)))));
-            N_glass = std::min(N_glass, 128);
+            int n_tiles_x =
+                static_cast<int>(std::round(config.domain_size.x / L_block));
+            int n_tiles_y =
+                static_cast<int>(std::round(config.domain_size.y / L_block));
+            int n_tiles_z =
+                static_cast<int>(std::round(config.domain_size.z / L_block));
 
             std::string file_glass =
                 "data/glassCube_" + std::to_string(N_glass) + ".hdf5";
@@ -561,7 +589,7 @@ void initialize_gas(SimState& state, const Config& config,
 
             // Shift the gas glass by half a spacing relative to DM to avoid
             // overlap
-            double spacing = L_base / N_glass;
+            double spacing = L_block / N_glass;
             double shift = 0.5 * spacing;
 
             double initial_h =
@@ -575,17 +603,17 @@ void initialize_gas(SimState& state, const Config& config,
                             // Unperturbed glass coordinates for Gas (Shifted
                             // with local block wrapping)
                             double qx =
-                                tx * L_base +
-                                std::fmod(glass.pos_x[p] * L_base + shift,
-                                          L_base);
+                                tx * L_block +
+                                std::fmod(glass.pos_x[p] * L_block + shift,
+                                          L_block);
                             double qy =
-                                ty * L_base +
-                                std::fmod(glass.pos_y[p] * L_base + shift,
-                                          L_base);
+                                ty * L_block +
+                                std::fmod(glass.pos_y[p] * L_block + shift,
+                                          L_block);
                             double qz =
-                                tz * L_base +
-                                std::fmod(glass.pos_z[p] * L_base + shift,
-                                          L_base);
+                                tz * L_block +
+                                std::fmod(glass.pos_z[p] * L_block + shift,
+                                          L_block);
 
                             Vec3 d = sample_zeldovich_cic(
                                 qx, qy, qz, zf, cell_size, config.mesh_size);
@@ -727,13 +755,15 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
     } else if (config.hydro_method == HydroMethod::MFM) {
         if (config.use_glass) {
             int target_N = config.num_gas_particles_1d;
-            int N_L = 16;
+            int N_L = 8;
             if (target_N >= 96)
                 N_L = 128;
             else if (target_N >= 48)
                 N_L = 64;
             else if (target_N >= 24)
                 N_L = 32;
+            else if (target_N >= 12)
+                N_L = 16;
 
             int N_R = N_L / 2;  // Right side is one tier lower
 
@@ -1012,9 +1042,15 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
             }
         } else {
             // Glass Initialization (Two-Pass Approach)
+            int N_glass = std::max(
+                8, static_cast<int>(std::pow(2, std::round(std::log2(N_res)))));
+            N_glass = std::min(N_glass, 128);
+
+            std::string file_glass =
+                "data/glassCube_" + std::to_string(N_glass) + ".hdf5";
             GlassData glass;
             try {
-                glass = HDF5Reader::read_glass_cube("data/glassCube_64.hdf5");
+                glass = HDF5Reader::read_glass_cube(file_glass);
             } catch (const std::exception& e) {
                 return;
             }
@@ -1089,7 +1125,7 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
                 injected_u_map[i] = E_i / gas_particle_mass;
             }
 
-            double dx_grid = L_base / static_cast<double>(64);
+            double dx_grid = L_base / static_cast<double>(N_glass);
             double initial_h = 2.0 * dx_grid;
 
             // Push to simulation state

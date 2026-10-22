@@ -117,7 +117,7 @@ TimestepInfo SimulationEngine::get_timestep() const {
 void SimulationEngine::step() {
     {
         ScopedTimer step_timer(diagnostics, TimerRegion::Step);
-        Integrator::KDK_step(state, current_ts, config, diagnostics);
+        Integrator::KDK_step(state, current_ts.dt_macro, config, diagnostics);
     }
 
     diagnostics.increment_cycle();

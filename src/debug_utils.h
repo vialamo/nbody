@@ -20,11 +20,14 @@ void print_riemann_diagnostic(size_t i, int j,
                               const Eigen::Vector3d& v_frame, double gamma,
                               Riemann::SolverError error);
 
-void print_non_converged_diagnostic(
-    const GasParticleSystem& gas, size_t i, double h_guess, double h_low,
-    double h_high, double effective_neighbors, double current_target_N,
-    double target_N, double tol, int num_neighb, int min_num_neighb,
-    int nr_iter, int max_iter, int density_retries, bool h_clamped,
-    bool valid_density_found, bool& diagnostic_printed);
+void print_non_converged_diagnostic(const GasParticleSystem& gas, size_t i,
+                                    double h_guess, double h_low, double h_high,
+                                    double effective_neighbors,
+                                    double current_target_N, double target_N,
+                                    double tol, int num_neighb, int nr_iter,
+                                    int max_iter, bool h_clamped,
+                                    bool& diagnostic_printed);
+
+void print_dbg(const char* str);
 
 }  // namespace DebugUtils

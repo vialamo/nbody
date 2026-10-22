@@ -2,9 +2,14 @@
 
 #include <omp.h>
 
+#include "config.h"
 #include "debug_utils.h"
 #include "kernels.h"
 #include "math_utils.h"
+#include "mfm.h"
+
+#define USE_NBG_LIST
+// #define USE_ADAPTIVE_CONDITION_NUMBER
 
 namespace DensitySolver {
 
@@ -20,13 +25,13 @@ static inline double evaluate_matrix_condition_number(
 }
 
 static void evaluate_density_sum(const GasParticleSystem& gas,
-                                 size_t particle_idx, double h_guess,
+                                 size_t particle_idx, double h,
                                  const Vec3& domain_size, double& out_n,
                                  double& out_dn_dh, int& out_num_neighb) {
     out_n = 0.0;
     out_dn_dh = 0.0;
     out_num_neighb = 0;
-    double search_sq = h_guess * h_guess;
+    double search_sq = h * h;
     double p1_x = gas.pos_x[particle_idx];
     double p1_y = gas.pos_y[particle_idx];
     double p1_z = gas.pos_z[particle_idx];
@@ -61,7 +66,7 @@ static void evaluate_density_sum(const GasParticleSystem& gas,
             if (r2 < search_sq) {
                 double r = std::sqrt(r2);
                 double W, dWdh;
-                Kernels::cubic_spline(r, h_guess, W, dWdh);
+                Kernels::cubic_spline(r, h, W, dWdh);
                 out_n += W;
                 out_dn_dh += dWdh;
                 out_num_neighb++;
@@ -73,15 +78,89 @@ static void evaluate_density_sum(const GasParticleSystem& gas,
     }
 }
 
-static double build_matrix_and_compute_condition(
-    const GasParticleSystem& gas, size_t particle_idx, double h_guess,
-    const Vec3& domain_size, Eigen::Matrix3d& B, bool volume_weighted) {
+#ifdef USE_NBG_LIST
+static void gather_neighbors(const GasParticleSystem& gas, size_t particle_idx,
+                             double h, const Vec3& domain_size,
+                             std::vector<int>& out_indices,
+                             std::vector<double>& out_r2) {
+    out_indices.clear();
+    out_r2.clear();
+    double search_sq = h * h;
+    double p1_x = gas.pos_x[particle_idx];
+    double p1_y = gas.pos_y[particle_idx];
+    double p1_z = gas.pos_z[particle_idx];
+
+    int stack[128];
+    int stack_ptr = 0;
+    stack[stack_ptr++] = 0;
+
+    while (stack_ptr > 0) {
+        int node_idx = stack[--stack_ptr];
+        const BVHNode& node = gas.bvh_nodes[node_idx];
+
+        double dist_sq = min_periodic_dist_sq(p1_x, node.bbox.min_x,
+                                              node.bbox.max_x, domain_size.x) +
+                         min_periodic_dist_sq(p1_y, node.bbox.min_y,
+                                              node.bbox.max_y, domain_size.y) +
+                         min_periodic_dist_sq(p1_z, node.bbox.min_z,
+                                              node.bbox.max_z, domain_size.z);
+
+        if (dist_sq > search_sq) continue;
+
+        if (node.particle_idx != -1) {
+            int j = node.particle_idx;
+            double dx =
+                periodic_displacement(gas.pos_x[j] - p1_x, domain_size.x);
+            double dy =
+                periodic_displacement(gas.pos_y[j] - p1_y, domain_size.y);
+            double dz =
+                periodic_displacement(gas.pos_z[j] - p1_z, domain_size.z);
+            double r2 = dx * dx + dy * dy + dz * dz;
+
+            if (r2 <= search_sq) {
+                out_indices.push_back(j);
+                out_r2.push_back(r2);
+            }
+        } else {
+            stack[stack_ptr++] = node.left_child;
+            stack[stack_ptr++] = node.right_child;
+        }
+    }
+}
+
+static void evaluate_density_sum_from_cache(
+    double h, const std::vector<int>& cached_indices,
+    const std::vector<double>& cached_r2, double& out_n, double& out_dn_dh,
+    int& out_num_neighb) {
+    out_n = 0.0;
+    out_dn_dh = 0.0;
+    out_num_neighb = 0;
+    double search_sq = h * h;
+
+    for (size_t k = 0; k < cached_indices.size(); ++k) {
+        double r2 = cached_r2[k];
+        if (r2 < search_sq) {
+            double r = std::sqrt(r2);
+            double W, dWdh;
+            Kernels::cubic_spline(r, h, W, dWdh);
+            out_n += W;
+            out_dn_dh += dWdh;
+            out_num_neighb++;
+        }
+    }
+}
+#endif
+
+static double build_matrix_and_compute_condition(const GasParticleSystem& gas,
+                                                 size_t particle_idx, double h,
+                                                 const Vec3& domain_size,
+                                                 Eigen::Matrix3d& B) {
     Eigen::Matrix3d E = Eigen::Matrix3d::Zero();
 
     double p1_x = gas.pos_x[particle_idx];
     double p1_y = gas.pos_y[particle_idx];
     double p1_z = gas.pos_z[particle_idx];
-    double search_sq = h_guess * h_guess;
+    double search_sq = h * h;
 
     int stack[128];
     int stack_ptr = 0;
@@ -115,14 +194,14 @@ static double build_matrix_and_compute_condition(
             if (r2 < search_sq && r2 > 1e-24) {
                 double r = std::sqrt(r2);
                 double W;
-                Kernels::cubic_spline_value(r, h_guess, W);
+                Kernels::cubic_spline_value(r, h, W);
+
+#ifdef USE_GEOMETRIC_MATRIX
                 double weight = W;
-                if (volume_weighted) {
-                    // Use a safe density floor (1e-12) to avoid division by
-                    // zero
-                    double V_j = gas.mass[j] / std::max(gas.rho[j], 1e-12);
-                    weight = W * V_j;
-                }
+#else
+                double V_j = gas.mass[j] / std::max(gas.rho[j], 1e-12);
+                double weight = W * V_j;
+#endif
 
                 E(0, 0) += dx * dx * weight;
                 E(0, 1) += dx * dy * weight;
@@ -145,77 +224,12 @@ static double build_matrix_and_compute_condition(
     return evaluate_matrix_condition_number(E, B);
 }
 
-#ifdef USE_ADAPTIVE_SOFTENING
-static double compute_zeta_contribution(
-    double p1_x, double p1_y, double p1_z, double h_i,
-    const std::vector<double>& target_x, const std::vector<double>& target_y,
-    const std::vector<double>& target_z, const std::vector<double>& target_mass,
-    const std::vector<BVHNode>& target_bvh, const Config& config) {
-    double zeta_sum = 0.0;
-    double search_sq_zeta = h_i * h_i;
-    const Vec3& domain_size = config.domain_size;
-    bool use_pm = config.use_PM;
-    double r_s = config.PM_smoothing_cells * config.cell_size;
-
-    int stack[128];
-    int stack_ptr = 0;
-    stack[stack_ptr++] = 0;
-
-    while (stack_ptr > 0) {
-        int node_idx = stack[--stack_ptr];
-        const BVHNode& node = target_bvh[node_idx];
-
-        double dist_sq = min_periodic_dist_sq(p1_x, node.bbox.min_x,
-                                              node.bbox.max_x, domain_size.x) +
-                         min_periodic_dist_sq(p1_y, node.bbox.min_y,
-                                              node.bbox.max_y, domain_size.y) +
-                         min_periodic_dist_sq(p1_z, node.bbox.min_z,
-                                              node.bbox.max_z, domain_size.z);
-
-        if (dist_sq > search_sq_zeta) continue;
-
-        if (node.particle_idx != -1) {
-            int j = node.particle_idx;
-            double dx =
-                periodic_displacement(target_x[j] - p1_x, domain_size.x);
-            double dy =
-                periodic_displacement(target_y[j] - p1_y, domain_size.y);
-            double dz =
-                periodic_displacement(target_z[j] - p1_z, domain_size.z);
-            double r2 = dx * dx + dy * dy + dz * dz;
-
-            if (r2 < search_sq_zeta) {
-                if (use_pm && r2 > config.cutoff_radius_squared) continue;
-
-                double r = std::sqrt(r2);
-                double dphi_dr, dphi_dh;
-                Kernels::gravity_derivatives(r, h_i, dphi_dr, dphi_dh);
-
-                if (use_pm) {
-                    double r_scaled = r / (2.0 * r_s);
-                    double taper = std::erfc(r_scaled) +
-                                   (r / (std::sqrt(M_PI) * r_s)) *
-                                       std::exp(-r_scaled * r_scaled);
-                    dphi_dh *= taper;
-                }
-                zeta_sum += target_mass[j] * dphi_dh;
-            }
-        } else {
-            stack[stack_ptr++] = node.left_child;
-            stack[stack_ptr++] = node.right_child;
-        }
-    }
-    return zeta_sum;
-}
-#endif
-
 }  // end anonymous namespace
 
 // --------------------------------------------------------------------------------
 // Density and Smoothing Length Iteration
 // --------------------------------------------------------------------------------
-void compute_density_and_h(GasParticleSystem& gas, const Config& config,
-                           const ParticleSystem& dm) {
+void compute_density_and_h(GasParticleSystem& gas, const Config& config) {
     if (gas.num_particles == 0) return;
 
     const Vec3& domain_size = config.domain_size;
@@ -226,7 +240,6 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
     const double min_h_cap = config.mfm_min_hsml_fraction * config.softening;
     const double max_h_cap = 0.5 * config.domain_size_1d;
 
-    constexpr int min_num_neighb = 1;  // + 20;
     constexpr double sphere_volume_factor = (4.0 / 3.0) * M_PI;
 
     size_t num_h_clamped = 0;
@@ -246,46 +259,70 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
 
     bool diagnostic_printed = false;
 
-    // ========================================================================
-    // PASS 1: Baseline Density and h Computation (Enforces Minimum Neighbors)
-    // ========================================================================
+// ========================================================================
+// PASS 1: Baseline Density and h Computation (Enforces Minimum Neighbors)
+// ========================================================================
+#ifdef USE_NBG_LIST
+#pragma omp parallel reduction(+ : num_h_clamped, num_non_converged, \
+                                   step_neighbor_increased_cases)
+#endif
+    {
+#ifdef USE_NBG_LIST
+        // Thread-local caches to prevent constant reallocation
+        std::vector<int> cached_indices;
+        std::vector<double> cached_r2;
+        cached_indices.reserve(256);
+        cached_r2.reserve(256);
+#pragma omp for schedule(dynamic, 64)
+#else
 #pragma omp parallel for schedule(dynamic, 64) reduction( \
         + : num_h_clamped, num_non_converged, step_neighbor_increased_cases)
-    for (size_t k = 0; k < gas.num_active; ++k) {
-        size_t i = gas.active_indices[k];
+#endif
+        for (size_t k = 0; k < gas.num_active; ++k) {
+            size_t i = gas.active_indices[k];
 
-        double h_guess = gas.h[i];
-        if (h_guess < min_h_cap) h_guess = min_h_cap;
-        if (h_guess > max_h_cap) h_guess = max_h_cap;
+            double h_guess = gas.h[i];
+            if (h_guess < min_h_cap) h_guess = min_h_cap;
+            if (h_guess > max_h_cap) h_guess = max_h_cap;
 
-        double current_target_N = target_N;
+            double current_target_N = target_N;
 
-        double number_density = 0.0;
-        double dn_dh = 0.0;
-        int num_neighb = 0;
-        double effective_neighbors = gas.n_enc_final[i];
+            double number_density = 0.0;
+            double dn_dh = 0.0;
+            int num_neighb = 0;
+            double effective_neighbors = gas.n_enc_final[i];
 
-        bool h_clamped = false;
-        bool is_converged = false;
+            bool h_clamped = false;
+            bool is_converged = false;
 
-        int density_retries = 0;
-        bool valid_density_found = false;
-        bool neighbors_increased = false;
+            bool neighbors_increased = false;
 
-        double h_low = 0.0;
-        double h_high = std::numeric_limits<double>::infinity();
-        int nr_iter = 0;
+            double h_low = 0.0;
+            double h_high = std::numeric_limits<double>::infinity();
+            int nr_iter = 0;
+            double cached_h = -1.0;  // Track the current cache radius
 
-        while ((!valid_density_found && density_retries < max_iter &&
-                h_guess < max_h_cap) ||
-               num_neighb < min_num_neighb) {
             is_converged = false;
             h_clamped = false;
 
             // Newton-Raphson Solver with Bisection fallback
             while (nr_iter < max_iter) {
+#ifdef USE_NBG_LIST
+                // Only rebuild the cache if the new guess exceeds our
+                // gathered radius
+                if (h_guess > cached_h) {
+                    cached_h = h_guess;
+                    gather_neighbors(gas, i, cached_h, domain_size,
+                                     cached_indices, cached_r2);
+                }
+
+                evaluate_density_sum_from_cache(h_guess, cached_indices,
+                                                cached_r2, number_density,
+                                                dn_dh, num_neighb);
+#else
                 evaluate_density_sum(gas, i, h_guess, domain_size,
                                      number_density, dn_dh, num_neighb);
+#endif
 
                 double h3 = h_guess * h_guess * h_guess;
                 effective_neighbors =
@@ -343,47 +380,31 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
                 }
             }
 
-            // Check if we hit the minimum discrete neighbor count threshold
-            if (num_neighb < min_num_neighb) {
-                current_target_N *= 1.2;
-                density_retries++;
-                neighbors_increased = true;
-                if (h_clamped && h_guess >= max_h_cap) break;
-            } else {
-                valid_density_found = true;
-            }
-        }
+            // Commit finalized state for Pass 1
+            gas.h[i] = h_guess;
+            gas.rho[i] = gas.mass[i] * number_density;
+            gas.n_enc_final[i] = effective_neighbors;
+            cached_dn_dh[i] = dn_dh;
+            particle_target_N[i] = current_target_N;  // Save for Pass 2
 
-        // Commit finalized state for Pass 1
-        gas.h[i] = h_guess;
-        gas.rho[i] = gas.mass[i] * number_density;
-        gas.n_enc_final[i] = effective_neighbors;
-        cached_dn_dh[i] = dn_dh;
-        particle_target_N[i] = current_target_N;  // Save for Pass 2
-
-        if (h_clamped) num_h_clamped++;
-        if (!is_converged) {
-            num_non_converged++;
-            if (!h_clamped) {
-                DebugUtils::print_non_converged_diagnostic(
-                    gas, i, h_guess, h_low, h_high, effective_neighbors,
-                    current_target_N, target_N, tol, num_neighb, min_num_neighb,
-                    nr_iter, max_iter, density_retries, h_clamped,
-                    valid_density_found, diagnostic_printed);
+            if (h_clamped) num_h_clamped++;
+            if (!is_converged) {
+                num_non_converged++;
+                if (!h_clamped) {
+                    DebugUtils::print_non_converged_diagnostic(
+                        gas, i, h_guess, h_low, h_high, effective_neighbors,
+                        current_target_N, target_N, tol, num_neighb, nr_iter,
+                        max_iter, h_clamped, diagnostic_printed);
+                }
             }
+            if (neighbors_increased) step_neighbor_increased_cases++;
         }
-        if (neighbors_increased) step_neighbor_increased_cases++;
     }
 
+#ifdef USE_ADAPTIVE_CONDITION_NUMBER
 // ========================================================================
 // PASS 2: Matrix Evaluation & Target Expansion (using synced densities)
 // ========================================================================
-#ifdef USE_GEOMETRIC_MATRIX
-    bool volume_weighted = false;
-#else
-    bool volume_weighted = true;
-#endif
-
 #pragma omp parallel for schedule(dynamic, 64) \
     reduction(+ : step_neighbor_increased_cases, num_not_enough_neighbors)
     for (size_t k = 0; k < gas.num_active; ++k) {
@@ -401,8 +422,8 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
         while (!matrix_converged && anisotropy_retries < max_iter &&
                h_guess < max_h_cap) {
             Eigen::Matrix3d temp_B;
-            cond = build_matrix_and_compute_condition(
-                gas, i, h_guess, domain_size, temp_B, volume_weighted);
+            cond = build_matrix_and_compute_condition(gas, i, h_guess,
+                                                      domain_size, temp_B);
 
             // Matrix regularization expansion loop
             if ((cond < 0.0 || cond > N_cond_crit) &&
@@ -483,8 +504,6 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
             }
         }
 
-        gas.cond_num_convergence[i] = cond;
-
         // Count neighbors locally from the last evaluate_density_sum
         double final_number_density = 0.0;
         double final_dn_dh = 0.0;
@@ -496,6 +515,7 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
 
         if (neighbors_increased) step_neighbor_increased_cases++;
     }
+#endif
 
     // ========================================================================
     // PASS 3: Final Matrix Sync & Adaptive Gravity
@@ -504,52 +524,20 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
     for (size_t k = 0; k < gas.num_active; ++k) {
         size_t i = gas.active_indices[k];
 
+#ifdef USE_ADAPTIVE_CONDITION_NUMBER
         // Sync final geometric N_enc for diagnostics
         double number_density = gas.rho[i] / gas.mass[i];
-        gas.n_enc_final[i] =
-            sphere_volume_factor * std::pow(gas.h[i], 3) * number_density;
+        gas.n_enc_final[i] = sphere_volume_factor * gas.h[i] * gas.h[i] *
+                             gas.h[i] * number_density;
+#endif
 
         // Assign the final volume-weighted B matrix and condition
         gas.cond_num[i] = build_matrix_and_compute_condition(
-            gas, i, gas.h[i], domain_size, gas.B_matrix[i], volume_weighted);
+            gas, i, gas.h[i], domain_size, gas.B_matrix[i]);
 
-#ifdef FORCE_SPH
-        gas.cond_num[i] = 10000;
-#endif
         if (gas.n_enc_final[i] > 3.0 * config.mfm_target_neighbors) {
-            gas.cond_num[i] = 10000;
+            gas.cond_num[i] = 2 * N_cond_crit;
         }
-
-#ifdef USE_ADAPTIVE_SOFTENING
-        if (config.use_PP) {
-            // Retrieve dn_dh from cache
-            double dn_dh = cached_dn_dh[i];
-
-            // Adaptive gravity correction (Zeta)
-            double Omega_i = 1.0;
-            double h_over_3n = 0.0;
-            if (number_density > 1e-12) {
-                h_over_3n = gas.h[i] / (number_density * 3.0);
-                Omega_i = std::max(1.0 + h_over_3n * dn_dh, 1e-12);
-            }
-
-            // Sum Gas contribution
-            double p1_x = gas.pos_x[i], p1_y = gas.pos_y[i],
-                   p1_z = gas.pos_z[i];
-            double zeta_sum = compute_zeta_contribution(
-                p1_x, p1_y, p1_z, gas.h[i], gas.pos_x, gas.pos_y, gas.pos_z,
-                gas.mass, gas.bvh_nodes, config);
-
-            // Sum DM contribution
-            if (dm.num_particles > 0 && !dm.bvh_nodes.empty()) {
-                zeta_sum += compute_zeta_contribution(
-                    p1_x, p1_y, p1_z, gas.h[i], dm.pos_x, dm.pos_y, dm.pos_z,
-                    dm.mass, dm.bvh_nodes, config);
-            }
-
-            gas.zeta[i] = h_over_3n * (1.0 / Omega_i) * zeta_sum;
-        }
-#endif
     }
 
     gas.clamped_h_cases += num_h_clamped;
@@ -557,7 +545,7 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
     gas.neighbor_increased_cases += step_neighbor_increased_cases;
     gas.not_enough_neighbors_cases += num_not_enough_neighbors;
 
-    // Refresh Bounding Boxes using the final converged smoothing lengths
+    // Refresh Bounding Boxes using the final smoothing lengths
     LBVH::update_h_and_bboxes(gas.num_particles, gas.pos_x, gas.pos_y,
                               gas.pos_z, gas.h, gas.bvh_nodes);
 }

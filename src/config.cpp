@@ -180,7 +180,7 @@ Config::Config() {
 }
 
 void Config::load(const std::string& filename) {
-    ini::Ini config_file;
+    Ini config_file;
     config_file.load(filename);
 
     mesh_size_1d = config_file.get_int("domain", "mesh_size_1d", mesh_size_1d);

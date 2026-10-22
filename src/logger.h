@@ -4,8 +4,6 @@
 #include <string>
 
 struct Config;
-
-// Forward declaration
 class Diagnostics;
 
 class Logger {

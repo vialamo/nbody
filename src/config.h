@@ -117,7 +117,7 @@ struct Config {
     bool enable_cooling = true;
     double primordial_mu = 1.22;  // Mean molecular weight for neutral
                                   // primordial gas (76% H, 24% He)
-    double temp_floor_k = 10.0;
+    double temp_floor_k = 2.73;
     double cooling_cutoff_k = 10000.0;
     std::string cooling_table_path = "";
 
@@ -130,8 +130,8 @@ struct Config {
     bool use_exact_riemann = false;
 
     // Subgrid
-    bool enable_subgrid_clumping = true;
-    double subgrid_clumping_amplitude = 10.0;
+    bool enable_subgrid_clumping = false;
+    double subgrid_clumping_amplitude = -1.0;
 
     // Time
     double max_dt_dynamical_factor = 1e-3;
@@ -140,7 +140,7 @@ struct Config {
     double a_start = 0.02;
     double a_end = 1.0;
     int max_cycles = 1000000000;
-    bool individual_particle_timesteps = true;
+    bool individual_particle_timesteps = false;
 
     // Output
     double save_HDF5_every_delta_a = 0.005;
@@ -164,7 +164,7 @@ struct Config {
     Vec3 mesh_size;
     Vec3 box_size_mpc;
 
-    double fixed_dt = 0.0;
+    double fixed_dt = 0;
 
     // Derived unit conversions (calculated once)
     double unit_length_mpc = 0.0;    // 1 code length = X Mpc

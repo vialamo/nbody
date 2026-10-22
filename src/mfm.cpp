@@ -7,7 +7,7 @@
 #include "thermodynamics.h"
 
 GasParticleSystem::GasParticleSystem(const Config& config)
-    : grid_rho(config.mesh_size), cic_data(config.num_gas_particles) {
+    : cic_data(config.num_gas_particles) {
     pos_x.reserve(config.num_gas_particles);
     pos_y.reserve(config.num_gas_particles);
     pos_z.reserve(config.num_gas_particles);
@@ -46,10 +46,6 @@ GasParticleSystem::GasParticleSystem(const Config& config)
     max_rel_ke.reserve(config.num_gas_particles);
     delta_E_grav.reserve(config.num_gas_particles);
 
-#ifdef USE_ADAPTIVE_SOFTENING
-    zeta.reserve(config.num_gas_particles);
-#endif
-
     vel_x_pred.reserve(config.num_gas_particles);
     vel_y_pred.reserve(config.num_gas_particles);
     vel_z_pred.reserve(config.num_gas_particles);
@@ -57,7 +53,6 @@ GasParticleSystem::GasParticleSystem(const Config& config)
 
     v_sig_max.reserve(config.num_gas_particles);
     cond_num.reserve(config.num_gas_particles);
-    cond_num_convergence.reserve(config.num_gas_particles);
     n_enc_final.reserve(config.num_gas_particles);
 
     time_bin.reserve(config.num_gas_particles);
@@ -112,10 +107,6 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
     max_rel_ke.push_back(0.0);
     delta_E_grav.push_back(0.0);
 
-#ifdef USE_ADAPTIVE_SOFTENING
-    zeta.push_back(0.0);
-#endif
-
     vel_x_pred.push_back(vx);
     vel_y_pred.push_back(vy);
     vel_z_pred.push_back(vz);
@@ -133,7 +124,6 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
     grad_p.push_back(Eigen::Vector3d::Zero());
 
     cond_num.push_back(0);
-    cond_num_convergence.push_back(0);
     n_enc_final.push_back(0);
 
     time_bin.push_back(0);
@@ -171,9 +161,7 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     std::vector<Eigen::Vector3d> new_grad_vy(num_particles),
         new_grad_vz(num_particles);
     std::vector<Eigen::Vector3d> new_grad_p(num_particles);
-#ifdef USE_ADAPTIVE_SOFTENING
-    std::vector<double> new_zeta(num_particles);
-#endif
+
     std::vector<double> new_vxp(num_particles), new_vyp(num_particles),
         new_vzp(num_particles), new_ppred(num_particles);
 
@@ -182,7 +170,6 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     std::vector<double> new_delta_E_grav(num_particles);
 
     std::vector<double> new_cond_num(num_particles);
-    std::vector<double> new_cond_num_conv(num_particles);
     std::vector<double> new_n_enc_final(num_particles);
 
     std::vector<int> new_time_bin(num_particles);
@@ -222,9 +209,7 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
         new_grad_vy[i] = grad_vy[src];
         new_grad_vz[i] = grad_vz[src];
         new_grad_p[i] = grad_p[src];
-#ifdef USE_ADAPTIVE_SOFTENING
-        new_zeta[i] = zeta[src];
-#endif
+
         new_vxp[i] = vel_x_pred[src];
         new_vyp[i] = vel_y_pred[src];
         new_vzp[i] = vel_z_pred[src];
@@ -234,7 +219,6 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
         new_max_rel_ke[i] = max_rel_ke[src];
         new_delta_E_grav[i] = delta_E_grav[src];
         new_cond_num[i] = cond_num[src];
-        new_cond_num_conv[i] = cond_num_convergence[src];
         new_n_enc_final[i] = n_enc_final[src];
         new_time_bin[i] = time_bin[src];
         new_dt_step[i] = dt_step[src];
@@ -273,9 +257,6 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     grad_vy = std::move(new_grad_vy);
     grad_vz = std::move(new_grad_vz);
     grad_p = std::move(new_grad_p);
-#ifdef USE_ADAPTIVE_SOFTENING
-    zeta = std::move(new_zeta);
-#endif
 
     vel_x_pred = std::move(new_vxp);
     vel_y_pred = std::move(new_vyp);
@@ -286,7 +267,6 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     max_rel_ke = std::move(new_max_rel_ke);
     delta_E_grav = std::move(new_delta_E_grav);
     cond_num = std::move(new_cond_num);
-    cond_num_convergence = std::move(new_cond_num_conv);
     n_enc_final = std::move(new_n_enc_final);
     time_bin = std::move(new_time_bin);
     dt_step = std::move(new_dt_step);

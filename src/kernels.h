@@ -58,30 +58,26 @@ inline void cubic_spline_value(double r, double h, double& W) {
 
 // --------------------------------------------------------------------------------
 // Adaptive Gravitational Softening Kernel (GIZMO / Price & Monaghan 2007)
-// Returns the modified 1/r^2 force factor and the d(phi)/dh term.
+// Returns the modified 1/r^2 force factor
 // --------------------------------------------------------------------------------
-inline void gravity_derivatives(double r, double h, double& dphi_dr,
-                                double& dphi_dh) {
+inline double gravity_derivatives(double r, double h) {
     double q = r / h;
     double q2 = q * q;
     double q3 = q2 * q;
     double q4 = q2 * q2;
-    double q5 = q3 * q2;
 
     double h2 = h * h;
-
+    
+    double dphi_dr;
     if (q < 0.5) {
         dphi_dr = (1.0 / h2) * (10.6666666667 * q - 38.4 * q3 + 32.0 * q4);
-        dphi_dh = (1.0 / h2) * (2.8 - 16.0 * q2 + 48.0 * q4 - 38.4 * q5);
     } else if (q < 1.0) {
         dphi_dr = (1.0 / h2) * (-(1.0 / 15.0) / q2 + (64.0 / 3.0) * q -
                                 48.0 * q2 + 38.4 * q3 - (32.0 / 3.0) * q4);
-        dphi_dh =
-            (1.0 / h2) * (3.2 - 32.0 * q2 + 64.0 * q3 - 48.0 * q4 + 12.8 * q5);
     } else {
         dphi_dr = 1.0 / (r * r);
-        dphi_dh = 0.0;
     }
+    return dphi_dr;
 }
 
 // --------------------------------------------------------------------------------

@@ -16,6 +16,7 @@ endif()
 
 option(USE_GPU_OFFLOAD "Enable OpenMP GPU Offloading" ON)
 option(USE_CLANG_TIDY  "Run clang-tidy during compilation" OFF)
+option(USE_FFTW_OMP "Use FFTW3 OpenMP backend (disable to avoid libgomp clash)" OFF)
 
 # ==============================================================================
 # DEPENDENCIES
@@ -23,6 +24,15 @@ option(USE_CLANG_TIDY  "Run clang-tidy during compilation" OFF)
 find_package(HDF5 REQUIRED COMPONENTS CXX)
 find_package(Eigen3 3.3 REQUIRED)
 find_package(OpenMP REQUIRED)
+find_path(FFTW3_INCLUDE_DIR NAMES fftw3.h REQUIRED)
+find_library(FFTW3_LIBRARY NAMES fftw3 REQUIRED)
+if(USE_FFTW_OMP)
+    find_library(FFTW3_PARALLEL_LIBRARY NAMES fftw3_omp REQUIRED)
+    message(STATUS "FFTW3 Parallel Backend: OpenMP (fftw3_omp)")
+else()
+    find_library(FFTW3_PARALLEL_LIBRARY NAMES fftw3_threads REQUIRED)
+    message(STATUS "FFTW3 Parallel Backend: POSIX Threads (fftw3_threads)")
+endif()
 
 # ==============================================================================
 # CORE LIBRARY (OBJECT TARGET)
@@ -60,7 +70,9 @@ add_library(SimulationCore OBJECT ${CORE_SOURCES})
 target_link_libraries(SimulationCore PUBLIC
     ${HDF5_CXX_LIBRARIES}
     ${HDF5_LIBRARIES}
-    OpenMP::OpenMP_CXX 
+    OpenMP::OpenMP_CXX
+    ${FFTW3_LIBRARY}
+    ${FFTW3_PARALLEL_LIBRARY}
 )
 
 target_include_directories(SimulationCore PUBLIC
@@ -70,6 +82,7 @@ target_include_directories(SimulationCore PUBLIC
 target_include_directories(SimulationCore SYSTEM PUBLIC
     ${HDF5_INCLUDE_DIRS}
     ${EIGEN3_INCLUDE_DIR}
+    ${FFTW3_INCLUDE_DIR}
 )
 # ==============================================================================
 # HARDWARE OPTIMIZATION
@@ -181,18 +194,18 @@ if(MSVC)
 endif()
 
 # Copy resource files post-build
-if(EXISTS ${CMAKE_SOURCE_DIR}/simulation.ini)
+if(EXISTS ${CMAKE_SOURCE_DIR}/config.ini)
     add_custom_command(
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/simulation.ini
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/config.ini
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_SOURCE_DIR}/simulation.ini
-            ${CMAKE_CURRENT_BINARY_DIR}/simulation.ini
-        DEPENDS ${CMAKE_SOURCE_DIR}/simulation.ini
-        COMMENT "Copying simulation.ini to build directory (Source was updated)"
+            ${CMAKE_SOURCE_DIR}/config.ini
+            ${CMAKE_CURRENT_BINARY_DIR}/config.ini
+        DEPENDS ${CMAKE_SOURCE_DIR}/config.ini
+        COMMENT "Copying config.ini to build directory (Source was updated)"
     )
 
     add_custom_target(CopyIni ALL 
-        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/simulation.ini
+        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/config.ini
     )
 
     add_dependencies(${PROJECT_NAME} CopyIni)

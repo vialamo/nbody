@@ -60,8 +60,6 @@ void print_ill_conditioned_diagnostic(bool& debug_printed, size_t i,
         std::cout << "h_i: " << gas.h[i] << " | rho_i: " << gas.rho[i] << "\n";
         std::cout << "n_enc: " << gas.n_enc_final[i] << "\n";
         std::cout << "Condition Number: " << gas.cond_num[i] << "\n";
-        std::cout << "Condition Number (conv): " << gas.cond_num_convergence[i]
-                  << "\n";
         std::cout << "Number of neighbors found: " << neighbors.size() << "\n";
 
         int exact_overlaps = 0;
@@ -159,12 +157,13 @@ void print_riemann_diagnostic(size_t i, int j,
     }
 }
 
-void print_non_converged_diagnostic(
-    const GasParticleSystem& gas, size_t i, double h_guess, double h_low,
-    double h_high, double effective_neighbors, double current_target_N,
-    double target_N, double tol, int num_neighb, int min_num_neighb,
-    int nr_iter, int max_iter, int density_retries, bool h_clamped,
-    bool valid_density_found, bool& diagnostic_printed) {
+void print_non_converged_diagnostic(const GasParticleSystem& gas, size_t i,
+                                    double h_guess, double h_low, double h_high,
+                                    double effective_neighbors,
+                                    double current_target_N, double target_N,
+                                    double tol, int num_neighb, int nr_iter,
+                                    int max_iter, bool h_clamped,
+                                    bool& diagnostic_printed) {
     if (!diagnostic_printed) {
 #pragma omp critical
         {
@@ -185,20 +184,18 @@ void print_non_converged_diagnostic(
                     << "Difference to Target: "
                     << std::abs(effective_neighbors - current_target_N)
                     << " (Tol: " << tol << ")\n"
-                    << "Discrete Neighbors  : " << num_neighb
-                    << " (Min required: " << min_num_neighb << ")\n"
+                    << "Discrete Neighbors  : " << num_neighb << "\n"
                     << "Newton-Raphson Iters: " << nr_iter << " / " << max_iter
                     << "\n"
-                    << "Density Retries     : " << density_retries << "\n"
                     << "h_clamped           : "
                     << (h_clamped ? "TRUE" : "FALSE") << "\n"
-                    << "valid_density_found : "
-                    << (valid_density_found ? "TRUE" : "FALSE") << "\n"
                     << "=================================================\n\n";
                 diagnostic_printed = true;
             }
         }
     }
 }
+
+void print_dbg(const char* str) { std::cout << str << std::endl; }
 
 }  // namespace DebugUtils
