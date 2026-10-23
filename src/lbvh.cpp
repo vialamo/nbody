@@ -305,6 +305,8 @@ void update_h_and_bboxes(size_t num_particles, const std::vector<double>& pos_x,
     }
 }
 
+#ifdef USE_GPU
+
 void compute_morton_and_sort_indices_gpu(
     size_t num_particles, const Vec3& domain_size, const double* pos_x,
     const double* pos_y, const double* pos_z, uint64_t* morton_codes,
@@ -317,10 +319,8 @@ void compute_morton_and_sort_indices_gpu(
     double bound = 2097152.0;
 
     // Generate Morton codes and initialize indices on the GPU
-#pragma omp target teams distribute parallel for map(                  \
-        present : pos_x[0 : num_particles], pos_y[0 : num_particles],  \
-            pos_z[0 : num_particles], morton_codes[0 : num_particles], \
-            sorted_indices[0 : num_particles])
+#pragma omp target teams distribute parallel for is_device_ptr( \
+        pos_x, pos_y, pos_z, morton_codes, sorted_indices)
     for (size_t i = 0; i < num_particles; ++i) {
         uint32_t x = static_cast<uint32_t>(
             fmod(pos_x[i] * inv_domain_x + 1.0, 1.0) * bound);
@@ -349,10 +349,9 @@ void compute_morton_and_sort_indices_gpu(
                                       d_padded_indices[0 : padded_n])
 
     // Copy actual particles into the padded target buffers
-#pragma omp target teams distribute parallel for map(                         \
-        present : morton_codes[0 : num_particles],                            \
-            sorted_indices[0 : num_particles], d_padded_morton[0 : padded_n], \
-            d_padded_indices[0 : padded_n])
+#pragma omp target teams distribute parallel for map(                          \
+        alloc : d_padded_morton[0 : padded_n], d_padded_indices[0 : padded_n]) \
+    is_device_ptr(morton_codes, sorted_indices)
     for (size_t i = 0; i < num_particles; ++i) {
         d_padded_morton[i] = morton_codes[i];
         d_padded_indices[i] = sorted_indices[i];
@@ -362,8 +361,7 @@ void compute_morton_and_sort_indices_gpu(
     for (size_t k = 2; k <= padded_n; k <<= 1) {
         for (size_t j = k >> 1; j > 0; j >>= 1) {
 #pragma omp target teams distribute parallel for map( \
-        present : d_padded_morton[0 : padded_n],      \
-            d_padded_indices[0 : padded_n])
+        alloc : d_padded_morton[0 : padded_n], d_padded_indices[0 : padded_n])
             for (size_t i = 0; i < padded_n; ++i) {
                 size_t ixj = i ^ j;
 
@@ -389,10 +387,9 @@ void compute_morton_and_sort_indices_gpu(
     }
 
     // Retrieve the valid sorted section back into the persistent arrays
-#pragma omp target teams distribute parallel for map(                         \
-        present : morton_codes[0 : num_particles],                            \
-            sorted_indices[0 : num_particles], d_padded_morton[0 : padded_n], \
-            d_padded_indices[0 : padded_n])
+#pragma omp target teams distribute parallel for map(                          \
+        alloc : d_padded_morton[0 : padded_n], d_padded_indices[0 : padded_n]) \
+    is_device_ptr(morton_codes, sorted_indices)
     for (size_t i = 0; i < num_particles; ++i) {
         morton_codes[i] = d_padded_morton[i];
         sorted_indices[i] = d_padded_indices[i];
@@ -415,8 +412,7 @@ void build_topology_and_aggregate_gpu(size_t num_particles,
     const int num_nodes = 2 * n - 1;
 
     // Initialize Leaf Nodes
-#pragma omp target teams distribute parallel for map( \
-        present : bvh_nodes[0 : num_nodes])
+#pragma omp target teams distribute parallel for is_device_ptr(bvh_nodes)
     for (int i = 0; i < n; ++i) {
         int leaf_idx = n - 1 + i;
         bvh_nodes[leaf_idx].particle_idx = i;
@@ -427,8 +423,8 @@ void build_topology_and_aggregate_gpu(size_t num_particles,
     if (n < 2) return;
 
     // Construct Internal Nodes (Karras 2012)
-#pragma omp target teams distribute parallel for map( \
-        present : morton_codes[0 : n], bvh_nodes[0 : num_nodes])
+#pragma omp target teams distribute parallel for is_device_ptr(morton_codes, \
+                                                                   bvh_nodes)
     for (int i = 0; i < n - 1; ++i) {
         // Device-compatible delta function
         auto delta = [=](int idx_a, int idx_b) -> int {
@@ -475,7 +471,7 @@ void build_topology_and_aggregate_gpu(size_t num_particles,
         bvh_nodes[right_child].parent = i;
     }
 
-#pragma omp target map(present : bvh_nodes[0 : num_nodes])
+#pragma omp target is_device_ptr(bvh_nodes)
     {
         bvh_nodes[0].parent = -1;
     }
@@ -488,10 +484,10 @@ void build_topology_and_aggregate_gpu(size_t num_particles,
 
 #pragma omp target enter data map(to : atomic_flags[0 : flags_size])
 
-#pragma omp target teams distribute parallel for map(                          \
-        present : sorted_pos_x[0 : n], sorted_pos_y[0 : n],                    \
-            sorted_pos_z[0 : n], sorted_mass[0 : n], bvh_nodes[0 : num_nodes], \
-            atomic_flags[0 : flags_size])
+#pragma omp target teams distribute parallel for map(                    \
+        alloc : atomic_flags[0 : flags_size])                            \
+    is_device_ptr(sorted_pos_x, sorted_pos_y, sorted_pos_z, sorted_mass, \
+                      bvh_nodes)
     for (int i = 0; i < n; ++i) {
         int leaf_idx = n - 1 + i;
         double px = sorted_pos_x[i], py = sorted_pos_y[i], pz = sorted_pos_z[i];
@@ -559,8 +555,7 @@ void build_topology_and_aggregate_gpu(size_t num_particles,
 #pragma omp target exit data map(delete : atomic_flags[0 : flags_size])
 
 // Normalize Center of Mass on GPU
-#pragma omp target teams distribute parallel for map( \
-        present : bvh_nodes[0 : num_nodes])
+#pragma omp target teams distribute parallel for is_device_ptr(bvh_nodes)
     for (int i = 0; i < num_nodes; ++i) {
         if (bvh_nodes[i].mass > 0.0) {
             bvh_nodes[i].com_x /= bvh_nodes[i].mass;
@@ -569,5 +564,7 @@ void build_topology_and_aggregate_gpu(size_t num_particles,
         }
     }
 }
+
+#endif
 
 }  // namespace LBVH

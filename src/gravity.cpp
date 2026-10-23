@@ -24,15 +24,21 @@ void update_softening(SimState& state, Config& config) {
 }
 
 #ifdef GRAVITY_GPU_MEMORY
-static std::vector<double> u_px, u_py, u_pz, u_m, u_ax, u_ay, u_az;
-static std::vector<double> t_px, t_py, t_pz, t_m;
-static std::vector<int> u_original_idx, t_original_idx;
-static std::vector<uint8_t> u_type, t_type;
-static std::vector<uint8_t> u_is_active, t_is_active;
-static std::vector<uint64_t> u_morton;
-static std::vector<int> u_sorted_indices;
+static double *d_u_px = nullptr, *d_u_py = nullptr, *d_u_pz = nullptr,
+              *d_u_m = nullptr;
+static double *d_u_ax = nullptr, *d_u_ay = nullptr, *d_u_az = nullptr;
+static double *d_t_px = nullptr, *d_t_py = nullptr, *d_t_pz = nullptr,
+              *d_t_m = nullptr;
+static int *d_u_orig_idx = nullptr, *d_t_orig_idx = nullptr,
+           *d_u_sorted_idx = nullptr;
+static uint8_t *d_u_type = nullptr, *d_t_type = nullptr,
+               *d_t_is_active = nullptr;
+static uint64_t* d_u_morton = nullptr;
+static BVHNode* d_u_bvh = nullptr;
+
+// Arrays requiring CPU interaction
+static std::vector<uint8_t> u_is_active;
 static std::vector<int> u_active_indices;
-static std::vector<BVHNode> u_bvh;
 
 static void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
                            const Config& config) {
@@ -46,113 +52,66 @@ static void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
 
     // GPU Allocation
     if (n_total > current_gpu_capacity) {
+        int dev = omp_get_default_device();
         // Free old GPU memory if capacity is expanding
         if (current_gpu_capacity > 0) {
-            double* old_px = u_px.data();
-            double* old_t_px = t_px.data();
-            double* old_py = u_py.data();
-            double* old_t_py = t_py.data();
-            double* old_pz = u_pz.data();
-            double* old_t_pz = t_pz.data();
-            double* old_m = u_m.data();
-            double* old_t_m = t_m.data();
-            double* old_ax = u_ax.data();
-            double* old_ay = u_ay.data();
-            double* old_az = u_az.data();
-            int* old_orig_idx = u_original_idx.data();
-            int* old_t_orig_idx = t_original_idx.data();
-            uint8_t* old_type = u_type.data();
-            uint8_t* old_t_type = t_type.data();
-            uint8_t* old_is_active = u_is_active.data();
-            uint8_t* old_t_is_active = t_is_active.data();
-            uint64_t* old_u_morton = u_morton.data();
-            int* old_u_sorted_idx = u_sorted_indices.data();
+            omp_target_free(d_u_px, dev);
+            omp_target_free(d_t_px, dev);
+            omp_target_free(d_u_py, dev);
+            omp_target_free(d_t_py, dev);
+            omp_target_free(d_u_pz, dev);
+            omp_target_free(d_t_pz, dev);
+            omp_target_free(d_u_m, dev);
+            omp_target_free(d_t_m, dev);
+            omp_target_free(d_u_ax, dev);
+            omp_target_free(d_u_ay, dev);
+            omp_target_free(d_u_az, dev);
+            omp_target_free(d_u_orig_idx, dev);
+            omp_target_free(d_t_orig_idx, dev);
+            omp_target_free(d_u_type, dev);
+            omp_target_free(d_t_type, dev);
+            omp_target_free(d_t_is_active, dev);
+            omp_target_free(d_u_morton, dev);
+            omp_target_free(d_u_sorted_idx, dev);
 
-#pragma omp target exit data map(                                              \
-        delete : old_px[0 : current_gpu_capacity],                             \
-            old_py[0 : current_gpu_capacity],                                  \
-            old_pz[0 : current_gpu_capacity], old_m[0 : current_gpu_capacity], \
-            old_ax[0 : current_gpu_capacity],                                  \
-            old_ay[0 : current_gpu_capacity],                                  \
-            old_az[0 : current_gpu_capacity],                                  \
-            old_orig_idx[0 : current_gpu_capacity],                            \
-            old_type[0 : current_gpu_capacity],                                \
-            old_is_active[0 : current_gpu_capacity],                           \
-            old_u_morton[0 : current_gpu_capacity],                            \
-            old_u_sorted_idx[0 : current_gpu_capacity],                        \
-            old_t_px[0 : current_gpu_capacity],                                \
-            old_t_py[0 : current_gpu_capacity],                                \
-            old_t_pz[0 : current_gpu_capacity],                                \
-            old_t_m[0 : current_gpu_capacity],                                 \
-            old_t_orig_idx[0 : current_gpu_capacity],                          \
-            old_t_type[0 : current_gpu_capacity],                              \
-            old_t_is_active[0 : current_gpu_capacity])
+            // Only use map(delete) for the host-backed active array
+            uint8_t* old_is_active = u_is_active.data();
+#pragma omp target exit data map( \
+        delete : old_is_active[0 : current_gpu_capacity])
         }
 
-        // Resize host vectors to get new valid pointers
-        u_px.resize(n_total);
-        u_py.resize(n_total);
-        u_pz.resize(n_total);
-        u_m.resize(n_total);
-        u_original_idx.resize(n_total);
-        u_type.resize(n_total);
         u_is_active.resize(n_total);
-        u_morton.resize(n_total);
-        u_sorted_indices.resize(n_total);
-        u_ax.assign(n_total, 0.0);
-        u_ay.assign(n_total, 0.0);
-        u_az.assign(n_total, 0.0);
-
-        t_px.resize(n_total);
-        t_py.resize(n_total);
-        t_pz.resize(n_total);
-        t_m.resize(n_total);
-        t_original_idx.resize(n_total);
-        t_type.resize(n_total);
-        t_is_active.resize(n_total);
+        uint8_t* d_is_act = u_is_active.data();
+#pragma omp target enter data map(alloc : d_is_act[0 : n_total])
 
         // Allocate directly on the GPU without copying uninitialized host data
-        double* d_u_px = u_px.data();
-        double* d_t_px = t_px.data();
-        double* d_u_py = u_py.data();
-        double* d_t_py = t_py.data();
-        double* d_u_pz = u_pz.data();
-        double* d_t_pz = t_pz.data();
-        double* d_u_m = u_m.data();
-        double* d_t_m = t_m.data();
-        double* d_u_ax = u_ax.data();
-        double* d_u_ay = u_ay.data();
-        double* d_u_az = u_az.data();
-        int* d_u_orig_idx = u_original_idx.data();
-        int* d_t_orig_idx = t_original_idx.data();
-        uint8_t* d_u_type = u_type.data();
-        uint8_t* d_t_type = t_type.data();
-        uint8_t* d_u_is_active = u_is_active.data();
-        uint8_t* d_t_is_active = t_is_active.data();
-        uint64_t* d_u_morton = u_morton.data();
-        int* d_u_sorted_idx = u_sorted_indices.data();
-
-#pragma omp target enter data map(                                             \
-        alloc : d_u_px[0 : n_total], d_u_py[0 : n_total], d_u_pz[0 : n_total], \
-            d_u_m[0 : n_total], d_u_ax[0 : n_total], d_u_ay[0 : n_total],      \
-            d_u_az[0 : n_total], d_u_orig_idx[0 : n_total],                    \
-            d_u_type[0 : n_total], d_u_is_active[0 : n_total],                 \
-            d_u_morton[0 : n_total], d_u_sorted_idx[0 : n_total],              \
-            d_t_px[0 : n_total], d_t_py[0 : n_total], d_t_pz[0 : n_total],     \
-            d_t_m[0 : n_total], d_t_orig_idx[0 : n_total],                     \
-            d_t_type[0 : n_total], d_t_is_active[0 : n_total])
+        d_u_px = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_t_px = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_u_py = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_t_py = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_u_pz = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_t_pz = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_u_m = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_t_m = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_u_ax = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_u_ay = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_u_az = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_u_orig_idx = (int*)omp_target_alloc(n_total * sizeof(int), dev);
+        d_t_orig_idx = (int*)omp_target_alloc(n_total * sizeof(int), dev);
+        d_u_type = (uint8_t*)omp_target_alloc(n_total * sizeof(uint8_t), dev);
+        d_t_type = (uint8_t*)omp_target_alloc(n_total * sizeof(uint8_t), dev);
+        d_t_is_active =
+            (uint8_t*)omp_target_alloc(n_total * sizeof(uint8_t), dev);
+        d_u_morton =
+            (uint64_t*)omp_target_alloc(n_total * sizeof(uint64_t), dev);
+        d_u_sorted_idx = (int*)omp_target_alloc(n_total * sizeof(int), dev);
 
         current_gpu_capacity = n_total;
     }
 
     // Zero out the accelerations on the GPU for the current step
-    double* d_u_ax = u_ax.data();
-    double* d_u_ay = u_ay.data();
-    double* d_u_az = u_az.data();
-
-#pragma omp target teams distribute parallel for map(       \
-        present : d_u_ax[0 : n_total], d_u_ay[0 : n_total], \
-            d_u_az[0 : n_total])
+#pragma omp target teams distribute parallel for is_device_ptr(d_u_ax, d_u_ay, \
+                                                                   d_u_az)
     for (size_t i = 0; i < n_total; ++i) {
         d_u_ax[i] = 0.0;
         d_u_ay[i] = 0.0;
@@ -160,12 +119,6 @@ static void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
     }
 
     // Pointers for Device Mapping
-    double* d_u_px = u_px.data();
-    double* d_u_py = u_py.data();
-    double* d_u_pz = u_pz.data();
-    double* d_u_m = u_m.data();
-    int* d_u_orig_idx = u_original_idx.data();
-    uint8_t* d_u_type = u_type.data();
     uint8_t* d_u_is_active = u_is_active.data();
 
     // On-Device Concatenation
@@ -177,12 +130,11 @@ static void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
     double* d_dm_m = dm.mass.data();
     uint8_t* d_dm_is_active = dm.is_active.data();
 
-#pragma omp target teams distribute parallel for map(                         \
-        present : d_u_px[0 : n_total], d_u_py[0 : n_total],                   \
-            d_u_pz[0 : n_total], d_u_m[0 : n_total],                          \
-            d_u_orig_idx[0 : n_total], d_u_type[0 : n_total],                 \
-            d_u_is_active[0 : n_total], d_dm_px[0 : n_dm], d_dm_py[0 : n_dm], \
-            d_dm_pz[0 : n_dm], d_dm_m[0 : n_dm], d_dm_is_active[0 : n_dm])
+#pragma omp target teams distribute parallel for is_device_ptr(       \
+        d_u_px, d_u_py, d_u_pz, d_u_m, d_u_orig_idx, d_u_type)        \
+    map(to : d_dm_px[0 : n_dm], d_dm_py[0 : n_dm], d_dm_pz[0 : n_dm], \
+            d_dm_m[0 : n_dm], d_dm_is_active[0 : n_dm])               \
+    map(alloc : d_u_is_active[0 : n_total])
     for (size_t i = 0; i < n_dm; ++i) {
         d_u_px[i] = d_dm_px[i];
         d_u_py[i] = d_dm_py[i];
@@ -193,10 +145,6 @@ static void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
         d_u_is_active[i] = d_dm_is_active[i];
     }
 
-#pragma omp target exit data map(                                         \
-        delete : d_dm_px[0 : n_dm], d_dm_py[0 : n_dm], d_dm_pz[0 : n_dm], \
-            d_dm_m[0 : n_dm], d_dm_is_active[0 : n_dm])
-
     if (gas && n_gas > 0) {
         double* d_gas_px = gas->pos_x.data();
         double* d_gas_py = gas->pos_y.data();
@@ -204,13 +152,11 @@ static void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
         double* d_gas_m = gas->mass.data();
         uint8_t* d_gas_is_active = gas->is_active.data();
 
-#pragma omp target teams distribute parallel for map(                     \
-        present : d_u_px[0 : n_total], d_u_py[0 : n_total],               \
-            d_u_pz[0 : n_total], d_u_m[0 : n_total],                      \
-            d_u_orig_idx[0 : n_total], d_u_type[0 : n_total],             \
-            d_u_is_active[0 : n_total], d_gas_px[0 : n_gas],              \
-            d_gas_py[0 : n_gas], d_gas_pz[0 : n_gas], d_gas_m[0 : n_gas], \
-            d_gas_is_active[0 : n_gas])
+#pragma omp target teams distribute parallel for is_device_ptr(             \
+        d_u_px, d_u_py, d_u_pz, d_u_m, d_u_orig_idx, d_u_type)              \
+    map(to : d_gas_px[0 : n_gas], d_gas_py[0 : n_gas], d_gas_pz[0 : n_gas], \
+            d_gas_m[0 : n_gas], d_gas_is_active[0 : n_gas])                 \
+    map(alloc : d_u_is_active[0 : n_total])
         for (size_t i = 0; i < n_gas; ++i) {
             size_t offset = n_dm + i;
             d_u_px[offset] = d_gas_px[i];
@@ -221,39 +167,20 @@ static void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
             d_u_type[offset] = 1;  // Type 1: Gas
             d_u_is_active[offset] = d_gas_is_active[i];
         }
-
-#pragma omp target exit data map(delete : d_gas_px[0 : n_gas],                 \
-                                     d_gas_py[0 : n_gas], d_gas_pz[0 : n_gas], \
-                                     d_gas_m[0 : n_gas],                       \
-                                     d_gas_is_active[0 : n_gas])
     }
 
     // Run Morton generation
-    LBVH::compute_morton_and_sort_indices_gpu(
-        n_total, config.domain_size, d_u_px, d_u_py, d_u_pz, u_morton.data(),
-        u_sorted_indices.data());
-
-    // Allocate Temp Arrays on Host and Device
-    double* d_t_px = t_px.data();
-    double* d_t_py = t_py.data();
-    double* d_t_pz = t_pz.data();
-    double* d_t_m = t_m.data();
-    int* d_t_orig_idx = t_original_idx.data();
-    uint8_t* d_t_type = t_type.data();
-    int* d_sorted_idx = u_sorted_indices.data();
-    uint8_t* d_t_is_active = t_is_active.data();
+    LBVH::compute_morton_and_sort_indices_gpu(n_total, config.domain_size,
+                                              d_u_px, d_u_py, d_u_pz,
+                                              d_u_morton, d_u_sorted_idx);
 
 // Permute into temporary device arrays
-#pragma omp target teams distribute parallel for map(                      \
-        present : d_u_px[0 : n_total], d_u_py[0 : n_total],                \
-            d_u_pz[0 : n_total], d_u_m[0 : n_total],                       \
-            d_u_orig_idx[0 : n_total], d_u_type[0 : n_total],              \
-            d_u_is_active[0 : n_total], d_sorted_idx[0 : n_total],         \
-            d_t_px[0 : n_total], d_t_py[0 : n_total], d_t_pz[0 : n_total], \
-            d_t_m[0 : n_total], d_t_orig_idx[0 : n_total],                 \
-            d_t_type[0 : n_total], d_t_is_active[0 : n_total])
+#pragma omp target teams distribute parallel for is_device_ptr(                \
+        d_u_px, d_u_py, d_u_pz, d_u_m, d_u_orig_idx, d_u_type, d_u_sorted_idx, \
+            d_t_px, d_t_py, d_t_pz, d_t_m, d_t_orig_idx, d_t_type,             \
+            d_t_is_active) map(alloc : d_u_is_active[0 : n_total])
     for (size_t i = 0; i < n_total; ++i) {
-        int idx = d_sorted_idx[i];
+        int idx = d_u_sorted_idx[i];
         d_t_px[i] = d_u_px[idx];
         d_t_py[i] = d_u_py[idx];
         d_t_pz[i] = d_u_pz[idx];
@@ -264,14 +191,10 @@ static void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
     }
 
 // Copy back to the persistent device arrays
-#pragma omp target teams distribute parallel for map(                     \
-        present : d_u_px[0 : n_total], d_u_py[0 : n_total],               \
-            d_u_pz[0 : n_total], d_u_m[0 : n_total],                      \
-            d_u_orig_idx[0 : n_total], d_u_type[0 : n_total],             \
-            d_u_is_active[0 : n_total], d_t_px[0 : n_total],              \
-            d_t_py[0 : n_total], d_t_pz[0 : n_total], d_t_m[0 : n_total], \
-            d_t_orig_idx[0 : n_total], d_t_type[0 : n_total],             \
-            d_t_is_active[0 : n_total])
+#pragma omp target teams distribute parallel for is_device_ptr(                \
+        d_u_px, d_u_py, d_u_pz, d_u_m, d_u_orig_idx, d_u_type, d_t_px, d_t_py, \
+            d_t_pz, d_t_m, d_t_orig_idx, d_t_type, d_t_is_active)              \
+    map(alloc : d_u_is_active[0 : n_total])
     for (size_t i = 0; i < n_total; ++i) {
         d_u_px[i] = d_t_px[i];
         d_u_py[i] = d_t_py[i];
@@ -287,20 +210,18 @@ static void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
     size_t required_nodes = (n_total > 0) ? (2 * n_total - 1) : 0;
 
     if (required_nodes > current_bvh_capacity) {
+        int dev = omp_get_default_device();
         if (current_bvh_capacity > 0) {
-            BVHNode* old_bvh = u_bvh.data();
-#pragma omp target exit data map(delete : old_bvh[0 : current_bvh_capacity])
+            omp_target_free(d_u_bvh, dev);
         }
-        u_bvh.resize(required_nodes);
-        BVHNode* d_u_bvh = u_bvh.data();
-#pragma omp target enter data map(alloc : d_u_bvh[0 : required_nodes])
+        d_u_bvh =
+            (BVHNode*)omp_target_alloc(required_nodes * sizeof(BVHNode), dev);
         current_bvh_capacity = required_nodes;
     }
 
     // Call the device-side builder using the GPU-resident arrays
-    LBVH::build_topology_and_aggregate_gpu(n_total, u_px.data(), u_py.data(),
-                                           u_pz.data(), u_m.data(),
-                                           u_morton.data(), u_bvh.data());
+    LBVH::build_topology_and_aggregate_gpu(n_total, d_u_px, d_u_py, d_u_pz,
+                                           d_u_m, d_u_morton, d_u_bvh);
 
     uint8_t* d_u_is_active_end = u_is_active.data();
 #pragma omp target update from(d_u_is_active_end[0 : n_total])
@@ -322,11 +243,6 @@ static void map_results(ParticleSystem& dm, GasParticleSystem* gas) {
 
     if (n_active == 0) return;
 
-    double* d_u_ax = u_ax.data();
-    double* d_u_ay = u_ay.data();
-    double* d_u_az = u_az.data();
-    int* d_u_orig_idx = u_original_idx.data();
-    uint8_t* d_u_type = u_type.data();
     int* d_active_idx = u_active_indices.data();
 
 #pragma omp target data map(to : d_active_idx[0 : n_active])
@@ -338,9 +254,8 @@ static void map_results(ParticleSystem& dm, GasParticleSystem* gas) {
 
 #pragma omp target teams distribute parallel for map(                     \
         tofrom : d_dm_ax[0 : n_dm], d_dm_ay[0 : n_dm], d_dm_az[0 : n_dm]) \
-    map(present : d_u_ax[0 : n_total], d_u_ay[0 : n_total],               \
-            d_u_az[0 : n_total], d_u_orig_idx[0 : n_total],               \
-            d_u_type[0 : n_total], d_active_idx[0 : n_active])
+    map(alloc : d_active_idx[0 : n_active])                               \
+    is_device_ptr(d_u_ax, d_u_ay, d_u_az, d_u_orig_idx, d_u_type)
             for (size_t k = 0; k < n_active; ++k) {
                 size_t i = d_active_idx[k];
                 if (d_u_type[i] == 0) {
@@ -357,12 +272,10 @@ static void map_results(ParticleSystem& dm, GasParticleSystem* gas) {
             double* d_gas_ay = gas->acc_y.data();
             double* d_gas_az = gas->acc_z.data();
 
-#pragma omp target teams distribute parallel for map(       \
-        tofrom : d_gas_ax[0 : n_gas], d_gas_ay[0 : n_gas],  \
-            d_gas_az[0 : n_gas])                            \
-    map(present : d_u_ax[0 : n_total], d_u_ay[0 : n_total], \
-            d_u_az[0 : n_total], d_u_orig_idx[0 : n_total], \
-            d_u_type[0 : n_total], d_active_idx[0 : n_active])
+#pragma omp target teams distribute parallel for map(                    \
+        tofrom : d_gas_ax[0 : n_gas], d_gas_ay[0 : n_gas],               \
+            d_gas_az[0 : n_gas]) map(alloc : d_active_idx[0 : n_active]) \
+    is_device_ptr(d_u_ax, d_u_ay, d_u_az, d_u_orig_idx, d_u_type)
             for (size_t k = 0; k < n_active; ++k) {
                 size_t i = d_active_idx[k];
                 if (d_u_type[i] == 1) {
@@ -381,14 +294,16 @@ void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
     size_t n_dm = dm.num_particles;
     size_t n_gas = gas ? gas->num_particles : 0;
     size_t n_total = n_dm + n_gas;
-    size_t n_active = dm.num_active + (gas ? gas->num_active : 0);
 
-    if (n_active == 0) return;
+    if (n_total == 0) return;
 
     prepare_arrays(dm, gas, config);
 
+    size_t n_active = u_active_indices.size();
+    if (n_active == 0) return;
+
     // Shared Force Constants
-    const Vec3& domain_size = config.domain_size;
+    const Vec3 domain_size = config.domain_size;
     const double G = config.G / (a * a * a);
     const double r_s = config.PM_smoothing_cells * config.cell_size;
     const bool use_pm = config.use_PM;
@@ -398,30 +313,23 @@ void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
     const size_t num_nodes = 2 * n_total - 1;
 
     // Raw pointers for GPU Offload
-    double* d_px = u_px.data();
-    double* d_py = u_py.data();
-    double* d_pz = u_pz.data();
-    double* d_m = u_m.data();
-    double* d_ax = u_ax.data();
-    double* d_ay = u_ay.data();
-    double* d_az = u_az.data();
-    BVHNode* d_bvh = u_bvh.data();
     int* d_active_idx = u_active_indices.data();
+    double* d_px = d_u_px;
+    double* d_py = d_u_py;
+    double* d_pz = d_u_pz;
+    double* d_m = d_u_m;
+    double* d_ax = d_u_ax;
+    double* d_ay = d_u_ay;
+    double* d_az = d_u_az;
+    BVHNode* d_bvh = d_u_bvh;
 
-#ifdef USE_GPU
     auto start_transfer = std::chrono::high_resolution_clock::now();
-#pragma omp target enter data map(to : d_active_idx[0 : n_active])
     auto end_transfer = std::chrono::high_resolution_clock::now();
     auto start_compute = std::chrono::high_resolution_clock::now();
 
-#pragma omp target teams distribute parallel for map(                      \
-        present : d_px[0 : n_total], d_py[0 : n_total], d_pz[0 : n_total], \
-            d_m[0 : n_total], d_bvh[0 : num_nodes], d_ax[0 : n_total],     \
-            d_ay[0 : n_total], d_az[0 : n_total], d_active_idx[0 : n_active])
-#else
-#pragma omp parallel for schedule(dynamic, 64)
-#endif
-    // Unified Kernel Execution
+#pragma omp target teams distribute parallel for map( \
+        to : d_active_idx[0 : n_active])              \
+    is_device_ptr(d_px, d_py, d_pz, d_m, d_bvh, d_ax, d_ay, d_az)
     for (size_t k = 0; k < n_active; ++k) {
         size_t i = d_active_idx[k];
 
@@ -500,15 +408,8 @@ void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
         d_az[i] += local_acc_z;
     }
 
-#ifdef USE_GPU
     auto end_compute = std::chrono::high_resolution_clock::now();
     auto start_return = std::chrono::high_resolution_clock::now();
-
-    // Copy the computed accelerations to the CPU
-#pragma omp target update from(d_ax[0 : n_total], d_ay[0 : n_total], \
-                                   d_az[0 : n_total])
-#pragma omp target exit data map(delete : d_active_idx[0 : n_active])
-
     auto end_return = std::chrono::high_resolution_clock::now();
 
     diag.add_prof_time(ProfRegion::Transf,
@@ -523,7 +424,6 @@ void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
                        std::chrono::duration_cast<std::chrono::microseconds>(
                            end_return - start_return)
                            .count());
-#endif
 
     map_results(dm, gas);
 }

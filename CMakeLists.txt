@@ -17,6 +17,7 @@ endif()
 option(USE_GPU_OFFLOAD "Enable OpenMP GPU Offloading" ON)
 option(USE_CLANG_TIDY  "Run clang-tidy during compilation" OFF)
 option(USE_FFTW_OMP "Use FFTW3 OpenMP backend (disable to avoid libgomp clash)" OFF)
+option(ENABLE_IPO "Enable Interprocedural Optimization (LTO)" ON)
 
 # ==============================================================================
 # DEPENDENCIES
@@ -246,13 +247,21 @@ catch_discover_tests(run_tests)
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
 
-if(ipo_supported)
+if(ipo_supported AND ENABLE_IPO)
     message(STATUS "IPO / LTO enabled: compiler supports it.")
     set_target_properties(SimulationCore PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
     set_target_properties(${PROJECT_NAME} PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
     set_target_properties(run_tests PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
 else()
-    message(STATUS "IPO / LTO disabled (or unsupported): ${ipo_error}")
+    if(NOT ENABLE_IPO)
+        message(STATUS "IPO / LTO manually disabled via ENABLE_IPO=OFF")
+    else()
+        message(STATUS "IPO / LTO disabled (unsupported): ${ipo_error}")
+    endif()
+    
+    set_target_properties(SimulationCore PROPERTIES INTERPROCEDURAL_OPTIMIZATION FALSE)
+    set_target_properties(${PROJECT_NAME} PROPERTIES INTERPROCEDURAL_OPTIMIZATION FALSE)
+    set_target_properties(run_tests PROPERTIES INTERPROCEDURAL_OPTIMIZATION FALSE)
 endif()
 
 # ==============================================================================
