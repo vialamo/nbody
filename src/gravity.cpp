@@ -24,17 +24,19 @@ void update_softening(SimState& state, Config& config) {
 }
 
 #ifdef GRAVITY_OWN_MEMORY
-static std::vector<double> u_px, u_py, u_pz, u_m, u_h, u_ax, u_ay, u_az;
-static std::vector<double> t_px, t_py, t_pz, t_m, t_h;
+static std::vector<double> u_px, u_py, u_pz, u_m, u_ax, u_ay, u_az;
+static std::vector<double> t_px, t_py, t_pz, t_m;
 static std::vector<int> u_original_idx, t_original_idx;
 static std::vector<uint8_t> u_type, t_type;
 static std::vector<uint64_t> u_morton;
 static std::vector<int> u_sorted_indices;
 static std::vector<int> u_active_indices;
 static std::vector<BVHNode> u_bvh;
+#endif
 
 void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
                     const Config& config) {
+#ifdef GRAVITY_OWN_MEMORY
     size_t n_dm = dm.num_particles;
     size_t n_gas = gas ? gas->num_particles : 0;
     size_t n_total = n_dm + n_gas;
@@ -46,7 +48,6 @@ void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
     u_py.resize(n_total);
     u_pz.resize(n_total);
     u_m.resize(n_total);
-    u_h.resize(n_total);
     u_original_idx.resize(n_total);
     u_type.resize(n_total);
     u_ax.assign(n_total, 0.0);
@@ -60,7 +61,6 @@ void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
         u_py[i] = dm.pos_y[i];
         u_pz[i] = dm.pos_z[i];
         u_m[i] = dm.mass[i];
-        u_h[i] = 0.0;  // DM does not use 'h'
         u_original_idx[i] = i;
         u_type[i] = 0;  // Type 0: DM
     }
@@ -73,7 +73,6 @@ void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
             u_py[offset] = gas->pos_y[i];
             u_pz[offset] = gas->pos_z[i];
             u_m[offset] = gas->mass[i];
-            u_h[offset] = gas->h[i];
             u_original_idx[offset] = i;
             u_type[offset] = 1;  // Type 1: Gas
         }
@@ -89,7 +88,6 @@ void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
     t_py.resize(n_total);
     t_pz.resize(n_total);
     t_m.resize(n_total);
-    t_h.resize(n_total);
     t_original_idx.resize(n_total);
     t_type.resize(n_total);
 
@@ -100,7 +98,6 @@ void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
         t_py[i] = u_py[idx];
         t_pz[i] = u_pz[idx];
         t_m[i] = u_m[idx];
-        t_h[i] = u_h[idx];
         t_original_idx[i] = u_original_idx[idx];
         t_type[i] = u_type[idx];
     }
@@ -109,12 +106,11 @@ void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
     u_py.swap(t_py);
     u_pz.swap(t_pz);
     u_m.swap(t_m);
-    u_h.swap(t_h);
     u_original_idx.swap(t_original_idx);
     u_type.swap(t_type);
 
     // Build Tree & Gather Active Indices
-    LBVH::build_topology_and_aggregate(n_total, u_px, u_py, u_pz, u_m, &u_h,
+    LBVH::build_topology_and_aggregate(n_total, u_px, u_py, u_pz, u_m, nullptr,
                                        u_morton, u_bvh);
 
     u_active_indices.clear();
@@ -124,10 +120,12 @@ void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
             (u_type[i] == 0) ? dm.is_active[orig] : gas->is_active[orig];
         if (is_active) u_active_indices.push_back(i);
     }
+#endif
 }
 
 // Map accelerations back to native structures
 void map_results(ParticleSystem& dm, GasParticleSystem* gas) {
+#ifdef GRAVITY_OWN_MEMORY
     size_t n_dm = dm.num_particles;
     size_t n_gas = gas ? gas->num_particles : 0;
     size_t n_total = n_dm + n_gas;
@@ -144,8 +142,10 @@ void map_results(ParticleSystem& dm, GasParticleSystem* gas) {
             gas->acc_z[orig] += u_az[i];
         }
     }
+#endif
 }
 
+#ifdef GRAVITY_OWN_MEMORY
 void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
                   const Config& config, Diagnostics& diag) {
     size_t n_dm = dm.num_particles;
