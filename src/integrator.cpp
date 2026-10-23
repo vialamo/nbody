@@ -362,7 +362,7 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
     // Build trees
     {
         ScopedTimer timer(diag, TimerRegion::Tree);
-#ifndef GRAVITY_OWN_MEMORY
+#ifndef GRAVITY_GPU_MEMORY
         state.dm.build_lbvh(config);
 #endif
         if (config.hydro_method == HydroMethod::MFM) {
@@ -388,7 +388,6 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
 #endif
     if (config.use_PP) {
         ScopedTimer pp_timer(diag, TimerRegion::PP);
-        GravitySolver::prepare_arrays(state.dm, state.mfm_gas.get(), config);
 
 #ifdef GPU_CPU_PARALLEL_EXECUTION
         pp_worker.launch([&]() {
@@ -399,7 +398,6 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
         GravitySolver::add_pp_accel(state.dm, state.mfm_gas.get(),
                                     state.scale_factor, config, diag);
 #endif
-        GravitySolver::map_results(state.dm, state.mfm_gas.get());
     }
 
     if (config.hydro_method == HydroMethod::MFM) {
@@ -422,7 +420,6 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
     if (config.use_PP) {
         ScopedTimer pp_timer(diag, TimerRegion::PP);
         pp_worker.wait();
-        GravitySolver::map_results(state.dm, state.mfm_gas.get());
     }
 #endif
 }

@@ -50,4 +50,17 @@ void update_h_and_bboxes(size_t num_particles, const std::vector<double>& pos_x,
                          const std::vector<double>& pos_z,
                          const std::vector<double>& h,
                          std::vector<BVHNode>& bvh_nodes);
+
+void compute_morton_and_sort_indices_gpu(
+    size_t num_particles, const Vec3& domain_size, const double* pos_x,
+    const double* pos_y, const double* pos_z, uint64_t* morton_codes,
+    int* sorted_indices);
+    
+void build_topology_and_aggregate_gpu(size_t num_particles,
+                                  const double* sorted_pos_x,
+                                  const double* sorted_pos_y,
+                                  const double* sorted_pos_z,
+                                  const double* sorted_mass,
+                                  const uint64_t* morton_codes,
+                                  BVHNode* bvh_nodes);
 }  // namespace LBVH
