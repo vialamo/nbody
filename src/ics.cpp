@@ -362,8 +362,8 @@ void initialize_dm(SimState& state, const Config& config,
         int n_tiles_z =
             static_cast<int>(std::round(config.domain_size.z / L_block));
 
-        std::string file_glass =
-            "data/glassCube_" + std::to_string(N_glass) + ".hdf5";
+        std::string file_glass = config.glass_folder_path + "/glassCube_" +
+                                 std::to_string(N_glass) + ".hdf5";
         GlassData glass;
         try {
             glass = HDF5Reader::read_glass_cube(file_glass);
@@ -573,8 +573,8 @@ void initialize_gas(SimState& state, const Config& config,
             int n_tiles_z =
                 static_cast<int>(std::round(config.domain_size.z / L_block));
 
-            std::string file_glass =
-                "data/glassCube_" + std::to_string(N_glass) + ".hdf5";
+            std::string file_glass = config.glass_folder_path + "/glassCube_" +
+                                     std::to_string(N_glass) + ".hdf5";
             GlassData glass;
             try {
                 glass = HDF5Reader::read_glass_cube(file_glass);
@@ -767,10 +767,10 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
 
             int N_R = N_L / 2;  // Right side is one tier lower
 
-            std::string file_L =
-                "data/glassCube_" + std::to_string(N_L) + ".hdf5";
-            std::string file_R =
-                "data/glassCube_" + std::to_string(N_R) + ".hdf5";
+            std::string file_L = config.glass_folder_path + "/glassCube_" +
+                                 std::to_string(N_L) + ".hdf5";
+            std::string file_R = config.glass_folder_path + "/glassCube_" +
+                                 std::to_string(N_R) + ".hdf5";
 
             GlassData glass_L, glass_R;
             try {
@@ -1046,8 +1046,8 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
                 8, static_cast<int>(std::pow(2, std::round(std::log2(N_res)))));
             N_glass = std::min(N_glass, 128);
 
-            std::string file_glass =
-                "data/glassCube_" + std::to_string(N_glass) + ".hdf5";
+            std::string file_glass = config.glass_folder_path + "/glassCube_" +
+                                     std::to_string(N_glass) + ".hdf5";
             GlassData glass;
             try {
                 glass = HDF5Reader::read_glass_cube(file_glass);

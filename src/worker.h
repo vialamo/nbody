@@ -1,12 +1,12 @@
 #pragma once
 
-#include <thread>
-#include <mutex>
 #include <condition_variable>
 #include <functional>
+#include <mutex>
+#include <thread>
 
-class PersistentWorker {
-private:
+class Worker {
+   private:
     std::thread worker_thread;
     std::mutex mtx;
     std::condition_variable cv_main;
@@ -18,13 +18,14 @@ private:
 
     std::function<void()> current_task;
 
-public:
-    PersistentWorker() {
+   public:
+    Worker() {
         worker_thread = std::thread([this]() {
             while (true) {
                 std::unique_lock<std::mutex> lock(mtx);
                 // Sleep until there is work or the program is shutting down
-                cv_worker.wait(lock, [this]() { return work_ready || terminate; });
+                cv_worker.wait(lock,
+                               [this]() { return work_ready || terminate; });
 
                 if (terminate) break;
 
@@ -42,7 +43,7 @@ public:
         });
     }
 
-    ~PersistentWorker() {
+    ~Worker() {
         {
             std::lock_guard<std::mutex> lock(mtx);
             terminate = true;
@@ -58,7 +59,7 @@ public:
         current_task = task;
         work_ready = true;
         work_done = false;
-        cv_worker.notify_one(); // Wake up the background thread
+        cv_worker.notify_one();  // Wake up the background thread
     }
 
     void wait() {

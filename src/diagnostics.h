@@ -20,9 +20,10 @@ enum class TimerRegion {
     IO,
     Tree,
     Density,
+    PP_GPU,
     NUM_REGIONS
 };
-enum class ProfRegion { Transf, Ret, Compute, NUM_PROF_REGIONS };
+enum class ProfRegion { Transf, Ret, Compute, Tree, NUM_PROF_REGIONS };
 
 class Diagnostics {
    private:

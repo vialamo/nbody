@@ -305,4 +305,290 @@ void update_h_and_bboxes(size_t num_particles, const std::vector<double>& pos_x,
     }
 }
 
+#ifdef GRAVITY_GPU_MEMORY
+
+static size_t current_padded_capacity = 0;
+static uint64_t* d_padded_morton = nullptr;
+static int* d_padded_indices = nullptr;
+
+void compute_morton_and_sort_indices_gpu(
+    size_t num_particles, const Vec3& domain_size, const double* pos_x,
+    const double* pos_y, const double* pos_z, uint64_t* morton_codes,
+    int* sorted_indices) {
+    if (num_particles == 0) return;
+
+    double inv_domain_x = 1.0 / domain_size.x;
+    double inv_domain_y = 1.0 / domain_size.y;
+    double inv_domain_z = 1.0 / domain_size.z;
+    double bound = 2097152.0;
+
+    // Generate Morton codes and initialize indices on the GPU
+#pragma omp target teams distribute parallel for is_device_ptr( \
+        pos_x, pos_y, pos_z, morton_codes, sorted_indices)
+    for (size_t i = 0; i < num_particles; ++i) {
+        uint32_t x = static_cast<uint32_t>(
+            fmod(pos_x[i] * inv_domain_x + 1.0, 1.0) * bound);
+        uint32_t y = static_cast<uint32_t>(
+            fmod(pos_y[i] * inv_domain_y + 1.0, 1.0) * bound);
+        uint32_t z = static_cast<uint32_t>(
+            fmod(pos_z[i] * inv_domain_z + 1.0, 1.0) * bound);
+        morton_codes[i] = morton3D(x, y, z);
+        sorted_indices[i] = static_cast<int>(i);
+    }
+
+    // Pad to the next power of 2 (Required for Bitonic Sort networks)
+    size_t padded_n = 1;
+    while (padded_n < num_particles) padded_n <<= 1;
+
+    // Persistent GPU allocation for the padded buffers
+    if (padded_n > current_padded_capacity) {
+        int dev = omp_get_default_device();
+        if (current_padded_capacity > 0) {
+            omp_target_free(d_padded_morton, dev);
+            omp_target_free(d_padded_indices, dev);
+        }
+        d_padded_morton =
+            (uint64_t*)omp_target_alloc(padded_n * sizeof(uint64_t), dev);
+        d_padded_indices = (int*)omp_target_alloc(padded_n * sizeof(int), dev);
+        current_padded_capacity = padded_n;
+    }
+
+    // Initialize the virtual out-of-bounds space on the GPU
+#pragma omp target teams distribute parallel for is_device_ptr( \
+        d_padded_morton, d_padded_indices)
+    for (size_t i = 0; i < padded_n; ++i) {
+        d_padded_morton[i] = UINT64_MAX;
+        d_padded_indices[i] = -1;
+    }
+
+    // Copy actual particles into the padded buffers
+#pragma omp target teams distribute parallel for is_device_ptr( \
+        morton_codes, sorted_indices, d_padded_morton, d_padded_indices)
+    for (size_t i = 0; i < num_particles; ++i) {
+        d_padded_morton[i] = morton_codes[i];
+        d_padded_indices[i] = sorted_indices[i];
+    }
+
+    // Parallel Bitonic Sort
+    for (size_t k = 2; k <= padded_n; k <<= 1) {
+        for (size_t j = k >> 1; j > 0; j >>= 1) {
+#pragma omp target teams distribute parallel for is_device_ptr( \
+        d_padded_morton, d_padded_indices)
+            for (size_t i = 0; i < padded_n; ++i) {
+                size_t ixj = i ^ j;
+                if (ixj > i) {
+                    bool ascending = ((i & k) == 0);
+                    uint64_t val_i = d_padded_morton[i];
+                    uint64_t val_ixj = d_padded_morton[ixj];
+
+                    if ((val_i > val_ixj) == ascending) {
+                        d_padded_morton[i] = val_ixj;
+                        d_padded_morton[ixj] = val_i;
+                        int temp_idx = d_padded_indices[i];
+                        d_padded_indices[i] = d_padded_indices[ixj];
+                        d_padded_indices[ixj] = temp_idx;
+                    }
+                }
+            }
+        }
+    }
+
+    // Retrieve the valid sorted section back
+#pragma omp target teams distribute parallel for is_device_ptr( \
+        morton_codes, sorted_indices, d_padded_morton, d_padded_indices)
+    for (size_t i = 0; i < num_particles; ++i) {
+        morton_codes[i] = d_padded_morton[i];
+        sorted_indices[i] = d_padded_indices[i];
+    }
+}
+
+static size_t current_flags_capacity = 0;
+static int* d_atomic_flags = nullptr;
+
+void build_topology_and_aggregate_gpu(size_t num_particles,
+                                      const double* sorted_pos_x,
+                                      const double* sorted_pos_y,
+                                      const double* sorted_pos_z,
+                                      const double* sorted_mass,
+                                      const uint64_t* morton_codes,
+                                      BVHNode* bvh_nodes) {
+    if (num_particles == 0) return;
+    const int n = static_cast<int>(num_particles);
+    const int num_nodes = 2 * n - 1;
+
+    // Initialize Leaf Nodes
+#pragma omp target teams distribute parallel for is_device_ptr(bvh_nodes)
+    for (int i = 0; i < n; ++i) {
+        int leaf_idx = n - 1 + i;
+        bvh_nodes[leaf_idx].particle_idx = i;
+        bvh_nodes[leaf_idx].left_child = -1;
+        bvh_nodes[leaf_idx].right_child = -1;
+    }
+
+    if (n < 2) return;
+
+    // Construct Internal Nodes (Karras 2012)
+#pragma omp target teams distribute parallel for is_device_ptr(morton_codes, \
+                                                                   bvh_nodes)
+    for (int i = 0; i < n - 1; ++i) {
+        // Device-compatible delta function
+        auto delta = [=](int idx_a, int idx_b) -> int {
+            if (idx_b < 0 || idx_b >= n) return -1;
+            uint64_t code_a = morton_codes[idx_a];
+            uint64_t code_b = morton_codes[idx_b];
+            if (code_a == code_b) {
+                return 64 + __builtin_clzll(
+                                static_cast<unsigned long long>(idx_a ^ idx_b));
+            }
+            return __builtin_clzll(code_a ^ code_b);
+        };
+
+        int d = (delta(i, i + 1) - delta(i, i - 1)) > 0 ? 1 : -1;
+        int delta_min = delta(i, i - d);
+        int l_max = 2;
+        while (delta(i, i + l_max * d) > delta_min) l_max *= 2;
+
+        int l = 0;
+        for (int t = l_max / 2; t >= 1; t /= 2) {
+            if (delta(i, i + (l + t) * d) > delta_min) l += t;
+        }
+        int j = i + l * d;
+        int delta_node = delta(i, j);
+        int s = 0;
+        int t = l;
+        do {
+            t = (t + 1) >> 1;
+            if (s + t < l && delta(i, i + (s + t) * d) > delta_node) s += t;
+        } while (t > 1);
+
+        int split = i + s * d + std::min(d, 0);
+        int min_idx = std::min(i, j);
+        int max_idx = std::max(i, j);
+
+        int left_child = (min_idx == split) ? (n - 1 + split) : split;
+        int right_child =
+            (max_idx == split + 1) ? (n - 1 + split + 1) : (split + 1);
+
+        bvh_nodes[i].left_child = left_child;
+        bvh_nodes[i].right_child = right_child;
+        bvh_nodes[i].particle_idx = -1;
+        bvh_nodes[left_child].parent = i;
+        bvh_nodes[right_child].parent = i;
+    }
+
+#pragma omp target is_device_ptr(bvh_nodes)
+    {
+        bvh_nodes[0].parent = -1;
+    }
+
+    // BOTTOM-UP AGGREGATION
+    int flags_size = n - 1;
+
+    if (flags_size > current_flags_capacity) {
+        int dev = omp_get_default_device();
+        if (current_flags_capacity > 0) {
+            omp_target_free(d_atomic_flags, dev);
+        }
+        d_atomic_flags = (int*)omp_target_alloc(flags_size * sizeof(int), dev);
+        current_flags_capacity = flags_size;
+    }
+
+    // Zero out the atomic flags
+#pragma omp target teams distribute parallel for is_device_ptr(d_atomic_flags)
+    for (int i = 0; i < flags_size; ++i) {
+        d_atomic_flags[i] = 0;
+    }
+
+#pragma omp target teams distribute parallel for is_device_ptr(           \
+        sorted_pos_x, sorted_pos_y, sorted_pos_z, sorted_mass, bvh_nodes, \
+            d_atomic_flags)
+    for (int i = 0; i < n; ++i) {
+        int leaf_idx = n - 1 + i;
+        double px = sorted_pos_x[i], py = sorted_pos_y[i], pz = sorted_pos_z[i];
+
+        bvh_nodes[leaf_idx].bbox.min_x = px;
+        bvh_nodes[leaf_idx].bbox.max_x = px;
+        bvh_nodes[leaf_idx].bbox.min_y = py;
+        bvh_nodes[leaf_idx].bbox.max_y = py;
+        bvh_nodes[leaf_idx].bbox.min_z = pz;
+        bvh_nodes[leaf_idx].bbox.max_z = pz;
+
+        bvh_nodes[leaf_idx].mass = sorted_mass[i];
+        bvh_nodes[leaf_idx].com_x = px * sorted_mass[i];
+        bvh_nodes[leaf_idx].com_y = py * sorted_mass[i];
+        bvh_nodes[leaf_idx].com_z = pz * sorted_mass[i];
+
+        int curr = bvh_nodes[leaf_idx].parent;
+        while (curr != -1) {
+            int old_flag;
+#pragma omp atomic capture
+            old_flag = d_atomic_flags[curr]++;
+
+            if (old_flag == 0) break;  // First thread terminates
+
+            int left = bvh_nodes[curr].left_child;
+            int right = bvh_nodes[curr].right_child;
+
+            bvh_nodes[curr].bbox.min_x =
+                (bvh_nodes[left].bbox.min_x < bvh_nodes[right].bbox.min_x)
+                    ? bvh_nodes[left].bbox.min_x
+                    : bvh_nodes[right].bbox.min_x;
+            bvh_nodes[curr].bbox.max_x =
+                (bvh_nodes[left].bbox.max_x > bvh_nodes[right].bbox.max_x)
+                    ? bvh_nodes[left].bbox.max_x
+                    : bvh_nodes[right].bbox.max_x;
+            bvh_nodes[curr].bbox.min_y =
+                (bvh_nodes[left].bbox.min_y < bvh_nodes[right].bbox.min_y)
+                    ? bvh_nodes[left].bbox.min_y
+                    : bvh_nodes[right].bbox.min_y;
+            bvh_nodes[curr].bbox.max_y =
+                (bvh_nodes[left].bbox.max_y > bvh_nodes[right].bbox.max_y)
+                    ? bvh_nodes[left].bbox.max_y
+                    : bvh_nodes[right].bbox.max_y;
+            bvh_nodes[curr].bbox.min_z =
+                (bvh_nodes[left].bbox.min_z < bvh_nodes[right].bbox.min_z)
+                    ? bvh_nodes[left].bbox.min_z
+                    : bvh_nodes[right].bbox.min_z;
+            bvh_nodes[curr].bbox.max_z =
+                (bvh_nodes[left].bbox.max_z > bvh_nodes[right].bbox.max_z)
+                    ? bvh_nodes[left].bbox.max_z
+                    : bvh_nodes[right].bbox.max_z;
+
+            bvh_nodes[curr].mass = bvh_nodes[left].mass + bvh_nodes[right].mass;
+            bvh_nodes[curr].com_x =
+                bvh_nodes[left].com_x + bvh_nodes[right].com_x;
+            bvh_nodes[curr].com_y =
+                bvh_nodes[left].com_y + bvh_nodes[right].com_y;
+            bvh_nodes[curr].com_z =
+                bvh_nodes[left].com_z + bvh_nodes[right].com_z;
+
+            curr = bvh_nodes[curr].parent;
+        }
+    }
+
+// Normalize Center of Mass on GPU
+#pragma omp target teams distribute parallel for is_device_ptr(bvh_nodes)
+    for (int i = 0; i < num_nodes; ++i) {
+        if (bvh_nodes[i].mass > 0.0) {
+            bvh_nodes[i].com_x /= bvh_nodes[i].mass;
+            bvh_nodes[i].com_y /= bvh_nodes[i].mass;
+            bvh_nodes[i].com_z /= bvh_nodes[i].mass;
+        }
+    }
+}
+
+void free_gpu_resources() {
+    int dev = omp_get_default_device();
+    if (current_padded_capacity > 0) {
+        omp_target_free(d_padded_morton, dev);
+        omp_target_free(d_padded_indices, dev);
+        current_padded_capacity = 0;
+    }
+    if (current_flags_capacity > 0) {
+        omp_target_free(d_atomic_flags, dev);
+        current_flags_capacity = 0;
+    }
+}
+#endif
+
 }  // namespace LBVH

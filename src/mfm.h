@@ -8,8 +8,6 @@
 constexpr double N_cond_crit = 5.0;
 constexpr double density_floor = 1e-12;
 
-// #define USE_GEOMETRIC_MATRIX
-
 struct Config;
 class Cooling;
 
@@ -123,24 +121,21 @@ class GasParticleSystem {
     void add_particle(double px, double py, double pz, double vx, double vy,
                       double vz, double m, double initial_u, double initial_h,
                       double z_metal);
-    
+
     void build_lbvh(const Config& config);
 
     // Assigns power-of-two block timesteps to all active particles
     void update_particle_timesteps(double dt_max, double a,
                                    const Config& config, Cooling& cooling);
-                                   
+
     // Sync the clock, process wakeups, and flag active particles
     void sync_and_activate(double dt, double a, double H, const Config& config);
-    
+
     void hydro_step(const Config& config, double a);
 
     // Time step calculations
     double get_cfl_timestep(double a, const Config& config) const;
-    
 
    private:
     void sort_arrays(const std::vector<int>& sorted_indices);
-
-
 };

@@ -105,7 +105,7 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
 
         state.dm.build_lbvh(config);
         
-        GravitySolver::add_pp_accel(state.dm, nullptr, 1.0, config, dummy_diag);
+        state.gravity.add_pp_accel(state.dm, nullptr, 1.0, config, dummy_diag);
 
         // Exact Newtonian Gravity: F = G * m1 * m2 / r^2
         // F = 1.0 * 1.0 * 1.0 / (0.25 * 0.25) = 1.0 / 0.0625 = 16.0
@@ -130,7 +130,7 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
         // Reset accelerations to 0 before computing
         std::fill(state.dm.acc_x.begin(), state.dm.acc_x.end(), 0.0);
 
-        GravitySolver::add_pp_accel(state.dm, nullptr, 1.0, config, dummy_diag);
+        state.gravity.add_pp_accel(state.dm, nullptr, 1.0, config, dummy_diag);
 
         // Because dist (0.25) > cutoff_radius (0.15), the short-range force is 0.0
         REQUIRE(state.dm.acc_x[0] == Catch::Approx(0.0));

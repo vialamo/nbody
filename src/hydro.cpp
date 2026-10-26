@@ -85,8 +85,6 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
         gas.mass.data(),       gas.rho.data(),        gas.pressure_pred.data(),
         gas.h.data(),          gas.cond_num.data()};
 
-    bool debug_printed = false;
-
 #pragma omp parallel reduction(+ : step_ill_conditioned)
     {
         // Declare the reusable buffer once per thread
@@ -173,11 +171,7 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
 
             if (ill_conditioned) {
                 step_ill_conditioned++;
-                // DebugUtils::print_ill_conditioned_diagnostic(debug_printed,
-                // i,
-                //    gas, neighbors, domain_size);
             }
-            // DebugUtils::print_gradients(gas, i);
         }
     }
     gas.ill_conditioned_cases += step_ill_conditioned;

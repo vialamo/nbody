@@ -159,6 +159,8 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         set_attr_double(config_group, "seed_metallicity_solar",
                         config.seed_metallicity_solar);
         set_attr_int(config_group, "seed", config.seed);
+        set_attr_string(config_group, "glass_folder_path",
+                        config.glass_folder_path);
 
         // [hydro]
         set_attr_string(config_group, "hydro_method",

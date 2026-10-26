@@ -141,6 +141,6 @@ class GasGrid {
     void add_expansion_work(double w) { accumulated_expansion_work += w; }
 
     Grid3D compute_thermal_timescale(double a, const Cooling& cooling) const;
-    
+
     void update_primitive_variables(double a);
 };

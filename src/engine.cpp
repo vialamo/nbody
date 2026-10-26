@@ -77,10 +77,10 @@ TimestepInfo SimulationEngine::get_timestep() const {
     }
 
     if (config.use_PM || config.use_PP) {
-        double dt_grav_dm = GravitySolver::get_timestep(state.dm, config);
+        double dt_grav_dm = state.gravity.get_timestep(state.dm, config);
         double dt_grav_mfm = std::numeric_limits<double>::infinity();
         if (config.hydro_method == HydroMethod::MFM) {
-            dt_grav_mfm = GravitySolver::get_timestep(*state.mfm_gas, config);
+            dt_grav_mfm = state.gravity.get_timestep(*state.mfm_gas, config);
         }
         ts.dt_grav = std::min(dt_grav_dm, dt_grav_mfm);
     } else {

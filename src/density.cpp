@@ -24,6 +24,7 @@ static inline double evaluate_matrix_condition_number(
     return (1.0 / 3.0) * std::sqrt(E.squaredNorm() * B.squaredNorm());
 }
 
+#ifdef USE_ADAPTIVE_CONDITION_NUMBER
 static void evaluate_density_sum(const GasParticleSystem& gas,
                                  size_t particle_idx, double h,
                                  const Vec3& domain_size, double& out_n,
@@ -77,6 +78,7 @@ static void evaluate_density_sum(const GasParticleSystem& gas,
         }
     }
 }
+#endif
 
 #ifdef USE_NBG_LIST
 static void gather_neighbors(const GasParticleSystem& gas, size_t particle_idx,

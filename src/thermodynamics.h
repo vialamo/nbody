@@ -20,7 +20,6 @@ std::tuple<std::vector<double>, std::vector<double>, std::vector<double>,
 compute_snapshot_primitives(const GasParticleSystem& gas, const Config& config,
                             double a);
 
-
 double get_u_floor(double a, const Config& config);
 
 // Conversion helpers

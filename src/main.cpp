@@ -38,7 +38,18 @@ static void print_info(const Config& config) {
         std::cout << "GPU: not available\n" << std::endl;
     } else {
         if (config.using_GPU) {
-            std::cout << "GPU: enabled\n" << std::endl;
+            std::cout << "GPU: enabled\n";
+            int threads = 0, teams = 0;
+#pragma omp target teams distribute parallel for map(tofrom : threads, teams)
+            for (int i = 0; i < 16384; i++) {
+                if (omp_get_team_num() == 0 && omp_get_thread_num() == 0) {
+                    threads = omp_get_num_threads();
+                    teams = omp_get_num_teams();
+                }
+            }
+            std::cout << "Device teams: " << teams << "\n";
+            std::cout << "Device threads per team: " << threads << "\n"
+                      << std::endl;
         } else {
             std::cout << "GPU: disabled\n" << std::endl;
         }
@@ -59,7 +70,8 @@ void signal_handler(int signal) {
 std::string generate_directory_name(const Config& config,
                                     const std::string& timestamp) {
     std::string base = InitialConfig::to_string(config.initial_setup);
-    std::string run_dir = "outputs/" + base + "_" + timestamp;
+    std::string run_dir =
+        config.outputs_folder_path + "/" + base + "_" + timestamp;
     return run_dir;
 }
 

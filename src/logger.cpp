@@ -101,6 +101,9 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
     int peak_mem = get_peak_memory_usage_MB();
     int curr_mem = get_current_memory_usage_MB();
 
+    double PP_time = std::max(diag.get_average(TimerRegion::PP),
+                              diag.get_average(TimerRegion::PP_GPU));
+
     // Write to CSV file
     if (log_file.is_open()) {
         log_file << diag.cycle << "," << diag.sim_time << ","
@@ -175,9 +178,7 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
               << format_double(diag.get_average_overhead() * 1000.0, 0)
               << " | PM: "
               << format_double(diag.get_average(TimerRegion::PM) * 1000.0, 0)
-              << " | PP: "
-              << format_double(diag.get_average(TimerRegion::PP) * 1000.0, 0)
-              << " | Hydro: "
+              << " | PP: " << format_double(PP_time * 1000.0, 0) << " | Hydro: "
               << format_double(diag.get_average(TimerRegion::Hydro) * 1000.0, 0)
               << " | Cool: "
               << format_double(diag.get_average(TimerRegion::Cool) * 1000.0, 0)
@@ -199,6 +200,9 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
                   << " | Compute: "
                   << format_double(
                          diag.get_prof_average(ProfRegion::Compute) / 1000.0, 1)
+                  << " | Tree: "
+                  << format_double(
+                         diag.get_prof_average(ProfRegion::Tree) / 1000.0, 1)
                   << "\n";
     }
     std::cout << "-------------------------------------------------------------"

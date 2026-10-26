@@ -67,7 +67,7 @@ inline double gravity_derivatives(double r, double h) {
     double q4 = q2 * q2;
 
     double h2 = h * h;
-    
+
     double dphi_dr;
     if (q < 0.5) {
         dphi_dr = (1.0 / h2) * (10.6666666667 * q - 38.4 * q3 + 32.0 * q4);

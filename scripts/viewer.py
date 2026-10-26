@@ -515,7 +515,7 @@ if __name__ == '__main__':
     target_dir = args.path
     
     if args.latest:
-        search_pattern = os.path.join(target_dir, "run_*")
+        search_pattern = os.path.join(target_dir, "cosmological_*")
         runs = sorted(glob.glob(search_pattern))
         if runs:
             target_dir = runs[-1]

@@ -1,5 +1,6 @@
 #pragma once
 #include <stddef.h>
+
 #include <vector>
 
 struct Config;
@@ -51,7 +52,7 @@ class Cooling {
                                   double a, double dt, double u_cutoff,
                                   double u_floor, const Config& config,
                                   int& iterations_taken) const;
-                                  
+
     // Public interface
     void apply_cooling(GasParticleSystem& gas, const Config& config, double a);
 

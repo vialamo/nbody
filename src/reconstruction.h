@@ -3,8 +3,6 @@
 
 struct Vec3;
 
-// #define USE_MIDPOINT_QUADRATURE
-
 namespace Reconstruction {
 
 struct FluidStateArrays {

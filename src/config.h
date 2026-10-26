@@ -110,6 +110,7 @@ struct Config {
     double initial_gas_temperature_k = 50.0;
     double seed_metallicity_solar = 0.0;
     int seed = 42;
+    std::string glass_folder_path = "";
 
     // Hydro
     HydroMethod hydro_method = HydroMethod::Eulerian;
@@ -143,6 +144,7 @@ struct Config {
     bool individual_particle_timesteps = false;
 
     // Output
+    std::string outputs_folder_path = "outputs";
     double save_HDF5_every_delta_a = 0.005;
     double debug_info_every_seconds = 30;
 

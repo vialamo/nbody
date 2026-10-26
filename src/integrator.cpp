@@ -352,42 +352,20 @@ static void reset_all_accels(SimState& state, Config& config) {
     }
 }
 
-#ifdef USE_GPU
-#define GPU_CPU_PARALLEL_EXECUTION
-#endif
 void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
     // Update softening
-    GravitySolver::update_softening(state, config);
+    state.gravity.update_softening(state, config);
 
     // Build trees
     {
         ScopedTimer timer(diag, TimerRegion::Tree);
-#ifndef GRAVITY_OWN_MEMORY
+#ifndef GRAVITY_GPU_MEMORY
         state.dm.build_lbvh(config);
 #endif
         if (config.hydro_method == HydroMethod::MFM) {
             state.mfm_gas->build_lbvh(config);
         }
     }
-
-#ifndef GPU_CPU_PARALLEL_EXECUTION
-    // Hydro
-    if (config.hydro_method == HydroMethod::MFM) {
-        {
-            ScopedTimer timer(diag, TimerRegion::Density);
-            DensitySolver::compute_density_and_h(*state.mfm_gas, config);
-        }
-        {
-            ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
-            state.mfm_gas->hydro_step(config, state.scale_factor);
-        }
-        if (config.enable_cooling) {
-            ScopedTimer cooling_timer(diag, TimerRegion::Cool);
-            state.cooling.apply_cooling(*state.mfm_gas, config,
-                                        state.scale_factor);
-        }
-    }
-#endif
 
     // PM
     {
@@ -401,15 +379,22 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
         }
     }
 
+    // PP
 #ifdef GPU_CPU_PARALLEL_EXECUTION
-    static PersistentWorker pp_worker;
+    static Worker pp_worker;
+#endif
     if (config.use_PP) {
         ScopedTimer pp_timer(diag, TimerRegion::PP);
-        GravitySolver::prepare_arrays(state.dm, state.mfm_gas.get(), config);
+#ifdef GPU_CPU_PARALLEL_EXECUTION
         pp_worker.launch([&]() {
-            GravitySolver::add_pp_accel(state.dm, state.mfm_gas.get(),
-                                        state.scale_factor, config, diag);
+            ScopedTimer pp_timer(diag, TimerRegion::PP_GPU);
+            state.gravity.add_pp_accel(state.dm, state.mfm_gas.get(),
+                                       state.scale_factor, config, diag);
         });
+#else
+        state.gravity.add_pp_accel(state.dm, state.mfm_gas.get(),
+                                   state.scale_factor, config, diag);
+#endif
     }
 
     if (config.hydro_method == HydroMethod::MFM) {
@@ -428,16 +413,10 @@ void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
         }
     }
 
-    if (config.use_PP) {
-        pp_worker.wait();
-        GravitySolver::map_results(state.dm, state.mfm_gas.get());
-    }
-#else
-    // PP
+#ifdef GPU_CPU_PARALLEL_EXECUTION
     if (config.use_PP) {
         ScopedTimer pp_timer(diag, TimerRegion::PP);
-        GravitySolver::add_pp_accel(state.dm, state.mfm_gas.get(),
-                                    state.scale_factor, config, diag);
+        pp_worker.wait();
     }
 #endif
 }

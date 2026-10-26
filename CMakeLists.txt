@@ -14,9 +14,14 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
 
-option(USE_GPU_OFFLOAD "Enable OpenMP GPU Offloading" ON)
-option(USE_CLANG_TIDY  "Run clang-tidy during compilation" OFF)
-option(USE_FFTW_OMP "Use FFTW3 OpenMP backend (disable to avoid libgomp clash)" OFF)
+option(USE_GPU_OFFLOAD "Enable GPU Offloading" ON)
+option(USE_FFTW_OMP "Use FFTW3 OpenMP backend (disable if libgomp conflicts arise)" OFF)
+option(ENABLE_IPO "Enable Interprocedural Optimization (LTO)" ON)
+option(ENABLE_VEC_DIAGNOSTICS "Enable compiler vectorization diagnostics" OFF)
+option(ENABLE_GRAVITY_GPU_MEMORY "Keep gravity solver data resident in GPU VRAM" ON)
+option(ENABLE_PARALLEL_EXECUTION "Execute CPU hydro and GPU gravity solvers concurrently" ON)
+option(USE_GEOMETRIC_MATRIX "Exclude neighbor density from MFM matrix computations" OFF)
+option(USE_MIDPOINT_QUADRATURE "Use midpoint instead of weighted quadrature in MFM" OFF)
 
 # ==============================================================================
 # DEPENDENCIES
@@ -60,6 +65,7 @@ set(CORE_SOURCES
     src/pm.cpp
     src/reconstruction.cpp
     src/riemann.cpp
+    src/state.cpp
     src/thermodynamics.cpp
     src/types.cpp
     src/utils.cpp
@@ -84,6 +90,17 @@ target_include_directories(SimulationCore SYSTEM PUBLIC
     ${EIGEN3_INCLUDE_DIR}
     ${FFTW3_INCLUDE_DIR}
 )
+
+# ==============================================================================
+# PHYSICS & FEATURE CONFIGURATION
+# ==============================================================================
+if(USE_GEOMETRIC_MATRIX)
+	target_compile_definitions(SimulationCore PUBLIC USE_GEOMETRIC_MATRIX)
+endif()
+if(USE_MIDPOINT_QUADRATURE)
+	target_compile_definitions(SimulationCore PUBLIC USE_MIDPOINT_QUADRATURE)
+endif()
+
 # ==============================================================================
 # HARDWARE OPTIMIZATION
 # ==============================================================================
@@ -93,7 +110,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         "-march=native"
         "-fno-math-errno"
     )
-    
+endif()
+
+if(MSVC)
+    target_compile_options(SimulationCore PUBLIC "/arch:AVX2")
+endif()
+
+# Vectorization Diagnostics Toggle
+if(ENABLE_VEC_DIAGNOSTICS)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         message(STATUS "Enabling Clang SIMD vectorization diagnostics")
         target_compile_options(SimulationCore PUBLIC 
@@ -105,9 +129,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(SimulationCore PUBLIC 
             "-fopt-info-vec-missed"
         )
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "NVHPC" OR CMAKE_CXX_COMPILER_ID MATCHES "PGI")
+        message(STATUS "Enabling NVHPC SIMD vectorization diagnostics")
+        target_compile_options(SimulationCore PUBLIC "-Minfo=vect")
     endif()
-elseif(MSVC)
-    target_compile_options(SimulationCore PUBLIC "/arch:AVX2")
 endif()
 
 # ==============================================================================
@@ -117,6 +142,14 @@ if(USE_GPU_OFFLOAD)
     message(STATUS "GPU Offloading ENABLED")
     
     target_compile_definitions(SimulationCore PUBLIC USE_GPU)
+    
+    if(ENABLE_GRAVITY_GPU_MEMORY)
+		target_compile_definitions(SimulationCore PUBLIC GRAVITY_GPU_MEMORY)
+	endif()
+
+	if(ENABLE_PARALLEL_EXECUTION)
+		target_compile_definitions(SimulationCore PUBLIC GPU_CPU_PARALLEL_EXECUTION)
+	endif()
 
     execute_process(
         COMMAND nvidia-smi --query-gpu=compute_cap --format=csv,noheader
@@ -161,14 +194,14 @@ if(USE_GPU_OFFLOAD)
         target_compile_options(SimulationCore PUBLIC
             -fopenmp
             -foffload=nvptx-none
-            "-foffload-options=nvptx-none=-march=${GPU_ARCH}"
+            "-foffload-options=nvptx-none=-march=${GPU_ARCH} -ffp-contract=fast -fno-math-errno -fno-trapping-math"
             -fcf-protection=none
             -fno-stack-protector # Bypass host stack canaries leaking to the GPU
         )
         add_link_options(
             -fopenmp
             -foffload=nvptx-none
-            "-foffload-options=nvptx-none=-march=${GPU_ARCH}"
+            "-foffload-options=nvptx-none=-march=${GPU_ARCH} -ffp-contract=fast -fno-math-errno -fno-trapping-math"
             -fcf-protection=none
             -fno-stack-protector
         )
@@ -183,6 +216,7 @@ else()
         add_link_options(-foffload=disable)
     endif()
 endif()
+
 # ==============================================================================
 # MAIN EXECUTABLE
 # ==============================================================================
@@ -246,25 +280,19 @@ catch_discover_tests(run_tests)
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
 
-if(ipo_supported)
+if(ipo_supported AND ENABLE_IPO)
     message(STATUS "IPO / LTO enabled: compiler supports it.")
     set_target_properties(SimulationCore PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
     set_target_properties(${PROJECT_NAME} PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
     set_target_properties(run_tests PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
 else()
-    message(STATUS "IPO / LTO disabled (or unsupported): ${ipo_error}")
-endif()
-
-# ==============================================================================
-# CODE LINTER (CLANG-TIDY)
-# ==============================================================================
-if(USE_CLANG_TIDY)
-    find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
-    if(CLANG_TIDY_EXE)
-        message(STATUS "clang-tidy found: ${CLANG_TIDY_EXE}")
-        set_target_properties(SimulationCore PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
-        set_target_properties(${PROJECT_NAME} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
+    if(NOT ENABLE_IPO)
+        message(STATUS "IPO / LTO manually disabled via ENABLE_IPO=OFF")
     else()
-        message(WARNING "clang-tidy not found!")
+        message(STATUS "IPO / LTO disabled (unsupported): ${ipo_error}")
     endif()
+    
+    set_target_properties(SimulationCore PROPERTIES INTERPROCEDURAL_OPTIMIZATION FALSE)
+    set_target_properties(${PROJECT_NAME} PROPERTIES INTERPROCEDURAL_OPTIMIZATION FALSE)
+    set_target_properties(run_tests PROPERTIES INTERPROCEDURAL_OPTIMIZATION FALSE)
 endif()

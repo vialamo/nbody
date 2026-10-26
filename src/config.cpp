@@ -228,6 +228,8 @@ void Config::load(const std::string& filename) {
     seed_metallicity_solar = config_file.get_double(
         "initial_conditions", "seed_metallicity_solar", seed_metallicity_solar);
     seed = config_file.get_int("initial_conditions", "seed", seed);
+    glass_folder_path = config_file.get("initial_conditions",
+                                        "glass_folder_path", glass_folder_path);
 
     std::string hydro_str = config_file.get(
         "hydro", "hydro_method", HydroConfig::to_string(hydro_method));
@@ -278,6 +280,8 @@ void Config::load(const std::string& filename) {
         "output", "save_hdf5_every_delta_a", save_HDF5_every_delta_a);
     debug_info_every_seconds = config_file.get_double(
         "output", "debug_info_every_seconds", debug_info_every_seconds);
+    outputs_folder_path =
+        config_file.get("output", "outputs_folder_path", outputs_folder_path);
 
     num_threads = config_file.get_int("HPC", "num_threads", num_threads);
 

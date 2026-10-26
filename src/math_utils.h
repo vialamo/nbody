@@ -16,6 +16,13 @@ inline double periodic_displacement(double dx, double domain_size) {
     dx = (dx < -half_domain) ? dx + domain_size : dx;
     return dx;
 }
+
+inline double periodic_displacement(double dx, double domain,
+                                    double half_domain) {
+    dx = (dx > half_domain) ? dx - domain : dx;
+    dx = (dx < -half_domain) ? dx + domain : dx;
+    return dx;
+}
 #ifdef USE_GPU
 #pragma omp end declare target
 #endif

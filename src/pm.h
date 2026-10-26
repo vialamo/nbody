@@ -6,15 +6,15 @@ struct Config;
 struct SimState;
 
 class PM {
-public:
+   public:
     Grid3D rho;
     Grid3D phi;
-    
+
     // Comoving gravitational acceleration on the mesh
     Grid3D acc_x;
     Grid3D acc_y;
     Grid3D acc_z;
-    
+
     PM(const Config& config);
     ~PM();
 

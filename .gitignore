@@ -1,14 +1,13 @@
 # Ignore CMake build folder
 /build/
 
-# Ignore the C++ IntelliSense database
-compile_commands.json
+# Ignore data folder
+data/*
+# Do not ignore the download script
+!data/fetch_data.sh
 
-# Ignore VS Code cache files (but KEEP settings.json)
-.vscode/*
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
+# Ignore VS Code cache files
+.vscode/
 
 # Ignore Python virtual environments and caches
 __pycache__/
@@ -16,5 +15,3 @@ __pycache__/
 .venv/
 venv/
 
-# Ignore builder files
-.buildconfig

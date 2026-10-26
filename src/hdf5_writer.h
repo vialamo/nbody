@@ -1,7 +1,7 @@
 #pragma once
+#include <Eigen/Dense>
 #include <string>
 #include <vector>
-#include <Eigen/Dense>
 
 #ifdef _MSC_VER
 #pragma warning(push)

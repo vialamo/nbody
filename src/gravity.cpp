@@ -8,193 +8,383 @@
 #include "math_utils.h"
 #include "state.h"
 
-namespace GravitySolver {
+// #define SINGLE_PRECISION_TRANSCENDENTALS
 
-void update_softening(SimState& state, Config& config) {
-    double a = state.scale_factor;
-    double cap_a = config.physical_softening_cap_a;
-    double current_comoving_softening = config.base_comoving_softening;
+#ifdef USE_GPU
+#pragma omp declare target
+#endif
+static inline double compute_pm_taper(double r, double inv_two_r_s,
+                                      double taper_coeff) {
+    double r_scaled = r * inv_two_r_s;
+#ifdef SINGLE_PRECISION_TRANSCENDENTALS
+    return erfcf(static_cast<float>(r_scaled)) +
+           (r * taper_coeff) * expf(static_cast<float>(-r_scaled * r_scaled));
+#else
+    return std::erfc(r_scaled) +
+           (r * taper_coeff) * std::exp(-r_scaled * r_scaled);
+#endif
+}
+#ifdef USE_GPU
+#pragma omp end declare target
+#endif
 
-    if (a > cap_a && config.expanding_universe) {
-        // Shrink comoving softening so physical softening stays constant
-        current_comoving_softening =
-            config.base_comoving_softening * (cap_a / a);
+#ifdef GRAVITY_GPU_MEMORY
+static size_t current_gpu_capacity = 0;
+static size_t current_bvh_capacity = 0;
+
+static double *d_u_px = nullptr, *d_u_py = nullptr, *d_u_pz = nullptr,
+              *d_u_m = nullptr;
+static double *d_u_ax = nullptr, *d_u_ay = nullptr, *d_u_az = nullptr;
+static double *d_t_px = nullptr, *d_t_py = nullptr, *d_t_pz = nullptr,
+              *d_t_m = nullptr;
+static int *d_u_orig_idx = nullptr, *d_t_orig_idx = nullptr,
+           *d_u_sorted_idx = nullptr;
+static uint8_t *d_u_type = nullptr, *d_t_type = nullptr,
+               *d_t_is_active = nullptr;
+static uint64_t* d_u_morton = nullptr;
+static BVHNode* d_u_bvh = nullptr;
+
+// Arrays requiring CPU interaction
+static std::vector<uint8_t> u_is_active;
+static std::vector<int> u_active_indices;
+
+static void free_gpu_resources() {
+    int dev = omp_get_default_device();
+
+    if (current_gpu_capacity > 0) {
+        omp_target_free(d_u_px, dev);
+        omp_target_free(d_t_px, dev);
+        omp_target_free(d_u_py, dev);
+        omp_target_free(d_t_py, dev);
+        omp_target_free(d_u_pz, dev);
+        omp_target_free(d_t_pz, dev);
+        omp_target_free(d_u_m, dev);
+        omp_target_free(d_t_m, dev);
+        omp_target_free(d_u_ax, dev);
+        omp_target_free(d_u_ay, dev);
+        omp_target_free(d_u_az, dev);
+        omp_target_free(d_u_orig_idx, dev);
+        omp_target_free(d_t_orig_idx, dev);
+        omp_target_free(d_u_type, dev);
+        omp_target_free(d_t_type, dev);
+        omp_target_free(d_t_is_active, dev);
+        omp_target_free(d_u_morton, dev);
+        omp_target_free(d_u_sorted_idx, dev);
+
+        uint8_t* old_is_active = u_is_active.data();
+#pragma omp target exit data map( \
+        delete : old_is_active[0 : current_gpu_capacity])
+
+        current_gpu_capacity = 0;
     }
-    config.softening = current_comoving_softening;
+
+    if (current_bvh_capacity > 0) {
+        omp_target_free(d_u_bvh, dev);
+        current_bvh_capacity = 0;
+    }
 }
 
-#ifdef GRAVITY_OWN_MEMORY
-static std::vector<double> u_px, u_py, u_pz, u_m, u_h, u_ax, u_ay, u_az;
-static std::vector<double> t_px, t_py, t_pz, t_m, t_h;
-static std::vector<int> u_original_idx, t_original_idx;
-static std::vector<uint8_t> u_type, t_type;
-static std::vector<uint64_t> u_morton;
-static std::vector<int> u_sorted_indices;
-static std::vector<int> u_active_indices;
-static std::vector<BVHNode> u_bvh;
-
-void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
-                    const Config& config) {
+static void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
+                           const Config& config, Diagnostics& diag) {
     size_t n_dm = dm.num_particles;
     size_t n_gas = gas ? gas->num_particles : 0;
     size_t n_total = n_dm + n_gas;
 
     if (n_total == 0) return;
 
-    // Resize global arrays
-    u_px.resize(n_total);
-    u_py.resize(n_total);
-    u_pz.resize(n_total);
-    u_m.resize(n_total);
-    u_h.resize(n_total);
-    u_original_idx.resize(n_total);
-    u_type.resize(n_total);
-    u_ax.assign(n_total, 0.0);
-    u_ay.assign(n_total, 0.0);
-    u_az.assign(n_total, 0.0);
+    auto t_start = std::chrono::high_resolution_clock::now();
 
-// Data Concatenation
-#pragma omp parallel for schedule(static)
-    for (size_t i = 0; i < n_dm; ++i) {
-        u_px[i] = dm.pos_x[i];
-        u_py[i] = dm.pos_y[i];
-        u_pz[i] = dm.pos_z[i];
-        u_m[i] = dm.mass[i];
-        u_h[i] = 0.0;  // DM does not use 'h'
-        u_original_idx[i] = i;
-        u_type[i] = 0;  // Type 0: DM
+    // GPU Allocation
+    if (n_total > current_gpu_capacity) {
+        int dev = omp_get_default_device();
+        // Free old GPU memory if capacity is expanding
+        if (current_gpu_capacity > 0) {
+            omp_target_free(d_u_px, dev);
+            omp_target_free(d_t_px, dev);
+            omp_target_free(d_u_py, dev);
+            omp_target_free(d_t_py, dev);
+            omp_target_free(d_u_pz, dev);
+            omp_target_free(d_t_pz, dev);
+            omp_target_free(d_u_m, dev);
+            omp_target_free(d_t_m, dev);
+            omp_target_free(d_u_ax, dev);
+            omp_target_free(d_u_ay, dev);
+            omp_target_free(d_u_az, dev);
+            omp_target_free(d_u_orig_idx, dev);
+            omp_target_free(d_t_orig_idx, dev);
+            omp_target_free(d_u_type, dev);
+            omp_target_free(d_t_type, dev);
+            omp_target_free(d_t_is_active, dev);
+            omp_target_free(d_u_morton, dev);
+            omp_target_free(d_u_sorted_idx, dev);
+
+            // Only use map(delete) for the host-backed active array
+            uint8_t* old_is_active = u_is_active.data();
+#pragma omp target exit data map( \
+        delete : old_is_active[0 : current_gpu_capacity])
+        }
+
+        u_is_active.resize(n_total);
+        uint8_t* d_is_act = u_is_active.data();
+#pragma omp target enter data map(alloc : d_is_act[0 : n_total])
+
+        // Allocate on the GPU
+        d_u_px = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_t_px = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_u_py = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_t_py = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_u_pz = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_t_pz = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_u_m = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_t_m = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_u_ax = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_u_ay = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_u_az = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_u_orig_idx = (int*)omp_target_alloc(n_total * sizeof(int), dev);
+        d_t_orig_idx = (int*)omp_target_alloc(n_total * sizeof(int), dev);
+        d_u_type = (uint8_t*)omp_target_alloc(n_total * sizeof(uint8_t), dev);
+        d_t_type = (uint8_t*)omp_target_alloc(n_total * sizeof(uint8_t), dev);
+        d_t_is_active =
+            (uint8_t*)omp_target_alloc(n_total * sizeof(uint8_t), dev);
+        d_u_morton =
+            (uint64_t*)omp_target_alloc(n_total * sizeof(uint64_t), dev);
+        d_u_sorted_idx = (int*)omp_target_alloc(n_total * sizeof(int), dev);
+
+        current_gpu_capacity = n_total;
     }
 
-    if (gas) {
-#pragma omp parallel for schedule(static)
+    // Zero out the accelerations on the GPU for the current step
+#pragma omp target teams distribute parallel for is_device_ptr(d_u_ax, d_u_ay, \
+                                                                   d_u_az)
+    for (size_t i = 0; i < n_total; ++i) {
+        d_u_ax[i] = 0.0;
+        d_u_ay[i] = 0.0;
+        d_u_az[i] = 0.0;
+    }
+
+    // Pointers for Device Mapping
+    uint8_t* d_u_is_active = u_is_active.data();
+
+    // On-Device Concatenation
+    // Map the CPU particle arrays to the device temporarily to build the
+    // unified arrays
+    double* d_dm_px = dm.pos_x.data();
+    double* d_dm_py = dm.pos_y.data();
+    double* d_dm_pz = dm.pos_z.data();
+    double* d_dm_m = dm.mass.data();
+    uint8_t* d_dm_is_active = dm.is_active.data();
+
+#pragma omp target teams distribute parallel for is_device_ptr(       \
+        d_u_px, d_u_py, d_u_pz, d_u_m, d_u_orig_idx, d_u_type)        \
+    map(to : d_dm_px[0 : n_dm], d_dm_py[0 : n_dm], d_dm_pz[0 : n_dm], \
+            d_dm_m[0 : n_dm], d_dm_is_active[0 : n_dm])
+    for (size_t i = 0; i < n_dm; ++i) {
+        d_u_px[i] = d_dm_px[i];
+        d_u_py[i] = d_dm_py[i];
+        d_u_pz[i] = d_dm_pz[i];
+        d_u_m[i] = d_dm_m[i];
+        d_u_orig_idx[i] = i;
+        d_u_type[i] = 0;  // Type 0: DM
+        d_u_is_active[i] = d_dm_is_active[i];
+    }
+
+    if (gas && n_gas > 0) {
+        double* d_gas_px = gas->pos_x.data();
+        double* d_gas_py = gas->pos_y.data();
+        double* d_gas_pz = gas->pos_z.data();
+        double* d_gas_m = gas->mass.data();
+        uint8_t* d_gas_is_active = gas->is_active.data();
+
+#pragma omp target teams distribute parallel for is_device_ptr(             \
+        d_u_px, d_u_py, d_u_pz, d_u_m, d_u_orig_idx, d_u_type)              \
+    map(to : d_gas_px[0 : n_gas], d_gas_py[0 : n_gas], d_gas_pz[0 : n_gas], \
+            d_gas_m[0 : n_gas], d_gas_is_active[0 : n_gas])
         for (size_t i = 0; i < n_gas; ++i) {
             size_t offset = n_dm + i;
-            u_px[offset] = gas->pos_x[i];
-            u_py[offset] = gas->pos_y[i];
-            u_pz[offset] = gas->pos_z[i];
-            u_m[offset] = gas->mass[i];
-            u_h[offset] = gas->h[i];
-            u_original_idx[offset] = i;
-            u_type[offset] = 1;  // Type 1: Gas
+            d_u_px[offset] = d_gas_px[i];
+            d_u_py[offset] = d_gas_py[i];
+            d_u_pz[offset] = d_gas_pz[i];
+            d_u_m[offset] = d_gas_m[i];
+            d_u_orig_idx[offset] = i;
+            d_u_type[offset] = 1;  // Type 1: Gas
+            d_u_is_active[offset] = d_gas_is_active[i];
         }
     }
 
-    // Morton Code Generation and Array Sorting
-    LBVH::compute_morton_and_sort_indices(n_total, config.domain_size, u_px,
-                                          u_py, u_pz, u_morton,
-                                          u_sorted_indices);
+    auto t_transfer = std::chrono::high_resolution_clock::now();
 
-    // Reorder data inline using temp arrays
-    t_px.resize(n_total);
-    t_py.resize(n_total);
-    t_pz.resize(n_total);
-    t_m.resize(n_total);
-    t_h.resize(n_total);
-    t_original_idx.resize(n_total);
-    t_type.resize(n_total);
+    // Run Morton generation
+    LBVH::compute_morton_and_sort_indices_gpu(n_total, config.domain_size,
+                                              d_u_px, d_u_py, d_u_pz,
+                                              d_u_morton, d_u_sorted_idx);
 
-#pragma omp parallel for schedule(static)
+// Permute into temporary device arrays
+#pragma omp target teams distribute parallel for is_device_ptr(                \
+        d_u_px, d_u_py, d_u_pz, d_u_m, d_u_orig_idx, d_u_type, d_u_sorted_idx, \
+            d_t_px, d_t_py, d_t_pz, d_t_m, d_t_orig_idx, d_t_type,             \
+            d_t_is_active)
     for (size_t i = 0; i < n_total; ++i) {
-        int idx = u_sorted_indices[i];
-        t_px[i] = u_px[idx];
-        t_py[i] = u_py[idx];
-        t_pz[i] = u_pz[idx];
-        t_m[i] = u_m[idx];
-        t_h[i] = u_h[idx];
-        t_original_idx[i] = u_original_idx[idx];
-        t_type[i] = u_type[idx];
+        int idx = d_u_sorted_idx[i];
+        d_t_px[i] = d_u_px[idx];
+        d_t_py[i] = d_u_py[idx];
+        d_t_pz[i] = d_u_pz[idx];
+        d_t_m[i] = d_u_m[idx];
+        d_t_orig_idx[i] = d_u_orig_idx[idx];
+        d_t_type[i] = d_u_type[idx];
+        d_t_is_active[i] = d_u_is_active[idx];
     }
 
-    u_px.swap(t_px);
-    u_py.swap(t_py);
-    u_pz.swap(t_pz);
-    u_m.swap(t_m);
-    u_h.swap(t_h);
-    u_original_idx.swap(t_original_idx);
-    u_type.swap(t_type);
+// Copy back to the persistent device arrays
+#pragma omp target teams distribute parallel for is_device_ptr(                \
+        d_u_px, d_u_py, d_u_pz, d_u_m, d_u_orig_idx, d_u_type, d_t_px, d_t_py, \
+            d_t_pz, d_t_m, d_t_orig_idx, d_t_type, d_t_is_active)
+    for (size_t i = 0; i < n_total; ++i) {
+        d_u_px[i] = d_t_px[i];
+        d_u_py[i] = d_t_py[i];
+        d_u_pz[i] = d_t_pz[i];
+        d_u_m[i] = d_t_m[i];
+        d_u_orig_idx[i] = d_t_orig_idx[i];
+        d_u_type[i] = d_t_type[i];
+        d_u_is_active[i] = d_t_is_active[i];
+    }
 
-    // Build Tree & Gather Active Indices
-    LBVH::build_topology_and_aggregate(n_total, u_px, u_py, u_pz, u_m, &u_h,
-                                       u_morton, u_bvh);
+    // Persistent GPU allocation for the tree
+    size_t required_nodes = (n_total > 0) ? (2 * n_total - 1) : 0;
 
+    if (required_nodes > current_bvh_capacity) {
+        int dev = omp_get_default_device();
+        if (current_bvh_capacity > 0) {
+            omp_target_free(d_u_bvh, dev);
+        }
+        d_u_bvh =
+            (BVHNode*)omp_target_alloc(required_nodes * sizeof(BVHNode), dev);
+        current_bvh_capacity = required_nodes;
+    }
+
+    // Call the device-side builder using the GPU-resident arrays
+    LBVH::build_topology_and_aggregate_gpu(n_total, d_u_px, d_u_py, d_u_pz,
+                                           d_u_m, d_u_morton, d_u_bvh);
+
+    uint8_t* d_u_is_active_end = u_is_active.data();
+#pragma omp target update from(d_u_is_active_end[0 : n_total])
+
+    // Rebuild the dense array sequentially to preserve Morton spatial
+    // locality
     u_active_indices.clear();
     for (size_t i = 0; i < n_total; ++i) {
-        int orig = u_original_idx[i];
-        bool is_active =
-            (u_type[i] == 0) ? dm.is_active[orig] : gas->is_active[orig];
-        if (is_active) u_active_indices.push_back(i);
+        if (u_is_active[i]) u_active_indices.push_back(i);
     }
+
+    auto t_tree = std::chrono::high_resolution_clock::now();
+
+    // Log the times to diagnostics
+    diag.add_prof_time(ProfRegion::Transf,
+                       std::chrono::duration_cast<std::chrono::microseconds>(
+                           t_transfer - t_start)
+                           .count());
+    diag.add_prof_time(ProfRegion::Tree,
+                       std::chrono::duration_cast<std::chrono::microseconds>(
+                           t_tree - t_transfer)
+                           .count());
 }
 
 // Map accelerations back to native structures
-void map_results(ParticleSystem& dm, GasParticleSystem* gas) {
+static void map_results(ParticleSystem& dm, GasParticleSystem* gas) {
     size_t n_dm = dm.num_particles;
     size_t n_gas = gas ? gas->num_particles : 0;
-    size_t n_total = n_dm + n_gas;
-#pragma omp parallel for schedule(static)
-    for (size_t i = 0; i < n_total; ++i) {
-        int orig = u_original_idx[i];
-        if (u_type[i] == 0) {
-            dm.acc_x[orig] += u_ax[i];
-            dm.acc_y[orig] += u_ay[i];
-            dm.acc_z[orig] += u_az[i];
-        } else {
-            gas->acc_x[orig] += u_ax[i];
-            gas->acc_y[orig] += u_ay[i];
-            gas->acc_z[orig] += u_az[i];
+    size_t n_active = u_active_indices.size();
+
+    if (n_active == 0) return;
+
+    int* d_active_idx = u_active_indices.data();
+
+#pragma omp target data map(to : d_active_idx[0 : n_active])
+    {
+        if (n_dm > 0) {
+            double* d_dm_ax = dm.acc_x.data();
+            double* d_dm_ay = dm.acc_y.data();
+            double* d_dm_az = dm.acc_z.data();
+
+#pragma omp target teams distribute parallel for map(                     \
+        tofrom : d_dm_ax[0 : n_dm], d_dm_ay[0 : n_dm], d_dm_az[0 : n_dm]) \
+    is_device_ptr(d_u_ax, d_u_ay, d_u_az, d_u_orig_idx, d_u_type)
+            for (size_t k = 0; k < n_active; ++k) {
+                size_t i = d_active_idx[k];
+                if (d_u_type[i] == 0) {
+                    int orig = d_u_orig_idx[i];
+                    d_dm_ax[orig] += d_u_ax[i];
+                    d_dm_ay[orig] += d_u_ay[i];
+                    d_dm_az[orig] += d_u_az[i];
+                }
+            }
+        }
+
+        if (n_gas > 0) {
+            double* d_gas_ax = gas->acc_x.data();
+            double* d_gas_ay = gas->acc_y.data();
+            double* d_gas_az = gas->acc_z.data();
+
+#pragma omp target teams distribute parallel for map(                    \
+        tofrom : d_gas_ax[0 : n_gas], d_gas_ay[0 : n_gas],               \
+            d_gas_az[0 : n_gas]) \
+    is_device_ptr(d_u_ax, d_u_ay, d_u_az, d_u_orig_idx, d_u_type)
+            for (size_t k = 0; k < n_active; ++k) {
+                size_t i = d_active_idx[k];
+                if (d_u_type[i] == 1) {
+                    int orig = d_u_orig_idx[i];
+                    d_gas_ax[orig] += d_u_ax[i];
+                    d_gas_ay[orig] += d_u_ay[i];
+                    d_gas_az[orig] += d_u_az[i];
+                }
+            }
         }
     }
 }
 
-void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
-                  const Config& config, Diagnostics& diag) {
+void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
+                                 double a, const Config& config,
+                                 Diagnostics& diag) {
     size_t n_dm = dm.num_particles;
     size_t n_gas = gas ? gas->num_particles : 0;
     size_t n_total = n_dm + n_gas;
 
     if (n_total == 0) return;
+
+    prepare_arrays(dm, gas, config, diag);
 
     size_t n_active = u_active_indices.size();
     if (n_active == 0) return;
 
     // Shared Force Constants
     const Vec3& domain_size = config.domain_size;
+    const double half_domain_x = 0.5 * domain_size.x;
+    const double half_domain_y = 0.5 * domain_size.y;
+    const double half_domain_z = 0.5 * domain_size.z;
     const double G = config.G / (a * a * a);
     const double r_s = config.PM_smoothing_cells * config.cell_size;
     const bool use_pm = config.use_PM;
     const double epsilon = config.softening;
     const double search_sq = use_pm ? config.cutoff_radius_squared
                                     : std::numeric_limits<double>::infinity();
-    const size_t num_nodes = 2 * n_total - 1;
+    const double inv_two_r_s = 1.0 / (2.0 * r_s);
+    const double taper_coeff = 1.0 / (std::sqrt(M_PI) * r_s);
 
     // Raw pointers for GPU Offload
-    double* d_px = u_px.data();
-    double* d_py = u_py.data();
-    double* d_pz = u_pz.data();
-    double* d_m = u_m.data();
-    double* d_ax = u_ax.data();
-    double* d_ay = u_ay.data();
-    double* d_az = u_az.data();
-    BVHNode* d_bvh = u_bvh.data();
     int* d_active_idx = u_active_indices.data();
+    double* d_px = d_u_px;
+    double* d_py = d_u_py;
+    double* d_pz = d_u_pz;
+    double* d_m = d_u_m;
+    double* d_ax = d_u_ax;
+    double* d_ay = d_u_ay;
+    double* d_az = d_u_az;
+    BVHNode* d_bvh = d_u_bvh;
 
-#ifdef USE_GPU
-    auto start_transfer = std::chrono::high_resolution_clock::now();
-
-#pragma omp target enter data map(                                            \
-        to : d_px[0 : n_total], d_py[0 : n_total], d_pz[0 : n_total],         \
-            d_m[0 : n_total], d_bvh[0 : num_nodes],                           \
-            d_active_idx[0 : n_active], d_ax[0 : n_total], d_ay[0 : n_total], \
-            d_az[0 : n_total])
-
-    auto end_transfer = std::chrono::high_resolution_clock::now();
     auto start_compute = std::chrono::high_resolution_clock::now();
 
-#pragma omp target teams distribute parallel for
-#else
-#pragma omp parallel for schedule(dynamic, 64)
-#endif
-    // Unified Kernel Execution
+#pragma omp target teams distribute parallel for map( \
+        to : d_active_idx[0 : n_active])              \
+    is_device_ptr(d_px, d_py, d_pz, d_m, d_bvh, d_ax, d_ay, d_az)
     for (size_t k = 0; k < n_active; ++k) {
         size_t i = d_active_idx[k];
 
@@ -221,27 +411,13 @@ void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
             if (node.particle_idx != -1) {
                 int j = node.particle_idx;
 
-                double dx = p1_x - d_px[j];
-                if (dx > 0.5 * domain_size.x)
-                    dx -= domain_size.x;
-                else if (dx < -0.5 * domain_size.x)
-                    dx += domain_size.x;
+                double dx = periodic_displacement(d_px[j] - p1_x, domain_size.x,
+                                                  half_domain_x);
+                double dy = periodic_displacement(d_py[j] - p1_y, domain_size.y,
+                                                  half_domain_y);
+                double dz = periodic_displacement(d_pz[j] - p1_z, domain_size.z,
+                                                  half_domain_z);
 
-                double dy = p1_y - d_py[j];
-                if (dy > 0.5 * domain_size.y)
-                    dy -= domain_size.y;
-                else if (dy < -0.5 * domain_size.y)
-                    dy += domain_size.y;
-
-                double dz = p1_z - d_pz[j];
-                if (dz > 0.5 * domain_size.z)
-                    dz -= domain_size.z;
-                else if (dz < -0.5 * domain_size.z)
-                    dz += domain_size.z;
-
-                dx = -dx;
-                dy = -dy;
-                dz = -dz;
                 double dist_sq = dx * dx + dy * dy + dz * dz;
 
                 if (dist_sq > search_sq) continue;
@@ -253,11 +429,8 @@ void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
                 double force_mag_over_r = G * dphi_dr / r;
 
                 if (use_pm) {
-                    double r_scaled = r / (2.0 * r_s);
-                    double taper = std::erfc(r_scaled) +
-                                   (r / (std::sqrt(M_PI) * r_s)) *
-                                       std::exp(-r_scaled * r_scaled);
-                    force_mag_over_r *= taper;
+                    force_mag_over_r *=
+                        compute_pm_taper(r, inv_two_r_s, taper_coeff);
                 }
 
                 local_acc_x += force_mag_over_r * m_j * dx;
@@ -273,43 +446,38 @@ void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
         d_az[i] += local_acc_z;
     }
 
-#ifdef USE_GPU
     auto end_compute = std::chrono::high_resolution_clock::now();
-    auto start_return = std::chrono::high_resolution_clock::now();
-
-#pragma omp target exit data map(from : d_ax[0 : n_total], d_ay[0 : n_total], \
-                                     d_az[0 : n_total])                       \
-    map(delete : d_px[0 : n_total], d_py[0 : n_total], d_pz[0 : n_total],     \
-            d_m[0 : n_total], d_bvh[0 : num_nodes],                           \
-            d_active_idx[0 : n_active])
-
+    map_results(dm, gas);
     auto end_return = std::chrono::high_resolution_clock::now();
 
-    diag.add_prof_time(ProfRegion::Transf,
-                       std::chrono::duration_cast<std::chrono::microseconds>(
-                           end_transfer - start_transfer)
-                           .count());
     diag.add_prof_time(ProfRegion::Compute,
                        std::chrono::duration_cast<std::chrono::microseconds>(
                            end_compute - start_compute)
                            .count());
     diag.add_prof_time(ProfRegion::Ret,
                        std::chrono::duration_cast<std::chrono::microseconds>(
-                           end_return - start_return)
+                           end_return - end_compute)
                            .count());
-#endif
 }
 
 #else
-void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
-                  const Config& config, Diagnostics& diag) {
-    if (dm.num_particles == 0 && gas.num_particles == 0) return;
+void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
+                                 double a, const Config& config,
+                                 Diagnostics& diag) {
+    if (dm.num_particles == 0 &&
+        (gas == nullptr || (gas && gas->num_particles == 0)))
+        return;
 
     const Vec3& domain_size = config.domain_size;
+    const double half_domain_x = 0.5 * domain_size.x;
+    const double half_domain_y = 0.5 * domain_size.y;
+    const double half_domain_z = 0.5 * domain_size.z;
     const double G = config.G / (a * a * a);
     const double r_s = config.PM_smoothing_cells * config.cell_size;
     const bool use_pm = config.use_PM;
     const double epsilon = config.softening;
+    const double inv_two_r_s = 1.0 / (2.0 * r_s);
+    const double taper_coeff = 1.0 / (std::sqrt(M_PI) * r_s);
 
     const double search_sq = use_pm ? config.cutoff_radius_squared
                                     : std::numeric_limits<double>::infinity();
@@ -392,27 +560,12 @@ void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
 
                 if (node.particle_idx != -1) {
                     int j = node.particle_idx;
-                    double dx = p1_x - d_dm_px[j];
-                    if (dx > 0.5 * domain_size.x)
-                        dx -= domain_size.x;
-                    else if (dx < -0.5 * domain_size.x)
-                        dx += domain_size.x;
-
-                    double dy = p1_y - d_dm_py[j];
-                    if (dy > 0.5 * domain_size.y)
-                        dy -= domain_size.y;
-                    else if (dy < -0.5 * domain_size.y)
-                        dy += domain_size.y;
-
-                    double dz = p1_z - d_dm_pz[j];
-                    if (dz > 0.5 * domain_size.z)
-                        dz -= domain_size.z;
-                    else if (dz < -0.5 * domain_size.z)
-                        dz += domain_size.z;
-
-                    dx = -dx;
-                    dy = -dy;
-                    dz = -dz;
+                    double dx = periodic_displacement(
+                        d_dm_px[j] - p1_x, domain_size.x, half_domain_x);
+                    double dy = periodic_displacement(
+                        d_dm_py[j] - p1_y, domain_size.y, half_domain_y);
+                    double dz = periodic_displacement(
+                        d_dm_pz[j] - p1_z, domain_size.z, half_domain_z);
                     double dist_sq = dx * dx + dy * dy + dz * dz;
 
                     if (dist_sq > search_sq) continue;
@@ -424,11 +577,8 @@ void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
                     double force_mag_over_r = G * dphi_dr / r;
 
                     if (use_pm) {
-                        double r_scaled = r / (2.0 * r_s);
-                        double taper = std::erfc(r_scaled) +
-                                       (r / (std::sqrt(M_PI) * r_s)) *
-                                           std::exp(-r_scaled * r_scaled);
-                        force_mag_over_r *= taper;
+                        force_mag_over_r *=
+                            compute_pm_taper(r, inv_two_r_s, taper_coeff);
                     }
 
                     local_acc_x += force_mag_over_r * m_j * dx;
@@ -460,27 +610,12 @@ void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
 
                     if (node.particle_idx != -1) {
                         int j = node.particle_idx;
-                        double dx = p1_x - d_gas_px[j];
-                        if (dx > 0.5 * domain_size.x)
-                            dx -= domain_size.x;
-                        else if (dx < -0.5 * domain_size.x)
-                            dx += domain_size.x;
-
-                        double dy = p1_y - d_gas_py[j];
-                        if (dy > 0.5 * domain_size.y)
-                            dy -= domain_size.y;
-                        else if (dy < -0.5 * domain_size.y)
-                            dy += domain_size.y;
-
-                        double dz = p1_z - d_gas_pz[j];
-                        if (dz > 0.5 * domain_size.z)
-                            dz -= domain_size.z;
-                        else if (dz < -0.5 * domain_size.z)
-                            dz += domain_size.z;
-
-                        dx = -dx;
-                        dy = -dy;
-                        dz = -dz;
+                        double dx = periodic_displacement(
+                            d_gas_px[j] - p1_x, domain_size.x, half_domain_x);
+                        double dy = periodic_displacement(
+                            d_gas_py[j] - p1_y, domain_size.y, half_domain_y);
+                        double dz = periodic_displacement(
+                            d_gas_pz[j] - p1_z, domain_size.z, half_domain_z);
                         double dist_sq = dx * dx + dy * dy + dz * dz;
 
                         if (dist_sq > search_sq) continue;
@@ -493,11 +628,8 @@ void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
                         double force_mag_over_r = G * dphi_dr / r;
 
                         if (use_pm) {
-                            double r_scaled = r / (2.0 * r_s);
-                            double taper = std::erfc(r_scaled) +
-                                           (r / (std::sqrt(M_PI) * r_s)) *
-                                               std::exp(-r_scaled * r_scaled);
-                            force_mag_over_r *= taper;
+                            force_mag_over_r *=
+                                compute_pm_taper(r, inv_two_r_s, taper_coeff);
                         }
 
                         local_acc_x += force_mag_over_r * m_j * dx;
@@ -548,27 +680,12 @@ void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
 
                 if (node.particle_idx != -1) {
                     int j = node.particle_idx;
-                    double dx = p1_x - d_gas_px[j];
-                    if (dx > 0.5 * domain_size.x)
-                        dx -= domain_size.x;
-                    else if (dx < -0.5 * domain_size.x)
-                        dx += domain_size.x;
-
-                    double dy = p1_y - d_gas_py[j];
-                    if (dy > 0.5 * domain_size.y)
-                        dy -= domain_size.y;
-                    else if (dy < -0.5 * domain_size.y)
-                        dy += domain_size.y;
-
-                    double dz = p1_z - d_gas_pz[j];
-                    if (dz > 0.5 * domain_size.z)
-                        dz -= domain_size.z;
-                    else if (dz < -0.5 * domain_size.z)
-                        dz += domain_size.z;
-
-                    dx = -dx;
-                    dy = -dy;
-                    dz = -dz;
+                    double dx = periodic_displacement(
+                        d_gas_px[j] - p1_x, domain_size.x, half_domain_x);
+                    double dy = periodic_displacement(
+                        d_gas_py[j] - p1_y, domain_size.y, half_domain_y);
+                    double dz = periodic_displacement(
+                        d_gas_pz[j] - p1_z, domain_size.z, half_domain_z);
                     double dist_sq = dx * dx + dy * dy + dz * dz;
 
                     if (dist_sq > search_sq) continue;
@@ -580,11 +697,8 @@ void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
                     double force_mag_over_r = G * dphi_dr / r;
 
                     if (use_pm) {
-                        double r_scaled = r / (2.0 * r_s);
-                        double taper = std::erfc(r_scaled) +
-                                       (r / (std::sqrt(M_PI) * r_s)) *
-                                           std::exp(-r_scaled * r_scaled);
-                        force_mag_over_r *= taper;
+                        force_mag_over_r *=
+                            compute_pm_taper(r, inv_two_r_s, taper_coeff);
                     }
 
                     local_acc_x += force_mag_over_r * m_j * dx;
@@ -616,27 +730,12 @@ void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
 
                     if (node.particle_idx != -1) {
                         int j = node.particle_idx;
-                        double dx = p1_x - d_dm_px[j];
-                        if (dx > 0.5 * domain_size.x)
-                            dx -= domain_size.x;
-                        else if (dx < -0.5 * domain_size.x)
-                            dx += domain_size.x;
-
-                        double dy = p1_y - d_dm_py[j];
-                        if (dy > 0.5 * domain_size.y)
-                            dy -= domain_size.y;
-                        else if (dy < -0.5 * domain_size.y)
-                            dy += domain_size.y;
-
-                        double dz = p1_z - d_dm_pz[j];
-                        if (dz > 0.5 * domain_size.z)
-                            dz -= domain_size.z;
-                        else if (dz < -0.5 * domain_size.z)
-                            dz += domain_size.z;
-
-                        dx = -dx;
-                        dy = -dy;
-                        dz = -dz;
+                        double dx = periodic_displacement(
+                            d_dm_px[j] - p1_x, domain_size.x, half_domain_x);
+                        double dy = periodic_displacement(
+                            d_dm_py[j] - p1_y, domain_size.y, half_domain_y);
+                        double dz = periodic_displacement(
+                            d_dm_pz[j] - p1_z, domain_size.z, half_domain_z);
                         double dist_sq = dx * dx + dy * dy + dz * dz;
 
                         if (dist_sq > search_sq) continue;
@@ -649,11 +748,8 @@ void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
                         double force_mag_over_r = G * dphi_dr / r;
 
                         if (use_pm) {
-                            double r_scaled = r / (2.0 * r_s);
-                            double taper = std::erfc(r_scaled) +
-                                           (r / (std::sqrt(M_PI) * r_s)) *
-                                               std::exp(-r_scaled * r_scaled);
-                            force_mag_over_r *= taper;
+                            force_mag_over_r *=
+                                compute_pm_taper(r, inv_two_r_s, taper_coeff);
                         }
 
                         local_acc_x += force_mag_over_r * m_j * dx;
@@ -734,7 +830,8 @@ static double calculate_max_acceleration(const GasParticleSystem& gas) {
     return std::sqrt(local_max);
 }
 
-double get_timestep(const GasParticleSystem& gas, const Config& config) {
+double GravitySolver::get_timestep(const GasParticleSystem& gas,
+                                   const Config& config) const {
     if (gas.num_particles == 0) return std::numeric_limits<double>::infinity();
 
     double epsilon = config.softening;
@@ -743,7 +840,8 @@ double get_timestep(const GasParticleSystem& gas, const Config& config) {
     return dt_grav * config.gravity_accuracy_eta;
 }
 
-double get_timestep(const ParticleSystem& dm, const Config& config) {
+double GravitySolver::get_timestep(const ParticleSystem& dm,
+                                   const Config& config) const {
     if (dm.num_particles == 0) return std::numeric_limits<double>::infinity();
 
     double epsilon = config.softening;
@@ -752,4 +850,24 @@ double get_timestep(const ParticleSystem& dm, const Config& config) {
     return dt_grav * config.gravity_accuracy_eta;
 }
 
-}  // namespace GravitySolver
+void GravitySolver::update_softening(SimState& state, Config& config) {
+    double a = state.scale_factor;
+    double cap_a = config.physical_softening_cap_a;
+    double current_comoving_softening = config.base_comoving_softening;
+
+    if (a > cap_a && config.expanding_universe) {
+        // Shrink comoving softening so physical softening stays constant
+        current_comoving_softening =
+            config.base_comoving_softening * (cap_a / a);
+    }
+    config.softening = current_comoving_softening;
+}
+
+GravitySolver::GravitySolver() {}
+
+GravitySolver::~GravitySolver() {
+#ifdef GRAVITY_GPU_MEMORY
+    free_gpu_resources();
+    LBVH::free_gpu_resources();
+#endif
+}
