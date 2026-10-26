@@ -324,9 +324,9 @@ static void map_results(ParticleSystem& dm, GasParticleSystem* gas) {
             double* d_gas_ay = gas->acc_y.data();
             double* d_gas_az = gas->acc_z.data();
 
-#pragma omp target teams distribute parallel for map(                    \
-        tofrom : d_gas_ax[0 : n_gas], d_gas_ay[0 : n_gas],               \
-            d_gas_az[0 : n_gas]) \
+#pragma omp target teams distribute parallel for map(      \
+        tofrom : d_gas_ax[0 : n_gas], d_gas_ay[0 : n_gas], \
+            d_gas_az[0 : n_gas])                           \
     is_device_ptr(d_u_ax, d_u_ay, d_u_az, d_u_orig_idx, d_u_type)
             for (size_t k = 0; k < n_active; ++k) {
                 size_t i = d_active_idx[k];

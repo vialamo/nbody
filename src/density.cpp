@@ -222,8 +222,61 @@ static double build_matrix_and_compute_condition(const GasParticleSystem& gas,
     E(2, 0) = E(0, 2);
     E(2, 1) = E(1, 2);
 
+#define SVD_FILTERING
+#ifndef SVD_FILTERING
     B = E.inverse();
     return evaluate_matrix_condition_number(E, B);
+#else
+// Moore-Penrose pseudoinverse via Singular Value Decomposition (SVD)
+#define TIKHONOV_REGULARIZATION
+#ifdef TIKHONOV_REGULARIZATION
+    // Exploit symmetry for a faster decomposition
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(E);
+    Eigen::Vector3d eigenvalues = solver.eigenvalues();
+
+    // Define the damping parameter (epsilon)
+    double max_eigenvalue = eigenvalues.maxCoeff();
+    double epsilon = std::max(1e-12, 1e-6 * max_eigenvalue);
+    double eps_sq = epsilon * epsilon;
+
+    Eigen::Vector3d inv_eigenvalues = Eigen::Vector3d::Zero();
+
+    // Smoothly regularize all eigenvalues (Tikhonov/Damped SVD)
+    for (int i = 0; i < 3; ++i) {
+        inv_eigenvalues(i) =
+            eigenvalues(i) / (eigenvalues(i) * eigenvalues(i) + eps_sq);
+    }
+
+    // Reconstruct the regularized pseudoinverse B
+    B = solver.eigenvectors() * inv_eigenvalues.asDiagonal() *
+        solver.eigenvectors().transpose();
+
+    return 1.0;
+#else
+    // Exploit symmetry for a faster, specialized decomposition
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(E);
+    Eigen::Vector3d eigenvalues = solver.eigenvalues();
+
+    // Define the dynamic tolerance
+    double max_eigenvalue = eigenvalues.maxCoeff();
+    double tolerance = std::max(1e-12, 1e-6 * max_eigenvalue);
+    Eigen::Vector3d inv_eigenvalues = Eigen::Vector3d::Zero();
+
+    // Filter degenerate eigenvalues
+    for (int i = 0; i < 3; ++i) {
+        if (eigenvalues(i) > tolerance) {
+            inv_eigenvalues(i) = 1.0 / eigenvalues(i);
+        }
+    }
+
+    // Reconstruct the pseudoinverse B using the diagonalized inverse
+    B = solver.eigenvectors() * inv_eigenvalues.asDiagonal() *
+        solver.eigenvectors().transpose();
+
+    // Return dummy condition number
+    return 1.0;
+#endif
+#endif
 }
 
 }  // end anonymous namespace
