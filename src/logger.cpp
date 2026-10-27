@@ -104,6 +104,9 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
     double PP_time = std::max(diag.get_average(TimerRegion::PP),
                               diag.get_average(TimerRegion::PP_GPU));
 
+    double physical_softening =
+        conf.softening * diag.scale_factor * conf.unit_length_mpc;
+
     // Write to CSV file
     if (log_file.is_open()) {
         log_file << diag.cycle << "," << diag.sim_time << ","
@@ -159,6 +162,9 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
                   << "% | Incr: "
                   << format_double(diag.MFM_inc_percent, 1, false) << "%\n";
     }
+    std::cout << "    - Softening: " << format_double(conf.softening, 2, true)
+              << " | Physical softening (mpc): "
+              << format_double(physical_softening, 2, true) << "\n";
 
     std::cout << "  [Stability]\n";
     std::cout << "    - Timestep (Macro): "

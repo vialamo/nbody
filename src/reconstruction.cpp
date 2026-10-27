@@ -8,8 +8,8 @@
 #include "math_utils.h"
 #include "mfm.h"
 
-// #define ZEROTH_ORDER_RECONSTRUCTION
-// #define DISABLE_LIMITER
+//#define ZEROTH_ORDER_RECONSTRUCTION
+//#define DISABLE_LIMITER
 
 #ifdef ZEROTH_ORDER_RECONSTRUCTION
 #ifndef DISABLE_LIMITER

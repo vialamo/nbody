@@ -222,60 +222,62 @@ static double build_matrix_and_compute_condition(const GasParticleSystem& gas,
     E(2, 0) = E(0, 2);
     E(2, 1) = E(1, 2);
 
-#define SVD_FILTERING
-#ifndef SVD_FILTERING
+//#define USE_PSEUDOINVERSE
+#ifndef USE_PSEUDOINVERSE
     B = E.inverse();
     return evaluate_matrix_condition_number(E, B);
 #else
-// Moore-Penrose pseudoinverse via Singular Value Decomposition (SVD)
-#define TIKHONOV_REGULARIZATION
-#ifdef TIKHONOV_REGULARIZATION
-    // Exploit symmetry for a faster decomposition
+    // Compute Moore-Penrose pseudoinverse via Eigendecomposition.
+    // (Mathematically identical to SVD for symmetric positive semi-definite
+    // matrices)
     Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(E);
     Eigen::Vector3d eigenvalues = solver.eigenvalues();
-
-    // Define the damping parameter (epsilon)
     double max_eigenvalue = eigenvalues.maxCoeff();
-    double epsilon = std::max(1e-12, 1e-6 * max_eigenvalue);
-    double eps_sq = epsilon * epsilon;
+
+    // Scale-invariant absolute floor. Tied to the smoothing length (h^2)
+    // to prevent matrix conditioning from breaking if simulation units change
+    double absolute_tol = 1e-14 * h * h;
+
+    // Relative geometric floor. A high threshold (e.g., 1e-1 to 1e-2)
+    // aggressively collapses the solver to zeroth-order in highly deformed
+    // spatial distributions (like 1D strings or 2D sheets), preventing
+    // unphysical thermal explosions in voids
+    constexpr double relative_tolerance_factor = 1e-4;
+    double relative_tol = relative_tolerance_factor * max_eigenvalue;
+
+    double threshold = std::max(absolute_tol, relative_tol);
 
     Eigen::Vector3d inv_eigenvalues = Eigen::Vector3d::Zero();
 
-    // Smoothly regularize all eigenvalues (Tikhonov/Damped SVD)
+#define USE_TIKHONOV_REGULARIZATION
+#ifdef TIKHONOV_REGULARIZATION
+    // Tikhonov Regularization (Damped Pseudoinverse)
+    // Smoothly suppresses degenerate dimensions to prevent abrupt mathematical
+    // discontinuities as particles enter and exit poorly-sampled configurations
+    double threshold_sq = threshold * threshold;
     for (int i = 0; i < 3; ++i) {
         inv_eigenvalues(i) =
-            eigenvalues(i) / (eigenvalues(i) * eigenvalues(i) + eps_sq);
+            eigenvalues(i) / (eigenvalues(i) * eigenvalues(i) + threshold_sq);
     }
-
-    // Reconstruct the regularized pseudoinverse B
-    B = solver.eigenvectors() * inv_eigenvalues.asDiagonal() *
-        solver.eigenvectors().transpose();
-
-    return 1.0;
 #else
-    // Exploit symmetry for a faster, specialized decomposition
-    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(E);
-    Eigen::Vector3d eigenvalues = solver.eigenvalues();
-
-    // Define the dynamic tolerance
-    double max_eigenvalue = eigenvalues.maxCoeff();
-    double tolerance = std::max(1e-12, 1e-6 * max_eigenvalue);
-    Eigen::Vector3d inv_eigenvalues = Eigen::Vector3d::Zero();
-
-    // Filter degenerate eigenvalues
+    // Truncated Pseudoinverse (Hard Cutoff)
+    // Completely zeroes out the gradient and flux along severely
+    // ill-conditioned axes
     for (int i = 0; i < 3; ++i) {
-        if (eigenvalues(i) > tolerance) {
+        if (eigenvalues(i) > threshold) {
             inv_eigenvalues(i) = 1.0 / eigenvalues(i);
         }
     }
+#endif
 
-    // Reconstruct the pseudoinverse B using the diagonalized inverse
+    // Reconstruct the regularized shape matrix (B)
     B = solver.eigenvectors() * inv_eigenvalues.asDiagonal() *
         solver.eigenvectors().transpose();
 
-    // Return dummy condition number
+    // Return dummy condition number since the pseudoinverse is unconditionally
+    // stable
     return 1.0;
-#endif
+
 #endif
 }
 
