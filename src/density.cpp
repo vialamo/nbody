@@ -222,7 +222,7 @@ static double build_matrix_and_compute_condition(const GasParticleSystem& gas,
     E(2, 0) = E(0, 2);
     E(2, 1) = E(1, 2);
 
-//#define USE_PSEUDOINVERSE
+// #define USE_PSEUDOINVERSE
 #ifndef USE_PSEUDOINVERSE
     B = E.inverse();
     return evaluate_matrix_condition_number(E, B);

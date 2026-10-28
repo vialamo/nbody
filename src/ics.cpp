@@ -1094,7 +1094,6 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
             int N_inject = 15;
             constexpr bool smooth_injection = true;
 
-            // Ensure we don't try to sort more particles than exist
             N_inject =
                 std::min(N_inject, static_cast<int>(tiled_particles.size()));
 
@@ -1105,8 +1104,56 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
                                   return a.r2 < b.r2;
                               });
 
+            double centroid_x = 0.0, centroid_y = 0.0, centroid_z = 0.0;
+            for (int i = 0; i < N_inject; ++i) {
+                centroid_x += tiled_particles[i].pos.x;
+                centroid_y += tiled_particles[i].pos.y;
+                centroid_z += tiled_particles[i].pos.z;
+            }
+            centroid_x /= N_inject;
+            centroid_y /= N_inject;
+            centroid_z /= N_inject;
+
+            // Define the shift required to move the centroid to (cx, cy, cz)
+            const double dx_center = centroid_x - cx;
+            const double dy_center = centroid_y - cy;
+            const double dz_center = centroid_z - cz;
+
+            // Shift ALL particles, apply periodic wrapping, and update r2
+            for (size_t i = 0; i < tiled_particles.size(); ++i) {
+                tiled_particles[i].pos.x -= dx_center;
+                tiled_particles[i].pos.y -= dy_center;
+                tiled_particles[i].pos.z -= dz_center;
+
+                tiled_particles[i].pos.x =
+                    fmod(tiled_particles[i].pos.x + config.domain_size.x,
+                         config.domain_size.x);
+                tiled_particles[i].pos.y =
+                    fmod(tiled_particles[i].pos.y + config.domain_size.y,
+                         config.domain_size.y);
+                tiled_particles[i].pos.z =
+                    fmod(tiled_particles[i].pos.z + config.domain_size.z,
+                         config.domain_size.z);
+
+                // Recalculate distance to the center
+                double dx = tiled_particles[i].pos.x - cx;
+                double dy = tiled_particles[i].pos.y - cy;
+                double dz = tiled_particles[i].pos.z - cz;
+
+                tiled_particles[i].r2 = dx * dx + dy * dy + dz * dz;
+            }
+
+            // Re-sort ONLY the injected group based on their new centered r2
+            // values to ensure r_max is perfectly accurate for the Gaussian
+            // standard deviation
+            std::sort(tiled_particles.begin(),
+                      tiled_particles.begin() + N_inject,
+                      [](const ParticleData& a, const ParticleData& b) {
+                          return a.r2 < b.r2;
+                      });
+
             double r_max = std::sqrt(tiled_particles[N_inject - 1].r2);
-            double sigma = r_max / 2.0;
+            double sigma = r_max / 2.5;
             double two_sigma2 = 2.0 * sigma * sigma;
 
             double total_weight = 0.0;

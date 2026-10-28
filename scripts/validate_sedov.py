@@ -181,9 +181,9 @@ def validate_sedov_interactive(snapshot_dir):
     ax_u.set_title("Specific Internal Energy")
 
     scat_gradP = ax_gradP.scatter([], [], c=[], **scatter_kwargs)
-    ax_gradP.set_ylabel(r"Grad P Mag ($|\nabla P|$)")
+    ax_gradP.set_ylabel(r"Grad P ($\nabla P$)")
     ax_gradP.set_xlabel("Radius (r)")
-    ax_gradP.set_title("Pressure Gradient Magnitude")
+    ax_gradP.set_title("Pressure Gradient")
 
     # Merged Matrix Condition and Neighbors Plot
     scat_cond = ax_cond.scatter([], [], c=[], **scatter_kwargs)
@@ -293,7 +293,7 @@ def validate_sedov_interactive(snapshot_dir):
                     
                 if 'grad_p' in f['Gas']:
                     grad_p = f['Gas/grad_p'][:]
-                    gradP_mag_flat = np.linalg.norm(grad_p, axis=1)
+                    gradP_mag_flat = (grad_p[:, 0]*dx + grad_p[:, 1]*dy + grad_p[:, 2]*dz) / np.maximum(r_flat, 1e-8)
                 else:
                     gradP_mag_flat = np.full_like(rho_flat, np.nan)
                     
@@ -407,7 +407,7 @@ def validate_sedov_interactive(snapshot_dir):
             ax_nenc.set_ylim(0, 100)
 
         if np.count_nonzero(~np.isnan(gradP_plot)) > 0:
-            ax_gradP.set_ylim(-0.1, np.nanmax(gradP_plot) * 1.1)
+            ax_gradP.set_ylim(np.nanmin(gradP_plot), np.nanmax(gradP_plot) * 1.1)
         else:
             ax_gradP.set_ylim(-0.1, 1.0)
             
