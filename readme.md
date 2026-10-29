@@ -142,7 +142,7 @@ Defines the spatial properties and resolution of the simulation box.
 * **`domain_size`**: The internal code-unit length of the box (typically set to `1.0` for natural units).
 * **`domain_size_x_factor`**: A multiplier for the base `domain_size` to establish the domain length along the x-axis ($L_x = \text{domain\_size} \times \text{factor}$). Use this to construct elongated rectangular simulation volumes—such as those required for 1D shock tubes—without altering the underlying particle spacing or base resolution scale. Defaults to `1.0` (cubic domain).
 * **`mesh_size_1d`**: The number of grid cells along one axis for the Poisson solver and hydrodynamics, if using the eulerian method (e.g., `32` creates a 32x32x32 computational grid).
-* **`num_particles_1d`**: The number of N-body particles along one axis (e.g., `32` creates 32,768 total particles). Often matched to `mesh_size` to avoid interpolation artifacts.
+* **`num_dm_particles_1d`**: The number of N-body particles along one axis (e.g., `32` creates 32,768 total particles). Often matched to `mesh_size` to avoid interpolation artifacts.
 * **`num_gas_particles_1d`**: The number of gas particles along one axis, when using MFM for hydrodynamics.
 * **`box_size_mpc`**: The physical comoving size of the simulation box in Megaparsecs (Mpc). Used to map internal code units back to physical reality.
 

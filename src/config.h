@@ -85,7 +85,7 @@ struct Config {
     // Domain
     double domain_size_x_factor = 1.0;
     double mesh_size_1d = 64;
-    int num_particles_1d = 64;
+    int num_dm_particles_1d = 64;
     int num_gas_particles_1d = 64;
     double box_size_mpc_1d = 96.0;
 
@@ -167,7 +167,6 @@ struct Config {
     double cutoff_radius = 0.0, cutoff_radius_squared = 0.0;
     int num_dm_particles = 0;
     int num_gas_particles = 0;
-    double dm_particle_mass = 0.0, gas_total_mass = 0.0;
     double softening = 0.0;
     double base_comoving_softening = 0.0;
 

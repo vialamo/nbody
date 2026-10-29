@@ -341,9 +341,11 @@ static Vec3 sample_zeldovich_cic(double qx, double qy, double qz,
 
 void initialize_dm(SimState& state, const Config& config,
                    const ZeldovichField& zf) {
+    const double baryon_fraction = config.omega_baryon / config.omega_m;
+    const double dm_total_mass = 1.0 - baryon_fraction;
     if (config.use_glass) {
         // Find largest power-of-two divisor to tile the particles
-        int N_1d = config.num_particles_1d;
+        int N_1d = config.num_dm_particles_1d;
         int N_glass = 1;
         while (N_1d % (N_glass * 2) == 0 && N_glass * 2 <= 128) {
             N_glass *= 2;
@@ -370,9 +372,6 @@ void initialize_dm(SimState& state, const Config& config,
         } catch (const std::exception& e) {
             exit(EXIT_FAILURE);
         }
-
-        double dm_total_mass =
-            config.num_dm_particles * config.dm_particle_mass;
 
         // Derive actual particle mass from the tiled glass
         double total_dm_particles =
@@ -413,7 +412,9 @@ void initialize_dm(SimState& state, const Config& config,
     } else {
         int M = config.mesh_size_1d;
         double cell_size = config.domain_size_1d / M;
-        double spacing = config.domain_size_1d / config.num_particles_1d;
+        double spacing = config.domain_size_1d / config.num_dm_particles_1d;
+        double dm_particle_mass =
+            dm_total_mass / pow(config.num_dm_particles_1d, 3);
 
         int scale_x =
             static_cast<int>(config.domain_size.x / config.domain_size_1d);
@@ -422,9 +423,9 @@ void initialize_dm(SimState& state, const Config& config,
         int scale_z =
             static_cast<int>(config.domain_size.z / config.domain_size_1d);
 
-        int N_part_x = config.num_particles_1d * scale_x;
-        int N_part_y = config.num_particles_1d * scale_y;
-        int N_part_z = config.num_particles_1d * scale_z;
+        int N_part_x = config.num_dm_particles_1d * scale_x;
+        int N_part_y = config.num_dm_particles_1d * scale_y;
+        int N_part_z = config.num_dm_particles_1d * scale_z;
 
         for (int i = 0; i < N_part_x; ++i) {
             for (int j = 0; j < N_part_y; ++j) {
@@ -448,7 +449,7 @@ void initialize_dm(SimState& state, const Config& config,
                     double v_z = state.hubble_param * d.z * zf.f;
 
                     state.dm.add_particle(p_x, p_y, p_z, v_x, v_y, v_z,
-                                          config.dm_particle_mass);
+                                          dm_particle_mass);
                 }
             }
         }
@@ -470,10 +471,11 @@ void initialize_gas(SimState& state, const Config& config,
         Thermodynamics::get_internal_energy_from_temp(
             config.initial_gas_temperature_k, state.scale_factor, config);
 
+    double gas_total_mass = config.omega_baryon / config.omega_m;
+
     if (config.hydro_method == HydroMethod::Eulerian) {
         auto& gas = *state.gas;
-        double mean_gas_rho =
-            config.gas_total_mass / pow(config.domain_size_1d, 3);
+        double mean_gas_rho = gas_total_mass / pow(config.domain_size_1d, 3);
         double inv_2dx = 1.0 / (2.0 * config.cell_size);
 
         for (int i = 0; i < Mx; ++i) {
@@ -584,8 +586,7 @@ void initialize_gas(SimState& state, const Config& config,
 
             double total_gas_particles =
                 glass.num_particles * n_tiles_x * n_tiles_y * n_tiles_z;
-            double gas_particle_mass =
-                config.gas_total_mass / total_gas_particles;
+            double gas_particle_mass = gas_total_mass / total_gas_particles;
 
             // Shift the gas glass by half a spacing relative to DM to avoid
             // overlap
@@ -655,7 +656,7 @@ void initialize_gas(SimState& state, const Config& config,
             double spacing =
                 config.domain_size_1d / config.num_gas_particles_1d;
             double gas_particle_mass =
-                config.gas_total_mass / pow(config.num_gas_particles_1d, 3);
+                gas_total_mass / pow(config.num_gas_particles_1d, 3);
 
             // Initial guess for smoothing length
             double initial_h =
@@ -1195,6 +1196,8 @@ void initialize_adiabatic_expansion(SimState& state, const Config& config) {
     double seed_metallicity = 0.0;
     double v_x = 0.0, v_y = 0.0, v_z = 0.0;
 
+    double gas_total_mass = config.omega_baryon / config.omega_m;
+
     if (config.hydro_method == HydroMethod::Eulerian) {
         auto& gas = *state.gas;
 
@@ -1205,7 +1208,7 @@ void initialize_adiabatic_expansion(SimState& state, const Config& config) {
 
         // Calculate the uniform background density based on the base volume
         double mean_gas_rho =
-            config.gas_total_mass / std::pow(config.domain_size_1d, 3.0);
+            gas_total_mass / std::pow(config.domain_size_1d, 3.0);
 
         for (int i = 0; i < Mx; ++i) {
             for (int j = 0; j < My; ++j) {
@@ -1256,7 +1259,7 @@ void initialize_adiabatic_expansion(SimState& state, const Config& config) {
 
         // Particle mass relies solely on the base 1D box setup
         double gas_particle_mass =
-            config.gas_total_mass / (N_part_1d * N_part_1d * N_part_1d);
+            gas_total_mass / (N_part_1d * N_part_1d * N_part_1d);
 
         // Initial guess for smoothing length
         double initial_h = 1.2 * spacing;
@@ -1373,7 +1376,8 @@ void initialize_evrard_collapse(SimState& state, const Config& config) {
     if (config.hydro_method != HydroMethod::MFM) return;
 
     // Evrard Collapse Parameters (Hopkins 2015, Section 4.5.1)
-    double M_total = config.gas_total_mass;
+    double gas_total_mass = config.omega_baryon / config.omega_m;
+    double M_total = gas_total_mass;
     double R_sphere = 0.15;
     double u_initial = 0.05;
     double seed_metallicity = 0.0;

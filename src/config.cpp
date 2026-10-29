@@ -85,7 +85,7 @@ void Config::compute_derived_data() {
         enable_cooling = false;
         use_PM = false;
         use_PP = false;
-        num_particles_1d = 0;
+        num_dm_particles_1d = 0;
         omega_lambda = 0.0;
         omega_m = 1.0;
         omega_baryon = 1.0;
@@ -99,7 +99,8 @@ void Config::compute_derived_data() {
     cutoff_radius = cutoff_radius_cells * cell_size;
     cutoff_radius_squared = cutoff_radius * cutoff_radius;
 
-    num_dm_particles = num_particles_1d * num_particles_1d * num_particles_1d;
+    num_dm_particles =
+        num_dm_particles_1d * num_dm_particles_1d * num_dm_particles_1d;
     if (hydro_method == HydroMethod::MFM) {
         num_gas_particles =
             num_gas_particles_1d * num_gas_particles_1d * num_gas_particles_1d;
@@ -107,13 +108,8 @@ void Config::compute_derived_data() {
 
     G = std::pow(domain_size_1d, 3) / (6.0 * M_PI * total_mass);
 
-    const double baryon_fraction = omega_baryon / omega_m;
-    const double dm_total_mass = total_mass * (1.0 - baryon_fraction);
-    dm_particle_mass =
-        num_dm_particles > 0 ? (dm_total_mass / num_dm_particles) : 0.0;
-    gas_total_mass = total_mass * baryon_fraction;
-
-    int active_particles_1d = std::max(num_particles_1d, num_gas_particles_1d);
+    int active_particles_1d =
+        std::max(num_dm_particles_1d, num_gas_particles_1d);
     if (active_particles_1d == 0) active_particles_1d = mesh_size_1d;
 
     double mean_interparticle_spacing =
@@ -146,8 +142,8 @@ void Config::load(const std::string& filename) {
     domain_size_x_factor = config_file.get_int("domain", "domain_size_x_factor",
                                                domain_size_x_factor);
     mesh_size_1d = config_file.get_int("domain", "mesh_size_1d", mesh_size_1d);
-    num_particles_1d =
-        config_file.get_int("domain", "num_particles_1d", num_particles_1d);
+    num_dm_particles_1d = config_file.get_int("domain", "num_dm_particles_1d",
+                                              num_dm_particles_1d);
     num_gas_particles_1d = config_file.get_int("domain", "num_gas_particles_1d",
                                                num_gas_particles_1d);
     box_size_mpc_1d =

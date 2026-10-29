@@ -124,7 +124,10 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         set_attr_double(config_group, "domain_size_z", config.domain_size.z);
         set_attr_double(config_group, "box_size_mpc", config.box_size_mpc_1d);
         set_attr_int(config_group, "mesh_size_1d", config.mesh_size_1d);
-        set_attr_int(config_group, "num_particles_1d", config.num_particles_1d);
+        set_attr_int(config_group, "num_dm_particles_1d",
+                     config.num_dm_particles_1d);
+        set_attr_int(config_group, "num_gas_particles_1d",
+                     config.num_gas_particles_1d);
 
         // [cosmology]
         set_attr_double(config_group, "omega_baryon", config.omega_baryon);

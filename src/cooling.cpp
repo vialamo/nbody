@@ -145,9 +145,11 @@ Cooling::Cooling(const Config& config) {
     Eigen::Vector2d p2(0.5, 1.4);
     Eigen::Vector2d p3(1.04, 10.0);
 
+    double gas_total_mass = config.omega_baryon / config.omega_m;
+
     QuadraticInterpolator A_curve(p1, p2, p3);
     mean_rho_code =
-        config.gas_total_mass /
+        gas_total_mass /
         (config.domain_size.x * config.domain_size.y * config.domain_size.z);
 
     double resolution = config.box_size_mpc_1d / config.mesh_size_1d;

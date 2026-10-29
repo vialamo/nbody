@@ -71,7 +71,7 @@ TEST_CASE("initialize_state produces physically sound macro-states",
     Config config;
     config.mesh_size_1d = 32;
     config.box_size_mpc_1d = 100.0;
-    config.num_particles_1d = 32;
+    config.num_dm_particles_1d = 32;
     config.use_PM = true;
     config.use_PP = false;
     config.use_glass = false;
@@ -83,7 +83,8 @@ TEST_CASE("initialize_state produces physically sound macro-states",
     SimState state = initialize_state(config);
 
     SECTION("Conservation of Mass") {
-        double total_dm_mass = state.dm.num_particles * config.dm_particle_mass;
+        double conf_total_dm_mass = (config.omega_m - config.omega_baryon) / config.omega_m;
+        double conf_total_gas_mass = config.omega_baryon / config.omega_m;
 
         double total_gas_mass = 0.0;
         int N3 = config.mesh_size.x * config.mesh_size.y * config.mesh_size.z;
@@ -94,10 +95,10 @@ TEST_CASE("initialize_state produces physically sound macro-states",
         }
 
         // The universe must have 1.0 code mass
-        REQUIRE(total_dm_mass + total_gas_mass ==
+        REQUIRE(conf_total_dm_mass + total_gas_mass ==
                 Catch::Approx(1.0).margin(1e-4));
         REQUIRE(total_gas_mass ==
-                Catch::Approx(config.gas_total_mass).margin(1e-4));
+                Catch::Approx(conf_total_gas_mass).margin(1e-4));
     }
 
     SECTION("Conservation of Momentum") {
@@ -171,7 +172,7 @@ TEST_CASE("Peculiar velocities exactly obey Zel'dovich kinematics",
           "[ics][kinematics]") {
     Config config;
     config.mesh_size_1d = 16;
-    config.num_particles_1d = 16;
+    config.num_dm_particles_1d = 16;
     config.box_size_mpc_1d = 100.0;
     config.omega_m = 0.3;
     config.omega_baryon = 0.048;
@@ -215,7 +216,7 @@ TEST_CASE("Peculiar velocities exactly obey Zel'dovich kinematics",
 
         // The unperturbed positions should perfectly align with the regular
         // lattice spacing
-        double spacing = config.domain_size_1d / config.num_particles_1d;
+        double spacing = config.domain_size_1d / config.num_dm_particles_1d;
 
         REQUIRE(std::fmod(unperturbed_x, spacing) ==
                 Catch::Approx(0.5 * spacing).margin(1e-7));
