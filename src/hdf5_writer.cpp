@@ -187,6 +187,14 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                         config.dual_energy_threshold);
         set_attr_bool(config_group, "use_exact_riemann",
                       config.use_exact_riemann);
+        set_attr_double(config_group, "gradient_limiter_beta_max",
+                        config.gradient_limiter_beta_max);
+        set_attr_double(config_group, "gradient_limiter_beta_min",
+                        config.gradient_limiter_beta_min);
+        set_attr_double(config_group, "pairwise_limiter_psi1",
+                        config.pairwise_limiter_psi1);
+        set_attr_double(config_group, "pairwise_limiter_psi2",
+                        config.pairwise_limiter_psi2);
 
         // [subgrid]
         set_attr_bool(config_group, "enable_subgrid_clumping",

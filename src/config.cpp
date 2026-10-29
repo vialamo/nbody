@@ -6,6 +6,8 @@
 #include "ini.h"
 #include "math_utils.h"
 
+constexpr double total_mass = 1.0;
+
 void Config::init_derived_units() {
     // Length
     unit_length_mpc = box_size_mpc_1d / domain_size_1d;
@@ -70,27 +72,15 @@ void Config::compute_derived_data() {
     box_size_mpc.y = box_size_mpc_1d;
     box_size_mpc.z = box_size_mpc_1d;
 
+    domain_size.x *= domain_size_x_factor;
+    mesh_size.x *= domain_size_x_factor;
+    box_size_mpc.x *= domain_size_x_factor;
+
     if (hubble_h > 10.0) {
         hubble_h /= 100.0;
     }
 
-    if (initial_setup == InitialSetup::SodShockTube) {
-        expanding_universe = false;
-        enable_cooling = false;
-        use_PM = false;
-        use_PP = false;
-        num_particles_1d = 0;
-        omega_lambda = 0.0;
-        omega_m = 1.0;
-        omega_baryon = 1.0;
-        gamma = 1.4;
-        total_mass = 0.5625;
-        a_end = 1.8;
-        domain_size.x *= 8.0;
-        mesh_size.x *= 8.0;
-        box_size_mpc.x *= 8.0;
-
-    } else if (initial_setup == InitialSetup::AdiabaticExpansion) {
+    if (initial_setup == InitialSetup::AdiabaticExpansion) {
         expanding_universe = true;
         enable_cooling = false;
         use_PM = false;
@@ -100,36 +90,6 @@ void Config::compute_derived_data() {
         omega_m = 1.0;
         omega_baryon = 1.0;
         gamma = 5.0 / 3.0;
-        total_mass = 1.0;
-    } else if (initial_setup == InitialSetup::SedovBlastwave) {
-        expanding_universe = false;
-        enable_cooling = false;
-        use_PM = false;
-        use_PP = false;
-        num_particles_1d = 0;
-        omega_lambda = 0.0;
-        omega_m = 1.0;
-        omega_baryon = 1.0;
-        gamma = 5.0 / 3.0;
-        total_mass = 1.0;
-        a_end = 0.1;
-    } else if (initial_setup == InitialSetup::SoundWave) {
-        hydro_method = HydroMethod::MFM;
-        expanding_universe = false;
-        enable_cooling = false;
-        use_glass = false;
-        use_PM = false;
-        use_PP = false;
-        num_particles_1d = 0;
-        omega_lambda = 0.0;
-        omega_m = 1.0;
-        omega_baryon = 1.0;
-        gamma = 5.0 / 3.0;
-        total_mass = 1.0;
-        domain_size.x *= 4.0;
-        mesh_size.x *= 4.0;
-        box_size_mpc.x *= 4.0;
-        a_end = 6.0;
     }
 
     cell_size = domain_size_1d / mesh_size_1d;
@@ -183,6 +143,8 @@ void Config::load(const std::string& filename) {
     Ini config_file;
     config_file.load(filename);
 
+    domain_size_x_factor = config_file.get_int("domain", "domain_size_x_factor",
+                                               domain_size_x_factor);
     mesh_size_1d = config_file.get_int("domain", "mesh_size_1d", mesh_size_1d);
     num_particles_1d =
         config_file.get_int("domain", "num_particles_1d", num_particles_1d);
@@ -259,6 +221,15 @@ void Config::load(const std::string& filename) {
         "mfm", "dual_energy_threshold", dual_energy_threshold);
     use_exact_riemann =
         config_file.get_bool("mfm", "use_exact_riemann", use_exact_riemann);
+    gradient_limiter_beta_max = config_file.get_double(
+        "mfm", "gradient_limiter_beta_max", gradient_limiter_beta_max);
+    gradient_limiter_beta_min = config_file.get_double(
+        "mfm", "gradient_limiter_beta_min", gradient_limiter_beta_min);
+    pairwise_limiter_psi1 = config_file.get_double(
+        "mfm", "pairwise_limiter_psi1", pairwise_limiter_psi1);
+    pairwise_limiter_psi2 = config_file.get_double(
+        "mfm", "pairwise_limiter_psi2", pairwise_limiter_psi2);
+
     enable_subgrid_clumping = config_file.get_bool(
         "subgrid", "enable_subgrid_clumping", enable_subgrid_clumping);
     subgrid_clumping_amplitude = config_file.get_double(

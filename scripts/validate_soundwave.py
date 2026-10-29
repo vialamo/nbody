@@ -281,7 +281,7 @@ def validate_soundwave_interactive(snapshot_dir):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Interactive MFM/Eulerian Soundwave validation.")
     parser.add_argument("path", type=str, nargs='?', default=".", help="Path to snapshot directory.")
-    parser.add_argument("-l", "--latest", action="store_true", help="Load latest run_* directory")
+    parser.add_argument("-l", "--latest", action="store_true", help="Load latest in directory")
     
     args = parser.parse_args()
     target_dir = args.path

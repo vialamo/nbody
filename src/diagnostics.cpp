@@ -306,5 +306,9 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
 
     // Global System Error Metrics
     this->total_momentum = (total_momentum_dm + total_momentum_gas).norm();
-    this->mass_err = total_mass_dm + total_mass_gas - config.total_mass;
+
+    if (initial_mass == 0.0) {
+        initial_mass = total_mass_dm + total_mass_gas;
+    }
+    this->mass_err = total_mass_dm + total_mass_gas - initial_mass;
 }

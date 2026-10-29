@@ -8,20 +8,10 @@
 #include "math_utils.h"
 #include "mfm.h"
 
-// #define ZEROTH_ORDER_RECONSTRUCTION
-// #define DISABLE_LIMITER
-
-#ifdef ZEROTH_ORDER_RECONSTRUCTION
-#ifndef DISABLE_LIMITER
-#define DISABLE_LIMITER
-#endif
-#endif
-
 namespace Reconstruction {
 
 namespace {  // Anonymous namespace for private helper functions
 
-#ifndef DISABLE_LIMITER
 inline double compute_gradient_alpha(double d_phi_max, double d_phi_min,
                                      double d_mid_max, double d_mid_min,
                                      double beta) {
@@ -43,19 +33,17 @@ inline double compute_gradient_alpha(double d_phi_max, double d_phi_min,
 
 inline int math_sign(double x) { return (x > 0.0) ? 1 : ((x < 0.0) ? -1 : 0); }
 
-constexpr double psi_1 = 0.5;
-constexpr double psi_2 = 0.25;
-
 double apply_pairwise_limiter(double phi_L_center, double phi_R_center,
-                              double phi_mid_0, double phi_bar) {
+                              double phi_mid_0, double phi_bar,
+                              const Config& config) {
     double d_phi = std::abs(phi_L_center - phi_R_center);
     if (d_phi < 1e-14) return phi_L_center;
 
     double phi_min = std::min(phi_L_center, phi_R_center);
     double phi_max = std::max(phi_L_center, phi_R_center);
 
-    double delta_1 = psi_1 * d_phi;
-    double delta_2 = psi_2 * d_phi;
+    double delta_1 = config.pairwise_limiter_psi1 * d_phi;
+    double delta_2 = config.pairwise_limiter_psi2 * d_phi;
 
     double phi_minus =
         (math_sign(phi_min - delta_1) == math_sign(phi_min) || phi_min == 0.0)
@@ -74,8 +62,11 @@ double apply_pairwise_limiter(double phi_L_center, double phi_R_center,
 }
 
 inline double compute_velocity_alpha(double vi, double vj, double dv_raw,
-                                     double fraction) {
+                                     double fraction, const Config& config) {
     if (std::abs(dv_raw) < 1e-14) return 1.0;
+
+    double psi_1 = config.pairwise_limiter_psi1;
+    double psi_2 = config.pairwise_limiter_psi2;
 
     double d_v = std::abs(vi - vj);
     double v_min = std::min(vi, vj) - psi_1 * d_v;
@@ -91,7 +82,6 @@ inline double compute_velocity_alpha(double vi, double vj, double dv_raw,
     }
     return std::max(0.0, std::min(1.0, (v_lim - vi) / dv_raw));
 }
-#endif
 
 Eigen::Vector3d compute_face_area_vector(
     const ParticleState& p_i, bool ill_conditioned_i, const ParticleState& p_j,
@@ -134,7 +124,9 @@ Eigen::Vector3d compute_face_area_vector(
 ParticleGradients compute_single_particle_gradients(
     size_t i, const int* neighbor_indices, size_t num_neighbors,
     const FluidStateArrays& data, const Eigen::Matrix3d& B,
-    bool ill_conditioned, const Vec3& domain_size) {
+    bool ill_conditioned, const Config& config) {
+    const Vec3& domain_size = config.domain_size;
+
     ParticleGradients out;
     out.grad_rho = Eigen::Vector3d::Zero();
     out.grad_p = Eigen::Vector3d::Zero();
@@ -142,7 +134,7 @@ ParticleGradients compute_single_particle_gradients(
     out.grad_vy = Eigen::Vector3d::Zero();
     out.grad_vz = Eigen::Vector3d::Zero();
     out.ill_conditioned = ill_conditioned;
-#ifndef ZEROTH_ORDER_RECONSTRUCTION
+
     if (!ill_conditioned) {
         Eigen::Vector3d sum_rho = Eigen::Vector3d::Zero();
         Eigen::Vector3d sum_p = Eigen::Vector3d::Zero();
@@ -202,7 +194,6 @@ ParticleGradients compute_single_particle_gradients(
         out.grad_vy = B * sum_vy;
         out.grad_vz = B * sum_vz;
 
-#ifndef DISABLE_LIMITER
         double phi_mid_max_rho = 0.0, phi_mid_min_rho = 0.0;
         double phi_mid_max_p = 0.0, phi_mid_min_p = 0.0;
         double phi_mid_max_v = 0.0;
@@ -241,13 +232,11 @@ ParticleGradients compute_single_particle_gradients(
             phi_mid_max_v = std::max(phi_mid_max_v, d_mid_v.norm());
         }
 
-        double beta = 2.0;
+        double beta = config.gradient_limiter_beta_max;
         if (data.cond_num[i] > 0.0) {
-            constexpr double beta_min = 1.0;
-            constexpr double beta_max = 2.0;
-            beta = std::max(
-                beta_min,
-                beta_max * std::min(1.0, N_cond_crit / data.cond_num[i]));
+            beta = std::max(config.gradient_limiter_beta_min,
+                            config.gradient_limiter_beta_max *
+                                std::min(1.0, N_cond_crit / data.cond_num[i]));
         }
 
         out.grad_rho *= compute_gradient_alpha(
@@ -261,7 +250,7 @@ ParticleGradients compute_single_particle_gradients(
         out.grad_vx *= alpha_v;
         out.grad_vy *= alpha_v;
         out.grad_vz *= alpha_v;
-#endif
+
     } else {
         out.grad_rho.setZero();
         out.grad_p.setZero();
@@ -295,7 +284,6 @@ ParticleGradients compute_single_particle_gradients(
             out.grad_vz += V_j * (data.vel_z[j] - data.vel_z[i]) * grad_W_i;
         }*/
     }
-#endif
 
     return out;
 }
@@ -304,7 +292,8 @@ ReconstructedFace compute_face_reconstruction(
     const ParticleState& p_i, const ParticleGradients& grad_i,
     const ParticleState& p_j, const ParticleGradients& grad_j,
     const Eigen::Matrix3d& B_matrix_i, const Eigen::Matrix3d& B_matrix_j,
-    const Vec3& domain_size, double density_floor, double pressure_floor) {
+    const Config& config, double density_floor, double pressure_floor) {
+    const Vec3& domain_size = config.domain_size;
     ReconstructedFace face;
     face.is_valid = false;
     face.used_sph_fallback = false;
@@ -352,21 +341,22 @@ ReconstructedFace compute_face_reconstruction(
     Eigen::Vector3d dx_face_i = fraction_i * dx_vec;
     Eigen::Vector3d dx_face_j = -fraction_j * dx_vec;
 
-#ifndef DISABLE_LIMITER
     double rho_bar = p_i.rho + fraction_i * (p_j.rho - p_i.rho);
     double p_bar = p_i.pressure + fraction_i * (p_j.pressure - p_i.pressure);
 
     face.rho_L = apply_pairwise_limiter(
-        p_i.rho, p_j.rho, p_i.rho + grad_i.grad_rho.dot(dx_face_i), rho_bar);
+        p_i.rho, p_j.rho, p_i.rho + grad_i.grad_rho.dot(dx_face_i), rho_bar,
+        config);
     face.rho_R = apply_pairwise_limiter(
-        p_j.rho, p_i.rho, p_j.rho + grad_j.grad_rho.dot(dx_face_j), rho_bar);
+        p_j.rho, p_i.rho, p_j.rho + grad_j.grad_rho.dot(dx_face_j), rho_bar,
+        config);
 
     face.p_L = apply_pairwise_limiter(
         p_i.pressure, p_j.pressure, p_i.pressure + grad_i.grad_p.dot(dx_face_i),
-        p_bar);
+        p_bar, config);
     face.p_R = apply_pairwise_limiter(
         p_j.pressure, p_i.pressure, p_j.pressure + grad_j.grad_p.dot(dx_face_j),
-        p_bar);
+        p_bar, config);
 
     // Galilean & Rotationally Invariant Velocity Limiting
     // Project center velocities onto the face normal
@@ -383,7 +373,7 @@ ReconstructedFace compute_face_reconstruction(
 
     // Compute the rotationally invariant alpha
     double alpha_v_L =
-        compute_velocity_alpha(vn_i, vn_j, dvn_L_raw, fraction_i);
+        compute_velocity_alpha(vn_i, vn_j, dvn_L_raw, fraction_i, config);
 
     // Scale the full 3D vector gradient symmetrically
     face.v_L = p_i.vel + alpha_v_L * dv_L_raw;
@@ -395,7 +385,7 @@ ReconstructedFace compute_face_reconstruction(
 
     double dvn_R_raw = dv_R_raw.dot(face.n);
     double alpha_v_R =
-        compute_velocity_alpha(vn_j, vn_i, dvn_R_raw, fraction_j);
+        compute_velocity_alpha(vn_j, vn_i, dvn_R_raw, fraction_j, config);
 
     face.v_R = p_j.vel + alpha_v_R * dv_R_raw;
 
@@ -403,36 +393,6 @@ ReconstructedFace compute_face_reconstruction(
     face.rho_R = std::max(face.rho_R, density_floor);
     face.p_L = std::max(face.p_L, pressure_floor);
     face.p_R = std::max(face.p_R, pressure_floor);
-#else
-#ifdef ZEROTH_ORDER_RECONSTRUCTION
-    face.rho_L = std::max(p_i.rho, density_floor);
-    face.rho_R = std::max(p_j.rho, density_floor);
-
-    face.p_L = std::max(p_i.pressure, pressure_floor);
-    face.p_R = std::max(p_j.pressure, pressure_floor);
-
-    face.v_L = p_i.vel;
-    face.v_R = p_j.vel;
-#else
-    face.rho_L =
-        std::max(p_i.rho + grad_i.grad_rho.dot(dx_face_i), density_floor);
-    face.rho_R =
-        std::max(p_j.rho + grad_j.grad_rho.dot(dx_face_j), density_floor);
-
-    face.p_L =
-        std::max(p_i.pressure + grad_i.grad_p.dot(dx_face_i), pressure_floor);
-    face.p_R =
-        std::max(p_j.pressure + grad_j.grad_p.dot(dx_face_j), pressure_floor);
-
-    face.v_L.x() = p_i.vel.x() + grad_i.grad_vx.dot(dx_face_i);
-    face.v_L.y() = p_i.vel.y() + grad_i.grad_vy.dot(dx_face_i);
-    face.v_L.z() = p_i.vel.z() + grad_i.grad_vz.dot(dx_face_i);
-
-    face.v_R.x() = p_j.vel.x() + grad_j.grad_vx.dot(dx_face_j);
-    face.v_R.y() = p_j.vel.y() + grad_j.grad_vy.dot(dx_face_j);
-    face.v_R.z() = p_j.vel.z() + grad_j.grad_vz.dot(dx_face_j);
-#endif
-#endif
 
     face.is_valid = true;
     return face;

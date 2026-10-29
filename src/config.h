@@ -40,6 +40,8 @@ enum class InitialSetup {
     AdiabaticExpansion,
     SedovBlastwave,
     SoundWave,
+    KelvinHelmholtz,
+    EvrardCollapse,
     Count
 };
 
@@ -51,9 +53,10 @@ struct EnumUtils::Traits<HydroMethod> {
 
 template <>
 struct EnumUtils::Traits<InitialSetup> {
-    static constexpr const char* names[] = {"cosmological", "sod_shock_tube",
-                                            "adiabatic_expansion",
-                                            "sedov_blastwave", "sound_wave"};
+    static constexpr const char* names[] = {
+        "cosmological",    "sod_shock_tube", "adiabatic_expansion",
+        "sedov_blastwave", "sound_wave",     "kelvin_helmholtz",
+        "evrard_collapse"};
     static constexpr InitialSetup default_value = InitialSetup::Cosmological;
 };
 
@@ -80,6 +83,7 @@ inline InitialSetup from_string(std::string str) {
 
 struct Config {
     // Domain
+    double domain_size_x_factor = 1.0;
     double mesh_size_1d = 64;
     int num_particles_1d = 64;
     int num_gas_particles_1d = 64;
@@ -129,6 +133,10 @@ struct Config {
     double mfm_min_hsml_fraction = 0.25;
     double dual_energy_threshold = 0.001;
     bool use_exact_riemann = false;
+    double gradient_limiter_beta_max = 2.0;
+    double gradient_limiter_beta_min = 1.0;
+    double pairwise_limiter_psi1 = 0.5;
+    double pairwise_limiter_psi2 = 0.25;
 
     // Subgrid
     bool enable_subgrid_clumping = false;
@@ -183,7 +191,6 @@ struct Config {
         0.0;  // Converts physical cooling rate (erg/g/s) to code units (du/dt)
 
     // Constant Parameters
-    double total_mass = 1;
     static constexpr double domain_size_1d = 1.0;
     Vec3 domain_size;
 #ifdef USE_GPU

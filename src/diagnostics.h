@@ -33,6 +33,7 @@ class Diagnostics {
     double scale_factor = 1.0;
     double total_mass_gas = 0.0;
     double total_mass_dm = 0.0;
+    double initial_mass = 0.0;
     double mass_err = 0.0;
     Eigen::Vector3d total_momentum_gas = {0.0, 0.0, 0.0};
     Eigen::Vector3d total_momentum_dm = {0.0, 0.0, 0.0};

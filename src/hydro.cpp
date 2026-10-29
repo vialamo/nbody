@@ -160,7 +160,7 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
             Reconstruction::ParticleGradients grads =
                 Reconstruction::compute_single_particle_gradients(
                     i, neighbors.data(), neighbors.size(), system_data,
-                    gas.B_matrix[i], ill_conditioned, domain_size);
+                    gas.B_matrix[i], ill_conditioned, config);
 
             // Map results back to SOA
             gas.grad_rho[i] = grads.grad_rho;
@@ -284,7 +284,7 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                     Reconstruction::ReconstructedFace face =
                         compute_face_reconstruction(
                             p_i, grad_i, p_j, grad_j, gas.B_matrix[i],
-                            gas.B_matrix[j], domain_size, density_floor,
+                            gas.B_matrix[j], config, density_floor,
                             gas.pressure_floor);
 
                     if (!face.is_valid) continue;

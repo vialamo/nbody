@@ -141,7 +141,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-l", "--latest", 
         action="store_true", 
-        help="Automatically find and load the most recent 'run_*' directory inside the provided path"
+        help="Automatically find and load the most recent in directory inside the provided path"
     )
     
     if len(sys.argv) == 1:

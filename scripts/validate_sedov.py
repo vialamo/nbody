@@ -435,7 +435,7 @@ def validate_sedov_interactive(snapshot_dir):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Interactive MFM/Eulerian Sedov Blastwave validation.")
     parser.add_argument("path", type=str, help="Path to snapshot directory.")
-    parser.add_argument("-l", "--latest", action="store_true", help="Load latest run_* directory")
+    parser.add_argument("-l", "--latest", action="store_true", help="Load latest sedov_blastwave_* directory")
     
     if len(sys.argv) == 1:
         parser.print_help()

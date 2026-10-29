@@ -1001,7 +1001,7 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
             double gas_particle_mass = rho_bg * (dx_base * dx_base * dx_base);
             double initial_h = 2.0 * dx_base;
 
-            constexpr bool spread_over_8_particles = false;
+            constexpr bool spread_over_8_particles = true;
 
             // Calculate center indices per axis
             auto get_bounds = [](int N, bool spread) {
@@ -1285,6 +1285,214 @@ void initialize_adiabatic_expansion(SimState& state, const Config& config) {
     }
 }
 
+void initialize_kelvin_helmholtz(SimState& state, const Config& config) {
+    if (config.hydro_method != HydroMethod::MFM) return;
+
+    // KH Instability Parameters (McNally et al. 2012 / Hopkins 2015)
+    double rho_1 = 1.0;
+    double rho_2 = 2.0;
+    double delta_rho = 0.5 * (rho_2 - rho_1);
+
+    double v_1 = -0.5;
+    double v_2 = 0.5;
+    double delta_v = 0.5 * (v_2 - v_1);
+
+    double delta_y = 0.025;
+    double P = 2.5;
+    double gamma = config.gamma;
+    double seed_metallicity = 0.0;
+
+    double Lx = config.domain_size.x;
+    double Ly = config.domain_size.y;
+    double Lz = config.domain_size.z;
+    double L_base = config.domain_size_1d;
+
+    int N_part = config.num_gas_particles_1d;
+    double spacing_base = L_base / N_part;
+
+    // Calculate integer scaling multipliers for each axis
+    int N_x = N_part * static_cast<int>(std::round(Lx / L_base));
+    int N_y = N_part * static_cast<int>(std::round(Ly / L_base));
+    int N_z = N_part * static_cast<int>(std::round(Lz / L_base));
+
+    double spacing_x = Lx / N_x;
+    double spacing_y = Ly / N_y;
+    double spacing_z = Lz / N_z;
+    double cell_volume = spacing_x * spacing_y * spacing_z;
+
+    double initial_h = 1.2 * std::max({spacing_x, spacing_y, spacing_z});
+
+    for (int i = 0; i < N_x; ++i) {
+        for (int j = 0; j < N_y; ++j) {
+            for (int k = 0; k < N_z; ++k) {
+                double x = (i + 0.5) * spacing_x;
+                double y = (j + 0.5) * spacing_y;
+                double z = (k + 0.5) * spacing_z;
+
+                // Normalize coordinates to [0, 1) for the profile definitions
+                double x_frac = x / Lx;
+                double y_frac = y / Ly;
+
+                double rho, v_x;
+
+                // Evaluate smoothed density and x-velocity profiles
+                if (y_frac < 0.25) {
+                    double exp_term = std::exp((y_frac - 0.25) / delta_y);
+                    rho = rho_1 + delta_rho * exp_term;
+                    v_x = v_1 + delta_v * exp_term;
+                } else if (y_frac <= 0.5) {
+                    double exp_term = std::exp((0.25 - y_frac) / delta_y);
+                    rho = rho_2 - delta_rho * exp_term;
+                    v_x = v_2 - delta_v * exp_term;
+                } else if (y_frac <= 0.75) {
+                    double exp_term = std::exp((y_frac - 0.75) / delta_y);
+                    rho = rho_2 - delta_rho * exp_term;
+                    v_x = v_2 - delta_v * exp_term;
+                } else {
+                    double exp_term = std::exp((0.75 - y_frac) / delta_y);
+                    rho = rho_1 + delta_rho * exp_term;
+                    v_x = v_1 + delta_v * exp_term;
+                }
+
+                // Apply initial y-velocity seed mode
+                double v_y = 0.01 * std::sin(4.0 * M_PI * x_frac);
+                double v_z = 0.0;
+
+                double particle_mass = rho * cell_volume;
+                double u = P / ((gamma - 1.0) * rho);
+
+                state.mfm_gas->add_particle(x, y, z, v_x, v_y, v_z,
+                                            particle_mass, u, initial_h,
+                                            seed_metallicity);
+            }
+        }
+    }
+}
+
+void initialize_evrard_collapse(SimState& state, const Config& config) {
+    if (config.hydro_method != HydroMethod::MFM) return;
+
+    // Evrard Collapse Parameters (Hopkins 2015, Section 4.5.1)
+    double M_total = config.gas_total_mass;
+    double R_sphere = 0.15;
+    double u_initial = 0.05;
+    double seed_metallicity = 0.0;
+
+    // True geometric center of the domain
+    double cx = config.domain_size.x / 2.0;
+    double cy = config.domain_size.y / 2.0;
+    double cz = config.domain_size.z / 2.0;
+
+    struct RawParticle {
+        double x, y, z, ru;
+    };
+    std::vector<RawParticle> uniform_points;
+
+    // Generate a uniform sphere of points (Glass or Lattice)
+    if (config.use_glass) {
+        int N_res = config.num_gas_particles_1d;
+        int N_glass = std::max(
+            8, static_cast<int>(std::pow(2, std::round(std::log2(N_res)))));
+        N_glass = std::min(N_glass, 128);
+
+        std::string file_glass = config.glass_folder_path + "/glassCube_" +
+                                 std::to_string(N_glass) + ".hdf5";
+        GlassData glass;
+        try {
+            glass = HDF5Reader::read_glass_cube(file_glass);
+        } catch (const std::exception& e) {
+            return;
+        }
+
+        // We want to tile the glass over a bounding box of [-R, R]^3
+        double L_base =
+            2.0 * R_sphere / std::ceil(static_cast<double>(N_res) / N_glass);
+        int n_tiles = static_cast<int>(std::ceil(2.0 * R_sphere / L_base));
+
+        for (int tx = 0; tx < n_tiles; ++tx) {
+            for (int ty = 0; ty < n_tiles; ++ty) {
+                for (int tz = 0; tz < n_tiles; ++tz) {
+                    for (size_t p = 0; p < glass.num_particles; ++p) {
+                        double px =
+                            -R_sphere + tx * L_base + glass.pos_x[p] * L_base;
+                        double py =
+                            -R_sphere + ty * L_base + glass.pos_y[p] * L_base;
+                        double pz =
+                            -R_sphere + tz * L_base + glass.pos_z[p] * L_base;
+
+                        double ru = std::sqrt(px * px + py * py + pz * pz);
+                        if (ru <= R_sphere) {
+                            uniform_points.push_back({px, py, pz, ru});
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        int N_part = config.num_gas_particles_1d;
+        double spacing = (2.0 * R_sphere) / N_part;
+        for (int i = 0; i < N_part; ++i) {
+            for (int j = 0; j < N_part; ++j) {
+                for (int k = 0; k < N_part; ++k) {
+                    double px = -R_sphere + (i + 0.5) * spacing;
+                    double py = -R_sphere + (j + 0.5) * spacing;
+                    double pz = -R_sphere + (k + 0.5) * spacing;
+
+                    double ru = std::sqrt(px * px + py * py + pz * pz);
+                    if (ru <= R_sphere) {
+                        uniform_points.push_back({px, py, pz, ru});
+                    }
+                }
+            }
+        }
+    }
+
+    // Map uniform sphere to the 1/r density profile and push to state
+    double particle_mass = M_total / static_cast<double>(uniform_points.size());
+
+    for (const auto& p : uniform_points) {
+        if (p.ru < 1e-8) continue;  // Avoid singularity at exact origin
+
+        // Radial transformation to achieve rho(r) ~ 1/r
+        // A uniform sphere has M(<r) ~ r^3. The target profile has M(<r) ~ r^2.
+        // Therefore, matching cumulative mass fractions gives r_target = R *
+        // (r_u / R)^1.5
+        double r_target = R_sphere * std::pow(p.ru / R_sphere, 1.5);
+
+        // Normalize direction vectors
+        double nx = p.x / p.ru;
+        double ny = p.y / p.ru;
+        double nz = p.z / p.ru;
+
+        // Shift to geometric center of the domain
+        double final_x = cx + nx * r_target;
+        double final_y = cy + ny * r_target;
+        double final_z = cz + nz * r_target;
+
+        // Apply periodic bounds safely
+        final_x =
+            std::fmod(final_x + config.domain_size.x, config.domain_size.x);
+        final_y =
+            std::fmod(final_y + config.domain_size.y, config.domain_size.y);
+        final_z =
+            std::fmod(final_z + config.domain_size.z, config.domain_size.z);
+
+        // Theoretical density at the new target radius
+        double target_rho =
+            M_total / (2.0 * M_PI * R_sphere * R_sphere * r_target);
+
+        // Initial guess for smoothing length
+        double initial_h = 0.5 * std::cbrt(config.mfm_target_neighbors *
+                                           particle_mass / target_rho);
+
+        state.mfm_gas->add_particle(final_x, final_y, final_z, 0.0, 0.0,
+                                    0.0,  // Initially at rest
+                                    particle_mass,
+                                    u_initial,  // Thermal energy u = 0.05
+                                    initial_h, seed_metallicity);
+    }
+}
+
 void initialize_soundwave(SimState& state, const Config& config) {
     if (config.hydro_method != HydroMethod::MFM) return;
 
@@ -1380,6 +1588,10 @@ SimState initialize_state(Config& config) {
         initialize_sedov_blastwave(state, config);
     } else if (config.initial_setup == InitialSetup::SoundWave) {
         initialize_soundwave(state, config);
+    } else if (config.initial_setup == InitialSetup::KelvinHelmholtz) {
+        initialize_kelvin_helmholtz(state, config);
+    } else if (config.initial_setup == InitialSetup::EvrardCollapse) {
+        initialize_evrard_collapse(state, config);
     }
 
     config.expanding_universe = prev_expanding_universe;

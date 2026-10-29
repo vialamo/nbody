@@ -2,6 +2,7 @@
 #include <Eigen/Dense>
 
 struct Vec3;
+struct Config;
 
 namespace Reconstruction {
 
@@ -58,13 +59,13 @@ ParticleGradients compute_single_particle_gradients(
     const int* neighbor_indices,          // Flat array of neighbor indices
     size_t num_neighbors,                 // Number of neighbors
     const FluidStateArrays& system_data,  // Pointers to global SoA
-    const Eigen::Matrix3d& B, bool ill_conditioned, const Vec3& domain_size);
+    const Eigen::Matrix3d& B, bool ill_conditioned, const Config& config);
 
 // Extrapolates particle states to the face using spatial gradients
 ReconstructedFace compute_face_reconstruction(
     const ParticleState& p_i, const ParticleGradients& grad_i,
     const ParticleState& p_j, const ParticleGradients& grad_j,
     const Eigen::Matrix3d& B_matrix_i, const Eigen::Matrix3d& B_matrix_j,
-    const Vec3& domain_size, double density_floor, double pressure_floor);
+    const Config& config, double density_floor, double pressure_floor);
 
 }  // namespace Reconstruction

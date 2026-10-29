@@ -140,6 +140,7 @@ The simulation is configured using a standard INI file format. Below is a breakd
 Defines the spatial properties and resolution of the simulation box.
 
 * **`domain_size`**: The internal code-unit length of the box (typically set to `1.0` for natural units).
+* **`domain_size_x_factor`**: A multiplier for the base `domain_size` to establish the domain length along the x-axis ($L_x = \text{domain\_size} \times \text{factor}$). Use this to construct elongated rectangular simulation volumes—such as those required for 1D shock tubes—without altering the underlying particle spacing or base resolution scale. Defaults to `1.0` (cubic domain).
 * **`mesh_size_1d`**: The number of grid cells along one axis for the Poisson solver and hydrodynamics, if using the eulerian method (e.g., `32` creates a 32x32x32 computational grid).
 * **`num_particles_1d`**: The number of N-body particles along one axis (e.g., `32` creates 32,768 total particles). Often matched to `mesh_size` to avoid interpolation artifacts.
 * **`num_gas_particles_1d`**: The number of gas particles along one axis, when using MFM for hydrodynamics.
@@ -198,6 +199,10 @@ Configures the fluid dynamics solver for the baryonic gas.
 * **`mfm_max_iterations`**: The maximum number of Newton-Raphson iterations the solver is allowed to perform when dynamically adjusting a particle's smoothing length to hit the target number of neighbors.
 * **`dual_energy_threshold`**: Threshold to activate the dual energy formalism. If the internal energy falls below this fraction of the kinetic energy, the fallback is triggered.
 * **`use_exact_riemann`**: Use an exact Riemann solver instead of the default HLLC.
+* **`gradient_limiter_beta_max`**: Defines the upper bound for the Barth-Jespersen gradient limiter's $\beta$ parameter. This maximum is applied dynamically when the local shape matrix is perfectly conditioned. A standard choice for second-order accuracy is 2.0. Set both this and the minimum value to 0.0 to completely bypass spatial gradient calculations and force a zeroth-order (piecewise constant) reconstruction.
+* **`gradient_limiter_beta_min`**: Defines the lower bound for the $\beta$ parameter, establishing the most aggressive gradient clipping applied when the shape matrix is poorly conditioned. A typical stable default is 1.0. Must be set to 0.0 alongside the maximum value to enforce a zeroth-order reconstruction.
+* **`pairwise_limiter_psi1`**: Controls the primary bounding envelope of the pairwise TVD face limiter. Defines the maximum allowed overshoot for the reconstructed face states relative to the absolute scalar differences between interacting particles (standard default is 0.5).
+* **`pairwise_limiter_psi2`**: Controls the secondary bounding envelope of the pairwise TVD face limiter. It enforces a stricter monotonicity constraint by restricting the extrapolated state relative to the linearly interpolated midpoint between particles (standard default is 0.25). Set to a very large value, alongside `psi1` and a high `beta`, to bypass all TVD constraints and achieve an unlimited second-order reconstruction.
 
 ### `[subgrid]`
 

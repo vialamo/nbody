@@ -505,7 +505,7 @@ class True3DViewer:
 if __name__ == '__main__':   
     parser = argparse.ArgumentParser(description="Interactive 3D Cosmological Simulation Viewer.")
     parser.add_argument("path", type=str, help="Path to snapshot directory.")
-    parser.add_argument("-l", "--latest", action="store_true", help="Automatically load the latest 'run_*' directory inside the path")
+    parser.add_argument("-l", "--latest", action="store_true", help="Automatically load the latest in directory inside the path")
     
     if len(sys.argv) == 1:
         parser.print_help()
