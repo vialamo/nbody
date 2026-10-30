@@ -2534,6 +2534,21 @@ This test measures the code's ability to model fluid mixing and the growth of in
 * **The Expected Result:** The shear at the interface is unstable. The small initial perturbation should grow exponentially, causing the interface to roll up into a characteristic series of vortices. 
 * **The Validation:** This is a test of the solver's numerical diffusion. Resolving these vortices correctly requires second-order spatial reconstruction and an adequate solver (like HLLC) to avoid introducing too much artificial viscosity.
 
+### The Evrard Spherical Collapse
+
+This is a multi-dimensional test for how a code couples hydrodynamics with self-gravity during extreme compression and shock heating.
+
+* **The Setup:** A cold sphere of gas of mass $M$ and radius $R$ is initialized at rest in a vacuum. The gas follows a specific $1/r$ density profile: $\rho(r) = \frac{M}{2\pi R^2 r}$ for $r < R$. The initial thermal energy is set artificially low ($u \ll GM/R$) so that gravity dominates the initial dynamics.
+
+* **The Expected Result:** The gas sphere free-falls inward under its own self-gravity, converting gravitational potential energy into kinetic energy. As the core reaches maximum compression, the central pressure spikes, halting the collapse and driving an outward-propagating shock wave (the "bounce"). This tests the **Gravity-Hydro Coupling** and **Total Energy Conservation**, as the code must accurately track the massive conversion of potential to kinetic, and finally to thermal energy without artificial dissipation.
+
+* **The Validation:** This test lacks an analytical solution for the transient phase, so it is validated against high-resolution 1D reference simulations and theoretical equilibrium limits:
+
+1. **Profile Evolution:** At specific times during the bounce (e.g., $t=0.8$), the radial profiles of density, velocity, and entropy must align with established 1D high-order benchmarks. The outward-moving shock front must be sharp and correctly positioned.
+
+2. **Global Energy Conservation:** The total energy of the fluid must remain conserved.
+3. **Hydrostatic Equilibrium:** The system must eventually settle into a permanent, stable state where the outward thermal pressure balances the inward gravitational pull: $\nabla P = -\rho \nabla \Phi$.
+
 ### Sources of Error
 
 #### The Temperature Floor

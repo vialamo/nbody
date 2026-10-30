@@ -94,41 +94,37 @@ def validate_evrard_interactive(snapshot_dir):
     ax_slice = fig.add_subplot(gs[2, 1:3])  
     
     cmap_angle = 'turbo' 
-    scatter_kwargs = {'s': 3, 'alpha': 0.6, 'cmap': cmap_angle, 'vmin': 0, 'vmax': 55} 
+    scatter_kwargs = {'s': 3, 'alpha': 0.6, 'color': 'tab:blue'} 
     
-    scat_rho = ax_rho.scatter([], [], c=[], **scatter_kwargs) 
+    scat_rho = ax_rho.scatter([], [], **scatter_kwargs) 
     ax_rho.set_ylabel(r"Density ($\rho$)") 
     ax_rho.set_yscale('log')
     ax_rho.set_title("Radial Density Profile") 
     
-    scat_v = ax_v.scatter([], [], c=[], **scatter_kwargs) 
+    scat_v = ax_v.scatter([], [], **scatter_kwargs) 
     ax_v.set_ylabel(r"Radial Velocity ($v_r$)") 
     ax_v.set_title("Radial Velocity Profile") 
     
-    scat_S = ax_S.scatter([], [], c=[], **scatter_kwargs)
+    scat_S = ax_S.scatter([], [], **scatter_kwargs)
     ax_S.set_ylabel(r"Entropy ($P/\rho^\gamma$)")
     ax_S.set_title("Entropy Profile")
     
-    scat_u = ax_u.scatter([], [], c=[], **scatter_kwargs) 
+    scat_u = ax_u.scatter([], [], **scatter_kwargs) 
     ax_u.set_ylabel(r"Internal Energy ($u$)") 
     ax_u.set_yscale('log')
     ax_u.set_title("Specific Internal Energy") 
 
-    scat_gradP = ax_gradP.scatter([], [], c=[], **scatter_kwargs) 
+    scat_gradP = ax_gradP.scatter([], [], **scatter_kwargs) 
     ax_gradP.set_ylabel(r"Radial Grad P ($\nabla P \cdot \hat{r}$)") 
     ax_gradP.set_xlabel("Radius (r)") 
     ax_gradP.set_title("Pressure Gradient") 
 
-    scat_cond = ax_cond.scatter([], [], c=[], **scatter_kwargs) 
+    scat_cond = ax_cond.scatter([], [], **scatter_kwargs) 
     ax_cond.set_ylabel("Condition Number") 
     ax_cond.set_xlabel("Radius (r)") 
-    ax_cond.set_title("Condition Num") 
-    
-    cbar_ax = fig.add_axes([0.92, 0.55, 0.01, 0.35]) 
-    cbar_angle = fig.colorbar(scat_v, cax=cbar_ax) 
-    cbar_angle.set_label('Angle to Nearest Cartesian Axis (deg)') 
+    ax_cond.set_title("Condition Num")
 
-    plot_axes = [ax_rho, ax_v, ax_S, ax_u, ax_gradP, ax_cond] 
+    plot_axes = [ax_rho, ax_v, ax_S, ax_u, ax_gradP, ax_cond]
     for ax in plot_axes: 
         ax.grid(True, linestyle=':', alpha=0.6) 
     
@@ -137,7 +133,7 @@ def validate_evrard_interactive(snapshot_dir):
     ax_slice.set_ylabel("y") 
     ax_slice.set_aspect('equal') 
     ax_slice.set_facecolor('midnightblue') 
-    scat_slice = ax_slice.scatter([], [], c=[], cmap='jet', norm=mcolors.LogNorm(vmin=1e-3, vmax=1e3), s=15, marker='s', edgecolors='none') 
+    scat_slice = ax_slice.scatter([], [], c=[], cmap='jet', norm=mcolors.LogNorm(vmin=1e-3, vmax=1e3), s=15, marker='o', edgecolors='none') 
     cbar = fig.colorbar(scat_slice, ax=ax_slice, fraction=0.046, pad=0.04) 
     cbar.set_label(r"Density ($\rho$)")
     
@@ -234,9 +230,6 @@ def validate_evrard_interactive(snapshot_dir):
                 y_slice = y_slice[sort_slice] 
                 rho_slice_2d = rho_slice_2d[sort_slice]
 
-        max_dir = np.maximum(np.maximum(np.abs(dx), np.abs(dy)), np.abs(dz)) 
-        angle_flat = np.degrees(np.arccos(max_dir / np.maximum(r_flat, 1e-8))) 
-
         if len(x_slice) > 0: 
             scat_slice.set_offsets(np.c_[x_slice, y_slice]) 
             scat_slice.set_array(rho_slice_2d)
@@ -260,37 +253,24 @@ def validate_evrard_interactive(snapshot_dir):
             S_plot = entropy_flat[sample_idx]
             u_plot = u_flat[sample_idx] 
             gradP_plot = gradP_mag_flat[sample_idx] 
-            cond_plot = cond_flat[sample_idx] 
-            angle_plot = angle_flat[sample_idx] 
+            cond_plot = cond_flat[sample_idx]  
         else: 
             r_plot, rho_plot, v_r_plot = r_flat, rho_flat, v_r_flat 
             S_plot, u_plot = entropy_flat, u_flat
             gradP_plot = gradP_mag_flat 
             cond_plot = cond_flat 
-            angle_plot = angle_flat 
             
         fig.canvas.manager.set_window_title(os.path.basename(os.path.normpath(snapshot_dir))) 
         fig.suptitle(f"Evrard Collapse Validation - Snapshot {idx} (t={time:.4f})", fontsize=16) 
         
-        sort_by_angle = np.random.permutation(len(angle_plot)) 
+        shuffle_idx = np.random.permutation(len(r_plot)) 
 
-        scat_rho.set_offsets(np.c_[r_plot[sort_by_angle], rho_plot[sort_by_angle]]) 
-        scat_rho.set_array(angle_plot[sort_by_angle]) 
-        
-        scat_v.set_offsets(np.c_[r_plot[sort_by_angle], v_r_plot[sort_by_angle]]) 
-        scat_v.set_array(angle_plot[sort_by_angle]) 
-        
-        scat_S.set_offsets(np.c_[r_plot[sort_by_angle], S_plot[sort_by_angle]])
-        scat_S.set_array(angle_plot[sort_by_angle])
-        
-        scat_u.set_offsets(np.c_[r_plot[sort_by_angle], u_plot[sort_by_angle]]) 
-        scat_u.set_array(angle_plot[sort_by_angle]) 
-        
-        scat_gradP.set_offsets(np.c_[r_plot[sort_by_angle], gradP_plot[sort_by_angle]]) 
-        scat_gradP.set_array(angle_plot[sort_by_angle]) 
-        
-        scat_cond.set_offsets(np.c_[r_plot[sort_by_angle], cond_plot[sort_by_angle]]) 
-        scat_cond.set_array(angle_plot[sort_by_angle]) 
+        scat_rho.set_offsets(np.c_[r_plot[shuffle_idx], rho_plot[shuffle_idx]]) 
+        scat_v.set_offsets(np.c_[r_plot[shuffle_idx], v_r_plot[shuffle_idx]]) 
+        scat_S.set_offsets(np.c_[r_plot[shuffle_idx], S_plot[shuffle_idx]])
+        scat_u.set_offsets(np.c_[r_plot[shuffle_idx], u_plot[shuffle_idx]]) 
+        scat_gradP.set_offsets(np.c_[r_plot[shuffle_idx], gradP_plot[shuffle_idx]]) 
+        scat_cond.set_offsets(np.c_[r_plot[shuffle_idx], cond_plot[shuffle_idx]])
 
         if len(rho_plot) > 0:
             valid_r = r_plot[r_plot > 0]

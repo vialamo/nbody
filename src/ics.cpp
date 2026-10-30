@@ -1373,10 +1373,18 @@ void initialize_kelvin_helmholtz(SimState& state, const Config& config) {
 }
 
 void initialize_evrard_collapse(SimState& state, const Config& config) {
-    if (config.hydro_method != HydroMethod::MFM) return;
+    bool use_gas_particles =
+        (config.num_gas_particles_1d > config.num_dm_particles_1d);
+
+    if (config.num_gas_particles_1d > 0 &&
+        config.hydro_method != HydroMethod::MFM)
+        return;
 
     // Evrard Collapse Parameters (Hopkins 2015, Section 4.5.1)
-    double M_total = config.omega_baryon / config.omega_m;
+    double M_total =
+        use_gas_particles
+            ? config.omega_baryon / config.omega_m
+            : (config.omega_m - config.omega_baryon) / config.omega_m;
     double R_sphere = 0.35;
     double u_initial = 0.05 * (config.G * M_total) / R_sphere;
     double seed_metallicity = 0.0;
@@ -1392,7 +1400,8 @@ void initialize_evrard_collapse(SimState& state, const Config& config) {
     std::vector<RawParticle> uniform_points;
 
     // Define the target 1D resolution for the bounding box
-    int N_res = config.num_gas_particles_1d;
+    int N_res =
+        std::max(config.num_gas_particles_1d, config.num_dm_particles_1d);
 
     // Generate a uniform sphere of points (Glass or Lattice)
     if (config.use_glass) {
@@ -1482,9 +1491,14 @@ void initialize_evrard_collapse(SimState& state, const Config& config) {
         double initial_h = 0.5 * std::cbrt(config.mfm_target_neighbors *
                                            particle_mass / target_rho);
 
-        state.mfm_gas->add_particle(final_x, final_y, final_z, 0.0, 0.0, 0.0,
-                                    particle_mass, u_initial, initial_h,
-                                    seed_metallicity);
+        if (use_gas_particles) {
+            state.mfm_gas->add_particle(final_x, final_y, final_z, 0.0, 0.0,
+                                        0.0, particle_mass, u_initial,
+                                        initial_h, seed_metallicity);
+        } else {
+            state.dm.add_particle(final_x, final_y, final_z, 0.0, 0.0, 0.0,
+                                  particle_mass);
+        }
     }
 }
 
