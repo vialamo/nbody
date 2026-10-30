@@ -46,19 +46,16 @@ def validate_evrard_interactive(snapshot_dir):
                 sw_e = f['Gas'].attrs.get('cumulative_entropy_switch_energy', 0.0) 
                 mass = f['Gas/mass'][:] 
                 
-                # Gravity potential energy should be included in total energy for Evrard
-                pot = f['Gas/potential'][:] if 'potential' in f['Gas'] else np.zeros_like(mass)
-                
                 if 'total_energy' in f['Gas']: 
                     u_tot_spec = f['Gas/total_energy'][:] 
-                    E_tot = np.sum(mass * (u_tot_spec + 0.5 * pot)) 
+                    E_tot = np.sum(mass * u_tot_spec) 
                 else: 
                     u = f['Gas/internal_energy'][:] 
                     vx = f['Gas/velocity_x'][:] 
                     vy = f['Gas/velocity_y'][:] 
                     vz = f['Gas/velocity_z'][:] 
                     ke = 0.5 * (vx**2 + vy**2 + vz**2) 
-                    E_tot = np.sum(mass * (u + ke + 0.5 * pot)) 
+                    E_tot = np.sum(mass * (u + ke)) 
             else: 
                 sw_e = f['Gas'].attrs.get('cumulative_dual_energy_switch_energy', 0.0) 
                 energy_dens = f['Gas/energy'][:] 
@@ -87,7 +84,7 @@ def validate_evrard_interactive(snapshot_dir):
     
     ax_rho   = fig.add_subplot(gs[0, 0]) 
     ax_v     = fig.add_subplot(gs[0, 1]) 
-    ax_S     = fig.add_subplot(gs[0, 2]) # Entropy instead of pressure
+    ax_S     = fig.add_subplot(gs[0, 2])
     
     ax_u     = fig.add_subplot(gs[1, 0]) 
     ax_gradP = fig.add_subplot(gs[1, 1]) 
@@ -110,7 +107,6 @@ def validate_evrard_interactive(snapshot_dir):
     
     scat_S = ax_S.scatter([], [], c=[], **scatter_kwargs)
     ax_S.set_ylabel(r"Entropy ($P/\rho^\gamma$)")
-    ax_S.set_yscale('log')
     ax_S.set_title("Entropy Profile")
     
     scat_u = ax_u.scatter([], [], c=[], **scatter_kwargs) 
@@ -134,7 +130,6 @@ def validate_evrard_interactive(snapshot_dir):
 
     plot_axes = [ax_rho, ax_v, ax_S, ax_u, ax_gradP, ax_cond] 
     for ax in plot_axes: 
-        ax.set_xlim(0.01, domain_size / 2.0)
         ax.grid(True, linestyle=':', alpha=0.6) 
     
     ax_slice.set_title("Density (2D Slice z=0)")
@@ -298,10 +293,31 @@ def validate_evrard_interactive(snapshot_dir):
         scat_cond.set_array(angle_plot[sort_by_angle]) 
 
         if len(rho_plot) > 0:
-            ax_rho.set_ylim(1e-2, np.nanmax(rho_plot) * 1.5)
-            ax_v.set_ylim(np.nanmin(v_r_plot) - 0.2, np.nanmax(v_r_plot) + 0.2)
-            ax_S.set_ylim(1e-3, np.nanmax(S_plot) * 1.5)
-            ax_u.set_ylim(1e-2, np.nanmax(u_plot) * 1.5)
+            valid_r = r_plot[r_plot > 0]
+            
+            # Dynamically calculate the maximum and minimum radius
+            r_max = np.nanmax(valid_r) if len(valid_r) > 0 else (domain_size / 2.0)
+            r_min = np.nanmin(valid_r) if len(valid_r) > 0 else 1e-3
+            
+            # Apply dynamic x-axis limits to all radial profile plots
+            for ax in [ax_rho, ax_v, ax_S, ax_u, ax_gradP, ax_cond]:
+                ax.set_xscale('log')
+                ax.set_xlim(r_min * 0.9, r_max * 1.1)
+            
+            # Dynamic Y-limits (Log plots require >0 filters)
+            rho_min = np.nanmin(rho_plot[rho_plot > 0]) if np.any(rho_plot > 0) else 1e-2
+            ax_rho.set_ylim(rho_min * 0.5, np.nanmax(rho_plot) * 1.5)
+            
+            # Linear scale padding
+            v_pad = 0.1 * (np.nanmax(v_r_plot) - np.nanmin(v_r_plot))
+            v_pad = v_pad if v_pad > 0 else 0.2
+            ax_v.set_ylim(np.nanmin(v_r_plot) - v_pad, np.nanmax(v_r_plot) + v_pad)
+            
+            S_min = np.nanmin(S_plot[S_plot > 0]) if np.any(S_plot > 0) else 1e-3
+            ax_S.set_ylim(S_min * 0.5, np.nanmax(S_plot) * 1.5)
+            
+            u_min = np.nanmin(u_plot[u_plot > 0]) if np.any(u_plot > 0) else 1e-2
+            ax_u.set_ylim(u_min * 0.5, np.nanmax(u_plot) * 1.5)
             
         if np.count_nonzero(~np.isnan(gradP_plot)) > 0: 
             ax_gradP.set_ylim(np.nanmin(gradP_plot), np.nanmax(gradP_plot) * 1.1) 

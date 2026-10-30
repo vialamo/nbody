@@ -352,7 +352,7 @@ static void reset_all_accels(SimState& state, Config& config) {
     }
 }
 
-void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
+static void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
     // Update softening
     state.gravity.update_softening(state, config);
 
@@ -462,7 +462,7 @@ static void apply_drift(SimState& state, double dt, Config& config,
     }
 }
 
-void update_timesteps(SimState& state, const Config& config) {
+static void update_timesteps(SimState& state, const Config& config) {
     state.dm.update_particle_timesteps(config.fixed_dt, config);
     if (config.hydro_method == HydroMethod::MFM) {
         state.mfm_gas->update_particle_timesteps(
@@ -492,7 +492,30 @@ void KDK_step(SimState& state, double dt, Config& config, Diagnostics& diag) {
     // KICK 2 (Half step)
     apply_kick(state, dt / 2.0, config, false);
 
+    if (config.hydro_method == HydroMethod::MFM) {
+        state.mfm_gas->sync_thermo(config, state.scale_factor);
+    }
+
     // Time bin assignment
+    update_timesteps(state, config);
+}
+
+void initialize(SimState& state, Config& config) {
+    if (config.hydro_method == HydroMethod::MFM) {
+        state.mfm_gas->build_lbvh(config);
+        DensitySolver::compute_density_and_h(*state.mfm_gas, config);
+        state.mfm_gas->sync_thermo(config, state.scale_factor, true);
+    }
+
+    state.dm.sync_and_activate(0.0, config);
+    if (config.hydro_method == HydroMethod::MFM) {
+        state.mfm_gas->sync_and_activate(0.0, state.scale_factor,
+                                         state.hubble_param, config);
+    }
+
+    Diagnostics dummy_diag;
+    compute_forces(state, config, dummy_diag);
+
     update_timesteps(state, config);
 }
 

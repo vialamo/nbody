@@ -1,6 +1,7 @@
 #include "mfm.h"
 
 #include "config.h"
+#include "density.h"
 #include "hydro.h"
 #include "integrator.h"
 #include "math_utils.h"
@@ -494,8 +495,19 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
 }
 
 void GasParticleSystem::hydro_step(const Config& config, double a) {
-    Thermodynamics::update_primitive_variables(*this, config, a);
     Thermodynamics::predict_primitive_variables(*this, config, a);
     HydroSolver::compute_gradients(*this, config);
     HydroSolver::compute_forces(*this, config, a);
+}
+
+void GasParticleSystem::sync_thermo(const Config& config, double a,
+                                    bool first_call) {
+    if (first_call) {
+        for (size_t i = 0; i < num_particles; ++i) {
+            double ke = 0.5 * (vel_x[i] * vel_x[i] + vel_y[i] * vel_y[i] +
+                               vel_z[i] * vel_z[i]);
+            total_energy[i] = u[i] + ke;
+        }
+    }
+    Thermodynamics::update_primitive_variables(*this, config, a);
 }

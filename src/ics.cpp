@@ -1376,13 +1376,12 @@ void initialize_evrard_collapse(SimState& state, const Config& config) {
     if (config.hydro_method != HydroMethod::MFM) return;
 
     // Evrard Collapse Parameters (Hopkins 2015, Section 4.5.1)
-    double gas_total_mass = config.omega_baryon / config.omega_m;
-    double M_total = gas_total_mass;
-    double R_sphere = 0.15;
-    double u_initial = 0.05;
+    double M_total = config.omega_baryon / config.omega_m;
+    double R_sphere = 0.35;
+    double u_initial = 0.05 * (config.G * M_total) / R_sphere;
     double seed_metallicity = 0.0;
 
-    // True geometric center of the domain
+    // Geometric center of the domain
     double cx = config.domain_size.x / 2.0;
     double cy = config.domain_size.y / 2.0;
     double cz = config.domain_size.z / 2.0;
@@ -1392,9 +1391,11 @@ void initialize_evrard_collapse(SimState& state, const Config& config) {
     };
     std::vector<RawParticle> uniform_points;
 
+    // Define the target 1D resolution for the bounding box
+    int N_res = config.num_gas_particles_1d;
+
     // Generate a uniform sphere of points (Glass or Lattice)
     if (config.use_glass) {
-        int N_res = config.num_gas_particles_1d;
         int N_glass = std::max(
             8, static_cast<int>(std::pow(2, std::round(std::log2(N_res)))));
         N_glass = std::min(N_glass, 128);
@@ -1408,24 +1409,27 @@ void initialize_evrard_collapse(SimState& state, const Config& config) {
             return;
         }
 
-        // We want to tile the glass over a bounding box of [-R, R]^3
-        double L_base =
-            2.0 * R_sphere / std::ceil(static_cast<double>(N_res) / N_glass);
-        int n_tiles = static_cast<int>(std::ceil(2.0 * R_sphere / L_base));
+        // Scale the length of one glass block so its internal number density
+        // matches the target N_res^3 over the (2 * R_sphere)^3 bounding box
+        double L_block =
+            (2.0 * R_sphere) * (static_cast<double>(N_glass) / N_res);
+
+        // Calculate required tiles to cover the bounding box
+        int n_tiles =
+            static_cast<int>(std::ceil(static_cast<double>(N_res) / N_glass));
 
         for (int tx = 0; tx < n_tiles; ++tx) {
             for (int ty = 0; ty < n_tiles; ++ty) {
                 for (int tz = 0; tz < n_tiles; ++tz) {
                     for (size_t p = 0; p < glass.num_particles; ++p) {
-                        double px =
-                            -R_sphere + tx * L_base + glass.pos_x[p] * L_base;
-                        double py =
-                            -R_sphere + ty * L_base + glass.pos_y[p] * L_base;
-                        double pz =
-                            -R_sphere + tz * L_base + glass.pos_z[p] * L_base;
+                        double px = -R_sphere + (tx + glass.pos_x[p]) * L_block;
+                        double py = -R_sphere + (ty + glass.pos_y[p]) * L_block;
+                        double pz = -R_sphere + (tz + glass.pos_z[p]) * L_block;
 
                         double ru = std::sqrt(px * px + py * py + pz * pz);
-                        if (ru <= R_sphere) {
+                        // The radius check natively discards the overhang of
+                        // the fractional tiles
+                        if (ru <= R_sphere && ru > 1e-8) {
                             uniform_points.push_back({px, py, pz, ru});
                         }
                     }
@@ -1433,17 +1437,16 @@ void initialize_evrard_collapse(SimState& state, const Config& config) {
             }
         }
     } else {
-        int N_part = config.num_gas_particles_1d;
-        double spacing = (2.0 * R_sphere) / N_part;
-        for (int i = 0; i < N_part; ++i) {
-            for (int j = 0; j < N_part; ++j) {
-                for (int k = 0; k < N_part; ++k) {
+        double spacing = (2.0 * R_sphere) / N_res;
+        for (int i = 0; i < N_res; ++i) {
+            for (int j = 0; j < N_res; ++j) {
+                for (int k = 0; k < N_res; ++k) {
                     double px = -R_sphere + (i + 0.5) * spacing;
                     double py = -R_sphere + (j + 0.5) * spacing;
                     double pz = -R_sphere + (k + 0.5) * spacing;
 
                     double ru = std::sqrt(px * px + py * py + pz * pz);
-                    if (ru <= R_sphere) {
+                    if (ru <= R_sphere && ru > 1e-8) {
                         uniform_points.push_back({px, py, pz, ru});
                     }
                 }
@@ -1455,12 +1458,7 @@ void initialize_evrard_collapse(SimState& state, const Config& config) {
     double particle_mass = M_total / static_cast<double>(uniform_points.size());
 
     for (const auto& p : uniform_points) {
-        if (p.ru < 1e-8) continue;  // Avoid singularity at exact origin
-
         // Radial transformation to achieve rho(r) ~ 1/r
-        // A uniform sphere has M(<r) ~ r^3. The target profile has M(<r) ~ r^2.
-        // Therefore, matching cumulative mass fractions gives r_target = R *
-        // (r_u / R)^1.5
         double r_target = R_sphere * std::pow(p.ru / R_sphere, 1.5);
 
         // Normalize direction vectors
@@ -1468,18 +1466,13 @@ void initialize_evrard_collapse(SimState& state, const Config& config) {
         double ny = p.y / p.ru;
         double nz = p.z / p.ru;
 
-        // Shift to geometric center of the domain
-        double final_x = cx + nx * r_target;
-        double final_y = cy + ny * r_target;
-        double final_z = cz + nz * r_target;
-
-        // Apply periodic bounds safely
-        final_x =
-            std::fmod(final_x + config.domain_size.x, config.domain_size.x);
-        final_y =
-            std::fmod(final_y + config.domain_size.y, config.domain_size.y);
-        final_z =
-            std::fmod(final_z + config.domain_size.z, config.domain_size.z);
+        // Shift to geometric center of the domain and apply periodic bounds
+        double final_x = std::fmod(cx + nx * r_target + config.domain_size.x,
+                                   config.domain_size.x);
+        double final_y = std::fmod(cy + ny * r_target + config.domain_size.y,
+                                   config.domain_size.y);
+        double final_z = std::fmod(cz + nz * r_target + config.domain_size.z,
+                                   config.domain_size.z);
 
         // Theoretical density at the new target radius
         double target_rho =
@@ -1489,11 +1482,9 @@ void initialize_evrard_collapse(SimState& state, const Config& config) {
         double initial_h = 0.5 * std::cbrt(config.mfm_target_neighbors *
                                            particle_mass / target_rho);
 
-        state.mfm_gas->add_particle(final_x, final_y, final_z, 0.0, 0.0,
-                                    0.0,  // Initially at rest
-                                    particle_mass,
-                                    u_initial,  // Thermal energy u = 0.05
-                                    initial_h, seed_metallicity);
+        state.mfm_gas->add_particle(final_x, final_y, final_z, 0.0, 0.0, 0.0,
+                                    particle_mass, u_initial, initial_h,
+                                    seed_metallicity);
     }
 }
 
@@ -1574,8 +1565,7 @@ void initialize_soundwave(SimState& state, const Config& config) {
 SimState initialize_state(Config& config) {
     SimState state(config);
     state.total_time = 0;
-    bool prev_expanding_universe = config.expanding_universe;
-    config.expanding_universe = true;
+
     Cosmology::update(state, config);
 
     if (config.initial_setup == InitialSetup::Cosmological) {
@@ -1598,12 +1588,7 @@ SimState initialize_state(Config& config) {
         initialize_evrard_collapse(state, config);
     }
 
-    config.expanding_universe = prev_expanding_universe;
-    Cosmology::update(state, config);
-
-    Diagnostics dummy_diag;
-    Integrator::compute_forces(state, config, dummy_diag);
-    Integrator::update_timesteps(state, config);
+    Integrator::initialize(state, config);
 
     return state;
 }

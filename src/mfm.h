@@ -133,6 +133,8 @@ class GasParticleSystem {
 
     void hydro_step(const Config& config, double a);
 
+    void sync_thermo(const Config& config, double a, bool first_call = false);
+
     // Time step calculations
     double get_cfl_timestep(double a, const Config& config) const;
 

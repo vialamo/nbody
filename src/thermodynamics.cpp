@@ -160,37 +160,6 @@ void predict_primitive_variables(GasParticleSystem& gas, const Config& config,
     }
 }
 
-std::tuple<std::vector<double>, std::vector<double>, std::vector<double>,
-           std::vector<double>>
-compute_snapshot_primitives(const GasParticleSystem& gas, const Config& config,
-                            double a) {
-    std::vector<double> u_snap(gas.num_particles);
-    std::vector<double> p_snap(gas.num_particles);
-    std::vector<double> s_snap(gas.num_particles);
-    std::vector<double> e_snap(gas.num_particles);
-
-    const double gamma_minus_1 = config.gamma - 1.0;
-
-    const double u_floor =
-        get_internal_energy_from_temp(config.temp_floor_k, a, config);
-
-    double alpha_kin = config.dual_energy_threshold;
-    double alpha_grav = config.dual_energy_threshold;
-
-#pragma omp parallel for schedule(static)
-    for (size_t i = 0; i < gas.num_particles; ++i) {
-        double dummy_injected = 0.0;
-        double dummy_switch = 0.0;
-
-        evaluate_particle_thermodynamics(
-            gas, i, u_floor, alpha_kin, alpha_grav, gamma_minus_1, u_snap[i],
-            p_snap[i], s_snap[i], e_snap[i], dummy_injected, dummy_switch);
-    }
-
-    return {std::move(u_snap), std::move(p_snap), std::move(s_snap),
-            std::move(e_snap)};
-}
-
 double get_u_floor(double a, const Config& config) {
     double u_floor =
         get_internal_energy_from_temp(config.temp_floor_k, a, config);

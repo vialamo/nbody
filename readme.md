@@ -27,6 +27,7 @@ This repository contains a TreePM/MFM cosmological code written in C++, along wi
 
 * [`/src/`](src/): A C++ TreePM + hydrodynamics cosmological code.
 * [`/docs/`](docs/): Contains a "living book" titled **"Notes on Cosmological Simulations"** in Markdown format. It includes a `Makefile` to automatically build the source notes into EPUB and PDF files.
+* [`/examples/`](examples/): Contains configuration files for typical simulations and tests.
 * [`/scripts/`](scripts/): Contains Python utilities for post-processing, including a dashboard (`dashboard.py`) to plot and diagnose physics from the HDF5 outputs.
 
 ## Getting Started
@@ -171,7 +172,7 @@ Defines the cosmological model of the universe.
 
 Controls the generation of the primordial density field and particle distributions.
 
-* **`setup`**: Initial configuration for gas and DM. Can be "cosmological" for a normal simulation, but also "sound_wave", "sod_shock_tube", "adiabatic_expansion" or "sedov_blastwave" to create initial conditions for these specific tests. In these cases, gravity and DM will be automatically disabled and expansion adjusted according to the specific test.
+* **`setup`**: Initial configuration for gas and DM. Can be "cosmological" for a normal simulation, but also "sound_wave", "sod_shock_tube", "adiabatic_expansion","sedov_blastwave", "kelvin_helmholtz" or "evrard_collapse" to create initial conditions for these specific tests. In these cases, gravity and DM will be automatically disabled and expansion adjusted according to the specific test.
 * **`use_glass`**: Will use glass files to generate the initial conditions when available. These must be located in the configured `glass_folder_path` and can be downloaded [`here`](https://virgodb.cosma.dur.ac.uk/swift-webstorage/ICs/) or through the `fetch_data.sh` script found in the `data` folder.
 * **`glass_folder_path`**: The folder where the glass files are located.
 * **`initial_gas_temp_k`**: The physical temperature of the baryonic gas at `start_a`, in Kelvin.

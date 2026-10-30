@@ -335,20 +335,16 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                 write_particle_vec(gas_group, "smoothing_length", gas.h);
                 write_particle_vec(gas_group, "density", gas.rho);
 
-                auto [u_snap, p_snap, s_snap, e_sna] =
-                    Thermodynamics::compute_snapshot_primitives(
-                        gas, config, state.scale_factor);
-
-                write_particle_vec(gas_group, "pressure", p_snap);
-                write_particle_vec(gas_group, "internal_energy", u_snap);
-                write_particle_vec(gas_group, "entropy", s_snap);
-                write_particle_vec(gas_group, "total_energy", e_sna);
+                write_particle_vec(gas_group, "pressure", gas.pressure);
+                write_particle_vec(gas_group, "internal_energy", gas.u);
+                write_particle_vec(gas_group, "entropy", gas.entropy);
+                write_particle_vec(gas_group, "total_energy", gas.total_energy);
                 write_particle_vec(gas_group, "metal_fraction", gas.metal_frac);
 
                 std::vector<double> temp_vec(gas.num_particles);
                 for (size_t i = 0; i < gas.num_particles; ++i) {
                     temp_vec[i] = Thermodynamics::get_temp_from_internal_energy(
-                        u_snap[i], state.scale_factor, config);
+                        gas.u[i], state.scale_factor, config);
                 }
                 write_particle_vec(gas_group, "temperature", temp_vec);
 

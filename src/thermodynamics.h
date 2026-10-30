@@ -13,13 +13,6 @@ void update_primitive_variables(GasParticleSystem& gas, const Config& config,
 void predict_primitive_variables(GasParticleSystem& gas, const Config& config,
                                  double a);
 
-// Computes synced snapshot arrays (u, P, S, E_tot) without modifying the
-// state
-std::tuple<std::vector<double>, std::vector<double>, std::vector<double>,
-           std::vector<double>>
-compute_snapshot_primitives(const GasParticleSystem& gas, const Config& config,
-                            double a);
-
 double get_u_floor(double a, const Config& config);
 
 // Conversion helpers
