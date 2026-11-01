@@ -434,7 +434,7 @@ void Cooling::apply_cooling(GasParticleSystem& gas, const Config& config,
                 double dt_particle = gas.dt_step[i];
 
                 int iters = 0;
-                // Solve cooling implicitly across the FULL macro-step in one go
+                // Solve cooling implicitly across the full macro-step
                 double u_current = solve_cooling_implicit(
                     u_initial, local_rho, local_Z_frac, a, dt_particle,
                     u_cutoff, u_floor, config, iters);

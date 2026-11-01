@@ -244,12 +244,12 @@ KickWork kick_single_gas_particle(GasParticleSystem& gas, size_t i, double dt,
         ke_phys;  // Negative value representing kinetic energy lost to drag
 
     // Thermodynamics (Hydro du/dt + Adiabatic Expansion Cooling)
-    double u_phys = gas.u[i] + gas.du_dt[i] * dt;
+    double u_post_hydro = gas.u[i] + gas.du_dt[i] * dt;
     double u_cooling =
-        u_phys *
-        expansion_factor;  // Apply expansion to the updated physical energy
+        u_post_hydro *
+        expansion_factor;  // Apply expansion to the updated energy
 
-    gas.u[i] = u_phys - u_cooling;
+    gas.u[i] = u_post_hydro - u_cooling;
     if (gas.u[i] < min_energy) gas.u[i] = min_energy;
 
     // Expansion Work Accumulation (Kinetic drag loss + Thermal expansion loss)
@@ -406,11 +406,6 @@ static void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
             ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
             state.mfm_gas->hydro_step(config, state.scale_factor);
         }
-        if (config.enable_cooling) {
-            ScopedTimer cooling_timer(diag, TimerRegion::Cool);
-            state.cooling.apply_cooling(*state.mfm_gas, config,
-                                        state.scale_factor);
-        }
     }
 
 #ifdef GPU_CPU_PARALLEL_EXECUTION
@@ -493,6 +488,11 @@ void KDK_step(SimState& state, double dt, Config& config, Diagnostics& diag) {
     apply_kick(state, dt / 2.0, config, false);
 
     if (config.hydro_method == HydroMethod::MFM) {
+        if (config.enable_cooling) {
+            ScopedTimer cooling_timer(diag, TimerRegion::Cool);
+            state.cooling.apply_cooling(*state.mfm_gas, config,
+                                        state.scale_factor);
+        }
         state.mfm_gas->sync_thermo(config, state.scale_factor);
     }
 

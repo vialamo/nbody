@@ -64,8 +64,9 @@ GasParticleSystem::GasParticleSystem(const Config& config)
     needs_wakeup.reserve(config.num_gas_particles);
     active_indices.reserve(config.num_gas_particles);
 
-    size_t num_nodes = 2 * config.num_gas_particles - 1;
-    if (config.num_dm_particles > 0) {
+    size_t num_nodes =
+        (config.num_gas_particles > 0) ? (2 * config.num_gas_particles - 1) : 0;
+    if (config.num_gas_particles > 0) {
         morton_codes.reserve(config.num_gas_particles);
         sorted_indices.reserve(config.num_gas_particles);
         bvh_nodes.reserve(num_nodes);

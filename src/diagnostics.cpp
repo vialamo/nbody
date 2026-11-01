@@ -240,16 +240,20 @@ void Diagnostics::compute_mfm_metrics(GasParticleSystem& gas,
                                           : 100.0;
 
     double cycle_div = std::max(1, cycle);
-    this->MFM_ill_percent =
-        100.0 * (static_cast<double>(gas.ill_conditioned_cases) / cycle_div) /
-        MFM_total_particles;
-    this->MFM_clamp_percent =
-        100.0 * (static_cast<double>(gas.clamped_h_cases) / cycle_div) /
-        MFM_total_particles;
-    this->MFM_inc_percent = 100.0 *
-                            (static_cast<double>(gas.neighbor_increased_cases) /
-                             std::max(1, accumulated_cycles)) /
-                            MFM_total_particles;
+    if (MFM_total_particles > 0) {
+        this->MFM_ill_percent =
+            100.0 *
+            (static_cast<double>(gas.ill_conditioned_cases) / cycle_div) /
+            MFM_total_particles;
+        this->MFM_clamp_percent =
+            100.0 * (static_cast<double>(gas.clamped_h_cases) / cycle_div) /
+            MFM_total_particles;
+        this->MFM_inc_percent =
+            100.0 *
+            (static_cast<double>(gas.neighbor_increased_cases) /
+             std::max(1, accumulated_cycles)) /
+            MFM_total_particles;
+    }
 
     double box_volume =
         config.domain_size.x * config.domain_size.y * config.domain_size.z;

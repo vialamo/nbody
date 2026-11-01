@@ -9,6 +9,48 @@ import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 from matplotlib.widgets import Slider
 
+def get_analytical_collapse(t, G, M=1.0, R=0.35):
+    """Computes the exact parametric radial collapse before shell crossing."""
+    if t == 0:
+        r0 = np.logspace(-4, np.log10(R), 200)
+        rho = M / (2 * np.pi * R**2 * r0)
+        v = np.zeros_like(r0)
+        return r0, rho, v
+
+    # Initial unperturbed radii
+    r0 = np.logspace(-4, np.log10(R), 1000)
+    
+    # Dimensionless time parameter for each shell
+    tau = t * np.sqrt(2.0 * G * M / (R**2 * r0))
+    
+    # Filter shells that haven't reached the center yet (tau < pi/2)
+    mask = tau < (np.pi / 2.0)
+    r0 = r0[mask]
+    tau = tau[mask]
+    
+    if len(r0) < 2:
+        return None, None, None
+        
+    # Vectorized Newton-Raphson to solve: theta + 0.5 * sin(2*theta) = tau
+    theta = tau / 2.0 
+    for _ in range(10):
+        f = theta + 0.5 * np.sin(2.0 * theta) - tau
+        df = 1.0 + np.cos(2.0 * theta)
+        theta = theta - f / df
+        
+    # Physical radius and velocity
+    r = r0 * np.cos(theta)**2
+    v = -np.sqrt(2.0 * G * M * r0 / R**2) * np.tan(theta)
+    
+    # Density via mass conservation (rho = dM / dV)
+    # M_enc = M * (r0/R)^2 -> dM = 2 * M * r0 * dr0 / R^2
+    dr = np.gradient(r)
+    dM = np.gradient(M * (r0/R)**2)
+    rho = dM / (4.0 * np.pi * r**2 * dr)
+    
+    valid = rho > 0
+    return r[valid], rho[valid], v[valid]
+
 def validate_dm_collapse_interactive(snapshot_dir):
     files = sorted(glob.glob(os.path.join(snapshot_dir, "snapshot_*.hdf5"))) 
     if not files:
@@ -30,7 +72,6 @@ def validate_dm_collapse_interactive(snapshot_dir):
             t = f['Header'].attrs['simulation_time'] 
             times.append(t) 
             
-            # Collect energy variables for DM
             w_grav = f['Particles'].attrs.get('cumulative_gravitational_work', 0.0) 
             w_exp = f['Particles'].attrs.get('cumulative_expansion_work', 0.0) 
 
@@ -47,7 +88,6 @@ def validate_dm_collapse_interactive(snapshot_dir):
             delta_K = K_current - K_initial 
             absolute_error = delta_K - w_grav + w_exp 
             
-            # Match the C++ diagnostics logic for division by zero if starting at rest
             denominator = K_initial if K_initial > 1e-12 else K_current
             err = absolute_error / denominator if denominator > 1e-12 else 0.0
             e_errors.append(err) 
@@ -65,25 +105,29 @@ def validate_dm_collapse_interactive(snapshot_dir):
     ax_slice = fig.add_subplot(gs[1, 1])  
     
     # 1. Radial Density Profile Setup
-    line_rho, = ax_rho.plot([], [], color='tab:blue', lw=2)
+    line_rho, = ax_rho.plot([], [], color='tab:blue', lw=2, label="Simulation")
+    line_rho_theo, = ax_rho.plot([], [], color='black', ls='--', lw=1.5, label="Analytical (Free-Fall)")
     ax_rho.set_ylabel(r"Density ($\rho$)") 
     ax_rho.set_xlabel("Radius (r)")
     ax_rho.set_yscale('log')
     ax_rho.set_xscale('log')
-    ax_rho.set_xlim(1e-4, 10.0) # Add default positive bound
-    ax_rho.set_ylim(1e-4, 10.0) # Add default positive bound
+    ax_rho.set_xlim(1e-4, 10.0) 
+    ax_rho.set_ylim(1e-4, 10.0) 
     ax_rho.set_title("Radial Density Profile (Binned)") 
     ax_rho.grid(True, linestyle=':', alpha=0.6)
+    ax_rho.legend(loc='upper right')
     
     # 2. Phase Space Setup
-    scatter_kwargs = {'s': 2, 'alpha': 0.5, 'color': 'tab:orange'} 
+    scatter_kwargs = {'s': 2, 'alpha': 0.5, 'color': 'tab:orange', 'label': 'Simulation'} 
     scat_vr = ax_vr.scatter([], [], **scatter_kwargs) 
+    line_vr_theo, = ax_vr.plot([], [], color='black', ls='--', lw=2, label="Analytical (Free-Fall)")
     ax_vr.set_ylabel(r"Radial Velocity ($v_r$)") 
     ax_vr.set_xlabel("Radius (r)")
     ax_vr.set_xscale('log')
-    ax_vr.set_xlim(1e-4, 10.0) # Add default positive bound
+    ax_vr.set_xlim(1e-4, 10.0)
     ax_vr.set_title("Phase Space: Radial Velocity") 
     ax_vr.grid(True, linestyle=':', alpha=0.6)
+    ax_vr.legend(loc='upper left')
     
     # 3. Time Series Setup
     ax_ts.plot(times, e_errors, color='tab:red', lw=2, label='Energy Error') 
@@ -149,6 +193,16 @@ def validate_dm_collapse_interactive(snapshot_dir):
         fig.canvas.manager.set_window_title(os.path.basename(os.path.normpath(snapshot_dir))) 
         fig.suptitle(f"Collisionless Spherical Collapse - Snapshot {idx} (t={time:.4f})", fontsize=16) 
         
+        # Plot Analytical Solution (Assumes M=1, R=0.35)
+        G = config.get('G', 1.0) 
+        r_theo, rho_theo, v_theo = get_analytical_collapse(time, G, M=1.0, R=0.35)
+        if r_theo is not None:
+            line_rho_theo.set_data(r_theo, rho_theo)
+            line_vr_theo.set_data(r_theo, v_theo)
+        else:
+            line_rho_theo.set_data([], [])
+            line_vr_theo.set_data([], [])
+
         # Update Phase Space (Filter out r=0 for the log scale)
         valid_phase = r_plot > 0
         scat_vr.set_offsets(np.c_[r_plot[valid_phase], v_r_plot[valid_phase]])
@@ -171,13 +225,18 @@ def validate_dm_collapse_interactive(snapshot_dir):
             rho_bins = hist_mass / bin_volumes
             bin_centers = np.sqrt(bins[1:] * bins[:-1])
             
-            # Filter empty bins
             valid_bins = rho_bins > 0
             
             if np.any(valid_bins):
                 line_rho.set_data(bin_centers[valid_bins], rho_bins[valid_bins])
+                
+                # Combine sim and theoretical data to find proper y-limits
+                all_rho = rho_bins[valid_bins]
+                if r_theo is not None:
+                    all_rho = np.concatenate([all_rho, rho_theo])
+                    
                 ax_rho.set_xlim(bins[0] * 0.9, bins[-1] * 1.1)
-                ax_rho.set_ylim(np.min(rho_bins[valid_bins]) * 0.5, np.max(rho_bins[valid_bins]) * 1.5)
+                ax_rho.set_ylim(np.nanmin(all_rho) * 0.5, np.nanmax(all_rho) * 1.5)
 
         fig.canvas.draw_idle() 
 
