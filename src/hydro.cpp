@@ -361,7 +361,7 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                     double P_star_com = flux_1d_phys.P_star * a;
                     double S_star_com = flux_1d_phys.S_star * a_inv;
 
-                    Eigen::Vector3d Force_mom = P_star_com * face.area_vec;
+                    /*Eigen::Vector3d Force_mom = P_star_com * face.area_vec;
                     Eigen::Vector3d v_star_lab =
                         v_frame + (S_star_com * face.n);
 
@@ -392,6 +392,102 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                             (v_star_lab - p_j.vel).dot(face.area_vec);
                         double du_dt_j = work_j / p_j.mass;
                         double de_dt_j = Rate_energy / p_j.mass;
+#pragma omp atomic
+                        gas.hydro_acc_x[j] += Force_mom.x() / p_j.mass;
+#pragma omp atomic
+                        gas.hydro_acc_y[j] += Force_mom.y() / p_j.mass;
+#pragma omp atomic
+                        gas.hydro_acc_z[j] += Force_mom.z() / p_j.mass;
+#pragma omp atomic
+                        gas.du_dt[j] += du_dt_j;
+#pragma omp atomic
+                        gas.de_dt[j] += de_dt_j;
+                    } else if (config.individual_particle_timesteps &&
+                               !gas.needs_wakeup[j]) {
+                        // OpenGadget3 Wake-up Limiter
+                        // Wake up the sleeping neighbor if the signal
+                        // velocity of the interaction exceeds 3x its own
+                        // sound speed (f_w = 3.0)
+                        bool og3_trigger = (v_sig_ij > 3.0 * c_phys_j);
+
+                        // Saitoh & Makino (2009) Timestep Limiter
+                        // Wake up the sleeping neighbor if its timestep is
+                        // larger (e.g., 4x) than the active particle
+                        // hitting it
+                        // bool gizmo_trigger = (dt_step[j] > 4.0 *
+                        // dt_step[i]);
+                        if (og3_trigger*/
+                    /*|| gizmo_trigger*/ /*) {
+#pragma omp atomic write
+       gas.needs_wakeup[j] = 1;
+   }
+}*/
+
+                    // Calculate Kinetic Energy for left and right states
+                    // p_i.vel is an Eigen::Vector3d, so squaredNorm() gives
+                    // v_x^2 + v_y^2 + v_z^2
+                    double ke_i = 0.5 * p_i.vel.squaredNorm();
+                    double ke_j = 0.5 * p_j.vel.squaredNorm();
+
+                    // Extract internal energy for left and right states
+                    double gamma_minus_1 = config.gamma - 1.0;
+                    double u_i = p_i.pressure / (gamma_minus_1 * p_i.rho);
+                    double u_j = p_j.pressure / (gamma_minus_1 * p_j.rho);
+
+                    // Synchronize with
+                    // predict_primitive_variables (threshold_truncation =
+                    // alpha_kin * ke)
+                    double thresh_i = config.dual_energy_threshold * ke_i;
+                    double thresh_j = config.dual_energy_threshold * ke_j;
+
+                    bool dual_energy_active_i = (u_i < thresh_i);
+                    bool dual_energy_active_j = (u_j < thresh_j);
+
+                    // Gate the Internal Energy Work
+                    // Total energy (de_dt) ALWAYS uses P_star_com to maintain
+                    // global conservation. Internal energy (du_dt) uses purely
+                    // adiabatic pressure if dual energy is active
+                    double P_work_i =
+                        dual_energy_active_i ? p_i.pressure : P_star_com;
+                    double P_work_j =
+                        dual_energy_active_j ? p_j.pressure : P_star_com;
+
+                    Eigen::Vector3d Force_mom = P_star_com * face.area_vec;
+                    Eigen::Vector3d v_star_lab =
+                        v_frame + (S_star_com * face.n);
+
+                    // Apply the gated pressure to the explicitly integrated
+                    // internal energy
+                    double work_i =
+                        P_work_i * (v_star_lab - p_i.vel).dot(face.area_vec);
+                    double du_dt_i = -work_i / p_i.mass;
+
+                    // The total energy flux must remain P_star_com to capture
+                    // true shocks
+                    double Rate_energy =
+                        P_star_com * v_star_lab.dot(face.area_vec);
+                    double de_dt_i = -Rate_energy / p_i.mass;
+
+                    // Apply the flux to the active particle 'i'
+#pragma omp atomic
+                    gas.hydro_acc_x[i] -= Force_mom.x() / p_i.mass;
+#pragma omp atomic
+                    gas.hydro_acc_y[i] -= Force_mom.y() / p_i.mass;
+#pragma omp atomic
+                    gas.hydro_acc_z[i] -= Force_mom.z() / p_i.mass;
+#pragma omp atomic
+                    gas.du_dt[i] += du_dt_i;
+#pragma omp atomic
+                    gas.de_dt[i] += de_dt_i;
+
+                    // Apply the reverse flux to j if j is also active
+                    if (gas.is_active[j]) {
+                        double work_j =
+                            P_work_j *
+                            (v_star_lab - p_j.vel).dot(face.area_vec);
+                        double du_dt_j = work_j / p_j.mass;
+                        double de_dt_j = Rate_energy / p_j.mass;
+
 #pragma omp atomic
                         gas.hydro_acc_x[j] += Force_mom.x() / p_j.mass;
 #pragma omp atomic
