@@ -1502,6 +1502,180 @@ void initialize_evrard_collapse(SimState& state, const Config& config) {
     }
 }
 
+void initialize_zeldovich_pancake(SimState& state, const Config& config) {
+    if (config.hydro_method != HydroMethod::MFM) return;
+
+    // Zeldovich Pancake Parameters (Hopkins 2015, Section 4.5.2)
+    double a_i = config.a_start;
+    double z_i = (1.0 / a_i) - 1.0;  // Initial redshift
+    double z_c = 1.0;  // Redshift of caustic formation (non-linear collapse)
+    double T_i =
+        config
+            .initial_gas_temperature_k;  // Initial unperturbed temperature in K
+
+    // Explicit domain dimensions (usually lambda = 64 Mpc/h)
+    double Lx = config.domain_size.x;
+    double Ly = config.domain_size.y;
+    double Lz = config.domain_size.z;
+    double L_base = config.domain_size_1d;
+
+    // Wavenumber for a single perturbation along the X-axis
+    double k_wave_code = 2.0 * M_PI / Lx;
+
+    // The physical wavelength of the box in Mpc
+    double lambda_phys_mpc = Lx * config.unit_length_mpc;
+    double k_wave_phys = 2.0 * M_PI / lambda_phys_mpc;  // Mpc^-1
+
+    double seed_metallicity = 0.0;
+    double H_0_kms_mpc = 100.0 * config.hubble_h;
+
+    int N_part = config.num_gas_particles_1d;
+    double gas_total_mass = config.omega_baryon / config.omega_m;
+
+    if (config.use_glass) {
+        // Find largest power-of-two divisor to tile the particles
+        int N_glass = 1;
+        while (N_part % (N_glass * 2) == 0 && N_glass * 2 <= 128) {
+            N_glass *= 2;
+        }
+        N_glass = std::max(8, N_glass);
+
+        int sub_tiles = N_part / N_glass;
+        double L_block = L_base / sub_tiles;
+
+        int n_tiles_x = static_cast<int>(std::round(Lx / L_block));
+        int n_tiles_y = static_cast<int>(std::round(Ly / L_block));
+        int n_tiles_z = static_cast<int>(std::round(Lz / L_block));
+
+        std::string file_glass = config.glass_folder_path + "/glassCube_" +
+                                 std::to_string(N_glass) + ".hdf5";
+        GlassData glass;
+        try {
+            glass = HDF5Reader::read_glass_cube(file_glass);
+        } catch (const std::exception& e) {
+            exit(EXIT_FAILURE);
+        }
+
+        double total_gas_particles =
+            glass.num_particles * n_tiles_x * n_tiles_y * n_tiles_z;
+        double gas_particle_mass = gas_total_mass / total_gas_particles;
+
+        double spacing = L_block / N_glass;
+        double initial_h =
+            0.5 * spacing * std::cbrt(config.mfm_target_neighbors);
+
+        for (int tx = 0; tx < n_tiles_x; ++tx) {
+            for (int ty = 0; ty < n_tiles_y; ++ty) {
+                for (int tz = 0; tz < n_tiles_z; ++tz) {
+                    for (size_t p = 0; p < glass.num_particles; ++p) {
+                        // Unperturbed Lagrangian coordinates (q)
+                        double qx = tx * L_block + glass.pos_x[p] * L_block;
+                        double qy = ty * L_block + glass.pos_y[p] * L_block;
+                        double qz = tz * L_block + glass.pos_z[p] * L_block;
+
+                        double sin_kq = std::sin(k_wave_code * qx);
+                        double cos_kq = std::cos(k_wave_code * qx);
+
+                        // Eulerian Position: x(q, z)
+                        double p_x = qx - ((1.0 + z_c) / (1.0 + z_i)) *
+                                              (sin_kq / k_wave_code);
+                        double p_y = qy;
+                        double p_z = qz;
+
+                        // Wrap periodic boundaries
+                        p_x = std::fmod(p_x + Lx, Lx);
+                        p_y = std::fmod(p_y + Ly, Ly);
+                        p_z = std::fmod(p_z + Lz, Lz);
+
+                        double v_pec_kms =
+                            -H_0_kms_mpc *
+                            ((1.0 + z_c) / std::sqrt(1.0 + z_i)) *
+                            (sin_kq / k_wave_phys);
+
+                        // Convert Physical km/s to Comoving Code Velocity
+                        double v_x =
+                            (v_pec_kms / config.unit_velocity_kms) / a_i;
+                        double v_y = 0.0;
+                        double v_z = 0.0;
+
+                        // Density: rho(q, z) / rho_0
+                        double rho_rel =
+                            1.0 / (1.0 - ((1.0 + z_c) / (1.0 + z_i)) * cos_kq);
+
+                        // Temperature: T(x, z)
+                        double T_local = T_i * std::pow(rho_rel, 2.0 / 3.0);
+                        double u =
+                            Thermodynamics::get_internal_energy_from_temp(
+                                T_local, a_i, config);
+
+                        state.mfm_gas->add_particle(
+                            p_x, p_y, p_z, v_x, v_y, v_z, gas_particle_mass, u,
+                            initial_h, seed_metallicity);
+                    }
+                }
+            }
+        }
+    } else {
+        // Lattice initialization
+        double spacing = L_base / N_part;
+
+        // Calculate integer scaling multipliers for each axis
+        int N_x = N_part * static_cast<int>(std::round(Lx / L_base));
+        int N_y = N_part * static_cast<int>(std::round(Ly / L_base));
+        int N_z = N_part * static_cast<int>(std::round(Lz / L_base));
+
+        double gas_particle_mass = gas_total_mass / (N_part * N_part * N_part);
+        double initial_h = 1.2 * spacing;
+
+        for (int i = 0; i < N_x; ++i) {
+            for (int j = 0; j < N_y; ++j) {
+                for (int k_idx = 0; k_idx < N_z; ++k_idx) {
+                    // Unperturbed Lagrangian coordinates (q)
+                    double qx = (i + 0.5) * spacing;
+                    double qy = (j + 0.5) * spacing;
+                    double qz = (k_idx + 0.5) * spacing;
+
+                    double sin_kq = std::sin(k_wave_code * qx);
+                    double cos_kq = std::cos(k_wave_code * qx);
+
+                    // Eulerian Position: x(q, z)
+                    double p_x = qx - ((1.0 + z_c) / (1.0 + z_i)) *
+                                          (sin_kq / k_wave_code);
+                    double p_y = qy;
+                    double p_z = qz;
+
+                    // Wrap periodic boundaries
+                    p_x = std::fmod(p_x + Lx, Lx);
+                    p_y = std::fmod(p_y + Ly, Ly);
+                    p_z = std::fmod(p_z + Lz, Lz);
+
+                    double v_pec_kms = -H_0_kms_mpc *
+                                       ((1.0 + z_c) / std::sqrt(1.0 + z_i)) *
+                                       (sin_kq / k_wave_phys);
+
+                    // Convert Physical km/s to Comoving Code Velocity
+                    double v_x = (v_pec_kms / config.unit_velocity_kms) / a_i;
+                    double v_y = 0.0;
+                    double v_z = 0.0;
+
+                    // Density: rho(q, z) / rho_0
+                    double rho_rel =
+                        1.0 / (1.0 - ((1.0 + z_c) / (1.0 + z_i)) * cos_kq);
+
+                    // Temperature: T(x, z)
+                    double T_local = T_i * std::pow(rho_rel, 2.0 / 3.0);
+                    double u = Thermodynamics::get_internal_energy_from_temp(
+                        T_local, a_i, config);
+
+                    state.mfm_gas->add_particle(p_x, p_y, p_z, v_x, v_y, v_z,
+                                                gas_particle_mass, u, initial_h,
+                                                seed_metallicity);
+                }
+            }
+        }
+    }
+}
+
 void initialize_soundwave(SimState& state, const Config& config) {
     if (config.hydro_method != HydroMethod::MFM) return;
 
@@ -1600,6 +1774,8 @@ SimState initialize_state(Config& config) {
         initialize_kelvin_helmholtz(state, config);
     } else if (config.initial_setup == InitialSetup::EvrardCollapse) {
         initialize_evrard_collapse(state, config);
+    } else if (config.initial_setup == InitialSetup::ZeldovichPancake) {
+        initialize_zeldovich_pancake(state, config);
     }
 
     Integrator::initialize(state, config);

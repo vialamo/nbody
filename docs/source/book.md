@@ -2549,6 +2549,37 @@ This is a multi-dimensional test for how a code couples hydrodynamics with self-
 2. **Global Energy Conservation:** The total energy of the fluid must remain conserved.
 3. **Hydrostatic Equilibrium:** The system must eventually settle into a permanent, stable state where the outward thermal pressure balances the inward gravitational pull: $\nabla P = -\rho \nabla \Phi$.
 
+
+### The Zel'dovich Pancake (Cosmological Collapse)
+
+This is a standard test for how a code handles cosmological integration and the highly anisotropic collapse of large-scale structure.
+
+* **The Setup:** A single Fourier mode density perturbation is initialized along a single axis (e.g., the x-axis) in a 3D expanding Einstein-de Sitter universe at a high initial redshift (e.g., $z_i = 100$). The gas represents Lagrangian patches with uniform initial density and temperature.
+
+* **The Expected Result:** The density perturbation grows linearly as the universe expands until it undergoes non-linear collapse, forming a caustic (a boundary where the trajectories of infalling matter intersect, causing the local density to diverge to infinity) at a specific target redshift (typically $z_c = 1$). This collapse creates a shock with a high Mach number that propagates outwards. Because the fluid is compressed along one axis but not the others (the physicist Yakov Zel'dovich coined the term "pancake" to describe this flat structure), it tests the code's energy-entropy switches, its handling of highly anisotropic geometries, and its resilience to high Mach-number flows.
+
+* **The Validation:** This test has an analytical solution for the linearized perturbation equations, and is validated in two ways:
+
+1. **Shock Structure:** The code must capture the steep density peak and the extreme temperature jump (which can be a factor of $\sim10^{10}$) without spurious noise dominating the un-shocked regions.
+
+2. **Cosmological Evolution:** The un-shocked flow outside the caustic must trace the linear solution for an expanding background.
+
+The analytical solution for the Zel'dovich pancake parametrizes the perturbed comoving Eulerian position ($x$), density ($\rho$), peculiar velocity ($v_{pec}$), and temperature ($T$) as a function of the unperturbed Lagrangian coordinate ($q$) and the redshift ($z$). The physical position is given by:
+
+$$x(q,z) = q - \frac{1+z_c}{1+z} \frac{\sin(kq)}{k}$$
+
+where $k = 2\pi/\lambda$ is the wavenumber of the perturbation (with wavelength $\lambda$) and $z_c$ is the redshift of caustic formation. The coordinate $q$ represents the initial starting position of a Lagrangian fluid patch at an arbitrarily high redshift before any density perturbations have had time to grow. It is where a specific parcel of gas would be if the universe were perfectly uniform and expanding smoothly, without any gravitational forces pulling it off course.   
+
+The state of the gas before the shock (or the un-shocked flow exterior to the caustic after collapse) follows these relations:
+
+* **Density:** The density contrast grows as the perturbation collapses toward the center: $\rho(q, z) = \frac{\rho_0}{1 - \frac{1+z_c}{1+z} \cos(kq)}$, where $\rho_0$ is the background critical density.
+
+* **Peculiar Velocity:** The velocity driving the gas inward is: $v_{pec}(x, z) = -H_0 \frac{1+z_c}{\sqrt{1+z}} \frac{\sin(kq)}{k}$, where $H_0$ is the Hubble constant today.
+
+* **Temperature:** The temperature evolves adiabatically with the expanding universe and the local density perturbation: $T(x, z) = T_i \left[ \left(\frac{1+z}{1+z_i}\right) \frac{\rho(x,z)}{\rho_0} \right]^{2/3}$, where $T_i$ is the initial unperturbed temperature at redshift $z_i$.
+
+After the caustic forms at $z_c$, the dynamics are dominated by the shock propagating outwards. Inside this shocked region, a central temperature cavity forms, which corresponds to a formally divergent theoretical density at the center ($x=0$) as the external unperturbed temperature approaches zero.
+
 ### Sources of Error
 
 #### The Temperature Floor

@@ -172,7 +172,7 @@ Defines the cosmological model of the universe.
 
 Controls the generation of the primordial density field and particle distributions.
 
-* **`setup`**: Initial configuration for gas and DM. Can be "cosmological" for a normal simulation, but also "sound_wave", "sod_shock_tube", "adiabatic_expansion","sedov_blastwave", "kelvin_helmholtz" or "evrard_collapse" to create initial conditions for these specific tests. In these cases, gravity and DM will be automatically disabled and expansion adjusted according to the specific test.
+* **`setup`**: Initial configuration for gas and DM. Can be "cosmological" for a normal simulation, but also "sound_wave", "sod_shock_tube", "adiabatic_expansion","sedov_blastwave", "kelvin_helmholtz", "evrard_collapse" or "zeldovich_pancake" to create initial conditions for these specific tests.
 * **`use_glass`**: Will use glass files to generate the initial conditions when available. These must be located in the configured `glass_folder_path` and can be downloaded [`here`](https://virgodb.cosma.dur.ac.uk/swift-webstorage/ICs/) or through the `fetch_data.sh` script found in the `data` folder.
 * **`glass_folder_path`**: The folder where the glass files are located.
 * **`initial_gas_temp_k`**: The physical temperature of the baryonic gas at `start_a`, in Kelvin.

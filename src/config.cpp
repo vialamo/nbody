@@ -163,8 +163,8 @@ void Config::load(const std::string& filename) {
 
     comoving_softening_factor = config_file.get_double(
         "gravity", "comoving_softening_factor", comoving_softening_factor);
-    physical_softening_cap_a = config_file.get_double(
-        "gravity", "softening_cap_scale_factor", physical_softening_cap_a);
+    softening_cap_a = config_file.get_double(
+        "gravity", "softening_cap_scale_factor", softening_cap_a);
     use_PM = config_file.get_bool("gravity", "use_pm", use_PM);
     use_PP = config_file.get_bool("gravity", "use_pp", use_PP);
     cutoff_radius_factor = config_file.get_double(

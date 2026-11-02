@@ -42,6 +42,7 @@ enum class InitialSetup {
     SoundWave,
     KelvinHelmholtz,
     EvrardCollapse,
+    ZeldovichPancake,
     Count
 };
 
@@ -54,9 +55,9 @@ struct EnumUtils::Traits<HydroMethod> {
 template <>
 struct EnumUtils::Traits<InitialSetup> {
     static constexpr const char* names[] = {
-        "cosmological",    "sod_shock_tube", "adiabatic_expansion",
-        "sedov_blastwave", "sound_wave",     "kelvin_helmholtz",
-        "evrard_collapse"};
+        "cosmological",    "sod_shock_tube",   "adiabatic_expansion",
+        "sedov_blastwave", "sound_wave",       "kelvin_helmholtz",
+        "evrard_collapse", "zeldovich_pancake"};
     static constexpr InitialSetup default_value = InitialSetup::Cosmological;
 };
 
@@ -100,7 +101,7 @@ struct Config {
 
     // Gravity
     double comoving_softening_factor = 0.0334;
-    double physical_softening_cap_a = 0.3;
+    double softening_cap_a = 0.3;
     bool use_PM = true;
     bool use_PP = true;
     double cutoff_radius_factor = 4.5;

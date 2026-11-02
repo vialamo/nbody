@@ -143,7 +143,7 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         set_attr_double(config_group, "comoving_softening_factor",
                         config.comoving_softening_factor);
         set_attr_double(config_group, "softening_cap_scale_factor",
-                        config.physical_softening_cap_a);
+                        config.softening_cap_a);
         set_attr_bool(config_group, "use_pm", config.use_PM);
         set_attr_bool(config_group, "use_pp", config.use_PP);
         set_attr_double(config_group, "pm_smoothing_cells",

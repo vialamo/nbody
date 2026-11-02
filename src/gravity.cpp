@@ -852,7 +852,7 @@ double GravitySolver::get_timestep(const ParticleSystem& dm,
 
 void GravitySolver::update_softening(SimState& state, Config& config) {
     double a = state.scale_factor;
-    double cap_a = config.physical_softening_cap_a;
+    double cap_a = config.softening_cap_a;
     double current_comoving_softening = config.base_comoving_softening;
 
     if (a > cap_a && config.expanding_universe) {
