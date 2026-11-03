@@ -5,10 +5,10 @@
 
 namespace Thermodynamics {
 
-static inline void evaluate_particle_thermodynamics(
-    const GasParticleSystem& gas, size_t i, double u_floor, double alpha_kin,
-    double alpha_grav, double gamma_minus_1, double& out_u, double& out_p,
-    double& out_s, double& out_e_tot, double& out_injected_u,
+/*static inline void evaluate_particle_thermodynamics(
+    const GasParticleSystem& gas, size_t i, double u_floor, double alpha_trunc,
+    double alpha_kin, double alpha_grav, double gamma_minus_1, double& out_u,
+    double& out_p, double& out_s, double& out_e_tot, double& out_injected_u,
     double& out_switch_energy) {
     out_injected_u = 0.0;
     out_switch_energy = 0.0;
@@ -23,7 +23,7 @@ static inline void evaluate_particle_thermodynamics(
     // Calculate the conserved internal energy
     double u_cons = gas.total_energy[i] - ke;
 
-    double threshold_truncation = alpha_kin * ke;
+    double threshold_truncation = alpha_trunc * ke;
     double threshold_kin = alpha_kin * (gas.max_rel_ke[i] + gas.u[i]);
     double threshold_grav = alpha_grav * gas.delta_E_grav[i];
 
@@ -31,8 +31,6 @@ static inline void evaluate_particle_thermodynamics(
     double s_temp = gas.entropy[i];
     double e_tot_temp = gas.total_energy[i];
 
-// #define USE_ENTROPY_SWITCH
-#ifdef USE_ENTROPY_SWITCH
     if (u_temp < threshold_kin || u_temp < threshold_grav) {
         // FALLBACK TRIGGERED: Extreme Mach number detected.
         // Discard the 'u' updated by the Riemann solver and use entropy-based
@@ -43,14 +41,10 @@ static inline void evaluate_particle_thermodynamics(
         out_switch_energy = (u_new - u_temp) * gas.mass[i];
         u_temp = u_new;
         e_tot_temp = u_temp + ke;
-    } else
-#endif
-        if (u_cons < threshold_truncation) {
+    } else if (u_cons < threshold_truncation) {
         // DUAL ENERGY FORMALISM: Highly supersonic/kinetic-dominated flow.
         // u_cons is corrupted by truncation error. Trust the explicitly
         // integrated u[i]
-        u_temp = gas.u[i];
-
         out_switch_energy = (gas.u[i] - u_cons) * gas.mass[i];
 
         s_temp = gamma_minus_1 * u_temp / std::pow(local_rho, gamma_minus_1);
@@ -80,6 +74,40 @@ static inline void evaluate_particle_thermodynamics(
     out_p = gamma_minus_1 * local_rho * u_temp;
     out_s = s_temp;
     out_e_tot = e_tot_temp;
+}*/
+
+static inline void evaluate_particle_thermodynamics(
+    const GasParticleSystem& gas, size_t i, double u_floor,
+    double gamma_minus_1, double& out_u, double& out_p, double& out_s,
+    double& out_e_tot, double& out_injected_u) {
+    out_injected_u = 0.0;
+
+    // density_floor must be defined/accessible in this scope
+    double local_rho = std::max(gas.rho[i], density_floor);
+
+    double u_temp = gas.u[i];
+    double e_tot_temp = gas.total_energy[i];
+
+    // Enforce thermodynamic floor
+    if (u_temp < u_floor) {
+        // Track the added energy
+        double injected_u = u_floor - u_temp;
+        out_injected_u = injected_u * gas.mass[i];
+
+        u_temp = u_floor;
+        e_tot_temp += injected_u;
+    }
+
+    // Always sync entropy and pressure to the current (or floored) internal
+    // energy This ensures P and S strictly reflect the latest rho and u
+    double s_temp = gamma_minus_1 * u_temp / std::pow(local_rho, gamma_minus_1);
+    double p_temp = gamma_minus_1 * local_rho * u_temp;
+
+    // Assign final computed variables to the output references
+    out_u = u_temp;
+    out_p = p_temp;
+    out_s = s_temp;
+    out_e_tot = e_tot_temp;
 }
 
 void update_primitive_variables(GasParticleSystem& gas, const Config& config,
@@ -94,8 +122,9 @@ void update_primitive_variables(GasParticleSystem& gas, const Config& config,
     const double u_floor =
         get_internal_energy_from_temp(config.temp_floor_k, a, config);
 
-    double alpha_kin = config.dual_energy_threshold;
-    double alpha_grav = config.dual_energy_threshold;
+    /*double alpha_trunc = config.dual_energy_threshold;
+    double alpha_kin = config.entropy_switch_akin;
+    double alpha_grav = config.entropy_switch_agrav;*/
 
     double step_floor_heating = 0.0;
     double step_entropy_switch = 0.0;
@@ -111,9 +140,10 @@ void update_primitive_variables(GasParticleSystem& gas, const Config& config,
 
             // Update the class arrays
             evaluate_particle_thermodynamics(
-                gas, i, u_floor, alpha_kin, alpha_grav, gamma_minus_1, gas.u[i],
-                gas.pressure[i], gas.entropy[i], gas.total_energy[i],
-                local_injected_u, local_switch_energy);
+                gas, i, u_floor, /*alpha_trunc, alpha_kin, alpha_grav,*/
+                gamma_minus_1, gas.u[i], gas.pressure[i], gas.entropy[i],
+                gas.total_energy[i],
+                local_injected_u /*, local_switch_energy*/);
 
             gas.rho[i] = std::max(gas.rho[i], density_floor);
             gas.metal_frac[i] = std::max(0.0, std::min(gas.metal_frac[i], 1.0));

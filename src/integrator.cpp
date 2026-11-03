@@ -11,6 +11,7 @@
 #include "particles.h"
 #include "pm.h"
 #include "state.h"
+#include "thermodynamics.h"
 #include "types.h"
 #include "worker.h"
 
@@ -249,26 +250,87 @@ KickWork kick_single_gas_particle(GasParticleSystem& gas, size_t i, double dt,
         u_post_hydro *
         expansion_factor;  // Apply expansion to the updated energy
 
-    gas.u[i] = u_post_hydro - u_cooling;
-    if (gas.u[i] < min_energy) gas.u[i] = min_energy;
+    // Specific kinetic energy (needed for total_energy subtraction)
+    double ke_spec_new = ke_new / m;
 
-    // Expansion Work Accumulation (Kinetic drag loss + Thermal expansion loss)
+    // Explicitly Integrated Internal Energy (u_raw)
+    double u_raw = u_post_hydro - u_cooling;
+    if (u_raw < min_energy) u_raw = min_energy;
+
+    // Expansion Work Accumulation
     work.exp_work = -w_drag + (u_cooling * m);
 
-    // Total Energy Synchronization
-    // total_energy changes due to:
-    //   -de_dt (Riemann hydro flux, which intrinsically includes hydro
-    //    kinetic work)
-    //   -Gravity kinetic work
-    //   -Cosmological losses (drag + cooling)
+    // Conservatively Integrated Total Energy
     gas.total_energy[i] +=
         (gas.de_dt[i] * dt) + (work.grav_work / m) + (w_drag / m) - u_cooling;
-
     if (gas.total_energy[i] < min_energy) gas.total_energy[i] = min_energy;
 
-    // Update EOS Variables
-    gas.entropy[i] =
-        gamma_minus_1 * gas.u[i] / std::pow(gas.rho[i], gamma_minus_1);
+    // Conservative Internal Energy (u_cons)
+    double u_cons = gas.total_energy[i] - ke_spec_new;
+
+    // =====================================================================
+    // THERMODYNAMIC ARBITRATION (DEF & Entropy Switch)
+    // =====================================================================
+    double thresh_trunc = config.dual_energy_threshold * ke_spec_new;
+    double thresh_kin =
+        config.entropy_switch_akin * (gas.max_rel_ke[i] + u_raw);
+    double thresh_grav = config.entropy_switch_agrav * gas.delta_E_grav[i];
+
+    work.switch_energy = 0.0;
+    work.injected_energy = 0.0;
+
+    if (u_raw < thresh_kin || u_raw < thresh_grav) {
+        // ENTROPY FALLBACK: Extreme Mach number or gravity detected
+
+        // Calculate the base adiabatic energy from pristine entropy
+        double u_clean = gas.entropy[i] * std::pow(gas.rho[i], gamma_minus_1) /
+                         gamma_minus_1;
+
+        // Apply cosmological expansion cooling to the pure adiabatic state FIRST
+        u_clean -= (u_clean * expansion_factor);
+
+        // Track the difference between the synchronized states
+        work.switch_energy = (u_clean - u_raw) * m;
+
+        gas.u[i] = std::max(u_clean, min_energy);
+
+        // Sync total energy to match the trusted adiabatic state
+        gas.total_energy[i] = gas.u[i] + ke_spec_new;
+
+        // Update pristine entropy so it tracks the cosmological decay
+        gas.entropy[i] =
+            gamma_minus_1 * gas.u[i] / std::pow(gas.rho[i], gamma_minus_1);
+
+    } else if (u_cons < thresh_trunc) {
+        // DUAL ENERGY FORMALISM: Kinetic-dominated flow
+        work.switch_energy = (u_raw - u_cons) * m;
+
+        gas.u[i] = u_raw;
+        gas.total_energy[i] = gas.u[i] + ke_spec_new;
+        gas.entropy[i] =
+            gamma_minus_1 * gas.u[i] / std::pow(gas.rho[i], gamma_minus_1);
+    } else {
+        // NORMAL REGIME: Trust the conservative internal energy
+        gas.u[i] = std::max(u_cons, min_energy);
+        gas.entropy[i] =
+            gamma_minus_1 * gas.u[i] / std::pow(gas.rho[i], gamma_minus_1);
+    }
+
+    const double u_floor = Thermodynamics::get_internal_energy_from_temp(
+        config.temp_floor_k, a, config);
+
+    if (gas.u[i] < u_floor) {
+        double injected_u = u_floor - gas.u[i];
+        work.injected_energy = injected_u * m;
+
+        gas.u[i] = u_floor;
+        gas.total_energy[i] +=
+            injected_u;  // Keep E_tot synced with the floored u
+        gas.entropy[i] =
+            gamma_minus_1 * gas.u[i] / std::pow(gas.rho[i], gamma_minus_1);
+    }
+
+    // Update Pressure for the next step
     gas.pressure[i] = gamma_minus_1 * gas.rho[i] * gas.u[i];
 
     return work;
@@ -278,6 +340,8 @@ static void apply_gas_kick(GasParticleSystem& gas, double dt, double a,
                            double H, const Config& config, bool is_kick1) {
     double step_grav_work = 0.0;
     double step_exp_work = 0.0;
+    double step_switch_energy = 0.0;
+    double step_photoheating_energy = 0.0;
     const size_t n = gas.num_particles;
 
     // dt passed to this function is half of the macro step
@@ -307,11 +371,15 @@ static void apply_gas_kick(GasParticleSystem& gas, double dt, double a,
         // Accumulate local diagnostic work
         step_grav_work += work.grav_work;
         step_exp_work += work.exp_work;
+        step_switch_energy += work.switch_energy;
+        step_photoheating_energy += work.injected_energy;
     }
 
     // Update global diagnostics
     gas.accumulated_gravitational_work += step_grav_work;
     gas.accumulated_expansion_work += step_exp_work;
+    gas.accumulated_entropy_switch_energy += step_switch_energy;
+    gas.accumulated_photoheating_energy += step_photoheating_energy;
 }
 
 static void apply_gas_drift(GasParticleSystem& gas, double dt,

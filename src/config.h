@@ -133,6 +133,8 @@ struct Config {
     int mfm_max_iterations = 50;
     double mfm_min_hsml_fraction = 0.25;
     double dual_energy_threshold = 0.001;
+    double entropy_switch_akin = 0.001;
+    double entropy_switch_agrav = 0.001;
     bool use_exact_riemann = false;
     double gradient_limiter_beta_max = 2.0;
     double gradient_limiter_beta_min = 1.0;

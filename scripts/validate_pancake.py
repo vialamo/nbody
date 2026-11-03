@@ -28,14 +28,14 @@ def get_analytical_zeldovich(z, config, T_i, z_i, unit_length_mpc):
     
     # Filter out the multi-valued region (shell-crossing) after caustic formation
     if z < z_c:
-        # 1. Find the Lagrangian coordinate (q) where the flow turns around (dx/dq = 0)
+        # Find the Lagrangian coordinate (q) where the flow turns around (dx/dq = 0)
         q_turn = np.arccos((1.0 + z) / (1.0 + z_c)) / k_code
         
-        # 2. Map this to the Eulerian boundary (x) of the folded region
+        # Map this to the Eulerian boundary (x) of the folded region
         x_turn = q_turn - ((1.0 + z_c) / (1.0 + z)) * (np.sin(k_code * q_turn) / k_code)
         x_caustic = np.abs(x_turn)
         
-        # 3. Replace the multi-stream region with NaNs to break the Matplotlib line
+        # Replace the multi-stream region with NaNs to break the Matplotlib line
         invalid_mask = np.abs(x) < x_caustic
         
         rho_rel[invalid_mask] = np.nan
@@ -61,7 +61,7 @@ def validate_zeldovich_interactive(snapshot_dir):
         a_i = f['Header'].attrs['scale_factor']
         z_i = (1.0 / a_i) - 1.0
         
-        # Read the initial Temperature baseline directly
+        # Read the initial Temperature
         T_i = np.mean(f['Gas/temperature'][:])
         rho_0 = np.mean(f['Gas/density'][:])
 
@@ -182,7 +182,7 @@ def validate_zeldovich_interactive(snapshot_dir):
         x_plot = (x_full + domain_size / 2.0) % domain_size - (domain_size / 2.0)
         rho_rel = rho_flat / rho_0
         
-        max_points = 64000 
+        max_points = 32768 
         if len(x_plot) > max_points: 
             shuffle_idx = np.random.choice(len(x_plot), max_points, replace=False)
             x_plot = x_plot[shuffle_idx] 

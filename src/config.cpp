@@ -215,6 +215,10 @@ void Config::load(const std::string& filename) {
         "mfm", "mfm_min_hsml_fraction", mfm_min_hsml_fraction);
     dual_energy_threshold = config_file.get_double(
         "mfm", "dual_energy_threshold", dual_energy_threshold);
+    entropy_switch_akin = config_file.get_double(
+        "mfm", "entropy_switch_alpha_kin", entropy_switch_akin);
+    entropy_switch_agrav = config_file.get_double(
+        "mfm", "entropy_switch_alpha_grav", entropy_switch_agrav);
     use_exact_riemann =
         config_file.get_bool("mfm", "use_exact_riemann", use_exact_riemann);
     gradient_limiter_beta_max = config_file.get_double(
