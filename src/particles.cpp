@@ -228,8 +228,8 @@ void ParticleSystem::update_particle_timesteps(double dt_max,
                                  acc_z[i] * acc_z[i]);
 
         if (a_mag > 0.0) {
-            double dt_grav =
-                std::sqrt(epsilon / a_mag) * config.gravity_accuracy_eta;
+            double dt_grav = std::sqrt(
+                (2.0 * config.gravity_accuracy_eta * epsilon) / a_mag);
             dt_ideal = std::min(dt_ideal, dt_grav);
         }
 

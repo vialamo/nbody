@@ -148,12 +148,6 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
 
             gas.max_rel_ke[i] = local_max_rel_ke;
 
-            // Calculate delta E_grav = |a_grav| * h
-            double a_grav_mag = std::sqrt(gas.acc_x[i] * gas.acc_x[i] +
-                                          gas.acc_y[i] * gas.acc_y[i] +
-                                          gas.acc_z[i] * gas.acc_z[i]);
-            gas.delta_E_grav[i] = a_grav_mag * gas.h[i];
-
             bool ill_conditioned =
                 (gas.cond_num[i] < 0.0 || gas.cond_num[i] > N_cond_crit);
 

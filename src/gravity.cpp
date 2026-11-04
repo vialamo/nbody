@@ -836,8 +836,7 @@ double GravitySolver::get_timestep(const GasParticleSystem& gas,
 
     double epsilon = config.softening;
     double a_max = calculate_max_acceleration(gas);
-    double dt_grav = std::sqrt(epsilon / a_max);
-    return dt_grav * config.gravity_accuracy_eta;
+    return std::sqrt((2.0 * config.gravity_accuracy_eta * epsilon) / a_max);
 }
 
 double GravitySolver::get_timestep(const ParticleSystem& dm,
@@ -846,8 +845,7 @@ double GravitySolver::get_timestep(const ParticleSystem& dm,
 
     double epsilon = config.softening;
     double a_max = calculate_max_acceleration(dm);
-    double dt_grav = std::sqrt(epsilon / a_max);
-    return dt_grav * config.gravity_accuracy_eta;
+    return std::sqrt((2.0 * config.gravity_accuracy_eta * epsilon) / a_max);
 }
 
 void GravitySolver::update_softening(SimState& state, Config& config) {

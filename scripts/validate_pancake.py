@@ -17,7 +17,7 @@ def get_analytical_zeldovich(z, config, T_i, z_i, unit_length_mpc):
     k_phys = 2.0 * np.pi / (Lx * unit_length_mpc)
     z_c = 1.0
     
-    H_0_kms = 100.0 * config.get('hubble_h', 0.7)
+    H_0_kms = 100.0 * config.get('Hubble_h', 1.0)
     
     x = q - ((1.0 + z_c) / (1.0 + z)) * (np.sin(k_code * q) / k_code)
     rho_rel = np.abs(1.0 / (1.0 - ((1.0 + z_c) / (1.0 + z)) * np.cos(k_code * q)))

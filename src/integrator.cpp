@@ -268,9 +268,15 @@ KickWork kick_single_gas_particle(GasParticleSystem& gas, size_t i, double dt,
     // Conservative Internal Energy (u_cons)
     double u_cons = gas.total_energy[i] - ke_spec_new;
 
-    // =====================================================================
     // THERMODYNAMIC ARBITRATION (DEF & Entropy Switch)
     // =====================================================================
+
+    // Calculate delta E_grav = |a_grav| * h
+    double a_grav_mag =
+        std::sqrt(gas.acc_x[i] * gas.acc_x[i] + gas.acc_y[i] * gas.acc_y[i] +
+                  gas.acc_z[i] * gas.acc_z[i]);
+    gas.delta_E_grav[i] = a_grav_mag * gas.h[i];
+
     double thresh_trunc = config.dual_energy_threshold * ke_spec_new;
     double thresh_kin =
         config.entropy_switch_akin * (gas.max_rel_ke[i] + u_raw);
@@ -286,7 +292,8 @@ KickWork kick_single_gas_particle(GasParticleSystem& gas, size_t i, double dt,
         double u_clean = gas.entropy[i] * std::pow(gas.rho[i], gamma_minus_1) /
                          gamma_minus_1;
 
-        // Apply cosmological expansion cooling to the pure adiabatic state FIRST
+        // Apply cosmological expansion cooling to the pure adiabatic state
+        // FIRST
         u_clean -= (u_clean * expansion_factor);
 
         // Track the difference between the synchronized states
@@ -330,7 +337,7 @@ KickWork kick_single_gas_particle(GasParticleSystem& gas, size_t i, double dt,
             gamma_minus_1 * gas.u[i] / std::pow(gas.rho[i], gamma_minus_1);
     }
 
-    // Update Pressure for the next step
+    // Update Pressure
     gas.pressure[i] = gamma_minus_1 * gas.rho[i] * gas.u[i];
 
     return work;
@@ -555,13 +562,9 @@ void KDK_step(SimState& state, double dt, Config& config, Diagnostics& diag) {
     // KICK 2 (Half step)
     apply_kick(state, dt / 2.0, config, false);
 
-    if (config.hydro_method == HydroMethod::MFM) {
-        if (config.enable_cooling) {
-            ScopedTimer cooling_timer(diag, TimerRegion::Cool);
-            state.cooling.apply_cooling(*state.mfm_gas, config,
-                                        state.scale_factor);
-        }
-        state.mfm_gas->sync_thermo(config, state.scale_factor);
+    if (config.hydro_method == HydroMethod::MFM && config.enable_cooling) {
+        ScopedTimer cooling_timer(diag, TimerRegion::Cool);
+        state.cooling.apply_cooling(*state.mfm_gas, config, state.scale_factor);
     }
 
     // Time bin assignment
@@ -572,7 +575,7 @@ void initialize(SimState& state, Config& config) {
     if (config.hydro_method == HydroMethod::MFM) {
         state.mfm_gas->build_lbvh(config);
         DensitySolver::compute_density_and_h(*state.mfm_gas, config);
-        state.mfm_gas->sync_thermo(config, state.scale_factor, true);
+        state.mfm_gas->sync_thermo(config, state.scale_factor);
     }
 
     state.dm.sync_and_activate(0.0, config);

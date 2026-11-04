@@ -5,77 +5,6 @@
 
 namespace Thermodynamics {
 
-/*static inline void evaluate_particle_thermodynamics(
-    const GasParticleSystem& gas, size_t i, double u_floor, double alpha_trunc,
-    double alpha_kin, double alpha_grav, double gamma_minus_1, double& out_u,
-    double& out_p, double& out_s, double& out_e_tot, double& out_injected_u,
-    double& out_switch_energy) {
-    out_injected_u = 0.0;
-    out_switch_energy = 0.0;
-
-    double local_rho = std::max(gas.rho[i], density_floor);
-
-    // Calculate specific kinetic energy
-    double ke =
-        0.5 * (gas.vel_x[i] * gas.vel_x[i] + gas.vel_y[i] * gas.vel_y[i] +
-               gas.vel_z[i] * gas.vel_z[i]);
-
-    // Calculate the conserved internal energy
-    double u_cons = gas.total_energy[i] - ke;
-
-    double threshold_truncation = alpha_trunc * ke;
-    double threshold_kin = alpha_kin * (gas.max_rel_ke[i] + gas.u[i]);
-    double threshold_grav = alpha_grav * gas.delta_E_grav[i];
-
-    double u_temp = gas.u[i];
-    double s_temp = gas.entropy[i];
-    double e_tot_temp = gas.total_energy[i];
-
-    if (u_temp < threshold_kin || u_temp < threshold_grav) {
-        // FALLBACK TRIGGERED: Extreme Mach number detected.
-        // Discard the 'u' updated by the Riemann solver and use entropy-based
-        // adiabatic evolution
-        double u_new =
-            s_temp * std::pow(local_rho, gamma_minus_1) / gamma_minus_1;
-
-        out_switch_energy = (u_new - u_temp) * gas.mass[i];
-        u_temp = u_new;
-        e_tot_temp = u_temp + ke;
-    } else if (u_cons < threshold_truncation) {
-        // DUAL ENERGY FORMALISM: Highly supersonic/kinetic-dominated flow.
-        // u_cons is corrupted by truncation error. Trust the explicitly
-        // integrated u[i]
-        out_switch_energy = (gas.u[i] - u_cons) * gas.mass[i];
-
-        s_temp = gamma_minus_1 * u_temp / std::pow(local_rho, gamma_minus_1);
-        e_tot_temp =
-            u_temp + ke;  // Synchronize total energy to match the trusted u[i]
-
-    } else {
-        // NORMAL REGIME: Trust the conservative internal energy.
-        // Re-sync the entropy array to match the shock-heated state
-        u_temp = u_cons;
-        s_temp = gamma_minus_1 * u_temp / std::pow(local_rho, gamma_minus_1);
-    }
-
-    // Enforce thermodynamic floor
-    if (u_temp < u_floor) {
-        // Track the added energy
-        double injected_u = u_floor - u_temp;
-        out_injected_u = injected_u * gas.mass[i];
-
-        u_temp = u_floor;
-        s_temp = gamma_minus_1 * u_temp / std::pow(local_rho, gamma_minus_1);
-        e_tot_temp += injected_u;
-    }
-
-    // Assign final computed variables to the output references
-    out_u = u_temp;
-    out_p = gamma_minus_1 * local_rho * u_temp;
-    out_s = s_temp;
-    out_e_tot = e_tot_temp;
-}*/
-
 static inline void evaluate_particle_thermodynamics(
     const GasParticleSystem& gas, size_t i, double u_floor,
     double gamma_minus_1, double& out_u, double& out_p, double& out_s,
@@ -122,40 +51,29 @@ void update_primitive_variables(GasParticleSystem& gas, const Config& config,
     const double u_floor =
         get_internal_energy_from_temp(config.temp_floor_k, a, config);
 
-    /*double alpha_trunc = config.dual_energy_threshold;
-    double alpha_kin = config.entropy_switch_akin;
-    double alpha_grav = config.entropy_switch_agrav;*/
-
     double step_floor_heating = 0.0;
-    double step_entropy_switch = 0.0;
 
     if (gas.num_active != 0) {
-#pragma omp parallel for simd reduction( \
-        + : step_floor_heating, step_entropy_switch) schedule(static)
+#pragma omp parallel for simd reduction(+ : step_floor_heating) schedule(static)
         for (size_t k = 0; k < gas.num_active; ++k) {
             size_t i = gas.active_indices[k];
 
             double local_injected_u = 0.0;
-            double local_switch_energy = 0.0;
 
             // Update the class arrays
             evaluate_particle_thermodynamics(
-                gas, i, u_floor, /*alpha_trunc, alpha_kin, alpha_grav,*/
-                gamma_minus_1, gas.u[i], gas.pressure[i], gas.entropy[i],
-                gas.total_energy[i],
-                local_injected_u /*, local_switch_energy*/);
+                gas, i, u_floor, gamma_minus_1, gas.u[i], gas.pressure[i],
+                gas.entropy[i], gas.total_energy[i], local_injected_u);
 
             gas.rho[i] = std::max(gas.rho[i], density_floor);
             gas.metal_frac[i] = std::max(0.0, std::min(gas.metal_frac[i], 1.0));
 
             step_floor_heating += local_injected_u;
-            step_entropy_switch += local_switch_energy;
         }
     }
     num_cycles++;
 
     gas.accumulated_photoheating_energy += step_floor_heating;
-    gas.accumulated_entropy_switch_energy += step_entropy_switch;
 }
 
 void predict_primitive_variables(GasParticleSystem& gas, const Config& config,
@@ -181,7 +99,10 @@ void predict_primitive_variables(GasParticleSystem& gas, const Config& config,
         gas.vel_z_pred[i] =
             gas.vel_z[i] + (gas.acc_z[i] + gas.hydro_acc_z[i]) * dt_pred_i;
 
-        double u_pred_i = gas.u[i] + gas.du_dt[i] * dt_pred_i;
+        // Predict the new internal energy adiabatically using the fresh density
+        // This captures the mechanical PdV work of the drift
+        double u_pred_i = gas.entropy[i] * std::pow(gas.rho[i], gamma_minus_1) /
+                          gamma_minus_1;
 
         // Enforce the thermodynamic floor on the predicted state
         if (u_pred_i < u_floor) u_pred_i = u_floor;

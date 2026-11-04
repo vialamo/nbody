@@ -156,11 +156,12 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
         std::cout << "    - Vol Err: "
                   << format_double(diag.volume_error, 1, true)
                   << " | Flux Err: " << format_double(flux_err, 1, true)
-                  << " | Ill: " << format_double(diag.MFM_ill_percent, 1, false)
+                  << " | Ill: " << format_double(diag.MFM_ill_percent, 1, true)
                   << "% | Clamp: "
-                  << format_double(diag.MFM_clamp_percent, 1, false)
-                  << "% | Incr: "
-                  << format_double(diag.MFM_inc_percent, 1, false) << "%\n";
+                  << format_double(diag.MFM_clamp_percent, 1, true)
+                  // << "% | Incr: "
+                  // << format_double(diag.MFM_inc_percent, 1, false)
+                  << "%\n";
     }
     std::cout << "    - Softening: " << format_double(conf.softening, 2, true)
               << " | Physical softening (mpc): "

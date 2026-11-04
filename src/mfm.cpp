@@ -454,8 +454,8 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
         double a_mag = std::sqrt(acc_x[i] * acc_x[i] + acc_y[i] * acc_y[i] +
                                  acc_z[i] * acc_z[i]);
         if (a_mag > 0.0) {
-            double dt_grav =
-                std::sqrt(epsilon / a_mag) * config.gravity_accuracy_eta;
+            double dt_grav = std::sqrt(
+                (2.0 * config.gravity_accuracy_eta * epsilon) / a_mag);
             dt_ideal = std::min(dt_ideal, dt_grav);
         }
 
@@ -501,14 +501,12 @@ void GasParticleSystem::hydro_step(const Config& config, double a) {
     HydroSolver::compute_forces(*this, config, a);
 }
 
-void GasParticleSystem::sync_thermo(const Config& config, double a,
-                                    bool first_call) {
-    if (first_call) {
-        for (size_t i = 0; i < num_particles; ++i) {
-            double ke = 0.5 * (vel_x[i] * vel_x[i] + vel_y[i] * vel_y[i] +
-                               vel_z[i] * vel_z[i]);
-            total_energy[i] = u[i] + ke;
-        }
+void GasParticleSystem::sync_thermo(const Config& config, double a) {
+    for (size_t i = 0; i < num_particles; ++i) {
+        double ke = 0.5 * (vel_x[i] * vel_x[i] + vel_y[i] * vel_y[i] +
+                           vel_z[i] * vel_z[i]);
+        total_energy[i] = u[i] + ke;
     }
+
     Thermodynamics::update_primitive_variables(*this, config, a);
 }

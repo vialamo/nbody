@@ -147,8 +147,8 @@ struct Config {
 
     // Time
     double max_dt_dynamical_factor = 1e-3;
-    double hydro_courant_factor = 0.4;
-    double gravity_accuracy_eta = 0.2;
+    double hydro_courant_factor = 0.3;
+    double gravity_accuracy_eta = 0.01;
     double a_start = 0.02;
     double a_end = 1.0;
     int max_cycles = 1000000000;
