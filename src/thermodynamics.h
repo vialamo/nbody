@@ -6,9 +6,8 @@
 class GasParticleSystem;
 
 namespace Thermodynamics {
-// Sync tracked internal energy, total energy, and compute pressure
-void update_primitive_variables(GasParticleSystem& gas, const Config& config,
-                                double a);
+void initialize_primitive_variables(GasParticleSystem& gas,
+                                    const Config& config, double a);
 
 void predict_primitive_variables(GasParticleSystem& gas, const Config& config,
                                  double a);

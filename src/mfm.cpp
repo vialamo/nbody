@@ -501,12 +501,12 @@ void GasParticleSystem::hydro_step(const Config& config, double a) {
     HydroSolver::compute_forces(*this, config, a);
 }
 
-void GasParticleSystem::sync_thermo(const Config& config, double a) {
+void GasParticleSystem::initialize_thermo(const Config& config, double a) {
     for (size_t i = 0; i < num_particles; ++i) {
         double ke = 0.5 * (vel_x[i] * vel_x[i] + vel_y[i] * vel_y[i] +
                            vel_z[i] * vel_z[i]);
         total_energy[i] = u[i] + ke;
     }
 
-    Thermodynamics::update_primitive_variables(*this, config, a);
+    Thermodynamics::initialize_primitive_variables(*this, config, a);
 }

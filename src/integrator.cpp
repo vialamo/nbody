@@ -457,20 +457,15 @@ static void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
     // PP
 #ifdef GPU_CPU_PARALLEL_EXECUTION
     static Worker pp_worker;
-#endif
     if (config.use_PP) {
         ScopedTimer pp_timer(diag, TimerRegion::PP);
-#ifdef GPU_CPU_PARALLEL_EXECUTION
         pp_worker.launch([&]() {
             ScopedTimer pp_timer(diag, TimerRegion::PP_GPU);
             state.gravity.add_pp_accel(state.dm, state.mfm_gas.get(),
                                        state.scale_factor, config, diag);
         });
-#else
-        state.gravity.add_pp_accel(state.dm, state.mfm_gas.get(),
-                                   state.scale_factor, config, diag);
-#endif
     }
+#endif
 
     if (config.hydro_method == HydroMethod::MFM) {
         {
@@ -483,12 +478,16 @@ static void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
         }
     }
 
-#ifdef GPU_CPU_PARALLEL_EXECUTION
     if (config.use_PP) {
         ScopedTimer pp_timer(diag, TimerRegion::PP);
+#ifdef GPU_CPU_PARALLEL_EXECUTION
         pp_worker.wait();
-    }
+        map_results(state.dm, *state.mfm_gas);
+#else
+        state.gravity.add_pp_accel(state.dm, state.mfm_gas.get(),
+                                   state.scale_factor, config, diag);
 #endif
+    }
 }
 
 static void eulerian_mesh_flux(SimState& state, Diagnostics& diag,
@@ -575,7 +574,7 @@ void initialize(SimState& state, Config& config) {
     if (config.hydro_method == HydroMethod::MFM) {
         state.mfm_gas->build_lbvh(config);
         DensitySolver::compute_density_and_h(*state.mfm_gas, config);
-        state.mfm_gas->sync_thermo(config, state.scale_factor);
+        state.mfm_gas->initialize_thermo(config, state.scale_factor);
     }
 
     state.dm.sync_and_activate(0.0, config);

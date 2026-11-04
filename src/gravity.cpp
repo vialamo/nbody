@@ -289,7 +289,8 @@ static void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
 }
 
 // Map accelerations back to native structures
-static void map_results(ParticleSystem& dm, GasParticleSystem* gas) {
+void map_results(ParticleSystem& dm, GasParticleSystem* gas,
+                 Diagnostics& diag) {
     size_t n_dm = dm.num_particles;
     size_t n_gas = gas ? gas->num_particles : 0;
     size_t n_active = u_active_indices.size();
@@ -298,6 +299,7 @@ static void map_results(ParticleSystem& dm, GasParticleSystem* gas) {
 
     int* d_active_idx = u_active_indices.data();
 
+    auto start_return = std::chrono::high_resolution_clock::now();
 #pragma omp target data map(to : d_active_idx[0 : n_active])
     {
         if (n_dm > 0) {
@@ -339,6 +341,12 @@ static void map_results(ParticleSystem& dm, GasParticleSystem* gas) {
             }
         }
     }
+
+    auto end_return = std::chrono::high_resolution_clock::now();
+    diag.add_prof_time(ProfRegion::Ret,
+                       std::chrono::duration_cast<std::chrono::microseconds>(
+                           end_return - start_return)
+                           .count());
 }
 
 void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
@@ -447,16 +455,9 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
     }
 
     auto end_compute = std::chrono::high_resolution_clock::now();
-    map_results(dm, gas);
-    auto end_return = std::chrono::high_resolution_clock::now();
-
     diag.add_prof_time(ProfRegion::Compute,
                        std::chrono::duration_cast<std::chrono::microseconds>(
                            end_compute - start_compute)
-                           .count());
-    diag.add_prof_time(ProfRegion::Ret,
-                       std::chrono::duration_cast<std::chrono::microseconds>(
-                           end_return - end_compute)
                            .count());
 }
 
