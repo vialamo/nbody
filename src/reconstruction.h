@@ -66,6 +66,6 @@ ReconstructedFace compute_face_reconstruction(
     const ParticleState& p_i, const ParticleGradients& grad_i,
     const ParticleState& p_j, const ParticleGradients& grad_j,
     const Eigen::Matrix3d& B_matrix_i, const Eigen::Matrix3d& B_matrix_j,
-    const Config& config, double density_floor, double pressure_floor);
+    const Config& config, double pressure_floor);
 
 }  // namespace Reconstruction

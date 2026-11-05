@@ -193,6 +193,7 @@ struct Config {
     // Constant Parameters
     static constexpr double domain_size_1d = 1.0;
     Vec3 domain_size;
+    static constexpr double density_floor = 1e-12;
 #ifdef USE_GPU
     static constexpr bool using_GPU = true;
 #else

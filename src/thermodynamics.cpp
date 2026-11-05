@@ -23,7 +23,7 @@ void initialize_primitive_variables(GasParticleSystem& gas,
             size_t i = gas.active_indices[k];
 
             // Enforce density and metallicity floors/bounds
-            gas.rho[i] = std::max(gas.rho[i], density_floor);
+            gas.rho[i] = std::max(gas.rho[i], config.density_floor);
             gas.metal_frac[i] = std::max(0.0, std::min(gas.metal_frac[i], 1.0));
 
             // Enforce thermodynamic energy floor
@@ -91,7 +91,7 @@ double get_u_floor(double a, const Config& config) {
 double get_pressure_floor(double a, const Config& config) {
     double u_floor = get_u_floor(a, config);
     double gamma_minus_1 = config.gamma - 1.0;
-    double pressure_floor = gamma_minus_1 * density_floor * u_floor;
+    double pressure_floor = gamma_minus_1 * config.density_floor * u_floor;
     return pressure_floor;
 }
 

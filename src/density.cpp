@@ -581,7 +581,7 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config) {
     for (size_t k = 0; k < gas.num_active; ++k) {
         size_t i = gas.active_indices[k];
 
-        gas.rho[i] = std::max(gas.rho[i], density_floor);
+        gas.rho[i] = std::max(gas.rho[i], config.density_floor);
 
 #ifdef USE_ADAPTIVE_CONDITION_NUMBER
         // Sync final geometric N_enc for diagnostics

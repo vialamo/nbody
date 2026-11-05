@@ -300,8 +300,7 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                     Reconstruction::ReconstructedFace face =
                         compute_face_reconstruction(
                             p_i, grad_i, p_j, grad_j, gas.B_matrix[i],
-                            gas.B_matrix[j], config, density_floor,
-                            pressure_floor);
+                            gas.B_matrix[j], config, pressure_floor);
 
                     if (!face.is_valid) continue;
                     if (face.used_sph_fallback) step_sph_fallbacks++;

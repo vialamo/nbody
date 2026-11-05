@@ -288,6 +288,8 @@ static void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
                            .count());
 }
 
+#endif
+
 // Map accelerations back to native structures
 void GravitySolver::map_results(ParticleSystem& dm, GasParticleSystem* gas,
                                 Diagnostics& diag) {
@@ -351,6 +353,7 @@ void GravitySolver::map_results(ParticleSystem& dm, GasParticleSystem* gas,
 #endif
 }
 
+#ifdef GRAVITY_GPU_MEMORY
 void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
                                  double a, const Config& config,
                                  Diagnostics& diag) {

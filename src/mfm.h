@@ -6,7 +6,6 @@
 #include "types.h"
 
 constexpr double N_cond_crit = 5.0;
-constexpr double density_floor = 1e-12;
 
 struct Config;
 
