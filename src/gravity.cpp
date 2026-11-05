@@ -289,8 +289,9 @@ static void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
 }
 
 // Map accelerations back to native structures
-void map_results(ParticleSystem& dm, GasParticleSystem* gas,
-                 Diagnostics& diag) {
+void GravitySolver::map_results(ParticleSystem& dm, GasParticleSystem* gas,
+                                Diagnostics& diag) {
+#ifdef GRAVITY_GPU_MEMORY
     size_t n_dm = dm.num_particles;
     size_t n_gas = gas ? gas->num_particles : 0;
     size_t n_active = u_active_indices.size();
@@ -347,6 +348,7 @@ void map_results(ParticleSystem& dm, GasParticleSystem* gas,
                        std::chrono::duration_cast<std::chrono::microseconds>(
                            end_return - start_return)
                            .count());
+#endif
 }
 
 void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
@@ -860,6 +862,18 @@ void GravitySolver::update_softening(SimState& state, Config& config) {
             config.base_comoving_softening * (cap_a / a);
     }
     config.softening = current_comoving_softening;
+}
+
+void GravitySolver::reset_accels(SimState& state, const Config& config) const {
+    std::fill(state.dm.acc_x.begin(), state.dm.acc_x.end(), 0.0);
+    std::fill(state.dm.acc_y.begin(), state.dm.acc_y.end(), 0.0);
+    std::fill(state.dm.acc_z.begin(), state.dm.acc_z.end(), 0.0);
+    if (config.hydro_method == HydroMethod::MFM) {
+        GasParticleSystem& gas = *state.mfm_gas;
+        std::fill(gas.acc_x.begin(), gas.acc_x.end(), 0.0);
+        std::fill(gas.acc_y.begin(), gas.acc_y.end(), 0.0);
+        std::fill(gas.acc_z.begin(), gas.acc_z.end(), 0.0);
+    }
 }
 
 GravitySolver::GravitySolver() {}

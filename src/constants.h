@@ -2,7 +2,7 @@
 
 namespace constants {
 // ---------------------------------------------------------
-// Fundamental Physical Constants
+// Physical Constants
 // ---------------------------------------------------------
 
 // Masses

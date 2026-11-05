@@ -15,8 +15,11 @@ class GravitySolver {
 
     void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
                       const Config& config, Diagnostics& diag);
+
     void map_results(ParticleSystem& dm, GasParticleSystem* gas,
                      Diagnostics& diag);
+
+    void reset_accels(SimState& state, const Config& config) const;
 
     // Timestep
     double get_timestep(const ParticleSystem& dm, const Config& config) const;

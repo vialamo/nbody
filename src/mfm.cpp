@@ -1,11 +1,7 @@
 #include "mfm.h"
 
 #include "config.h"
-#include "density.h"
-#include "hydro.h"
 #include "integrator.h"
-#include "math_utils.h"
-#include "thermodynamics.h"
 
 GasParticleSystem::GasParticleSystem(const Config& config)
     : cic_data(config.num_gas_particles) {
@@ -45,7 +41,6 @@ GasParticleSystem::GasParticleSystem(const Config& config)
 
     entropy.reserve(config.num_gas_particles);
     max_rel_ke.reserve(config.num_gas_particles);
-    delta_E_grav.reserve(config.num_gas_particles);
 
     vel_x_pred.reserve(config.num_gas_particles);
     vel_y_pred.reserve(config.num_gas_particles);
@@ -71,10 +66,6 @@ GasParticleSystem::GasParticleSystem(const Config& config)
         sorted_indices.reserve(config.num_gas_particles);
         bvh_nodes.reserve(num_nodes);
     }
-
-    double u_code_K =
-        Thermodynamics::get_internal_energy_from_temp(0.1, 1.0, config);
-    pressure_floor = (config.gamma - 1.0) * density_floor * u_code_K;
 }
 
 void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
@@ -107,7 +98,6 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
 
     entropy.push_back(0.0);
     max_rel_ke.push_back(0.0);
-    delta_E_grav.push_back(0.0);
 
     vel_x_pred.push_back(vx);
     vel_y_pred.push_back(vy);
@@ -169,7 +159,6 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
 
     std::vector<double> new_entropy(num_particles);
     std::vector<double> new_max_rel_ke(num_particles);
-    std::vector<double> new_delta_E_grav(num_particles);
 
     std::vector<double> new_cond_num(num_particles);
     std::vector<double> new_n_enc_final(num_particles);
@@ -219,7 +208,6 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
 
         new_entropy[i] = entropy[src];
         new_max_rel_ke[i] = max_rel_ke[src];
-        new_delta_E_grav[i] = delta_E_grav[src];
         new_cond_num[i] = cond_num[src];
         new_n_enc_final[i] = n_enc_final[src];
         new_time_bin[i] = time_bin[src];
@@ -267,7 +255,6 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
 
     entropy = std::move(new_entropy);
     max_rel_ke = std::move(new_max_rel_ke);
-    delta_E_grav = std::move(new_delta_E_grav);
     cond_num = std::move(new_cond_num);
     n_enc_final = std::move(new_n_enc_final);
     time_bin = std::move(new_time_bin);
@@ -385,39 +372,8 @@ void GasParticleSystem::sync_and_activate(double dt, double a, double H,
     active_particles_num_cycles++;
 }
 
-double GasParticleSystem::get_cfl_timestep(double a,
-                                           const Config& config) const {
-    if (config.hydro_method != HydroMethod::MFM || num_particles == 0 ||
-        config.individual_particle_timesteps) {
-        return std::numeric_limits<double>::infinity();
-    }
-
-    double min_dt = std::numeric_limits<double>::infinity();
-
-#pragma omp parallel for reduction(min : min_dt) schedule(static)
-    for (size_t i = 0; i < num_particles; ++i) {
-        // v_sig_max is cached in physical units during compute_hydro_forces
-        if (v_sig_max[i] > 1e-9) {
-            double dt_i = (a * h[i]) / v_sig_max[i];
-            if (dt_i < min_dt) {
-                min_dt = dt_i;
-            }
-        }
-    }
-
-    // BOOTSTRAP: On the very first step (t = 0), forces haven't been computed
-    // yet, so v_sig_max is 0. Provide a tiny, safe initial timestep to get the
-    // engine started
-    if (min_dt == std::numeric_limits<double>::infinity()) {
-        return config.fixed_dt / std::pow(2.0, 10.0);
-    }
-
-    return min_dt * config.hydro_courant_factor;
-}
-
 void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
-                                                  const Config& config,
-                                                  Cooling& cooling) {
+                                                  const Config& config) {
     if (num_particles == 0) return;
 
     if (!config.individual_particle_timesteps) {
@@ -430,8 +386,6 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
         return;
     }
 
-    double u_floor =
-        config.enable_cooling ? Thermodynamics::get_u_floor(a, config) : 0.0;
     double epsilon = config.softening;
 
     if (num_active == 0) return;
@@ -493,20 +447,4 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
         // Project the end time of the new step
         t_end[i] = global_time + dt_bin;
     }
-}
-
-void GasParticleSystem::hydro_step(const Config& config, double a) {
-    Thermodynamics::predict_primitive_variables(*this, config, a);
-    HydroSolver::compute_gradients(*this, config);
-    HydroSolver::compute_forces(*this, config, a);
-}
-
-void GasParticleSystem::initialize_thermo(const Config& config, double a) {
-    for (size_t i = 0; i < num_particles; ++i) {
-        double ke = 0.5 * (vel_x[i] * vel_x[i] + vel_y[i] * vel_y[i] +
-                           vel_z[i] * vel_z[i]);
-        total_energy[i] = u[i] + ke;
-    }
-
-    Thermodynamics::initialize_primitive_variables(*this, config, a);
 }

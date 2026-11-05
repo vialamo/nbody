@@ -2,6 +2,25 @@
 
 namespace Riemann {
 
+// Helper function to compute Star states
+static inline void calculate_star_states(
+    const Reconstruction::ReconstructedFace& face, double vn_L, double vn_R,
+    double S_L, double S_R, double& S_star, double& P_star) {
+    double den_star = face.rho_L * (S_L - vn_L) - face.rho_R * (S_R - vn_R);
+
+    if (std::abs(den_star) < 1e-15) {
+        den_star = (den_star > 0.0 ? 1e-15 : -1e-15);
+    }
+
+    S_star = (face.p_R - face.p_L + face.rho_L * vn_L * (S_L - vn_L) -
+              face.rho_R * vn_R * (S_R - vn_R)) /
+             den_star;
+
+    // Enforce physical bounds on the Riemann fan
+    S_star = std::max(S_L, std::min(S_star, S_R));
+    P_star = face.p_L + face.rho_L * (S_L - vn_L) * (S_star - vn_L);
+}
+
 // Solves the HLLC Riemann problem at the moving face between particles.
 // INPUT: Reconstructed face states, relative frame velocity (v_frame), and
 // adiabatic index.
@@ -35,22 +54,6 @@ FaceFlux solve_hllc(const Reconstruction::ReconstructedFace& face,
     double cs_R =
         (face.rho_R > 1e-12) ? std::sqrt(gamma * face.p_R / face.rho_R) : 0.0;
 
-    // Helper lambda to compute Star states
-    auto calc_star = [&](double S_L, double S_R, double& S_star,
-                         double& P_star) {
-        double den_star = face.rho_L * (S_L - vn_L) - face.rho_R * (S_R - vn_R);
-        if (std::abs(den_star) < 1e-15)
-            den_star = (den_star > 0 ? 1e-15 : -1e-15);
-
-        S_star = (face.p_R - face.p_L + face.rho_L * vn_L * (S_L - vn_L) -
-                  face.rho_R * vn_R * (S_R - vn_R)) /
-                 den_star;
-
-        // Enforce physical bounds on the Riemann fan
-        S_star = std::max(S_L, std::min(S_star, S_R));
-        P_star = face.p_L + face.rho_L * (S_L - vn_L) * (S_star - vn_L);
-    };
-
     // Attempt Roe Average Wave Speeds
     double gamma_minus_1 = gamma - 1.0;
     double sqrt_rho_L = std::sqrt(face.rho_L);
@@ -81,7 +84,7 @@ FaceFlux solve_hllc(const Reconstruction::ReconstructedFace& face,
         use_fallback = true;
     } else if (S_L < 0.0 && S_R > 0.0) {
         // Subsonic case: evaluate star state to check if P_star <= 0
-        calc_star(S_L, S_R, S_star, P_star);
+        calculate_star_states(face, vn_L, vn_R, S_L, S_R, S_star, P_star);
         if (P_star <= 0.0) {
             use_fallback = true;
         }
@@ -100,7 +103,7 @@ FaceFlux solve_hllc(const Reconstruction::ReconstructedFace& face,
         }
 
         if (S_L < 0.0 && S_R > 0.0) {
-            calc_star(S_L, S_R, S_star, P_star);
+            calculate_star_states(face, vn_L, vn_R, S_L, S_R, S_star, P_star);
             // Check for strong rarefaction causing negative pressure
             if (P_star < 0.0) {
                 out.success = false;

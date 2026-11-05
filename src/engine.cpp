@@ -5,6 +5,7 @@
 #include "gas.h"
 #include "gravity.h"
 #include "hdf5_writer.h"
+#include "hydro.h"
 #include "ics.h"
 #include "integrator.h"
 #include "logger.h"
@@ -70,8 +71,7 @@ TimestepInfo SimulationEngine::get_timestep() const {
     if (config.hydro_method == HydroMethod::Eulerian) {
         ts.dt_hydro = state.gas->get_cfl_timestep();
     } else if (config.hydro_method == HydroMethod::MFM) {
-        ts.dt_hydro =
-            state.mfm_gas->get_cfl_timestep(state.scale_factor, config);
+        ts.dt_hydro = HydroSolver::get_timestep(*state.mfm_gas, config);
     } else {
         ts.dt_hydro = std::numeric_limits<double>::infinity();
     }

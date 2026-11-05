@@ -109,9 +109,8 @@ Eigen::Vector3d compute_face_area_vector(
 
     if (facenormal_dot_dp < 0.0 || ill_conditioned_i || ill_conditioned_j) {
         used_sph_fallback = true;
-        double dW_dr_i, dW_dr_j, dummy_phi;
-        Kernels::adaptive_gravity_terms(r, p_i.h, dummy_phi, dW_dr_i);
-        Kernels::adaptive_gravity_terms(r, p_j.h, dummy_phi, dW_dr_j);
+        double dW_dr_i = Kernels::cubic_spline_gradient(r, p_i.h);
+        double dW_dr_j = Kernels::cubic_spline_gradient(r, p_j.h);
         double face_area_mag = -(V_i * V_i * dW_dr_i + V_j * V_j * dW_dr_j) / r;
         return face_area_mag * dx_vec;
     }
@@ -269,8 +268,7 @@ ParticleGradients compute_single_particle_gradients(
                                               domain_size.z);
             double r2 = dx * dx + dy * dy + dz * dz;
             double r = std::sqrt(r2);
-            double dphi_dr_dummy, dW_dr;
-            Kernels::adaptive_gravity_terms(r, data.h[i], dphi_dr_dummy, dW_dr);
+            double dW_dr = Kernels::cubic_spline_gradient(r, data.h[i]);
 
             double V_j = data.mass[j] / data.rho[j];
             Eigen::Vector3d dx_vec(dx, dy, dz);

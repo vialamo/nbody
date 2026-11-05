@@ -10,6 +10,11 @@
 #include "particles.h"
 #include "reconstruction.h"
 
+namespace HydroSolver {
+void compute_gradients(GasParticleSystem& gas, const Config& config);
+void compute_forces(GasParticleSystem& gas, const Config& config, double a);
+}
+
 // ---------------------------------------------------------------------
 // MFM Face Reconstruction and Limiting
 // ---------------------------------------------------------------------

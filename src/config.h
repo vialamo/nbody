@@ -33,6 +33,11 @@ E from_string(std::string str) {
 }  // namespace EnumUtils
 
 enum class HydroMethod { None, Eulerian, MFM, Count };
+template <>
+struct EnumUtils::Traits<HydroMethod> {
+    static constexpr const char* names[] = {"none", "eulerian", "mfm"};
+    static constexpr HydroMethod default_value = HydroMethod::None;
+};
 
 enum class InitialSetup {
     Cosmological,
@@ -45,13 +50,6 @@ enum class InitialSetup {
     ZeldovichPancake,
     Count
 };
-
-template <>
-struct EnumUtils::Traits<HydroMethod> {
-    static constexpr const char* names[] = {"none", "eulerian", "mfm"};
-    static constexpr HydroMethod default_value = HydroMethod::None;
-};
-
 template <>
 struct EnumUtils::Traits<InitialSetup> {
     static constexpr const char* names[] = {
