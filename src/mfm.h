@@ -101,8 +101,8 @@ class GasParticleSystem {
     std::vector<uint8_t>
         needs_wakeup;  // Thread-safe flag for waking up sleeping particles
     std::vector<int> active_indices;
-    size_t num_active = 0;
     double global_time = 0.0;
+    size_t get_num_active() const { return active_indices.size(); }
 
     std::vector<double> vel_x_pred;
     std::vector<double> vel_y_pred;
@@ -119,7 +119,8 @@ class GasParticleSystem {
 
     // Assigns power-of-two block timesteps to all active particles
     void update_particle_timesteps(double dt_max, double a,
-                                   const Config& config);
+                                   const Config& config,
+                                   double softening_length);
 
     // Sync the clock, process wakeups, and flag active particles
     void sync_and_activate(double dt, double a, double H, const Config& config);

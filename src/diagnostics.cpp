@@ -295,6 +295,7 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
     this->dt_gravity = ts.dt_grav;
     this->dt_cool = ts.dt_cool;
     this->dt_final = ts.dt_macro;
+    this->softening_length = state.gravity.softening_length;
 
     // Compute Independent Physics Domains
     compute_dm_metrics(state.dm);

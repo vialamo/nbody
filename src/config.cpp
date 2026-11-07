@@ -118,8 +118,6 @@ void Config::compute_derived_data() {
     base_comoving_softening =
         mean_interparticle_spacing * comoving_softening_factor;
 
-    softening = base_comoving_softening;
-
     const double dynamical_time = 1.0 / std::sqrt(G);
     double raw_fixed_dt = max_dt_dynamical_factor * dynamical_time;
     // Snap to the nearest lower power of 2

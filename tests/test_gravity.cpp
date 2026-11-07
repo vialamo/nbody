@@ -89,11 +89,11 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
     config.compute_derived_data();
     
     config.G = 1.0;
-    config.softening = 0.01;
     config.base_comoving_softening = 0.01;
 
     Diagnostics dummy_diag;
     SimState state(config);
+    state.gravity.update_softening(state.scale_factor, config);
 
     // Two particles 0.25 units apart on the X-axis
     state.dm.add_particle(0.25, 0.5, 0.5, 0.0, 0.0, 0.0, 1.0);

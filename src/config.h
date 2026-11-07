@@ -168,7 +168,6 @@ struct Config {
     double cutoff_radius = 0.0, cutoff_radius_squared = 0.0;
     int num_dm_particles = 0;
     int num_gas_particles = 0;
-    double softening = 0.0;
     double base_comoving_softening = 0.0;
 
     Vec3 mesh_size;

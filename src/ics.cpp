@@ -528,7 +528,7 @@ void initialize_gas(SimState& state, const Config& config,
                                  (dz_kp1.z - dz_km1.z) * inv_2dx;
 
                     double rho = mean_gas_rho * (1.0 - div);
-                    double safe_rho = std::max(rho, 1e-12);
+                    double safe_rho = std::max(rho, config.density_floor);
                     gas.density.data[idx] = safe_rho;
                     gas.metal_density.data[idx] = safe_rho * seed_metallicity;
 
@@ -1750,8 +1750,7 @@ void initialize_soundwave(SimState& state, const Config& config) {
     }
 }
 
-SimState initialize_state(Config& config) {
-    SimState state(config);
+void initialize_state(SimState& state, Config& config) {
     state.total_time = 0;
 
     Cosmology::update(state, config);
@@ -1779,6 +1778,4 @@ SimState initialize_state(Config& config) {
     }
 
     Integrator::initialize(state, config);
-
-    return state;
 }

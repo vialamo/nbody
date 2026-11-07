@@ -80,7 +80,8 @@ TEST_CASE("initialize_state produces physically sound macro-states",
     config.compute_derived_data();
 
     // Initialize the simulation state
-    SimState state = initialize_state(config);
+    SimState state(config);
+    initialize_state(state, config);
 
     SECTION("Conservation of Mass") {
         double conf_total_dm_mass = (config.omega_m - config.omega_baryon) / config.omega_m;
@@ -185,7 +186,8 @@ TEST_CASE("Peculiar velocities exactly obey Zel'dovich kinematics",
     config.compute_derived_data();
 
     // Generate state and grab the Zeldovich field growth rate
-    SimState state = initialize_state(config);
+    SimState state(config);
+    initialize_state(state, config);
     ZeldovichField zf = compute_zeldovich_field(config.a_start, config);
 
     double H = state.hubble_param;

@@ -43,8 +43,8 @@ class ParticleSystem {
     std::vector<double> t_current;
     std::vector<double> t_end;
     std::vector<int> active_indices;
-    size_t num_active = 0;
     double global_time = 0.0;
+    size_t get_num_active() const { return active_indices.size(); }
 
     ParticleSystem(const Config& config);
 
@@ -53,7 +53,8 @@ class ParticleSystem {
     void add_particle(double px, double py, double pz, double vx, double vy,
                       double vz, double m);
 
-    void update_particle_timesteps(double dt_max, const Config& config);
+    void update_particle_timesteps(double dt_max, const Config& config,
+                                   double softening_length);
     void sync_and_activate(double dt, const Config& config);
 
    private:

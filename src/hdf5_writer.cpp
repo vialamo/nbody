@@ -106,6 +106,8 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         H5::Group header_group = root_group.createGroup("Header");
         set_attr_double(header_group, "scale_factor", state.scale_factor);
         set_attr_double(header_group, "simulation_time", state.total_time);
+        set_attr_double(header_group, "softening_length",
+                        state.gravity.softening_length);
         set_attr_double(header_group, "dt_macro", ts.dt_macro);
         set_attr_double(header_group, "dt_grav", ts.dt_grav);
         set_attr_double(header_group, "dt_hydro", ts.dt_hydro);

@@ -9,8 +9,9 @@ class GasParticleSystem;
 
 namespace Integrator {
 
-void initialize(SimState& state, Config& config);
-void KDK_step(SimState& state, double dt, Config& config, Diagnostics& diag);
+void initialize(SimState& state, const Config& config);
+void KDK_step(SimState& state, double dt, const Config& config,
+              Diagnostics& diag);
 
 struct KickWork {
     double grav_work = 0.0;

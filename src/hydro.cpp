@@ -62,10 +62,8 @@ static inline void update_signal_velocities(
     double r = std::sqrt(r2);
 
     // Comoving sound speeds
-    double c_com_i =
-        (p_i.rho > 1e-12) ? std::sqrt(gamma * p_i.pressure / p_i.rho) : 0.0;
-    double c_com_j =
-        (p_j.rho > 1e-12) ? std::sqrt(gamma * p_j.pressure / p_j.rho) : 0.0;
+    double c_com_i = std::sqrt(gamma * p_i.pressure / p_i.rho);
+    double c_com_j = std::sqrt(gamma * p_j.pressure / p_j.rho);
 
     out_c_com_j = c_com_j;
 
@@ -96,7 +94,8 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
     const Vec3& domain_size = config.domain_size;
     size_t step_ill_conditioned = 0;
 
-    if (gas.num_active == 0) return;
+    size_t num_active = gas.get_num_active();
+    if (num_active == 0) return;
 
     Reconstruction::FluidStateArrays system_data{
         gas.pos_x.data(),      gas.pos_y.data(),      gas.pos_z.data(),
@@ -111,7 +110,7 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
         neighbors.reserve(256);
 
 #pragma omp for schedule(dynamic, 64)
-        for (size_t k = 0; k < gas.num_active; ++k) {
+        for (size_t k = 0; k < num_active; ++k) {
             size_t i = gas.active_indices[k];
             neighbors.clear();
             double local_max_rel_ke = 0.0;
@@ -195,10 +194,11 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
     if (gas.num_particles == 0) return;
     const Vec3& domain_size = config.domain_size;
 
-    if (gas.num_active == 0) return;
+    size_t num_active = gas.get_num_active();
+    if (num_active == 0) return;
 
     // Reset accumulators
-    for (size_t k = 0; k < gas.num_active; ++k) {
+    for (size_t k = 0; k < num_active; ++k) {
         size_t i = gas.active_indices[k];
         gas.hydro_acc_x[i] = 0.0;
         gas.hydro_acc_y[i] = 0.0;
@@ -215,7 +215,7 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
 
 #pragma omp parallel for schedule(dynamic, 64) \
     reduction(+ : step_sph_fallbacks, riemann_failed_cases)
-    for (size_t k = 0; k < gas.num_active; ++k) {
+    for (size_t k = 0; k < num_active; ++k) {
         size_t i = gas.active_indices[k];
 
         Reconstruction::ParticleState p_i;

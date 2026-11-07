@@ -333,9 +333,10 @@ static void apply_gas_drift(GasParticleSystem& gas, double dt,
     }
 }
 
-static void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
+static void compute_forces(SimState& state, const Config& config,
+                           Diagnostics& diag) {
     // Update softening
-    state.gravity.update_softening(state, config);
+    state.gravity.update_softening(state.scale_factor, config);
 
     // Build trees
     {
@@ -376,7 +377,8 @@ static void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
     if (config.hydro_method == HydroMethod::MFM) {
         {
             ScopedTimer timer(diag, TimerRegion::Density);
-            DensitySolver::compute_density_and_h(*state.mfm_gas, config);
+            DensitySolver::compute_density_and_h(
+                *state.mfm_gas, config, state.gravity.softening_length);
         }
         {
             ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
@@ -397,7 +399,7 @@ static void compute_forces(SimState& state, Config& config, Diagnostics& diag) {
 }
 
 static void eulerian_mesh_flux(SimState& state, Diagnostics& diag,
-                               Config& config, double dt) {
+                               const Config& config, double dt) {
     // Approximate the scale factor at the half-step (t + dt/2)
     double mid_a = state.scale_factor * (1.0 + 0.5 * state.hubble_param * dt);
     {
@@ -426,7 +428,7 @@ static void apply_kick(SimState& state, double dt, const Config& config,
     }
 }
 
-static void apply_drift(SimState& state, double dt, Config& config,
+static void apply_drift(SimState& state, double dt, const Config& config,
                         Diagnostics& diag) {
     apply_dm_drift(state.dm, dt, config.domain_size);
 
@@ -438,14 +440,17 @@ static void apply_drift(SimState& state, double dt, Config& config,
 }
 
 static void update_timesteps(SimState& state, const Config& config) {
-    state.dm.update_particle_timesteps(config.fixed_dt, config);
+    state.dm.update_particle_timesteps(config.fixed_dt, config,
+                                       state.gravity.softening_length);
     if (config.hydro_method == HydroMethod::MFM) {
-        state.mfm_gas->update_particle_timesteps(config.fixed_dt,
-                                                 state.scale_factor, config);
+        state.mfm_gas->update_particle_timesteps(
+            config.fixed_dt, state.scale_factor, config,
+            state.gravity.softening_length);
     }
 }
 
-void KDK_step(SimState& state, double dt, Config& config, Diagnostics& diag) {
+void KDK_step(SimState& state, double dt, const Config& config,
+              Diagnostics& diag) {
     // Clock sync and wake-ups
     state.dm.sync_and_activate(dt, config);
     if (config.hydro_method == HydroMethod::MFM) {
@@ -476,10 +481,12 @@ void KDK_step(SimState& state, double dt, Config& config, Diagnostics& diag) {
     update_timesteps(state, config);
 }
 
-void initialize(SimState& state, Config& config) {
+void initialize(SimState& state, const Config& config) {
+    state.gravity.update_softening(state.scale_factor, config);
     if (config.hydro_method == HydroMethod::MFM) {
         state.mfm_gas->build_lbvh(config);
-        DensitySolver::compute_density_and_h(*state.mfm_gas, config);
+        DensitySolver::compute_density_and_h(*state.mfm_gas, config,
+                                             state.gravity.softening_length);
         Thermodynamics::initialize_primitive_variables(*state.mfm_gas, config,
                                                        state.scale_factor);
     }

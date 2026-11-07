@@ -53,18 +53,33 @@ void update_h_and_bboxes(size_t num_particles, const std::vector<double>& pos_x,
 
 // GPU specific versions
 #ifdef GRAVITY_GPU_MEMORY
-void compute_morton_and_sort_indices_gpu(
-    size_t num_particles, const Vec3& domain_size, const double* pos_x,
-    const double* pos_y, const double* pos_z, uint64_t* morton_codes,
-    int* sorted_indices);
 
-void build_topology_and_aggregate_gpu(size_t num_particles,
-                                      const double* sorted_pos_x,
-                                      const double* sorted_pos_y,
-                                      const double* sorted_pos_z,
-                                      const double* sorted_mass,
-                                      const uint64_t* morton_codes,
-                                      BVHNode* bvh_nodes);
-void free_gpu_resources();
+class Workspace {
+   public:
+    size_t current_padded_capacity = 0;
+    uint64_t* d_padded_morton = nullptr;
+    int* d_padded_indices = nullptr;
+
+    size_t current_flags_capacity = 0;
+    int* d_atomic_flags = nullptr;
+
+    Workspace() = default;
+    ~Workspace();
+
+    // Prevent accidental copying which would cause double-free errors
+    Workspace(const Workspace&) = delete;
+    Workspace& operator=(const Workspace&) = delete;
+};
+
+void compute_morton_and_sort_indices_gpu(
+    Workspace& workspace, size_t num_particles, const Vec3& domain_size,
+    const double* pos_x, const double* pos_y, const double* pos_z,
+    uint64_t* morton_codes, int* sorted_indices);
+
+void build_topology_and_aggregate_gpu(
+    Workspace& workspace, size_t num_particles, const double* sorted_pos_x,
+    const double* sorted_pos_y, const double* sorted_pos_z,
+    const double* sorted_mass, const uint64_t* morton_codes,
+    BVHNode* bvh_nodes);
 #endif
 }  // namespace LBVH

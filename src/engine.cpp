@@ -25,11 +25,8 @@ static double get_next_sync_dt(const std::vector<double>& t_end,
 
 SimulationEngine::SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5,
                                    Diagnostics& diag)
-    : config(conf),
-      logger(log),
-      h5_writer(h5),
-      diagnostics(diag),
-      state(initialize_state(conf)) {
+    : config(conf), logger(log), h5_writer(h5), diagnostics(diag), state(conf) {
+    initialize_state(state, conf);
     // Determine initial timestep
     current_ts = get_timestep();
 

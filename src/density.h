@@ -7,6 +7,7 @@ namespace DensitySolver {
 
 // Main entry point for computing density, smoothing lengths, and gradient
 // matrices
-void compute_density_and_h(GasParticleSystem& gas, const Config& config);
+void compute_density_and_h(GasParticleSystem& gas, const Config& config,
+                           double softening_length);
 
 }  // namespace DensitySolver

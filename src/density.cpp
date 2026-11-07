@@ -201,7 +201,7 @@ static double build_matrix_and_compute_condition(const GasParticleSystem& gas,
 #ifdef USE_GEOMETRIC_MATRIX
                 double weight = W;
 #else
-                double V_j = gas.mass[j] / std::max(gas.rho[j], 1e-12);
+                double V_j = gas.mass[j] / gas.rho[j];
                 double weight = W * V_j;
 #endif
 
@@ -286,7 +286,8 @@ static double build_matrix_and_compute_condition(const GasParticleSystem& gas,
 // --------------------------------------------------------------------------------
 // Density and Smoothing Length Iteration
 // --------------------------------------------------------------------------------
-void compute_density_and_h(GasParticleSystem& gas, const Config& config) {
+void compute_density_and_h(GasParticleSystem& gas, const Config& config,
+                           double softening_length) {
     if (gas.num_particles == 0) return;
 
     const Vec3& domain_size = config.domain_size;
@@ -294,7 +295,7 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config) {
     double tol = config.mfm_neighbor_tolerance;
     int max_iter = config.mfm_max_iterations;
 
-    const double min_h_cap = config.mfm_min_hsml_fraction * config.softening;
+    const double min_h_cap = config.mfm_min_hsml_fraction * softening_length;
     const double max_h_cap = 0.5 * config.domain_size_1d;
 
     constexpr double sphere_volume_factor = (4.0 / 3.0) * M_PI;
@@ -304,7 +305,8 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config) {
     size_t step_neighbor_increased_cases = 0;
     size_t num_not_enough_neighbors = 0;
 
-    if (gas.num_active == 0) return;
+    size_t num_active = gas.get_num_active();
+    if (num_active == 0) return;
 
     // Cache to pass dn_dh to the adaptive softening loop without re-evaluating
     // the tree
@@ -335,7 +337,7 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config) {
 #pragma omp parallel for schedule(dynamic, 64) reduction( \
         + : num_h_clamped, num_non_converged, step_neighbor_increased_cases)
 #endif
-        for (size_t k = 0; k < gas.num_active; ++k) {
+        for (size_t k = 0; k < num_active; ++k) {
             size_t i = gas.active_indices[k];
 
             double h_guess = gas.h[i];
@@ -464,7 +466,7 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config) {
 // ========================================================================
 #pragma omp parallel for schedule(dynamic, 64) \
     reduction(+ : step_neighbor_increased_cases, num_not_enough_neighbors)
-    for (size_t k = 0; k < gas.num_active; ++k) {
+    for (size_t k = 0; k < num_active; ++k) {
         size_t i = gas.active_indices[k];
 
         double h_guess = gas.h[i];
@@ -578,7 +580,7 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config) {
     // PASS 3: Final Matrix Sync & Adaptive Gravity
     // ========================================================================
 #pragma omp parallel for schedule(dynamic, 64)
-    for (size_t k = 0; k < gas.num_active; ++k) {
+    for (size_t k = 0; k < num_active; ++k) {
         size_t i = gas.active_indices[k];
 
         gas.rho[i] = std::max(gas.rho[i], config.density_floor);

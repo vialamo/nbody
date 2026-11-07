@@ -421,14 +421,15 @@ void Cooling::apply_cooling(GasParticleSystem& gas, const Config& config,
 
     double gamma_minus_1 = config.gamma - 1.0;
 
-    if (gas.num_active != 0) {
+    size_t num_active = gas.get_num_active();
+    if (num_active != 0) {
 #pragma omp parallel for schedule(static) \
     reduction(+ : total_radiated, total_photoheated, non_converged_count)
-        for (size_t k = 0; k < gas.num_active; ++k) {
+        for (size_t k = 0; k < num_active; ++k) {
             size_t i = gas.active_indices[k];
 
             double local_rho = gas.rho[i];
-            if (local_rho > 1e-12) {  // Skip vacuum particles
+            if (local_rho > config.density_floor) {  // Skip vacuum particles
                 double local_Z_frac = gas.metal_frac[i];
                 double u_initial = gas.u[i];
                 double dt_particle = gas.dt_step[i];

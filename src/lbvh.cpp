@@ -307,14 +307,23 @@ void update_h_and_bboxes(size_t num_particles, const std::vector<double>& pos_x,
 
 #ifdef GRAVITY_GPU_MEMORY
 
-static size_t current_padded_capacity = 0;
-static uint64_t* d_padded_morton = nullptr;
-static int* d_padded_indices = nullptr;
+Workspace::~Workspace() {
+    int dev = omp_get_default_device();
+    if (current_padded_capacity > 0) {
+        omp_target_free(d_padded_morton, dev);
+        omp_target_free(d_padded_indices, dev);
+        current_padded_capacity = 0;
+    }
+    if (current_flags_capacity > 0) {
+        omp_target_free(d_atomic_flags, dev);
+        current_flags_capacity = 0;
+    }
+}
 
 void compute_morton_and_sort_indices_gpu(
-    size_t num_particles, const Vec3& domain_size, const double* pos_x,
-    const double* pos_y, const double* pos_z, uint64_t* morton_codes,
-    int* sorted_indices) {
+    Workspace& ws, size_t num_particles, const Vec3& domain_size,
+    const double* pos_x, const double* pos_y, const double* pos_z,
+    uint64_t* morton_codes, int* sorted_indices) {
     if (num_particles == 0) return;
 
     double inv_domain_x = 1.0 / domain_size.x;
@@ -341,17 +350,21 @@ void compute_morton_and_sort_indices_gpu(
     while (padded_n < num_particles) padded_n <<= 1;
 
     // Persistent GPU allocation for the padded buffers
-    if (padded_n > current_padded_capacity) {
+    if (padded_n > ws.current_padded_capacity) {
         int dev = omp_get_default_device();
-        if (current_padded_capacity > 0) {
-            omp_target_free(d_padded_morton, dev);
-            omp_target_free(d_padded_indices, dev);
+        if (ws.current_padded_capacity > 0) {
+            omp_target_free(ws.d_padded_morton, dev);
+            omp_target_free(ws.d_padded_indices, dev);
         }
-        d_padded_morton =
+        ws.d_padded_morton =
             (uint64_t*)omp_target_alloc(padded_n * sizeof(uint64_t), dev);
-        d_padded_indices = (int*)omp_target_alloc(padded_n * sizeof(int), dev);
-        current_padded_capacity = padded_n;
+        ws.d_padded_indices =
+            (int*)omp_target_alloc(padded_n * sizeof(int), dev);
+        ws.current_padded_capacity = padded_n;
     }
+
+    uint64_t* d_padded_morton = ws.d_padded_morton;
+    int* d_padded_indices = ws.d_padded_indices;
 
     // Initialize the virtual out-of-bounds space on the GPU
 #pragma omp target teams distribute parallel for is_device_ptr( \
@@ -402,10 +415,7 @@ void compute_morton_and_sort_indices_gpu(
     }
 }
 
-static size_t current_flags_capacity = 0;
-static int* d_atomic_flags = nullptr;
-
-void build_topology_and_aggregate_gpu(size_t num_particles,
+void build_topology_and_aggregate_gpu(Workspace& ws, size_t num_particles,
                                       const double* sorted_pos_x,
                                       const double* sorted_pos_y,
                                       const double* sorted_pos_z,
@@ -484,14 +494,17 @@ void build_topology_and_aggregate_gpu(size_t num_particles,
     // BOTTOM-UP AGGREGATION
     int flags_size = n - 1;
 
-    if (flags_size > current_flags_capacity) {
+    if (flags_size > ws.current_flags_capacity) {
         int dev = omp_get_default_device();
-        if (current_flags_capacity > 0) {
-            omp_target_free(d_atomic_flags, dev);
+        if (ws.current_flags_capacity > 0) {
+            omp_target_free(ws.d_atomic_flags, dev);
         }
-        d_atomic_flags = (int*)omp_target_alloc(flags_size * sizeof(int), dev);
-        current_flags_capacity = flags_size;
+        ws.d_atomic_flags =
+            (int*)omp_target_alloc(flags_size * sizeof(int), dev);
+        ws.current_flags_capacity = flags_size;
     }
+
+    int* d_atomic_flags = ws.d_atomic_flags;
 
     // Zero out the atomic flags
 #pragma omp target teams distribute parallel for is_device_ptr(d_atomic_flags)
@@ -577,18 +590,6 @@ void build_topology_and_aggregate_gpu(size_t num_particles,
     }
 }
 
-void free_gpu_resources() {
-    int dev = omp_get_default_device();
-    if (current_padded_capacity > 0) {
-        omp_target_free(d_padded_morton, dev);
-        omp_target_free(d_padded_indices, dev);
-        current_padded_capacity = 0;
-    }
-    if (current_flags_capacity > 0) {
-        omp_target_free(d_atomic_flags, dev);
-        current_flags_capacity = 0;
-    }
-}
 #endif
 
 }  // namespace LBVH

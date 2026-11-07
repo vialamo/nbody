@@ -126,7 +126,6 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
     needs_wakeup.push_back(0);
 
     active_indices.push_back(num_particles);
-    num_active++;
 
     num_particles++;
 }
@@ -271,7 +270,6 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
             active_indices.push_back(i);
         }
     }
-    num_active = active_indices.size();
 }
 
 void GasParticleSystem::build_lbvh(const Config& config) {
@@ -365,7 +363,7 @@ void GasParticleSystem::sync_and_activate(double dt, double a, double H,
             active_indices.push_back(i);
         }
     }
-    num_active = active_indices.size();
+    size_t num_active = get_num_active();
 
     active_particles_fraction +=
         static_cast<double>(num_active) / static_cast<double>(num_particles);
@@ -373,7 +371,8 @@ void GasParticleSystem::sync_and_activate(double dt, double a, double H,
 }
 
 void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
-                                                  const Config& config) {
+                                                  const Config& config,
+                                                  double softening_length) {
     if (num_particles == 0) return;
 
     if (!config.individual_particle_timesteps) {
@@ -386,8 +385,9 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
         return;
     }
 
-    double epsilon = config.softening;
+    double epsilon = softening_length;
 
+    size_t num_active = get_num_active();
     if (num_active == 0) return;
 
     double current_min_dt = dt_max;

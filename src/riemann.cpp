@@ -49,10 +49,8 @@ FaceFlux solve_hllc(const Reconstruction::ReconstructedFace& face,
     double vn_R = (face.v_R - v_frame).dot(face.n);
 
     // Compute Sound Speeds
-    double cs_L =
-        (face.rho_L > 1e-12) ? std::sqrt(gamma * face.p_L / face.rho_L) : 0.0;
-    double cs_R =
-        (face.rho_R > 1e-12) ? std::sqrt(gamma * face.p_R / face.rho_R) : 0.0;
+    double cs_L = std::sqrt(gamma * face.p_L / face.rho_L);
+    double cs_R = std::sqrt(gamma * face.p_R / face.rho_R);
 
     // Attempt Roe Average Wave Speeds
     double gamma_minus_1 = gamma - 1.0;
@@ -164,8 +162,8 @@ FaceFlux solve_exact(const Reconstruction::ReconstructedFace& face,
     double rho_R = face.rho_R;
 
     // Compute Sound Speeds
-    double c_L = (rho_L > 1e-12) ? std::sqrt(gamma * P_L / rho_L) : 0.0;
-    double c_R = (rho_R > 1e-12) ? std::sqrt(gamma * P_R / rho_R) : 0.0;
+    double c_L = std::sqrt(gamma * P_L / rho_L);
+    double c_R = std::sqrt(gamma * P_R / rho_R);
 
     // Vacuum Generation Check
     if (2.0 / (gamma - 1.0) * (c_L + c_R) <= (u_R - u_L)) {

@@ -64,6 +64,7 @@ class Diagnostics {
     double MFM_flux_momentum_error = 0.0;
     double percent_particles_updated = 0;
     double volume_error = 0.0;
+    double softening_length = 0.0;
 
     // Performance State
     int accumulated_cycles = 0;
