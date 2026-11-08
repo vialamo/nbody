@@ -27,6 +27,7 @@ This repository contains a TreePM/MFM cosmological code written in C++, along wi
 
 * [`/src/`](src/): A C++ TreePM + hydrodynamics cosmological code.
 * [`/docs/`](docs/): Contains a "living book" titled **"Notes on Cosmological Simulations"** in Markdown format. It includes a `Makefile` to automatically build the source notes into EPUB and PDF files.
+* [`/examples/`](examples/): Contains configuration files for typical simulations and tests.
 * [`/scripts/`](scripts/): Contains Python utilities for post-processing, including a dashboard (`dashboard.py`) to plot and diagnose physics from the HDF5 outputs.
 
 ## Getting Started
@@ -140,8 +141,9 @@ The simulation is configured using a standard INI file format. Below is a breakd
 Defines the spatial properties and resolution of the simulation box.
 
 * **`domain_size`**: The internal code-unit length of the box (typically set to `1.0` for natural units).
+* **`domain_size_x_factor`**: A multiplier for the base `domain_size` to establish the domain length along the x-axis. Use this to construct elongated rectangular simulation volumes—such as those required for 1D shock tubes—without altering the underlying particle spacing or base resolution scale. Defaults to `1.0` (cubic domain).
 * **`mesh_size_1d`**: The number of grid cells along one axis for the Poisson solver and hydrodynamics, if using the eulerian method (e.g., `32` creates a 32x32x32 computational grid).
-* **`num_particles_1d`**: The number of N-body particles along one axis (e.g., `32` creates 32,768 total particles). Often matched to `mesh_size` to avoid interpolation artifacts.
+* **`num_dm_particles_1d`**: The number of N-body particles along one axis (e.g., `32` creates 32,768 total particles). Often matched to `mesh_size` to avoid interpolation artifacts.
 * **`num_gas_particles_1d`**: The number of gas particles along one axis, when using MFM for hydrodynamics.
 * **`box_size_mpc`**: The physical comoving size of the simulation box in Megaparsecs (Mpc). Used to map internal code units back to physical reality.
 
@@ -159,18 +161,18 @@ Defines the cosmological model of the universe.
 
 ### `[gravity]`
 
-* **`comoving_softening_factor`**: The baseline gravitational softening length as a multiplier of the mean inter-particle spacing.
-* **`softening_cap_scale_factor`**: The expansion scale factor at which the physical size of the softening length is capped (so that its physical size won't grow more). This is needed to preserve halo density through the simulation.
+* **`comoving_softening_factor`**: The gravitational softening length as a multiplier of the mean inter-particle spacing.
+* **`softening_cap_scale_factor`**: The expansion scale factor at which the physical size of the softening length is capped (so that its physical size won't grow more). This may be needed to preserve halo density through the simulation.
 * **`use_pm`**: Boolean. Enables the long-range Particle-Mesh (PM) force calculation via Fast Fourier Transform.
 * **`use_pp`**: Boolean. Enables the short-range Particle-Particle (PP) direct summation for sub-grid resolution.
-* **`pm_smoothing_cells`**: The fundamental mathematical scale ($r_s$) of the Fourier-space Gaussian filter, defined in units of grid cells. Determines how smoothly the grid force is blunted to avoid anisotropic grid artifacts. Minimum mathematically sound value is 1.0.
-* **`cutoff_radius_factor`**: A multiplier that dictates the cutoff radius relative to the smoothing scale ($r_c = \text{factor} \times r_s$). Because the short-range force is an erfc exponential decay, the cutoff must be placed far enough out to avoid force discontinuity. Typically set to at least 3.5.
+* **`pm_smoothing_cells`**: The scale ($r_s$) of the Fourier-space Gaussian filter, defined in units of grid cells. Determines how smoothly the grid force is blunted to avoid anisotropic grid artifacts. Minimum sound value is 1.0.
+* **`cutoff_radius_factor`**: A multiplier that defines the cutoff radius relative to the smoothing scale ($r_c = \text{factor} \times r_s$). Because the short-range force is an erfc exponential decay, the cutoff must be placed far enough out to avoid force discontinuity. Typically set to at least 3.5.
 
 ### `[initial_conditions]`
 
 Controls the generation of the primordial density field and particle distributions.
 
-* **`setup`**: Initial configuration for gas and DM. Can be "cosmological" for a normal simulation, but also "sound_wave", "sod_shock_tube", "adiabatic_expansion" or "sedov_blastwave" to create initial conditions for these specific tests. In these cases, gravity and DM will be automatically disabled and expansion adjusted according to the specific test.
+* **`setup`**: Initial configuration for gas and DM. Can be "cosmological" for a normal simulation, but also "sound_wave", "sod_shock_tube", "adiabatic_expansion","sedov_blastwave", "kelvin_helmholtz", "evrard_collapse" or "zeldovich_pancake" to create initial conditions for these specific tests.
 * **`use_glass`**: Will use glass files to generate the initial conditions when available. These must be located in the configured `glass_folder_path` and can be downloaded [`here`](https://virgodb.cosma.dur.ac.uk/swift-webstorage/ICs/) or through the `fetch_data.sh` script found in the `data` folder.
 * **`glass_folder_path`**: The folder where the glass files are located.
 * **`initial_gas_temp_k`**: The physical temperature of the baryonic gas at `start_a`, in Kelvin.
@@ -187,8 +189,8 @@ Configures the fluid dynamics solver for the baryonic gas.
 * **`gamma`**: The adiabatic index (ratio of specific heats) of the gas. Set to `1.6666666667` (5/3) for a monatomic, non-relativistic ideal gas.
 * **`enable_cooling`**: Boolean. If `true`, the code activates the implicit radiative cooling solver to extract thermal energy from the gas over time.
 * **`primordial_mu`**: The mean molecular weight of the gas (e.g., `1.22` for neutral primordial hydrogen/helium gas). Used to accurately map internal energy to physical temperatures.
-* **`temp_floor_k`**: The minimum temperature (in Kelvin) the gas is allowed to reach. Physically, this ensures the gas does not cool below the baseline heat of the universe, such as the Cosmic Microwave Background (CMB). Note that internally, the radiative cooling module halts at `cooling_cutoff_k` regardless, but this parameter acts as the ultimate mathematical safety net for the hydrodynamics engine.
-* **`cooling_cutoff_k`**: The minimum temperature (in Kelvin) the gas is allowed to reach via the analytical radiative cooling. The gas does not radiate below this temperature. (Note: This parameter is ignored if a cooling table is provided).
+* **`temp_floor_k`**: The minimum temperature (in Kelvin) the gas is allowed to reach. Note that internally, the radiative cooling module halts at `cooling_cutoff_k` regardless, but this parameter acts as the ultimate floor for the hydrodynamics engine.
+* **`cooling_cutoff_k`**: The minimum temperature (in Kelvin) at which the gas is allowed to radiate via the analytical radiative cooling. This parameter is ignored if a cooling table is provided.
 * **`cooling_table_path`**: The file path to a pre-computed HDF5 cooling table (such as the HM2012 tables provided by Grackle) to compute metallicity-dependent cooling and UVB heating. When a table is provided, the analytical `cooling_cutoff_k` is overridden, and the code instead dynamically halts cooling at the configured `temp_floor_k`. The code has been tested with the Grackle data files (`CloudyData_UVB=HM2012.h5` is recommended), which can be found [here](https://github.com/grackle-project/grackle_data_files/tree/928696482fbe15d9bac4382de6134d95568f099c/input) or downloaded using the `fetch_data.sh` script found in the `data` folder.
 
 ### `[mfm]`
@@ -197,7 +199,13 @@ Configures the fluid dynamics solver for the baryonic gas.
 * **`mfm_neighbor_tolerance`**: The acceptable deviation from the target number of neighbors (e.g., 0.1). A tighter tolerance improves accuracy but may require more iterations.
 * **`mfm_max_iterations`**: The maximum number of Newton-Raphson iterations the solver is allowed to perform when dynamically adjusting a particle's smoothing length to hit the target number of neighbors.
 * **`dual_energy_threshold`**: Threshold to activate the dual energy formalism. If the internal energy falls below this fraction of the kinetic energy, the fallback is triggered.
+* **`entropy_switch_akin`**: Threshold to activate the entropy switch. If the internal energy falls below this fraction of the maximum relative kinetic energy of interacting neighbors the fallback is triggered to enforce purely adiabatic evolution.
+* **`entropy_switch_agrav`**: Threshold to activate the entropy switch. If the internal energy falls below this fraction of the local gravitational energy variation across the smoothing length, the fallback is triggered to enforce purely adiabatic evolution.
 * **`use_exact_riemann`**: Use an exact Riemann solver instead of the default HLLC.
+* **`gradient_limiter_beta_max`**: Defines the upper bound for the Barth-Jespersen gradient limiter's $\beta$ parameter. This maximum is applied dynamically when the local shape matrix is perfectly conditioned. A standard choice for second-order accuracy is 2.0. Set both this and the minimum value to 0.0 to completely bypass spatial gradient calculations and force a zeroth-order (piecewise constant) reconstruction.
+* **`gradient_limiter_beta_min`**: Defines the lower bound for the $\beta$ parameter, establishing the most aggressive gradient clipping applied when the shape matrix is poorly conditioned. A typical stable default is 1.0. Must be set to 0.0 alongside the maximum value to enforce a zeroth-order reconstruction.
+* **`pairwise_limiter_psi1`**: Controls the primary bounding envelope of the pairwise TVD face limiter. Defines the maximum allowed overshoot for the reconstructed face states relative to the absolute scalar differences between interacting particles (standard default is 0.5).
+* **`pairwise_limiter_psi2`**: Controls the secondary bounding envelope of the pairwise TVD face limiter. It enforces a stricter monotonicity constraint by restricting the extrapolated state relative to the linearly interpolated midpoint between particles (standard default is 0.25). Set to a very large value, alongside `psi1` and a high `beta`, to bypass all TVD constraints and achieve an unlimited second-order reconstruction.
 
 ### `[subgrid]`
 

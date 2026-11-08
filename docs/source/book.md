@@ -1704,13 +1704,21 @@ The polynomial we'll use to calculate this weight is derived from the standard *
 
 The cubic spline models the gas pseudo-particle as a cloud whose density profile $\rho(q)$ cloud is defined as:
 
-$$\rho(q) = \frac{8}{\pi h^3} M_{\text{gas}} \begin{cases} 1 - 6q^2 + 6q^3 & \text{if } 0 \le q < 0.5 \\ 2(1-q)^3 & \text{if } 0.5 \le q < 1.0 \\ 0 & \text{if } q \ge 1.0 \end{cases}$$
+$$
+\rho(q) = \frac{8}{\pi h^3} M_{\text{gas}} \begin{cases} 
+1 - 6q^2 + 6q^3 & \text{if } 0 \le q < 0.5 \\ 
+2(1-q)^3 & \text{if } 0.5 \le q < 1.0 \\ 
+0 & \text{if } q \ge 1.0 
+\end{cases}
+$$
 
 According to Newton's Shell Theorem (a particle moving through this spherically symmetric cloud only feels the gravitational pull of the mass interior to its current radius), the true sub-grid force is scaled by the **fraction of enclosed mass**:
 
-$$F = \frac{G M_{\text{gas}} m_{\text{dm}}}{r^2} \times \left( \frac{M(<r)}{M_{\text{gas}}} \right)$$
+$$
+F = \frac{G M_{\text{gas}} m_{\text{dm}}}{r^2} \times \left( \frac{M(< r)}{M_{\text{gas}}} \right)
+$$
 
-To find this enclosed mass fraction, $W(q) = M(<r)/M_{\text{gas}}$, we must integrate the density profile over a spherical volume from the center out to the particle's radius $r$:
+To find this enclosed mass fraction, $W(q) = M(< r)/M_{\text{gas}}$, we must integrate the density profile over a spherical volume from the center out to the particle's radius $r$:
 
 $$W(q) = \frac{1}{M_{\text{gas}}} \int_0^r 4\pi r'^2 \rho(r') dr'$$
 
@@ -2533,6 +2541,52 @@ This test measures the code's ability to model fluid mixing and the growth of in
 * **The Setup:** A 2D box is initialized with two layers of fluid sliding past each other in opposite directions. For example, the top half has a velocity $v_x = +v$ and the bottom half has $v_x = -v$. A tiny, sinusoidal perturbation is introduced at the interface.
 * **The Expected Result:** The shear at the interface is unstable. The small initial perturbation should grow exponentially, causing the interface to roll up into a characteristic series of vortices. 
 * **The Validation:** This is a test of the solver's numerical diffusion. Resolving these vortices correctly requires second-order spatial reconstruction and an adequate solver (like HLLC) to avoid introducing too much artificial viscosity.
+
+### The Evrard Spherical Collapse
+
+This is a multi-dimensional test for how a code couples hydrodynamics with self-gravity during extreme compression and shock heating.
+
+* **The Setup:** A cold sphere of gas of mass $M$ and radius $R$ is initialized at rest in a vacuum. The gas follows a specific $1/r$ density profile: $\rho(r) = \frac{M}{2\pi R^2 r}$ for $r < R$. The initial thermal energy is set artificially low ($u \ll GM/R$) so that gravity dominates the initial dynamics.
+
+* **The Expected Result:** The gas sphere free-falls inward under its own self-gravity, converting gravitational potential energy into kinetic energy. As the core reaches maximum compression, the central pressure spikes, halting the collapse and driving an outward-propagating shock wave (the "bounce"). This tests the **Gravity-Hydro Coupling** and **Total Energy Conservation**, as the code must accurately track the massive conversion of potential to kinetic, and finally to thermal energy without artificial dissipation.
+
+* **The Validation:** This test lacks an analytical solution for the transient phase, so it is validated against high-resolution 1D reference simulations and theoretical equilibrium limits:
+
+1. **Profile Evolution:** At specific times during the bounce (e.g., $t=0.8$), the radial profiles of density, velocity, and entropy must align with established 1D high-order benchmarks. The outward-moving shock front must be sharp and correctly positioned.
+
+2. **Global Energy Conservation:** The total energy of the fluid must remain conserved.
+3. **Hydrostatic Equilibrium:** The system must eventually settle into a permanent, stable state where the outward thermal pressure balances the inward gravitational pull: $\nabla P = -\rho \nabla \Phi$.
+
+
+### The Zel'dovich Pancake (Cosmological Collapse)
+
+This is a standard test for how a code handles cosmological integration and the highly anisotropic collapse of large-scale structure.
+
+* **The Setup:** A single Fourier mode density perturbation is initialized along a single axis (e.g., the x-axis) in a 3D expanding Einstein-de Sitter universe at a high initial redshift (e.g., $z_i = 100$). The gas represents Lagrangian patches with uniform initial density and temperature.
+
+* **The Expected Result:** The density perturbation grows linearly as the universe expands until it undergoes non-linear collapse, forming a caustic (a boundary where the trajectories of infalling matter intersect, causing the local density to diverge to infinity) at a specific target redshift (typically $z_c = 1$). This collapse creates a shock with a high Mach number that propagates outwards. Because the fluid is compressed along one axis but not the others (the physicist Yakov Zel'dovich coined the term "pancake" to describe this flat structure), it tests the code's energy-entropy switches, its handling of highly anisotropic geometries, and its resilience to high Mach-number flows.
+
+* **The Validation:** This test has an analytical solution for the linearized perturbation equations, and is validated in two ways:
+
+1. **Shock Structure:** The code must capture the steep density peak and the extreme temperature jump (which can be a factor of $\sim10^{10}$) without spurious noise dominating the un-shocked regions.
+
+2. **Cosmological Evolution:** The un-shocked flow outside the caustic must trace the linear solution for an expanding background.
+
+The analytical solution for the Zel'dovich pancake parametrizes the perturbed comoving Eulerian position ($x$), density ($\rho$), peculiar velocity ($v_{pec}$), and temperature ($T$) as a function of the unperturbed Lagrangian coordinate ($q$) and the redshift ($z$). The physical position is given by:
+
+$$x(q,z) = q - \frac{1+z_c}{1+z} \frac{\sin(kq)}{k}$$
+
+where $k = 2\pi/\lambda$ is the wavenumber of the perturbation (with wavelength $\lambda$) and $z_c$ is the redshift of caustic formation. The coordinate $q$ represents the initial starting position of a Lagrangian fluid patch at an arbitrarily high redshift before any density perturbations have had time to grow. It is where a specific parcel of gas would be if the universe were perfectly uniform and expanding smoothly, without any gravitational forces pulling it off course.   
+
+The state of the gas before the shock (or the un-shocked flow exterior to the caustic after collapse) follows these relations:
+
+* **Density:** The density contrast grows as the perturbation collapses toward the center: $\rho(q, z) = \frac{\rho_0}{1 - \frac{1+z_c}{1+z} \cos(kq)}$, where $\rho_0$ is the background critical density.
+
+* **Peculiar Velocity:** The velocity driving the gas inward is: $v_{pec}(x, z) = -H_0 \frac{1+z_c}{\sqrt{1+z}} \frac{\sin(kq)}{k}$, where $H_0$ is the Hubble constant today.
+
+* **Temperature:** The temperature evolves adiabatically with the expanding universe and the local density perturbation: $T(x, z) = T_i \left[ \left(\frac{1+z}{1+z_i}\right) \frac{\rho(x,z)}{\rho_0} \right]^{2/3}$, where $T_i$ is the initial unperturbed temperature at redshift $z_i$.
+
+After the caustic forms at $z_c$, the dynamics are dominated by the shock propagating outwards. Inside this shocked region, a central temperature cavity forms, which corresponds to a formally divergent theoretical density at the center ($x=0$) as the external unperturbed temperature approaches zero.
 
 ### Sources of Error
 

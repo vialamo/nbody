@@ -6,10 +6,9 @@
 #include "types.h"
 
 constexpr double N_cond_crit = 5.0;
-constexpr double density_floor = 1e-12;
 
 struct Config;
-class Cooling;
+class Integrator;
 
 class GasParticleSystem {
    public:
@@ -28,7 +27,6 @@ class GasParticleSystem {
     std::vector<double> acc_z;
     std::vector<double> mass;  // Particle mass [Code Mass]
 
-    // MFM-specific quantities
     std::vector<double> hydro_acc_x;  // Comoving hydrodynamic acceleration
                                       // [Code Vel / Code Time]
     std::vector<double> hydro_acc_y;
@@ -58,9 +56,6 @@ class GasParticleSystem {
                   // [Code Velocity^2 / (Code Mass / Code Length^3)^(gamma-1)]
     std::vector<double> max_rel_ke;  // Maximum specific relative kinetic energy
                                      // of neighbors [Code Velocity^2]
-    std::vector<double>
-        delta_E_grav;  // Specific gravitational energy variation across
-                       // smoothing length (|a_grav| * h) [Code Velocity^2]
 
     // Gradients are evaluated with respect to comoving coordinates
     // (d/dx_comoving)
@@ -79,7 +74,6 @@ class GasParticleSystem {
     double accumulated_gravitational_work = 0.0;
     double accumulated_expansion_work = 0.0;
     double accumulated_entropy_switch_energy = 0.0;
-    double pressure_floor = 0.0;
 
     // Debugging
     std::vector<double> n_enc_final;
@@ -108,8 +102,8 @@ class GasParticleSystem {
     std::vector<uint8_t>
         needs_wakeup;  // Thread-safe flag for waking up sleeping particles
     std::vector<int> active_indices;
-    size_t num_active = 0;
     double global_time = 0.0;
+    size_t get_num_active() const { return active_indices.size(); }
 
     std::vector<double> vel_x_pred;
     std::vector<double> vel_y_pred;
@@ -126,15 +120,12 @@ class GasParticleSystem {
 
     // Assigns power-of-two block timesteps to all active particles
     void update_particle_timesteps(double dt_max, double a,
-                                   const Config& config, Cooling& cooling);
+                                   const Config& config,
+                                   double softening_length);
 
     // Sync the clock, process wakeups, and flag active particles
-    void sync_and_activate(double dt, double a, double H, const Config& config);
-
-    void hydro_step(const Config& config, double a);
-
-    // Time step calculations
-    double get_cfl_timestep(double a, const Config& config) const;
+    void sync_and_activate(Integrator& integrator, double dt, double a,
+                           double H, const Config& config);
 
    private:
     void sort_arrays(const std::vector<int>& sorted_indices);

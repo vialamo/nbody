@@ -63,4 +63,14 @@ double get_time_from_scale_factor(double a, const Config& config) {
     }
 }
 
+void compute_step_factors(double a, double H, double dt, double gamma,
+                          double& drag_factor, double& exp_factor) {
+    drag_factor = 1.0;
+    if (H > 0.0 && a > 0.0) {
+        double a_next = a + (a * H * dt);
+        drag_factor = (a / a_next) * (a / a_next);
+    }
+    exp_factor = (3.0 * gamma - 1.0) * H * dt;
+}
+
 }  // namespace Cosmology

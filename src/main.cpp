@@ -12,50 +12,6 @@
 
 SimulationEngine* g_engine = nullptr;
 
-static void print_info(const Config& config) {
-    std::cout << "\nInternal Unit System\n";
-    std::cout << "1.0 Code Length   = " << config.unit_length_mpc
-              << " comoving Mpc\n";
-    std::cout << "1.0 Code Time     = " << config.unit_time_gyr << " Gyr\n";
-    std::cout << "1.0 Code Velocity = " << config.unit_velocity_kms
-              << " km/s\n";
-    std::cout << "1.0 Code Mass     = " << config.unit_mass_msun
-              << " Solar Masses\n";
-    std::cout << "G = " << config.G << "\n" << std::endl;
-
-    std::cout << "Mesh Size = " << config.mesh_size_1d << "\n";
-    std::cout << "Hydro Mode = " << HydroConfig::to_string(config.hydro_method)
-              << "\n";
-    std::cout << "Initial Setup = "
-              << InitialConfig::to_string(config.initial_setup) << "\n";
-    if (config.individual_particle_timesteps) {
-        std::cout << "Base timestep: " << config.fixed_dt << "\n";
-    }
-
-    std::cout << "Threads: " << omp_get_max_threads() << " | ";
-    int num_devices = omp_get_num_devices();
-    if (num_devices == 0) {
-        std::cout << "GPU: not available\n" << std::endl;
-    } else {
-        if (config.using_GPU) {
-            std::cout << "GPU: enabled\n";
-            int threads = 0, teams = 0;
-#pragma omp target teams distribute parallel for map(tofrom : threads, teams)
-            for (int i = 0; i < 16384; i++) {
-                if (omp_get_team_num() == 0 && omp_get_thread_num() == 0) {
-                    threads = omp_get_num_threads();
-                    teams = omp_get_num_teams();
-                }
-            }
-            std::cout << "Device teams: " << teams << "\n";
-            std::cout << "Device threads per team: " << threads << "\n"
-                      << std::endl;
-        } else {
-            std::cout << "GPU: disabled\n" << std::endl;
-        }
-    }
-}
-
 void signal_handler(int signal) {
     if (signal == SIGINT) {
         std::cout << "\n[Ctrl+C Detected] Finishing the current cycle and "
@@ -97,7 +53,7 @@ int main(int argc, char* argv[]) {
         omp_set_num_threads(config.num_threads);
     }
 
-    print_info(config);
+    Logger::print_startup_info(config);
 
     // Create the output directories
     std::string timestamp = utils::get_timestamp();

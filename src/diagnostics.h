@@ -33,6 +33,7 @@ class Diagnostics {
     double scale_factor = 1.0;
     double total_mass_gas = 0.0;
     double total_mass_dm = 0.0;
+    double initial_mass = 0.0;
     double mass_err = 0.0;
     Eigen::Vector3d total_momentum_gas = {0.0, 0.0, 0.0};
     Eigen::Vector3d total_momentum_dm = {0.0, 0.0, 0.0};
@@ -63,6 +64,7 @@ class Diagnostics {
     double MFM_flux_momentum_error = 0.0;
     double percent_particles_updated = 0;
     double volume_error = 0.0;
+    double softening_length = 0.0;
 
     // Performance State
     int accumulated_cycles = 0;

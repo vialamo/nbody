@@ -1,6 +1,7 @@
 #pragma once
 #include <chrono>
 
+#include "integrator.h"
 #include "state.h"
 
 struct Config;
@@ -25,6 +26,7 @@ class SimulationEngine {
     Diagnostics& diagnostics;
     HDF5Writer& h5_writer;
 
+    Integrator integrator;
     SimState state;
 
     TimestepInfo get_timestep() const;

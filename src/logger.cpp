@@ -1,5 +1,6 @@
 #include "logger.h"
 
+#include <omp.h>
 #include <sys/resource.h>
 #include <unistd.h>  // For sysconf and _SC_PAGESIZE
 
@@ -104,6 +105,9 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
     double PP_time = std::max(diag.get_average(TimerRegion::PP),
                               diag.get_average(TimerRegion::PP_GPU));
 
+    double physical_softening =
+        diag.softening_length * diag.scale_factor * conf.unit_length_mpc;
+
     // Write to CSV file
     if (log_file.is_open()) {
         log_file << diag.cycle << "," << diag.sim_time << ","
@@ -153,12 +157,17 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
         std::cout << "    - Vol Err: "
                   << format_double(diag.volume_error, 1, true)
                   << " | Flux Err: " << format_double(flux_err, 1, true)
-                  << " | Ill: " << format_double(diag.MFM_ill_percent, 1, false)
+                  << " | Ill: " << format_double(diag.MFM_ill_percent, 1, true)
                   << "% | Clamp: "
-                  << format_double(diag.MFM_clamp_percent, 1, false)
-                  << "% | Incr: "
-                  << format_double(diag.MFM_inc_percent, 1, false) << "%\n";
+                  << format_double(diag.MFM_clamp_percent, 1, true)
+                  // << "% | Incr: "
+                  // << format_double(diag.MFM_inc_percent, 1, false)
+                  << "%\n";
     }
+    std::cout << "    - Softening: "
+              << format_double(diag.softening_length, 2, true)
+              << " | Physical softening (mpc): "
+              << format_double(physical_softening, 2, true) << "\n";
 
     std::cout << "  [Stability]\n";
     std::cout << "    - Timestep (Macro): "
@@ -224,5 +233,49 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
     if (diag.MFM_riemann_failed_cases > 0) {
         std::cout << "  [WARNING] MFM Riemann failed cases: "
                   << diag.MFM_riemann_failed_cases << "\n";
+    }
+}
+
+void Logger::print_startup_info(const Config& config) {
+    std::cout << "\nInternal Unit System\n";
+    std::cout << "1.0 Code Length   = " << config.unit_length_mpc
+              << " comoving Mpc\n";
+    std::cout << "1.0 Code Time     = " << config.unit_time_gyr << " Gyr\n";
+    std::cout << "1.0 Code Velocity = " << config.unit_velocity_kms
+              << " km/s\n";
+    std::cout << "1.0 Code Mass     = " << config.unit_mass_msun
+              << " Solar Masses\n";
+    std::cout << "G = " << config.G << "\n" << std::endl;
+
+    std::cout << "Mesh Size = " << config.mesh_size_1d << "\n";
+    std::cout << "Hydro Mode = " << HydroConfig::to_string(config.hydro_method)
+              << "\n";
+    std::cout << "Initial Setup = "
+              << InitialConfig::to_string(config.initial_setup) << "\n";
+    if (config.individual_particle_timesteps) {
+        std::cout << "Base timestep: " << config.fixed_dt << "\n";
+    }
+
+    std::cout << "Threads: " << omp_get_max_threads() << " | ";
+    int num_devices = omp_get_num_devices();
+    if (num_devices == 0) {
+        std::cout << "GPU: not available\n" << std::endl;
+    } else {
+        if (config.using_GPU) {
+            std::cout << "GPU: enabled\n";
+            int threads = 0, teams = 0;
+#pragma omp target teams distribute parallel for map(tofrom : threads, teams)
+            for (int i = 0; i < 16384; i++) {
+                if (omp_get_team_num() == 0 && omp_get_thread_num() == 0) {
+                    threads = omp_get_num_threads();
+                    teams = omp_get_num_teams();
+                }
+            }
+            std::cout << "Device teams: " << teams << "\n";
+            std::cout << "Device threads per team: " << threads << "\n"
+                      << std::endl;
+        } else {
+            std::cout << "GPU: disabled\n" << std::endl;
+        }
     }
 }

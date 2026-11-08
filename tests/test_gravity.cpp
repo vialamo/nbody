@@ -89,11 +89,11 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
     config.compute_derived_data();
     
     config.G = 1.0;
-    config.softening = 0.01;
     config.base_comoving_softening = 0.01;
 
     Diagnostics dummy_diag;
     SimState state(config);
+    state.gravity.update_softening(state.scale_factor, config);
 
     // Two particles 0.25 units apart on the X-axis
     state.dm.add_particle(0.25, 0.5, 0.5, 0.0, 0.0, 0.0, 1.0);
@@ -106,6 +106,7 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
         state.dm.build_lbvh(config);
         
         state.gravity.add_pp_accel(state.dm, nullptr, 1.0, config, dummy_diag);
+        state.gravity.map_results(state.dm, nullptr, dummy_diag);
 
         // Exact Newtonian Gravity: F = G * m1 * m2 / r^2
         // F = 1.0 * 1.0 * 1.0 / (0.25 * 0.25) = 1.0 / 0.0625 = 16.0
@@ -131,6 +132,7 @@ TEST_CASE("Short-range gravity calculates Newtonian and P3M forces",
         std::fill(state.dm.acc_x.begin(), state.dm.acc_x.end(), 0.0);
 
         state.gravity.add_pp_accel(state.dm, nullptr, 1.0, config, dummy_diag);
+        state.gravity.map_results(state.dm, nullptr, dummy_diag);
 
         // Because dist (0.25) > cutoff_radius (0.15), the short-range force is 0.0
         REQUIRE(state.dm.acc_x[0] == Catch::Approx(0.0));

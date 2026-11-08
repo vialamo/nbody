@@ -106,6 +106,8 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         H5::Group header_group = root_group.createGroup("Header");
         set_attr_double(header_group, "scale_factor", state.scale_factor);
         set_attr_double(header_group, "simulation_time", state.total_time);
+        set_attr_double(header_group, "softening_length",
+                        state.gravity.softening_length);
         set_attr_double(header_group, "dt_macro", ts.dt_macro);
         set_attr_double(header_group, "dt_grav", ts.dt_grav);
         set_attr_double(header_group, "dt_hydro", ts.dt_hydro);
@@ -124,7 +126,10 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         set_attr_double(config_group, "domain_size_z", config.domain_size.z);
         set_attr_double(config_group, "box_size_mpc", config.box_size_mpc_1d);
         set_attr_int(config_group, "mesh_size_1d", config.mesh_size_1d);
-        set_attr_int(config_group, "num_particles_1d", config.num_particles_1d);
+        set_attr_int(config_group, "num_dm_particles_1d",
+                     config.num_dm_particles_1d);
+        set_attr_int(config_group, "num_gas_particles_1d",
+                     config.num_gas_particles_1d);
 
         // [cosmology]
         set_attr_double(config_group, "omega_baryon", config.omega_baryon);
@@ -140,7 +145,7 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
         set_attr_double(config_group, "comoving_softening_factor",
                         config.comoving_softening_factor);
         set_attr_double(config_group, "softening_cap_scale_factor",
-                        config.physical_softening_cap_a);
+                        config.softening_cap_a);
         set_attr_bool(config_group, "use_pm", config.use_PM);
         set_attr_bool(config_group, "use_pp", config.use_PP);
         set_attr_double(config_group, "pm_smoothing_cells",
@@ -187,6 +192,14 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                         config.dual_energy_threshold);
         set_attr_bool(config_group, "use_exact_riemann",
                       config.use_exact_riemann);
+        set_attr_double(config_group, "gradient_limiter_beta_max",
+                        config.gradient_limiter_beta_max);
+        set_attr_double(config_group, "gradient_limiter_beta_min",
+                        config.gradient_limiter_beta_min);
+        set_attr_double(config_group, "pairwise_limiter_psi1",
+                        config.pairwise_limiter_psi1);
+        set_attr_double(config_group, "pairwise_limiter_psi2",
+                        config.pairwise_limiter_psi2);
 
         // [subgrid]
         set_attr_bool(config_group, "enable_subgrid_clumping",
@@ -324,20 +337,16 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                 write_particle_vec(gas_group, "smoothing_length", gas.h);
                 write_particle_vec(gas_group, "density", gas.rho);
 
-                auto [u_snap, p_snap, s_snap, e_sna] =
-                    Thermodynamics::compute_snapshot_primitives(
-                        gas, config, state.scale_factor);
-
-                write_particle_vec(gas_group, "pressure", p_snap);
-                write_particle_vec(gas_group, "internal_energy", u_snap);
-                write_particle_vec(gas_group, "entropy", s_snap);
-                write_particle_vec(gas_group, "total_energy", e_sna);
+                write_particle_vec(gas_group, "pressure", gas.pressure);
+                write_particle_vec(gas_group, "internal_energy", gas.u);
+                write_particle_vec(gas_group, "entropy", gas.entropy);
+                write_particle_vec(gas_group, "total_energy", gas.total_energy);
                 write_particle_vec(gas_group, "metal_fraction", gas.metal_frac);
 
                 std::vector<double> temp_vec(gas.num_particles);
                 for (size_t i = 0; i < gas.num_particles; ++i) {
                     temp_vec[i] = Thermodynamics::get_temp_from_internal_energy(
-                        u_snap[i], state.scale_factor, config);
+                        gas.u[i], state.scale_factor, config);
                 }
                 write_particle_vec(gas_group, "temperature", temp_vec);
 

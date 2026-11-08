@@ -1,17 +1,9 @@
 #include "pm.h"
 
-#include <fftw3.h>
 #include <omp.h>
-
-#include <vector>
 
 #include "config.h"
 #include "state.h"
-
-static std::vector<std::complex<double>> rho_k;
-static std::vector<std::complex<double>> phi_k;
-static fftw_plan forward_plan = nullptr;
-static fftw_plan backward_plan = nullptr;
 
 PM::PM(const Config& config)
     : rho(config.mesh_size),

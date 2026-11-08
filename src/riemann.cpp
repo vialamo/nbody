@@ -2,6 +2,25 @@
 
 namespace Riemann {
 
+// Helper function to compute Star states
+static inline void calculate_star_states(
+    const Reconstruction::ReconstructedFace& face, double vn_L, double vn_R,
+    double S_L, double S_R, double& S_star, double& P_star) {
+    double den_star = face.rho_L * (S_L - vn_L) - face.rho_R * (S_R - vn_R);
+
+    if (std::abs(den_star) < 1e-15) {
+        den_star = (den_star > 0.0 ? 1e-15 : -1e-15);
+    }
+
+    S_star = (face.p_R - face.p_L + face.rho_L * vn_L * (S_L - vn_L) -
+              face.rho_R * vn_R * (S_R - vn_R)) /
+             den_star;
+
+    // Enforce physical bounds on the Riemann fan
+    S_star = std::max(S_L, std::min(S_star, S_R));
+    P_star = face.p_L + face.rho_L * (S_L - vn_L) * (S_star - vn_L);
+}
+
 // Solves the HLLC Riemann problem at the moving face between particles.
 // INPUT: Reconstructed face states, relative frame velocity (v_frame), and
 // adiabatic index.
@@ -30,20 +49,66 @@ FaceFlux solve_hllc(const Reconstruction::ReconstructedFace& face,
     double vn_R = (face.v_R - v_frame).dot(face.n);
 
     // Compute Sound Speeds
-    double cs_L =
-        (face.rho_L > 1e-12) ? std::sqrt(gamma * face.p_L / face.rho_L) : 0.0;
-    double cs_R =
-        (face.rho_R > 1e-12) ? std::sqrt(gamma * face.p_R / face.rho_R) : 0.0;
+    double cs_L = std::sqrt(gamma * face.p_L / face.rho_L);
+    double cs_R = std::sqrt(gamma * face.p_R / face.rho_R);
 
-    // Wave Speed Estimates
-    double S_L = std::min(vn_L - cs_L, vn_R - cs_R);
-    double S_R = std::max(vn_L + cs_L, vn_R + cs_R);
+    // Attempt Roe Average Wave Speeds
+    double gamma_minus_1 = gamma - 1.0;
+    double sqrt_rho_L = std::sqrt(face.rho_L);
+    double sqrt_rho_R = std::sqrt(face.rho_R);
+    double inv_sum = 1.0 / (sqrt_rho_L + sqrt_rho_R);
 
-    // Check for wave speed inversion
+    double v_roe = (sqrt_rho_L * vn_L + sqrt_rho_R * vn_R) * inv_sum;
+
+    // Specific Enthalpies
+    double h_L =
+        (gamma / gamma_minus_1) * (face.p_L / face.rho_L) + 0.5 * vn_L * vn_L;
+    double h_R =
+        (gamma / gamma_minus_1) * (face.p_R / face.rho_R) + 0.5 * vn_R * vn_R;
+    double h_roe = (sqrt_rho_L * h_L + sqrt_rho_R * h_R) * inv_sum;
+
+    double c_roe_sq = gamma_minus_1 * (h_roe - 0.5 * v_roe * v_roe);
+    double c_roe = (c_roe_sq > 0.0) ? std::sqrt(c_roe_sq) : 0.0;
+
+    // Einfeldt bounds for Roe wave speeds
+    double S_L = std::min(vn_L - cs_L, v_roe - c_roe);
+    double S_R = std::max(vn_R + cs_R, v_roe + c_roe);
+
+    bool use_fallback = false;
+    double S_star = 0.0;
+    double P_star = 0.0;
+
     if (S_L >= S_R) {
-        out.success = false;
-        out.error = SolverError::WaveInversion;
-        return out;
+        use_fallback = true;
+    } else if (S_L < 0.0 && S_R > 0.0) {
+        // Subsonic case: evaluate star state to check if P_star <= 0
+        calculate_star_states(face, vn_L, vn_R, S_L, S_R, S_star, P_star);
+        if (P_star <= 0.0) {
+            use_fallback = true;
+        }
+    }
+
+    // Fallback to Simple Estimates if Roe fails
+    if (use_fallback) {
+        S_L = std::min(vn_L - cs_L, vn_R - cs_R);
+        S_R = std::max(vn_L + cs_L, vn_R + cs_R);
+
+        // Check for wave speed inversion
+        if (S_L >= S_R) {
+            out.success = false;
+            out.error = SolverError::WaveInversion;
+            return out;
+        }
+
+        if (S_L < 0.0 && S_R > 0.0) {
+            calculate_star_states(face, vn_L, vn_R, S_L, S_R, S_star, P_star);
+            // Check for strong rarefaction causing negative pressure
+            if (P_star < 0.0) {
+                out.success = false;
+                out.error = SolverError::NegativePressure;
+                return out;
+            }
+        }
     }
 
     // Supersonic to the right: face sees only the Left state
@@ -63,27 +128,6 @@ FaceFlux solve_hllc(const Reconstruction::ReconstructedFace& face,
     }
 
     // Subsonic: contact wave lies inside the fan
-    // Solve the HLLC Riemann Problem for the Star State
-    // MFM always samples the Star State, because the face moves at S_star
-    double den_star = face.rho_L * (S_L - vn_L) - face.rho_R * (S_R - vn_R);
-    if (std::abs(den_star) < 1e-15) den_star = (den_star > 0 ? 1e-15 : -1e-15);
-
-    double S_star = (face.p_R - face.p_L + face.rho_L * vn_L * (S_L - vn_L) -
-                     face.rho_R * vn_R * (S_R - vn_R)) /
-                    den_star;
-
-    // Enforce physical bounds on the Riemann fan
-    S_star = std::max(S_L, std::min(S_star, S_R));
-
-    double P_star = face.p_L + face.rho_L * (S_L - vn_L) * (S_star - vn_L);
-    // Check for strong rarefaction causing negative pressure
-    if (P_star < 0.0) {
-        out.success = false;
-        out.error = SolverError::NegativePressure;
-        return out;
-    }
-
-    // Assemble MFM Fluxes (Mass flux is zero)
     out.flux_mom = P_star * face.n;
     out.P_star = P_star;
     out.S_star = S_star;
@@ -118,8 +162,8 @@ FaceFlux solve_exact(const Reconstruction::ReconstructedFace& face,
     double rho_R = face.rho_R;
 
     // Compute Sound Speeds
-    double c_L = (rho_L > 1e-12) ? std::sqrt(gamma * P_L / rho_L) : 0.0;
-    double c_R = (rho_R > 1e-12) ? std::sqrt(gamma * P_R / rho_R) : 0.0;
+    double c_L = std::sqrt(gamma * P_L / rho_L);
+    double c_R = std::sqrt(gamma * P_R / rho_R);
 
     // Vacuum Generation Check
     if (2.0 / (gamma - 1.0) * (c_L + c_R) <= (u_R - u_L)) {

@@ -21,4 +21,6 @@ class Logger {
 
     void write_header();
     void log(const Diagnostics& diag, const Config& conf);
+
+    static void print_startup_info(const Config& config);
 };

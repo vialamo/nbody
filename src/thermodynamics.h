@@ -2,25 +2,27 @@
 #include <vector>
 
 #include "config.h"
+#include "integrator.h"
 
 class GasParticleSystem;
 
 namespace Thermodynamics {
-// Sync tracked internal energy, total energy, and compute pressure
-void update_primitive_variables(GasParticleSystem& gas, const Config& config,
-                                double a);
+
+void initialize_primitive_variables(GasParticleSystem& gas,
+                                    const Config& config, double a);
 
 void predict_primitive_variables(GasParticleSystem& gas, const Config& config,
                                  double a);
 
-// Computes synced snapshot arrays (u, P, S, E_tot) without modifying the
-// state
-std::tuple<std::vector<double>, std::vector<double>, std::vector<double>,
-           std::vector<double>>
-compute_snapshot_primitives(const GasParticleSystem& gas, const Config& config,
-                            double a);
+void kick_particle_thermodynamics(GasParticleSystem& gas, size_t i,
+                                  double ke_spec_new, double grav_work,
+                                  double drag_work, double dt,
+                                  double expansion_factor, double a,
+                                  const Config& config,
+                                  Integrator::KickWork& work);
 
 double get_u_floor(double a, const Config& config);
+double get_pressure_floor(double a, const Config& config);
 
 // Conversion helpers
 inline double get_temp_from_internal_energy(double u_code, double a,

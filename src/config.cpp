@@ -6,6 +6,8 @@
 #include "ini.h"
 #include "math_utils.h"
 
+constexpr double total_mass = 1.0;
+
 void Config::init_derived_units() {
     // Length
     unit_length_mpc = box_size_mpc_1d / domain_size_1d;
@@ -70,66 +72,24 @@ void Config::compute_derived_data() {
     box_size_mpc.y = box_size_mpc_1d;
     box_size_mpc.z = box_size_mpc_1d;
 
+    domain_size.x *= domain_size_x_factor;
+    mesh_size.x *= domain_size_x_factor;
+    box_size_mpc.x *= domain_size_x_factor;
+
     if (hubble_h > 10.0) {
         hubble_h /= 100.0;
     }
 
-    if (initial_setup == InitialSetup::SodShockTube) {
-        expanding_universe = false;
-        enable_cooling = false;
-        use_PM = false;
-        use_PP = false;
-        num_particles_1d = 0;
-        omega_lambda = 0.0;
-        omega_m = 1.0;
-        omega_baryon = 1.0;
-        gamma = 1.4;
-        total_mass = 0.5625;
-        a_end = 1.8;
-        domain_size.x *= 8.0;
-        mesh_size.x *= 8.0;
-        box_size_mpc.x *= 8.0;
-
-    } else if (initial_setup == InitialSetup::AdiabaticExpansion) {
+    if (initial_setup == InitialSetup::AdiabaticExpansion) {
         expanding_universe = true;
         enable_cooling = false;
         use_PM = false;
         use_PP = false;
-        num_particles_1d = 0;
+        num_dm_particles_1d = 0;
         omega_lambda = 0.0;
         omega_m = 1.0;
         omega_baryon = 1.0;
         gamma = 5.0 / 3.0;
-        total_mass = 1.0;
-    } else if (initial_setup == InitialSetup::SedovBlastwave) {
-        expanding_universe = false;
-        enable_cooling = false;
-        use_PM = false;
-        use_PP = false;
-        num_particles_1d = 0;
-        omega_lambda = 0.0;
-        omega_m = 1.0;
-        omega_baryon = 1.0;
-        gamma = 5.0 / 3.0;
-        total_mass = 1.0;
-        a_end = 0.1;
-    } else if (initial_setup == InitialSetup::SoundWave) {
-        hydro_method = HydroMethod::MFM;
-        expanding_universe = false;
-        enable_cooling = false;
-        use_glass = false;
-        use_PM = false;
-        use_PP = false;
-        num_particles_1d = 0;
-        omega_lambda = 0.0;
-        omega_m = 1.0;
-        omega_baryon = 1.0;
-        gamma = 5.0 / 3.0;
-        total_mass = 1.0;
-        domain_size.x *= 4.0;
-        mesh_size.x *= 4.0;
-        box_size_mpc.x *= 4.0;
-        a_end = 6.0;
     }
 
     cell_size = domain_size_1d / mesh_size_1d;
@@ -139,7 +99,8 @@ void Config::compute_derived_data() {
     cutoff_radius = cutoff_radius_cells * cell_size;
     cutoff_radius_squared = cutoff_radius * cutoff_radius;
 
-    num_dm_particles = num_particles_1d * num_particles_1d * num_particles_1d;
+    num_dm_particles =
+        num_dm_particles_1d * num_dm_particles_1d * num_dm_particles_1d;
     if (hydro_method == HydroMethod::MFM) {
         num_gas_particles =
             num_gas_particles_1d * num_gas_particles_1d * num_gas_particles_1d;
@@ -147,13 +108,8 @@ void Config::compute_derived_data() {
 
     G = std::pow(domain_size_1d, 3) / (6.0 * M_PI * total_mass);
 
-    const double baryon_fraction = omega_baryon / omega_m;
-    const double dm_total_mass = total_mass * (1.0 - baryon_fraction);
-    dm_particle_mass =
-        num_dm_particles > 0 ? (dm_total_mass / num_dm_particles) : 0.0;
-    gas_total_mass = total_mass * baryon_fraction;
-
-    int active_particles_1d = std::max(num_particles_1d, num_gas_particles_1d);
+    int active_particles_1d =
+        std::max(num_dm_particles_1d, num_gas_particles_1d);
     if (active_particles_1d == 0) active_particles_1d = mesh_size_1d;
 
     double mean_interparticle_spacing =
@@ -161,8 +117,6 @@ void Config::compute_derived_data() {
 
     base_comoving_softening =
         mean_interparticle_spacing * comoving_softening_factor;
-
-    softening = base_comoving_softening;
 
     const double dynamical_time = 1.0 / std::sqrt(G);
     double raw_fixed_dt = max_dt_dynamical_factor * dynamical_time;
@@ -183,9 +137,11 @@ void Config::load(const std::string& filename) {
     Ini config_file;
     config_file.load(filename);
 
+    domain_size_x_factor = config_file.get_int("domain", "domain_size_x_factor",
+                                               domain_size_x_factor);
     mesh_size_1d = config_file.get_int("domain", "mesh_size_1d", mesh_size_1d);
-    num_particles_1d =
-        config_file.get_int("domain", "num_particles_1d", num_particles_1d);
+    num_dm_particles_1d = config_file.get_int("domain", "num_dm_particles_1d",
+                                              num_dm_particles_1d);
     num_gas_particles_1d = config_file.get_int("domain", "num_gas_particles_1d",
                                                num_gas_particles_1d);
     box_size_mpc_1d =
@@ -205,8 +161,8 @@ void Config::load(const std::string& filename) {
 
     comoving_softening_factor = config_file.get_double(
         "gravity", "comoving_softening_factor", comoving_softening_factor);
-    physical_softening_cap_a = config_file.get_double(
-        "gravity", "softening_cap_scale_factor", physical_softening_cap_a);
+    softening_cap_a = config_file.get_double(
+        "gravity", "softening_cap_scale_factor", softening_cap_a);
     use_PM = config_file.get_bool("gravity", "use_pm", use_PM);
     use_PP = config_file.get_bool("gravity", "use_pp", use_PP);
     cutoff_radius_factor = config_file.get_double(
@@ -257,8 +213,21 @@ void Config::load(const std::string& filename) {
         "mfm", "mfm_min_hsml_fraction", mfm_min_hsml_fraction);
     dual_energy_threshold = config_file.get_double(
         "mfm", "dual_energy_threshold", dual_energy_threshold);
+    entropy_switch_akin = config_file.get_double(
+        "mfm", "entropy_switch_alpha_kin", entropy_switch_akin);
+    entropy_switch_agrav = config_file.get_double(
+        "mfm", "entropy_switch_alpha_grav", entropy_switch_agrav);
     use_exact_riemann =
         config_file.get_bool("mfm", "use_exact_riemann", use_exact_riemann);
+    gradient_limiter_beta_max = config_file.get_double(
+        "mfm", "gradient_limiter_beta_max", gradient_limiter_beta_max);
+    gradient_limiter_beta_min = config_file.get_double(
+        "mfm", "gradient_limiter_beta_min", gradient_limiter_beta_min);
+    pairwise_limiter_psi1 = config_file.get_double(
+        "mfm", "pairwise_limiter_psi1", pairwise_limiter_psi1);
+    pairwise_limiter_psi2 = config_file.get_double(
+        "mfm", "pairwise_limiter_psi2", pairwise_limiter_psi2);
+
     enable_subgrid_clumping = config_file.get_bool(
         "subgrid", "enable_subgrid_clumping", enable_subgrid_clumping);
     subgrid_clumping_amplitude = config_file.get_double(

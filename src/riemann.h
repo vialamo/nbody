@@ -17,9 +17,9 @@ enum class SolverError {
 // Output of the Riemann Solver
 struct FaceFlux {
     Eigen::Vector3d flux_mom;  // Momentum flux density vector (P_star * n)
-                               // [PHYSICAL Pressure Units]
-    double P_star;  // Resolved face pressure [PHYSICAL Pressure Units]
-    double S_star;  // Resolved relative contact wave speed [PHYSICAL Velocity
+                               // [Code Pressure Units]
+    double P_star;             // Resolved face pressure [Code Pressure Units]
+    double S_star;  // Resolved relative contact wave speed [Code Velocity
                     // Units]
     bool success = true;
     SolverError error = SolverError::None;
@@ -29,7 +29,6 @@ struct FaceFlux {
 // INPUT: Reconstructed face states, relative frame velocity (v_frame), and
 // adiabatic index.
 // OUTPUT: The resolved pressure (P_star) and relative wave speed (S_star).
-// Note that it should get and return physical units
 FaceFlux solve_hllc(const Reconstruction::ReconstructedFace& face,
                     const Eigen::Vector3d& v_frame, double gamma);
 

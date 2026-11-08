@@ -240,16 +240,20 @@ void Diagnostics::compute_mfm_metrics(GasParticleSystem& gas,
                                           : 100.0;
 
     double cycle_div = std::max(1, cycle);
-    this->MFM_ill_percent =
-        100.0 * (static_cast<double>(gas.ill_conditioned_cases) / cycle_div) /
-        MFM_total_particles;
-    this->MFM_clamp_percent =
-        100.0 * (static_cast<double>(gas.clamped_h_cases) / cycle_div) /
-        MFM_total_particles;
-    this->MFM_inc_percent = 100.0 *
-                            (static_cast<double>(gas.neighbor_increased_cases) /
-                             std::max(1, accumulated_cycles)) /
-                            MFM_total_particles;
+    if (MFM_total_particles > 0) {
+        this->MFM_ill_percent =
+            100.0 *
+            (static_cast<double>(gas.ill_conditioned_cases) / cycle_div) /
+            MFM_total_particles;
+        this->MFM_clamp_percent =
+            100.0 * (static_cast<double>(gas.clamped_h_cases) / cycle_div) /
+            MFM_total_particles;
+        this->MFM_inc_percent =
+            100.0 *
+            (static_cast<double>(gas.neighbor_increased_cases) /
+             std::max(1, accumulated_cycles)) /
+            MFM_total_particles;
+    }
 
     double box_volume =
         config.domain_size.x * config.domain_size.y * config.domain_size.z;
@@ -291,6 +295,7 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
     this->dt_gravity = ts.dt_grav;
     this->dt_cool = ts.dt_cool;
     this->dt_final = ts.dt_macro;
+    this->softening_length = state.gravity.softening_length;
 
     // Compute Independent Physics Domains
     compute_dm_metrics(state.dm);
@@ -306,5 +311,9 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
 
     // Global System Error Metrics
     this->total_momentum = (total_momentum_dm + total_momentum_gas).norm();
-    this->mass_err = total_mass_dm + total_mass_gas - config.total_mass;
+
+    if (initial_mass == 0.0) {
+        initial_mass = total_mass_dm + total_mass_gas;
+    }
+    this->mass_err = total_mass_dm + total_mass_gas - initial_mass;
 }

@@ -201,7 +201,7 @@ static double build_matrix_and_compute_condition(const GasParticleSystem& gas,
 #ifdef USE_GEOMETRIC_MATRIX
                 double weight = W;
 #else
-                double V_j = gas.mass[j] / std::max(gas.rho[j], 1e-12);
+                double V_j = gas.mass[j] / gas.rho[j];
                 double weight = W * V_j;
 #endif
 
@@ -222,8 +222,63 @@ static double build_matrix_and_compute_condition(const GasParticleSystem& gas,
     E(2, 0) = E(0, 2);
     E(2, 1) = E(1, 2);
 
+// #define USE_PSEUDOINVERSE
+#ifndef USE_PSEUDOINVERSE
     B = E.inverse();
     return evaluate_matrix_condition_number(E, B);
+#else
+    // Compute Moore-Penrose pseudoinverse via Eigendecomposition.
+    // (Mathematically identical to SVD for symmetric positive semi-definite
+    // matrices)
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(E);
+    Eigen::Vector3d eigenvalues = solver.eigenvalues();
+    double max_eigenvalue = eigenvalues.maxCoeff();
+
+    // Scale-invariant absolute floor. Tied to the smoothing length (h^2)
+    // to prevent matrix conditioning from breaking if simulation units change
+    double absolute_tol = 1e-14 * h * h;
+
+    // Relative geometric floor. A high threshold (e.g., 1e-1 to 1e-2)
+    // aggressively collapses the solver to zeroth-order in highly deformed
+    // spatial distributions (like 1D strings or 2D sheets), preventing
+    // unphysical thermal explosions in voids
+    constexpr double relative_tolerance_factor = 1e-4;
+    double relative_tol = relative_tolerance_factor * max_eigenvalue;
+
+    double threshold = std::max(absolute_tol, relative_tol);
+
+    Eigen::Vector3d inv_eigenvalues = Eigen::Vector3d::Zero();
+
+#define USE_TIKHONOV_REGULARIZATION
+#ifdef TIKHONOV_REGULARIZATION
+    // Tikhonov Regularization (Damped Pseudoinverse)
+    // Smoothly suppresses degenerate dimensions to prevent abrupt mathematical
+    // discontinuities as particles enter and exit poorly-sampled configurations
+    double threshold_sq = threshold * threshold;
+    for (int i = 0; i < 3; ++i) {
+        inv_eigenvalues(i) =
+            eigenvalues(i) / (eigenvalues(i) * eigenvalues(i) + threshold_sq);
+    }
+#else
+    // Truncated Pseudoinverse (Hard Cutoff)
+    // Completely zeroes out the gradient and flux along severely
+    // ill-conditioned axes
+    for (int i = 0; i < 3; ++i) {
+        if (eigenvalues(i) > threshold) {
+            inv_eigenvalues(i) = 1.0 / eigenvalues(i);
+        }
+    }
+#endif
+
+    // Reconstruct the regularized shape matrix (B)
+    B = solver.eigenvectors() * inv_eigenvalues.asDiagonal() *
+        solver.eigenvectors().transpose();
+
+    // Return dummy condition number since the pseudoinverse is unconditionally
+    // stable
+    return 1.0;
+
+#endif
 }
 
 }  // end anonymous namespace
@@ -231,7 +286,8 @@ static double build_matrix_and_compute_condition(const GasParticleSystem& gas,
 // --------------------------------------------------------------------------------
 // Density and Smoothing Length Iteration
 // --------------------------------------------------------------------------------
-void compute_density_and_h(GasParticleSystem& gas, const Config& config) {
+void compute_density_and_h(GasParticleSystem& gas, const Config& config,
+                           double softening_length) {
     if (gas.num_particles == 0) return;
 
     const Vec3& domain_size = config.domain_size;
@@ -239,7 +295,7 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config) {
     double tol = config.mfm_neighbor_tolerance;
     int max_iter = config.mfm_max_iterations;
 
-    const double min_h_cap = config.mfm_min_hsml_fraction * config.softening;
+    const double min_h_cap = config.mfm_min_hsml_fraction * softening_length;
     const double max_h_cap = 0.5 * config.domain_size_1d;
 
     constexpr double sphere_volume_factor = (4.0 / 3.0) * M_PI;
@@ -249,7 +305,8 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config) {
     size_t step_neighbor_increased_cases = 0;
     size_t num_not_enough_neighbors = 0;
 
-    if (gas.num_active == 0) return;
+    size_t num_active = gas.get_num_active();
+    if (num_active == 0) return;
 
     // Cache to pass dn_dh to the adaptive softening loop without re-evaluating
     // the tree
@@ -280,7 +337,7 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config) {
 #pragma omp parallel for schedule(dynamic, 64) reduction( \
         + : num_h_clamped, num_non_converged, step_neighbor_increased_cases)
 #endif
-        for (size_t k = 0; k < gas.num_active; ++k) {
+        for (size_t k = 0; k < num_active; ++k) {
             size_t i = gas.active_indices[k];
 
             double h_guess = gas.h[i];
@@ -409,7 +466,7 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config) {
 // ========================================================================
 #pragma omp parallel for schedule(dynamic, 64) \
     reduction(+ : step_neighbor_increased_cases, num_not_enough_neighbors)
-    for (size_t k = 0; k < gas.num_active; ++k) {
+    for (size_t k = 0; k < num_active; ++k) {
         size_t i = gas.active_indices[k];
 
         double h_guess = gas.h[i];
@@ -523,8 +580,10 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config) {
     // PASS 3: Final Matrix Sync & Adaptive Gravity
     // ========================================================================
 #pragma omp parallel for schedule(dynamic, 64)
-    for (size_t k = 0; k < gas.num_active; ++k) {
+    for (size_t k = 0; k < num_active; ++k) {
         size_t i = gas.active_indices[k];
+
+        gas.rho[i] = std::max(gas.rho[i], config.density_floor);
 
 #ifdef USE_ADAPTIVE_CONDITION_NUMBER
         // Sync final geometric N_enc for diagnostics

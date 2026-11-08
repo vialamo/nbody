@@ -799,7 +799,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate a cosmological simulation dashboard from HDF5 snapshots.")
     parser.add_argument("path", type=str, help="Path to the simulation directory")
     parser.add_argument("-p", "--pair", type=str, default=None, help="Path to a paired simulation directory")
-    parser.add_argument("-l", "--latest", action="store_true", help="Automatically find the most recent 'run_*' directory")
+    parser.add_argument("-l", "--latest", action="store_true", help="Automatically find the most recent in directory")
 
     if len(sys.argv) == 1:
         parser.print_help()

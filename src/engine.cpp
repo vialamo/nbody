@@ -5,6 +5,7 @@
 #include "gas.h"
 #include "gravity.h"
 #include "hdf5_writer.h"
+#include "hydro.h"
 #include "ics.h"
 #include "integrator.h"
 #include "logger.h"
@@ -24,11 +25,10 @@ static double get_next_sync_dt(const std::vector<double>& t_end,
 
 SimulationEngine::SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5,
                                    Diagnostics& diag)
-    : config(conf),
-      logger(log),
-      h5_writer(h5),
-      diagnostics(diag),
-      state(initialize_state(conf)) {
+    : config(conf), logger(log), h5_writer(h5), diagnostics(diag), state(conf) {
+    initialize_state(state, conf);
+    integrator.initialize(state, config);
+
     // Determine initial timestep
     current_ts = get_timestep();
 
@@ -70,8 +70,7 @@ TimestepInfo SimulationEngine::get_timestep() const {
     if (config.hydro_method == HydroMethod::Eulerian) {
         ts.dt_hydro = state.gas->get_cfl_timestep();
     } else if (config.hydro_method == HydroMethod::MFM) {
-        ts.dt_hydro =
-            state.mfm_gas->get_cfl_timestep(state.scale_factor, config);
+        ts.dt_hydro = HydroSolver::get_timestep(*state.mfm_gas, config);
     } else {
         ts.dt_hydro = std::numeric_limits<double>::infinity();
     }
@@ -117,7 +116,7 @@ TimestepInfo SimulationEngine::get_timestep() const {
 void SimulationEngine::step() {
     {
         ScopedTimer step_timer(diagnostics, TimerRegion::Step);
-        Integrator::KDK_step(state, current_ts.dt_macro, config, diagnostics);
+        integrator.KDK_step(state, current_ts.dt_macro, config, diagnostics);
     }
 
     diagnostics.increment_cycle();

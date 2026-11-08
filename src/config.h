@@ -33,6 +33,11 @@ E from_string(std::string str) {
 }  // namespace EnumUtils
 
 enum class HydroMethod { None, Eulerian, MFM, Count };
+template <>
+struct EnumUtils::Traits<HydroMethod> {
+    static constexpr const char* names[] = {"none", "eulerian", "mfm"};
+    static constexpr HydroMethod default_value = HydroMethod::None;
+};
 
 enum class InitialSetup {
     Cosmological,
@@ -40,20 +45,17 @@ enum class InitialSetup {
     AdiabaticExpansion,
     SedovBlastwave,
     SoundWave,
+    KelvinHelmholtz,
+    EvrardCollapse,
+    ZeldovichPancake,
     Count
 };
-
-template <>
-struct EnumUtils::Traits<HydroMethod> {
-    static constexpr const char* names[] = {"none", "eulerian", "mfm"};
-    static constexpr HydroMethod default_value = HydroMethod::None;
-};
-
 template <>
 struct EnumUtils::Traits<InitialSetup> {
-    static constexpr const char* names[] = {"cosmological", "sod_shock_tube",
-                                            "adiabatic_expansion",
-                                            "sedov_blastwave", "sound_wave"};
+    static constexpr const char* names[] = {
+        "cosmological",    "sod_shock_tube",   "adiabatic_expansion",
+        "sedov_blastwave", "sound_wave",       "kelvin_helmholtz",
+        "evrard_collapse", "zeldovich_pancake"};
     static constexpr InitialSetup default_value = InitialSetup::Cosmological;
 };
 
@@ -80,8 +82,9 @@ inline InitialSetup from_string(std::string str) {
 
 struct Config {
     // Domain
+    double domain_size_x_factor = 1.0;
     double mesh_size_1d = 64;
-    int num_particles_1d = 64;
+    int num_dm_particles_1d = 64;
     int num_gas_particles_1d = 64;
     double box_size_mpc_1d = 96.0;
 
@@ -96,7 +99,7 @@ struct Config {
 
     // Gravity
     double comoving_softening_factor = 0.0334;
-    double physical_softening_cap_a = 0.3;
+    double softening_cap_a = 0.3;
     bool use_PM = true;
     bool use_PP = true;
     double cutoff_radius_factor = 4.5;
@@ -128,7 +131,13 @@ struct Config {
     int mfm_max_iterations = 50;
     double mfm_min_hsml_fraction = 0.25;
     double dual_energy_threshold = 0.001;
+    double entropy_switch_akin = 0.001;
+    double entropy_switch_agrav = 0.001;
     bool use_exact_riemann = false;
+    double gradient_limiter_beta_max = 2.0;
+    double gradient_limiter_beta_min = 1.0;
+    double pairwise_limiter_psi1 = 0.5;
+    double pairwise_limiter_psi2 = 0.25;
 
     // Subgrid
     bool enable_subgrid_clumping = false;
@@ -136,8 +145,8 @@ struct Config {
 
     // Time
     double max_dt_dynamical_factor = 1e-3;
-    double hydro_courant_factor = 0.4;
-    double gravity_accuracy_eta = 0.2;
+    double hydro_courant_factor = 0.3;
+    double gravity_accuracy_eta = 0.01;
     double a_start = 0.02;
     double a_end = 1.0;
     int max_cycles = 1000000000;
@@ -159,8 +168,6 @@ struct Config {
     double cutoff_radius = 0.0, cutoff_radius_squared = 0.0;
     int num_dm_particles = 0;
     int num_gas_particles = 0;
-    double dm_particle_mass = 0.0, gas_total_mass = 0.0;
-    double softening = 0.0;
     double base_comoving_softening = 0.0;
 
     Vec3 mesh_size;
@@ -183,9 +190,9 @@ struct Config {
         0.0;  // Converts physical cooling rate (erg/g/s) to code units (du/dt)
 
     // Constant Parameters
-    double total_mass = 1;
     static constexpr double domain_size_1d = 1.0;
     Vec3 domain_size;
+    static constexpr double density_floor = 1e-12;
 #ifdef USE_GPU
     static constexpr bool using_GPU = true;
 #else

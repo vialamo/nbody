@@ -55,7 +55,6 @@ void ParticleSystem::add_particle(double px, double py, double pz, double vx,
     is_active.push_back(1);
 
     active_indices.push_back(num_particles);
-    num_active++;
 
     num_particles++;
 }
@@ -138,7 +137,6 @@ void ParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
             active_indices.push_back(i);
         }
     }
-    num_active = active_indices.size();
 }
 
 void ParticleSystem::build_lbvh(const Config& config) {
@@ -193,11 +191,11 @@ void ParticleSystem::sync_and_activate(double dt, const Config& config) {
             active_indices.push_back(i);
         }
     }
-    num_active = active_indices.size();
 }
 
 void ParticleSystem::update_particle_timesteps(double dt_max,
-                                               const Config& config) {
+                                               const Config& config,
+                                               double softening_length) {
     if (num_particles == 0) return;
 
     if (!config.individual_particle_timesteps) {
@@ -211,10 +209,11 @@ void ParticleSystem::update_particle_timesteps(double dt_max,
         return;
     }
 
-    double epsilon = config.softening;
+    double epsilon = softening_length;
 
     // Prevent OpenMP from deadlocking on 0-trip dynamic loops
     // during micro-cycles where all particles are asleep
+    size_t num_active = get_num_active();
     if (num_active == 0) return;
 
 #pragma omp parallel for schedule(dynamic, 64)
@@ -228,8 +227,8 @@ void ParticleSystem::update_particle_timesteps(double dt_max,
                                  acc_z[i] * acc_z[i]);
 
         if (a_mag > 0.0) {
-            double dt_grav =
-                std::sqrt(epsilon / a_mag) * config.gravity_accuracy_eta;
+            double dt_grav = std::sqrt(
+                (2.0 * config.gravity_accuracy_eta * epsilon) / a_mag);
             dt_ideal = std::min(dt_ideal, dt_grav);
         }
 

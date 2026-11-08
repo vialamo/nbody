@@ -1,11 +1,21 @@
 #pragma once
 
+#include <fftw3.h>
+
+#include <vector>
+
 #include "types.h"
 
 struct Config;
 struct SimState;
 
 class PM {
+   private:
+    std::vector<std::complex<double>> rho_k;
+    std::vector<std::complex<double>> phi_k;
+    fftw_plan forward_plan = nullptr;
+    fftw_plan backward_plan = nullptr;
+
    public:
     Grid3D rho;
     Grid3D phi;

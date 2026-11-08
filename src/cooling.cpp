@@ -145,9 +145,11 @@ Cooling::Cooling(const Config& config) {
     Eigen::Vector2d p2(0.5, 1.4);
     Eigen::Vector2d p3(1.04, 10.0);
 
+    double gas_total_mass = config.omega_baryon / config.omega_m;
+
     QuadraticInterpolator A_curve(p1, p2, p3);
     mean_rho_code =
-        config.gas_total_mass /
+        gas_total_mass /
         (config.domain_size.x * config.domain_size.y * config.domain_size.z);
 
     double resolution = config.box_size_mpc_1d / config.mesh_size_1d;
@@ -419,20 +421,21 @@ void Cooling::apply_cooling(GasParticleSystem& gas, const Config& config,
 
     double gamma_minus_1 = config.gamma - 1.0;
 
-    if (gas.num_active != 0) {
+    size_t num_active = gas.get_num_active();
+    if (num_active != 0) {
 #pragma omp parallel for schedule(static) \
     reduction(+ : total_radiated, total_photoheated, non_converged_count)
-        for (size_t k = 0; k < gas.num_active; ++k) {
+        for (size_t k = 0; k < num_active; ++k) {
             size_t i = gas.active_indices[k];
 
             double local_rho = gas.rho[i];
-            if (local_rho > 1e-12) {  // Skip vacuum particles
+            if (local_rho > config.density_floor) {  // Skip vacuum particles
                 double local_Z_frac = gas.metal_frac[i];
                 double u_initial = gas.u[i];
                 double dt_particle = gas.dt_step[i];
 
                 int iters = 0;
-                // Solve cooling implicitly across the FULL macro-step in one go
+                // Solve cooling implicitly across the full macro-step
                 double u_current = solve_cooling_implicit(
                     u_initial, local_rho, local_Z_frac, a, dt_particle,
                     u_cutoff, u_floor, config, iters);

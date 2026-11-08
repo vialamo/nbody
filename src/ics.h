@@ -1,7 +1,7 @@
 #pragma once
 #include "state.h"
 
-SimState initialize_state(Config& config);
+void initialize_state(SimState& state, Config& config);
 
 struct ZeldovichField {
     std::vector<double> dx;

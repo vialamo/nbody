@@ -2,16 +2,54 @@
 
 #include <omp.h>
 
+#include <cstring>
+
 #include "config.h"
 #include "debug_utils.h"
 #include "kernels.h"
 #include "math_utils.h"
 #include "mfm.h"
 #include "riemann.h"
+#include "thermodynamics.h"
 
 namespace HydroSolver {
 
 namespace {  // Anonymous namespace for internal hydro helpers
+
+// Fast atomic max using Compare-and-Swap (CAS) to avoid OpenMP lock
+// overhead
+static inline void atomic_update_max(double* address, double val) {
+    uint64_t* addr_as_int = reinterpret_cast<uint64_t*>(address);
+    uint64_t old_val_int = *addr_as_int;
+    uint64_t new_val_int;
+    std::memcpy(&new_val_int, &val, sizeof(double));
+
+    while (true) {
+        // Interpret the current integer bit-pattern as a double
+        double old_val_double;
+        std::memcpy(&old_val_double, &old_val_int, sizeof(double));
+
+        // If the value in memory is already >= our new value, we are done
+        if (old_val_double >= val) {
+            break;
+        }
+
+        // Attempt the swap.
+        // If successful, actual_old_int == old_val_int, and we break.
+        // If it fails, actual_old_int gets the newest value written by the
+        // other thread
+        uint64_t actual_old_int =
+            __sync_val_compare_and_swap(addr_as_int, old_val_int, new_val_int);
+
+        if (actual_old_int == old_val_int) {
+            break;
+        }
+
+        // Swap failed because another thread updated it.
+        // Update our local state to the new reality and loop again
+        old_val_int = actual_old_int;
+    }
+}
 
 // Computes the maximum signal velocity between two particles and updates
 // their cached maximums using lock-free atomics for the CFL timestep
@@ -19,65 +57,45 @@ namespace {  // Anonymous namespace for internal hydro helpers
 static inline void update_signal_velocities(
     const Reconstruction::ParticleState& p_i,
     const Reconstruction::ParticleState& p_j, double dx, double dy, double dz,
-    double r2, double a, double a_inv, double a_inv3, double gamma,
-    double& v_sig_max_i, double& v_sig_max_j, double& out_v_sig_ij,
-    double& out_c_phys_j) {
+    double r2, double gamma, double& v_sig_max_i, double& v_sig_max_j,
+    double& out_v_sig_ij_com, double& out_c_com_j) {
     double r = std::sqrt(r2);
-    double rho_phys_i = p_i.rho * a_inv3;
-    double p_phys_i = p_i.pressure * a_inv;
-    double c_phys_i =
-        (rho_phys_i > 1e-12) ? std::sqrt(gamma * p_phys_i / rho_phys_i) : 0.0;
 
-    double rho_phys_j = p_j.rho * a_inv3;
-    double p_phys_j = p_j.pressure * a_inv;
-    double c_phys_j =
-        (rho_phys_j > 1e-12) ? std::sqrt(gamma * p_phys_j / rho_phys_j) : 0.0;
+    // Comoving sound speeds
+    double c_com_i = std::sqrt(gamma * p_i.pressure / p_i.rho);
+    double c_com_j = std::sqrt(gamma * p_j.pressure / p_j.rho);
 
-    out_c_phys_j = c_phys_j;
+    out_c_com_j = c_com_j;
 
-    double dvx_phys = (p_j.vel.x() - p_i.vel.x()) * a;
-    double dvy_phys = (p_j.vel.y() - p_i.vel.y()) * a;
-    double dvz_phys = (p_j.vel.z() - p_i.vel.z()) * a;
+    // Comoving relative velocities
+    double dvx_com = p_j.vel.x() - p_i.vel.x();
+    double dvy_com = p_j.vel.y() - p_i.vel.y();
+    double dvz_com = p_j.vel.z() - p_i.vel.z();
 
-    double dv_dot_dx_phys = dvx_phys * dx + dvy_phys * dy + dvz_phys * dz;
-    double v_sig_ij_phys = c_phys_i + c_phys_j;
+    double dv_dot_dx_com = dvx_com * dx + dvy_com * dy + dvz_com * dz;
+    double v_sig_ij_com = c_com_i + c_com_j;
 
-    if (dv_dot_dx_phys < 0.0) {
-        v_sig_ij_phys -= dv_dot_dx_phys / r;
+    if (dv_dot_dx_com < 0.0) {
+        v_sig_ij_com -= dv_dot_dx_com / r;
     }
 
-    out_v_sig_ij = v_sig_ij_phys;
+    out_v_sig_ij_com = v_sig_ij_com;
 
-    // Fast atomic max using Compare-and-Swap (CAS) to avoid OpenMP lock
-    // overhead
-    auto atomic_update_max = [](double* address, double val) {
-        uint64_t* addr_as_int = reinterpret_cast<uint64_t*>(address);
-        uint64_t old_val = *addr_as_int;
-        while (val > *reinterpret_cast<double*>(&old_val)) {
-            uint64_t new_val_int = *reinterpret_cast<uint64_t*>(&val);
-            if (__sync_bool_compare_and_swap(addr_as_int, old_val,
-                                             new_val_int)) {
-                break;
-            }
-            old_val = *addr_as_int;
-        }
-    };
-
-    // Update particle i
-    // Because of the (j <= i) symmetry optimization, thread 'j' might skip
-    // 'i'. Therefore, thread 'i' MUST push the max velocity to 'j'
-    atomic_update_max(&v_sig_max_i, v_sig_ij_phys);
-    atomic_update_max(&v_sig_max_j, v_sig_ij_phys);
+    // Update particle i and j using the atomic CAS
+    atomic_update_max(&v_sig_max_i, v_sig_ij_com);
+    atomic_update_max(&v_sig_max_j, v_sig_ij_com);
 }
 
 }  // end anonymous namespace
 
+// Compute the least-squares matrix gradients for all primitive variables
 void compute_gradients(GasParticleSystem& gas, const Config& config) {
     if (gas.num_particles == 0) return;
     const Vec3& domain_size = config.domain_size;
     size_t step_ill_conditioned = 0;
 
-    if (gas.num_active == 0) return;
+    size_t num_active = gas.get_num_active();
+    if (num_active == 0) return;
 
     Reconstruction::FluidStateArrays system_data{
         gas.pos_x.data(),      gas.pos_y.data(),      gas.pos_z.data(),
@@ -92,7 +110,7 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
         neighbors.reserve(256);
 
 #pragma omp for schedule(dynamic, 64)
-        for (size_t k = 0; k < gas.num_active; ++k) {
+        for (size_t k = 0; k < num_active; ++k) {
             size_t i = gas.active_indices[k];
             neighbors.clear();
             double local_max_rel_ke = 0.0;
@@ -148,21 +166,15 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
 
             gas.max_rel_ke[i] = local_max_rel_ke;
 
-            // Calculate delta E_grav = |a_grav| * h
-            double a_grav_mag = std::sqrt(gas.acc_x[i] * gas.acc_x[i] +
-                                          gas.acc_y[i] * gas.acc_y[i] +
-                                          gas.acc_z[i] * gas.acc_z[i]);
-            gas.delta_E_grav[i] = a_grav_mag * gas.h[i];
-
             bool ill_conditioned =
                 (gas.cond_num[i] < 0.0 || gas.cond_num[i] > N_cond_crit);
 
             Reconstruction::ParticleGradients grads =
                 Reconstruction::compute_single_particle_gradients(
                     i, neighbors.data(), neighbors.size(), system_data,
-                    gas.B_matrix[i], ill_conditioned, domain_size);
+                    gas.B_matrix[i], ill_conditioned, config);
 
-            // Map results back to SOA
+            // Map results back
             gas.grad_rho[i] = grads.grad_rho;
             gas.grad_p[i] = grads.grad_p;
             gas.grad_vx[i] = grads.grad_vx;
@@ -177,14 +189,16 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
     gas.ill_conditioned_cases += step_ill_conditioned;
 }
 
+// Solve the Riemann problem between neighbors and update hydro_acc and du_dt
 void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
     if (gas.num_particles == 0) return;
     const Vec3& domain_size = config.domain_size;
 
-    if (gas.num_active == 0) return;
+    size_t num_active = gas.get_num_active();
+    if (num_active == 0) return;
 
     // Reset accumulators
-    for (size_t k = 0; k < gas.num_active; ++k) {
+    for (size_t k = 0; k < num_active; ++k) {
         size_t i = gas.active_indices[k];
         gas.hydro_acc_x[i] = 0.0;
         gas.hydro_acc_y[i] = 0.0;
@@ -197,9 +211,11 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
     size_t step_sph_fallbacks = 0;
     size_t riemann_failed_cases = 0;
 
+    const double pressure_floor = Thermodynamics::get_pressure_floor(a, config);
+
 #pragma omp parallel for schedule(dynamic, 64) \
     reduction(+ : step_sph_fallbacks, riemann_failed_cases)
-    for (size_t k = 0; k < gas.num_active; ++k) {
+    for (size_t k = 0; k < num_active; ++k) {
         size_t i = gas.active_indices[k];
 
         Reconstruction::ParticleState p_i;
@@ -284,8 +300,7 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                     Reconstruction::ReconstructedFace face =
                         compute_face_reconstruction(
                             p_i, grad_i, p_j, grad_j, gas.B_matrix[i],
-                            gas.B_matrix[j], domain_size, density_floor,
-                            gas.pressure_floor);
+                            gas.B_matrix[j], config, pressure_floor);
 
                     if (!face.is_valid) continue;
                     if (face.used_sph_fallback) step_sph_fallbacks++;
@@ -298,72 +313,55 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                     Eigen::Vector3d v_frame =
                         p_i.vel + fraction_i * (p_j.vel - p_i.vel);
 
-                    // Convert to physical units
-                    double a_inv = 1.0 / a;
-                    double a_inv3 = a_inv * a_inv * a_inv;
-
-                    Reconstruction::ReconstructedFace face_phys = face;
-                    face_phys.rho_L = face.rho_L * a_inv3;
-                    face_phys.rho_R = face.rho_R * a_inv3;
-                    face_phys.p_L = face.p_L * a_inv;
-                    face_phys.p_R = face.p_R * a_inv;
-                    face_phys.v_L = face.v_L * a;
-                    face_phys.v_R = face.v_R * a;
-
-                    Eigen::Vector3d v_frame_phys = v_frame * a;
-
-                    Riemann::FaceFlux flux_1d_phys;
+                    Riemann::FaceFlux flux_1d;
                     if (config.use_exact_riemann) {
-                        flux_1d_phys = Riemann::solve_exact(
-                            face_phys, v_frame_phys, config.gamma);
+                        flux_1d =
+                            Riemann::solve_exact(face, v_frame, config.gamma);
                     } else {
-                        flux_1d_phys = Riemann::solve_hllc(
-                            face_phys, v_frame_phys, config.gamma);
+                        flux_1d =
+                            Riemann::solve_hllc(face, v_frame, config.gamma);
                     }
 
                     // Fallback to First-Order Reconstruction if solvers still
                     // fail
-                    if (!flux_1d_phys.success) {
+                    if (!flux_1d.success) {
                         // Overwrite the extrapolated face states with the
                         // particle center values
-                        face_phys.rho_L = p_i.rho * a_inv3;
-                        face_phys.rho_R = p_j.rho * a_inv3;
-                        face_phys.p_L = p_i.pressure * a_inv;
-                        face_phys.p_R = p_j.pressure * a_inv;
-                        face_phys.v_L = p_i.vel * a;
-                        face_phys.v_R = p_j.vel * a;
+                        face.rho_L = p_i.rho;
+                        face.rho_R = p_j.rho;
+                        face.p_L = p_i.pressure;
+                        face.p_R = p_j.pressure;
+                        face.v_L = p_i.vel;
+                        face.v_R = p_j.vel;
 
                         // Retry the exact solver with the flat states
-                        flux_1d_phys = Riemann::solve_exact(
-                            face_phys, v_frame_phys, config.gamma);
+                        flux_1d =
+                            Riemann::solve_exact(face, v_frame, config.gamma);
                     }
 
                     // Final fallback: Zero-Flux State
-                    if (!flux_1d_phys.success) {
+                    if (!flux_1d.success) {
                         DebugUtils::print_riemann_diagnostic(
-                            i, j, face_phys, v_frame_phys, config.gamma,
-                            flux_1d_phys.error);
-                        flux_1d_phys.P_star = 0.0;
-                        flux_1d_phys.S_star = 0.0;
-                        flux_1d_phys.flux_mom = Eigen::Vector3d::Zero();
+                            i, j, face, v_frame, config.gamma, flux_1d.error);
+                        flux_1d.P_star = 0.0;
+                        flux_1d.S_star = 0.0;
+                        flux_1d.flux_mom = Eigen::Vector3d::Zero();
                         riemann_failed_cases++;
                     }
 
                     // Calculate Maximum Signal Velocity for the CFL
                     // condition
-                    double v_sig_ij, c_phys_j;
-                    update_signal_velocities(p_i, p_j, dx, dy, dz, r2, a, a_inv,
-                                             a_inv3, config.gamma,
-                                             gas.v_sig_max[i], gas.v_sig_max[j],
-                                             v_sig_ij, c_phys_j);
+                    double v_sig_ij, c_com_j;
+                    update_signal_velocities(
+                        p_i, p_j, dx, dy, dz, r2, config.gamma,
+                        gas.v_sig_max[i], gas.v_sig_max[j], v_sig_ij, c_com_j);
 
                     // Back to code units
-                    double P_star_com = flux_1d_phys.P_star * a;
-                    double S_star_com = flux_1d_phys.S_star * a_inv;
+                    double P_star_com = flux_1d.P_star;
 
                     Eigen::Vector3d Force_mom = P_star_com * face.area_vec;
                     Eigen::Vector3d v_star_lab =
-                        v_frame + (S_star_com * face.n);
+                        v_frame + (flux_1d.S_star * face.n);
 
                     double work_i =
                         P_star_com * (v_star_lab - p_i.vel).dot(face.area_vec);
@@ -408,7 +406,7 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                         // Wake up the sleeping neighbor if the signal
                         // velocity of the interaction exceeds 3x its own
                         // sound speed (f_w = 3.0)
-                        bool og3_trigger = (v_sig_ij > 3.0 * c_phys_j);
+                        bool og3_trigger = (v_sig_ij > 3.0 * c_com_j);
 
                         // Saitoh & Makino (2009) Timestep Limiter
                         // Wake up the sleeping neighbor if its timestep is
@@ -444,6 +442,40 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
             }
         }
     }
+}
+
+void step(GasParticleSystem& gas, const Config& config, double a) {
+    Thermodynamics::predict_primitive_variables(gas, config, a);
+    compute_gradients(gas, config);
+    compute_forces(gas, config, a);
+}
+
+double get_timestep(GasParticleSystem& gas, const Config& config) {
+    if (config.hydro_method != HydroMethod::MFM || gas.num_particles == 0 ||
+        config.individual_particle_timesteps) {
+        return std::numeric_limits<double>::infinity();
+    }
+
+    double min_dt = std::numeric_limits<double>::infinity();
+
+#pragma omp parallel for reduction(min : min_dt) schedule(static)
+    for (size_t i = 0; i < gas.num_particles; ++i) {
+        // v_sig_max is cached in physical units during compute_hydro_forces
+        if (gas.v_sig_max[i] > 1e-9) {
+            double dt_i = gas.h[i] / gas.v_sig_max[i];
+            if (dt_i < min_dt) {
+                min_dt = dt_i;
+            }
+        }
+    }
+
+    // BOOTSTRAP: On the first step forces haven't been computed yet,
+    // so v_sig_max is 0. Provide a small timestep to get the engine started
+    if (min_dt == std::numeric_limits<double>::infinity()) {
+        return config.fixed_dt / std::pow(2.0, 10.0);
+    }
+
+    return min_dt * config.hydro_courant_factor;
 }
 
 }  // namespace HydroSolver
