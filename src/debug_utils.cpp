@@ -3,8 +3,8 @@
 #include <iomanip>
 #include <iostream>
 
+#include "gas.h"
 #include "math_utils.h"
-#include "mfm.h"
 
 namespace DebugUtils {
 

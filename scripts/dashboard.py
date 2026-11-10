@@ -192,16 +192,13 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
         
         domain_size = config.get('domain_size', 1.0)
         mesh_size = config.get('mesh_size_1d', 32)
-        method = config.get('hydro_method', b"none").decode('utf-8')
-        has_eulerian_hydro = bool(method == "eulerian")
-        has_particle_hydro = bool(method == "mfm")
-        has_hydro = has_eulerian_hydro or has_particle_hydro
-        hubble = config.get('Hubble_h', 70.0)
+        has_hydro = (config.get('num_gas_particles_1d', 0) > 0)
+        hubble = config.get('hubble_h', 0.7)
         h_val = hubble / 100.0 if hubble > 10.0 else hubble
         box_size_mpc = config.get('box_size_mpc', 1.0)
         box_h_mpc = box_size_mpc * h_val
         
-        omega_m = config.get('omega_M', 1.0)
+        omega_m = config.get('omega_m', 1.0)
         omega_b = config.get('omega_baryon', 0.04)
         omega_l = config.get('omega_lambda', 0.0)
         gamma = config.get('gamma', 5.0/3.0)
@@ -214,22 +211,11 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
         u_time_gyr = units.get('unit_time_in_gyr', 1.0)
         cell_vol_code = (domain_size / mesh_size)**3
 
-        if has_eulerian_hydro:
-            rho = f['Gas/density'][:]
-            flat_index = np.argmax(rho)
-            target_coords = np.unravel_index(flat_index, rho.shape)
-            Z, Y, X = np.indices(rho.shape)
-            radius_cells = 0
-            dz = np.minimum(np.abs(Z - target_coords[0]), mesh_size - np.abs(Z - target_coords[0]))
-            dy = np.minimum(np.abs(Y - target_coords[1]), mesh_size - np.abs(Y - target_coords[1]))
-            dx = np.minimum(np.abs(X - target_coords[2]), mesh_size - np.abs(X - target_coords[2]))
-            dist_sq = dx**2 + dy**2 + dz**2
-        elif has_particle_hydro:
-            rho = f['Gas/density'][:]
-            max_idx = np.argmax(rho)
-            target_pos = np.array([f['Gas/position_x'][max_idx], 
-                                   f['Gas/position_y'][max_idx], 
-                                   f['Gas/position_z'][max_idx]])
+        rho = f['Gas/density'][:]
+        max_idx = np.argmax(rho)
+        target_pos = np.array([f['Gas/position_x'][max_idx], 
+                               f['Gas/position_y'][max_idx], 
+                               f['Gas/position_z'][max_idx]])
 
     # Time series lists
     scale_factors, times_gyr, dm_variances, dm_scale_factors = [], [], [], []
@@ -301,19 +287,18 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
 
             # Total Power Spectrum (DM + Gas)
             tot_px, tot_py, tot_pz, tot_pmass = p_x, p_y, p_z, p_mass
-            if has_particle_hydro:
-                gx = f['Gas/position_x'][:] * box_h_mpc
-                gy = f['Gas/position_y'][:] * box_h_mpc
-                gz = f['Gas/position_z'][:] * box_h_mpc
-                gm = f['Gas/mass'][:]
-                tot_px = np.concatenate([p_x, gx]) if len(p_x) > 0 else gx
-                tot_py = np.concatenate([p_y, gy]) if len(p_y) > 0 else gy
-                tot_pz = np.concatenate([p_z, gz]) if len(p_z) > 0 else gz
-                tot_pmass = np.concatenate([p_mass, gm]) if len(p_mass) > 0 else gm
+            gx = f['Gas/position_x'][:] * box_h_mpc
+            gy = f['Gas/position_y'][:] * box_h_mpc
+            gz = f['Gas/position_z'][:] * box_h_mpc
+            gm = f['Gas/mass'][:]
+            tot_px = np.concatenate([p_x, gx]) if len(p_x) > 0 else gx
+            tot_py = np.concatenate([p_y, gy]) if len(p_y) > 0 else gy
+            tot_pz = np.concatenate([p_z, gz]) if len(p_z) > 0 else gz
+            tot_pmass = np.concatenate([p_mass, gm]) if len(p_mass) > 0 else gm
                 
             tot_particles = len(tot_pmass)
             tot_part_mesh_size = int(np.round(len(p_mass)**(1.0/3.0))) if len(p_mass) > 0 else 0
-            rho_grid = f['Gas/density'][:] if has_eulerian_hydro else None
+            rho_grid = None
 
             if i in target_indices:
                 k_bins, pk = compute_power_spectrum(tot_px, tot_py, tot_pz, tot_pmass, box_h_mpc, mesh_size, tot_part_mesh_size, gas_rho=rho_grid)
@@ -334,64 +319,39 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
                 rho = f['Gas/density'][:]
                 temp = get_temperature(f)
                 n_H_conv = (u_density_cgs / a**3 * X_H) / M_P_CGS
+                
+                vx, vy, vz = f['Gas/velocity_x'][:], f['Gas/velocity_y'][:], f['Gas/velocity_z'][:]
+                u_int = f['Gas/internal_energy'][:]
+                gas_mass = f['Gas/mass'][:]
+                metallicity = f['Gas/metal_fraction'][:]
+                num_gas_particles = len(gas_mass)
+                
+                ke_array = 0.5 * gas_mass * (vx**2 + vy**2 + vz**2)
+                
+                kin_energies.append(np.sum(ke_array) * energy_conv)
+                therm_energies.append(np.sum(gas_mass * u_int) * energy_conv)
+                current_e_code = np.sum(ke_array) + np.sum(gas_mass * u_int)
+                
+                closest_idx = np.argmax(rho)
+                rho_densest_cell.append(rho[closest_idx] * n_H_conv)
+                gas_temp_densest_cell.append(temp[closest_idx])
+                thermal_timescale_densest.append(np.nan) 
+                mean_rho = np.sum(gas_mass) / domain_size**3
 
-                if has_eulerian_hydro:
-                    px_g, py_g, pz_g = f['Gas/momentum_x'][:], f['Gas/momentum_y'][:], f['Gas/momentum_z'][:]
-                    e_tot = f['Gas/energy'][:]
-                    metal_density = f['Gas/metal_density'][:]
-                    metallicity = metal_density / rho
-                    gas_mass = rho * cell_vol_code
+                # Safely extract h and N_enc (with fallbacks just in case)
+                h_array = f['Gas/smoothing_length'][:] if 'Gas/smoothing_length' in f else f['Gas/h'][:]
+                if 'Gas/n_enc_final' in f:
+                    n_array = f['Gas/n_enc_final'][:]
+                elif 'Gas/num_neighbors' in f:
+                    n_array = f['Gas/num_neighbors'][:]
+                else:
+                    n_array = (4.0 / 3.0) * np.pi * (h_array**3) * (rho / gas_mass)
                     
-                    safe_rho = np.maximum(rho, 1e-10)
-                    ke_grid = (px_g**2 + py_g**2 + pz_g**2) / (2.0 * safe_rho)
-                    
-                    kin_energies.append(np.sum(ke_grid) * energy_conv * cell_vol_code)
-                    therm_energies.append((np.sum(e_tot) - np.sum(ke_grid)) * energy_conv * cell_vol_code)
-                    current_e_code = np.sum(e_tot) * cell_vol_code
-                    
-                    local_rho = np.where(dist_sq <= radius_cells**2, rho, -1.0)
-                    local_max_coords = np.unravel_index(np.argmax(local_rho), rho.shape)
-                    rho_densest_cell.append(rho[local_max_coords] * n_H_conv)
-                    gas_temp_densest_cell.append(temp[local_max_coords])
-                    thermal_timescale_densest.append(f['Gas/thermal_timescale'][local_max_coords])
-                    mean_rho = np.mean(rho)
+                h_densest_particle.append(h_array[closest_idx])
+                n_enc_densest_particle.append(n_array[closest_idx])
 
-                    switch_energy_code = f['Gas'].attrs.get('cumulative_dual_energy_switch_energy', 0.0)
-                    switch_energies.append(switch_energy_code)
-
-                elif has_particle_hydro:
-                    vx, vy, vz = f['Gas/velocity_x'][:], f['Gas/velocity_y'][:], f['Gas/velocity_z'][:]
-                    u_int = f['Gas/internal_energy'][:]
-                    gas_mass = f['Gas/mass'][:]
-                    metallicity = f['Gas/metal_fraction'][:]
-                    num_gas_particles = len(gas_mass)
-                    
-                    ke_array = 0.5 * gas_mass * (vx**2 + vy**2 + vz**2)
-                    
-                    kin_energies.append(np.sum(ke_array) * energy_conv)
-                    therm_energies.append(np.sum(gas_mass * u_int) * energy_conv)
-                    current_e_code = np.sum(ke_array) + np.sum(gas_mass * u_int)
-                    
-                    closest_idx = np.argmax(rho)
-                    rho_densest_cell.append(rho[closest_idx] * n_H_conv)
-                    gas_temp_densest_cell.append(temp[closest_idx])
-                    thermal_timescale_densest.append(np.nan) 
-                    mean_rho = np.sum(gas_mass) / domain_size**3
-
-                    # Safely extract h and N_enc (with fallbacks just in case)
-                    h_array = f['Gas/smoothing_length'][:] if 'Gas/smoothing_length' in f else f['Gas/h'][:]
-                    if 'Gas/n_enc_final' in f:
-                        n_array = f['Gas/n_enc_final'][:]
-                    elif 'Gas/num_neighbors' in f:
-                        n_array = f['Gas/num_neighbors'][:]
-                    else:
-                        n_array = (4.0 / 3.0) * np.pi * (h_array**3) * (rho / gas_mass)
-                        
-                    h_densest_particle.append(h_array[closest_idx])
-                    n_enc_densest_particle.append(n_array[closest_idx])
-
-                    switch_energy_code = f['Gas'].attrs.get('cumulative_entropy_switch_energy', 0.0)
-                    switch_energies.append(switch_energy_code)
+                switch_energy_code = f['Gas'].attrs.get('cumulative_entropy_switch_energy', 0.0)
+                switch_energies.append(switch_energy_code)
 
                 p999_gas_densities.append(np.percentile(rho, 99.9) * n_H_conv)
                 max_gas_densities.append(np.max(rho) * n_H_conv)
@@ -440,19 +400,19 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
                     p_mass = f['Particles/mass'][:]
                     
                     tot_px, tot_py, tot_pz, tot_pmass = p_x, p_y, p_z, p_mass
-                    if has_particle_hydro:
-                        gx = f['Gas/position_x'][:] * box_h_mpc
-                        gy = f['Gas/position_y'][:] * box_h_mpc
-                        gz = f['Gas/position_z'][:] * box_h_mpc
-                        gm = f['Gas/mass'][:]
-                        tot_px = np.concatenate([p_x, gx]) if len(p_x) > 0 else gx
-                        tot_py = np.concatenate([p_y, gy]) if len(p_y) > 0 else gy
-                        tot_pz = np.concatenate([p_z, gz]) if len(p_z) > 0 else gz
-                        tot_pmass = np.concatenate([p_mass, gm]) if len(p_mass) > 0 else gm
+
+                    gx = f['Gas/position_x'][:] * box_h_mpc
+                    gy = f['Gas/position_y'][:] * box_h_mpc
+                    gz = f['Gas/position_z'][:] * box_h_mpc
+                    gm = f['Gas/mass'][:]
+                    tot_px = np.concatenate([p_x, gx]) if len(p_x) > 0 else gx
+                    tot_py = np.concatenate([p_y, gy]) if len(p_y) > 0 else gy
+                    tot_pz = np.concatenate([p_z, gz]) if len(p_z) > 0 else gz
+                    tot_pmass = np.concatenate([p_mass, gm]) if len(p_mass) > 0 else gm
 
                     tot_particles = len(tot_pmass)
                     tot_part_mesh_size = int(np.round(len(p_mass)**(1.0/3.0))) if len(p_mass) > 0 else 0
-                    rho_grid = f['Gas/density'][:] if has_eulerian_hydro else None
+                    rho_grid = None
                     
                     k_bins_p, pk_p = compute_power_spectrum(tot_px, tot_py, tot_pz, tot_pmass, box_h_mpc, mesh_size, tot_part_mesh_size, gas_rho=rho_grid)
                     pk_data_pair[a_pair] = (k_bins_p, pk_p)
@@ -471,14 +431,10 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
         with h5py.File(files[-1], 'r') as f:
             final_rho = f['Gas/density'][:]
             final_temp = get_temperature(f)
-            
-            if has_eulerian_hydro:
-                mean_rho = np.mean(final_rho)
-                weights = (final_rho * cell_vol_code).flatten()
-            else:
-                final_mass = f['Gas/mass'][:]
-                mean_rho = np.sum(final_mass) / domain_size**3
-                weights = final_mass.flatten()
+           
+            final_mass = f['Gas/mass'][:]
+            mean_rho = np.sum(final_mass) / domain_size**3
+            weights = final_mass.flatten()
                 
             x_data = (final_rho / mean_rho).flatten()
             y_data = final_temp.flatten()
@@ -611,36 +567,7 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
         axs[1, 1].text(0.5, 0.5, 'No Extreme States Data', ha='center', va='center')
 
     # Densest Cell Evolution
-    if has_hydro and has_eulerian_hydro:
-        axs[1, 2].plot(scale_factors, rho_densest_cell, color='blue', lw=2, label='Density')
-        axs[1, 2].set(yscale='log', xlabel='Scale Factor (a)', ylabel=r'Physical Density [$m_p$ cm$^{-3}$]')
-        axs[1, 2].tick_params(axis='y', labelcolor='black')
-        
-        ax_temp = axs[1, 2].twinx()
-        ax_temp.plot(scale_factors, gas_temp_densest_cell, color='red', lw=2, label='Temp')
-        ax_temp.set(yscale='log', ylabel='Temperature [K]')
-        ax_temp.tick_params(axis='y', labelcolor='red')
-
-        ax_time = axs[1, 2].twinx()
-        ax_time.spines['right'].set_position(('outward', 50))
-        
-        t_therm = np.array(thermal_timescale_densest)
-        t_heating = np.where(t_therm > 0, t_therm, np.nan)
-        t_cooling = np.where(t_therm < 0, np.abs(t_therm), np.nan)
-        
-        ax_time.plot(scale_factors, t_heating, color='green', lw=2, linestyle='-', label='+t_therm (Heating)')
-        ax_time.plot(scale_factors, t_cooling, color='green', lw=2, linestyle='--', label='-t_therm (Cooling)')
-        
-        ax_time.set(yscale='log', ylabel='Time [Code Units]')
-        ax_time.tick_params(axis='y', labelcolor='green')
-
-        lines_left, labels_left = axs[1, 2].get_legend_handles_labels()
-        lines_temp, labels_temp = ax_temp.get_legend_handles_labels()
-        lines_time, labels_time = ax_time.get_legend_handles_labels()
-        
-        axs[1, 2].legend(lines_left + lines_temp + lines_time, labels_left + labels_temp + labels_time, loc='upper left', fontsize=8)
-        axs[1, 2].set_title('Densest cell (z=0) evolution')
-    elif has_hydro and has_particle_hydro:
+    if has_hydro:
         axs[1, 2].plot(scale_factors, rho_densest_cell, color='blue', lw=2, label='Density')
         axs[1, 2].set(yscale='log', xlabel='Scale Factor (a)', ylabel=r'Physical Density [$m_p$ cm$^{-3}$]')
         axs[1, 2].tick_params(axis='y', labelcolor='blue')
@@ -715,14 +642,10 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
                         return
                     rho_snap = f['Gas/density'][:]
                     temp_snap = get_temperature(f)
-                    
-                    if has_eulerian_hydro:
-                        mean_rho_snap = np.mean(rho_snap)
-                        weights_snap = (rho_snap * cell_vol_code).flatten()
-                    else:
-                        gas_mass_snap = f['Gas/mass'][:]
-                        mean_rho_snap = np.sum(gas_mass_snap) / domain_size**3
-                        weights_snap = gas_mass_snap.flatten()
+
+                    gas_mass_snap = f['Gas/mass'][:]
+                    mean_rho_snap = np.sum(gas_mass_snap) / domain_size**3
+                    weights_snap = gas_mass_snap.flatten()
                         
                     x_snap = (rho_snap / mean_rho_snap).flatten()
                     y_snap = temp_snap.flatten()
@@ -779,8 +702,7 @@ def generate_dashboard(snapshot_dir, pair_dir=None):
         f"{'Box Size':<9}: {str(box_size_mpc) + ' Mpc'}\n"
         f"{'Grid':<9}: {str(mesh_size) + '³'}\n"
         f"{'Particles':<9}: {n_dm_1d} ({num_dm_particles_total})\n"
-        f"{'Gas particles':<9}: {n_gas_1d} ({num_gas_particles})\n"
-        f"{'Hydro method':<9}: {method}\n\n"
+        f"{'Gas particles':<9}: {n_gas_1d} ({num_gas_particles})\n\n"
         f"Cosmology & Physics:\n"
         f"  {'Ω_m':<3}: {omega_m:<8} | {'Hubble (h)':<12}: {h_val:.2f}\n"
         f"  {'Ω_b':<3}: {omega_b:<8} | {'Gamma (γ)':<12}: {gamma:.3f}\n"

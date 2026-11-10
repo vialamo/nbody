@@ -1,7 +1,38 @@
 #include "diagnostics.h"
 
-#include "mfm.h"
+#include "gas.h"
 #include "state.h"
+
+namespace {
+struct HydroConservationError {
+    Eigen::Vector3d momentum_error_rate;  // Net un-conserved force
+    double energy_error_rate;             // Net un-conserved power
+};
+
+HydroConservationError diagnose_hydro_conservation_error(
+    const GasParticleSystem& gas) {
+    double net_fx = 0.0;
+    double net_fy = 0.0;
+    double net_fz = 0.0;
+    double net_edot = 0.0;
+
+    // Summing m * a_hydro gives the aggregate of all Riemann face fluxes
+#pragma omp parallel for reduction(+ : net_fx, net_fy, net_fz, net_edot) \
+    schedule(static)
+    for (size_t i = 0; i < gas.num_particles; ++i) {
+        net_fx += gas.mass[i] * gas.hydro_acc_x[i];
+        net_fy += gas.mass[i] * gas.hydro_acc_y[i];
+        net_fz += gas.mass[i] * gas.hydro_acc_z[i];
+        net_edot += gas.mass[i] * gas.de_dt[i];
+    }
+
+    HydroConservationError error;
+    error.momentum_error_rate = Eigen::Vector3d(net_fx, net_fy, net_fz);
+    error.energy_error_rate = net_edot;
+
+    return error;
+}
+}  // namespace
 
 ScopedTimer::ScopedTimer(Diagnostics& d, TimerRegion r) : diag(d), region(r) {
     start_time = std::chrono::high_resolution_clock::now();
@@ -12,7 +43,7 @@ ScopedTimer::~ScopedTimer() {
     diag.add_time(region, elapsed.count());
 }
 
-void Diagnostics::add_prof_time(ProfRegion region, double time_sec) {
+void Diagnostics::add_prof_time(GPUProfRegion region, double time_sec) {
     accumulated_prof[static_cast<size_t>(region)] += time_sec;
 }
 
@@ -43,7 +74,7 @@ double Diagnostics::get_average_overhead() const {
     return get_average(TimerRegion::Step) - total_physics;
 }
 
-double Diagnostics::get_prof_average(ProfRegion region) const {
+double Diagnostics::get_prof_average(GPUProfRegion region) const {
     if (accumulated_cycles == 0) return 0.0;
     return accumulated_prof[static_cast<size_t>(region)] / accumulated_cycles;
 }
@@ -52,35 +83,6 @@ void Diagnostics::reset_accumulators() {
     accumulated_times.fill(0.0);
     accumulated_prof.fill(0.0);
     accumulated_cycles = 0;
-}
-
-struct HydroConservationError {
-    Eigen::Vector3d momentum_error_rate;  // Net un-conserved force
-    double energy_error_rate;             // Net un-conserved power
-};
-
-static HydroConservationError diagnose_hydro_conservation_error(
-    const GasParticleSystem& gas) {
-    double net_fx = 0.0;
-    double net_fy = 0.0;
-    double net_fz = 0.0;
-    double net_edot = 0.0;
-
-    // Summing m * a_hydro gives the aggregate of all Riemann face fluxes
-#pragma omp parallel for reduction(+ : net_fx, net_fy, net_fz, net_edot) \
-    schedule(static)
-    for (size_t i = 0; i < gas.num_particles; ++i) {
-        net_fx += gas.mass[i] * gas.hydro_acc_x[i];
-        net_fy += gas.mass[i] * gas.hydro_acc_y[i];
-        net_fz += gas.mass[i] * gas.hydro_acc_z[i];
-        net_edot += gas.mass[i] * gas.de_dt[i];
-    }
-
-    HydroConservationError error;
-    error.momentum_error_rate = Eigen::Vector3d(net_fx, net_fy, net_fz);
-    error.energy_error_rate = net_edot;
-
-    return error;
 }
 
 void Diagnostics::compute_dm_metrics(const ParticleSystem& dm) {
@@ -113,8 +115,8 @@ void Diagnostics::compute_dm_metrics(const ParticleSystem& dm) {
     }
 
     double delta_ke_dm = ke_dm - initial_dm_energy;
-    double dm_absolute_error = delta_ke_dm - dm.accumulated_gravitational_work +
-                               dm.accumulated_expansion_work;
+    double dm_absolute_error =
+        delta_ke_dm - dm.budget.gravitational_work + dm.budget.expansion_work;
     double denominator =
         (initial_dm_energy > 1e-12) ? initial_dm_energy : ke_dm;
 
@@ -124,63 +126,23 @@ void Diagnostics::compute_dm_metrics(const ParticleSystem& dm) {
 }
 
 double Diagnostics::calculate_hydro_energy_error(double current_energy,
-                                                 double w_grav, double w_exp,
-                                                 double e_rad, double e_heat) {
-    if (!energy_initialized) {
+                                                 const EnergyBudget& budget) {
+    if (!gas_energy_initialized) {
         initial_gas_energy = current_energy;
-        energy_initialized = true;
+        gas_energy_initialized = true;
     }
 
     double delta_e = current_energy - initial_gas_energy;
-    double absolute_error = delta_e - w_grav + w_exp + e_rad - e_heat;
+    double absolute_error = delta_e - budget.gravitational_work +
+                            budget.expansion_work + budget.radiated -
+                            budget.photoheated;
     double denominator = std::abs(initial_gas_energy);
 
     return (denominator > 1e-12) ? absolute_error / denominator
                                  : absolute_error;
 }
 
-void Diagnostics::compute_eulerian_metrics(const GasGrid& gas,
-                                           const Config& config) {
-    this->max_gas_density = gas.get_density().maxCoeff();
-    this->max_gas_pressure = gas.get_pressure().maxCoeff();
-    this->max_gas_velocity = (gas.get_velocity_x().array().square() +
-                              gas.get_velocity_y().array().square() +
-                              gas.get_velocity_z().array().square())
-                                 .sqrt()
-                                 .maxCoeff();
-
-    this->non_converged_cooling_cells = gas.get_cooling_failed_cells();
-    this->total_mass_gas = gas.get_density().sum() * config.cell_volume;
-    this->total_momentum_gas = {
-        gas.get_momentum_x().sum() * config.cell_volume,
-        gas.get_momentum_y().sum() * config.cell_volume,
-        gas.get_momentum_z().sum() * config.cell_volume};
-
-    int total_cells = gas.get_density().size();
-    Grid3D ke_gas_density(config.mesh_size);
-    ke_gas_density.data = 0.5 * (gas.get_momentum_x().array().square() +
-                                 gas.get_momentum_y().array().square() +
-                                 gas.get_momentum_z().array().square());
-
-#pragma omp parallel for simd schedule(static)
-    for (int i = 0; i < total_cells; ++i) {
-        ke_gas_density.data[i] /= std::max(1e-12, gas.get_density().data[i]);
-    }
-
-    this->ke_gas = ke_gas_density.sum() * config.cell_volume;
-    this->ie_gas = (gas.get_pressure().array() / (config.gamma - 1.0)).sum() *
-                   config.cell_volume;
-
-    this->total_radiated_energy = gas.get_accumulated_radiated_energy();
-    this->total_heated_energy = gas.get_accumulated_photoheating_energy();
-
-    this->energy_err = calculate_hydro_energy_error(
-        this->ke_gas + this->ie_gas, gas.get_accumulated_gravitational_work(),
-        gas.get_accumulated_expansion_work(), this->total_radiated_energy,
-        this->total_heated_energy);
-}
-
-void Diagnostics::compute_mfm_metrics(GasParticleSystem& gas,
+void Diagnostics::compute_gas_metrics(const GasParticleSystem& gas,
                                       const Config& config) {
     double max_rho = 0.0, max_p = 0.0, max_v = 0.0;
     double sum_mass = 0.0, sum_px = 0.0, sum_py = 0.0, sum_pz = 0.0;
@@ -215,44 +177,42 @@ void Diagnostics::compute_mfm_metrics(GasParticleSystem& gas,
     this->total_momentum_gas = {sum_px, sum_py, sum_pz};
     this->ke_gas = sum_ke;
     this->ie_gas = sum_ie;
-    this->non_converged_cooling_cells = gas.cooling_failed_cells;
+    this->non_converged_cooling_particles = gas.diag.cooling_failed;
 
     // Extracted Energy Error
-    this->total_radiated_energy = gas.accumulated_radiated_energy;
-    this->total_heated_energy = gas.accumulated_photoheating_energy;
-    this->energy_err = calculate_hydro_energy_error(
-        sum_ke + sum_ie, gas.accumulated_gravitational_work,
-        gas.accumulated_expansion_work, gas.accumulated_radiated_energy,
-        gas.accumulated_photoheating_energy);
+    this->total_radiated_energy = gas.budget.radiated;
+    this->total_heated_energy = gas.budget.photoheated;
+    this->gas_energy_err =
+        calculate_hydro_energy_error(sum_ke + sum_ie, gas.budget);
 
     // MFM Specific Diagnostics
-    this->MFM_total_particles = gas.num_particles;
-    this->MFM_h_non_converged_cases = gas.non_converged_h_cases;
-    this->MFM_not_enough_nbg_cases = gas.not_enough_neighbors_cases;
-    this->MFM_sph_fallback_cases = gas.sph_fallback_cases;
-    this->MFM_riemann_failed_cases = gas.riemann_failed_cases;
+    const size_t num_gas_particles = gas.num_particles;
+    this->MFM_h_non_converged_cases = gas.diag.non_converged_h;
+    this->MFM_not_enough_nbg_cases = gas.diag.not_enough_neighbors;
+    this->MFM_sph_fallback_cases = gas.diag.sph_fallback;
+    this->MFM_riemann_failed_cases = gas.diag.riemann_failed;
 
-    this->percent_particles_updated = (config.individual_particle_timesteps &&
-                                       gas.active_particles_num_cycles > 0)
-                                          ? 100.0 *
-                                                gas.active_particles_fraction /
-                                                gas.active_particles_num_cycles
-                                          : 100.0;
+    this->percent_particles_updated =
+        (config.individual_particle_timesteps &&
+         gas.diag.active_particles_num_cycles > 0)
+            ? 100.0 * gas.diag.active_particles_fraction /
+                  gas.diag.active_particles_num_cycles
+            : 100.0;
 
     double cycle_div = std::max(1, cycle);
-    if (MFM_total_particles > 0) {
+    if (num_gas_particles > 0) {
         this->MFM_ill_percent =
             100.0 *
-            (static_cast<double>(gas.ill_conditioned_cases) / cycle_div) /
-            MFM_total_particles;
+            (static_cast<double>(gas.diag.ill_conditioned) / cycle_div) /
+            num_gas_particles;
         this->MFM_clamp_percent =
-            100.0 * (static_cast<double>(gas.clamped_h_cases) / cycle_div) /
-            MFM_total_particles;
+            100.0 * (static_cast<double>(gas.diag.clamped_h) / cycle_div) /
+            num_gas_particles;
         this->MFM_inc_percent =
             100.0 *
-            (static_cast<double>(gas.neighbor_increased_cases) /
+            (static_cast<double>(gas.diag.neighbor_increased) /
              std::max(1, accumulated_cycles)) /
-            MFM_total_particles;
+            num_gas_particles;
     }
 
     double box_volume =
@@ -262,13 +222,6 @@ void Diagnostics::compute_mfm_metrics(GasParticleSystem& gas,
     auto hce = diagnose_hydro_conservation_error(gas);
     this->MFM_flux_energy_error = hce.energy_error_rate;
     this->MFM_flux_momentum_error = hce.momentum_error_rate.norm();
-
-    // Reset counters
-    gas.active_particles_fraction = 0.0;
-    gas.active_particles_num_cycles = 0;
-    gas.ill_conditioned_cases = 0;
-    gas.clamped_h_cases = 0;
-    gas.neighbor_increased_cases = 0;
 }
 
 double Diagnostics::compute_potential_energy(const Grid3D& total_rho,
@@ -303,11 +256,7 @@ void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,
         compute_potential_energy(state.pm.rho, state.pm.phi, config);
 
     // Compute Solver-Specific Hydro Metrics
-    if (config.hydro_method == HydroMethod::Eulerian) {
-        compute_eulerian_metrics(*state.gas, config);
-    } else if (config.hydro_method == HydroMethod::MFM) {
-        compute_mfm_metrics(*state.mfm_gas, config);
-    }
+    compute_gas_metrics(state.gas, config);
 
     // Global System Error Metrics
     this->total_momentum = (total_momentum_dm + total_momentum_gas).norm();

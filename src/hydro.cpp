@@ -6,9 +6,9 @@
 
 #include "config.h"
 #include "debug_utils.h"
+#include "gas.h"
 #include "kernels.h"
 #include "math_utils.h"
-#include "mfm.h"
 #include "riemann.h"
 #include "thermodynamics.h"
 
@@ -18,7 +18,7 @@ namespace {  // Anonymous namespace for internal hydro helpers
 
 // Fast atomic max using Compare-and-Swap (CAS) to avoid OpenMP lock
 // overhead
-static inline void atomic_update_max(double* address, double val) {
+inline void atomic_update_max(double* address, double val) {
     uint64_t* addr_as_int = reinterpret_cast<uint64_t*>(address);
     uint64_t old_val_int = *addr_as_int;
     uint64_t new_val_int;
@@ -54,11 +54,13 @@ static inline void atomic_update_max(double* address, double val) {
 // Computes the maximum signal velocity between two particles and updates
 // their cached maximums using lock-free atomics for the CFL timestep
 // condition
-static inline void update_signal_velocities(
-    const Reconstruction::ParticleState& p_i,
-    const Reconstruction::ParticleState& p_j, double dx, double dy, double dz,
-    double r2, double gamma, double& v_sig_max_i, double& v_sig_max_j,
-    double& out_v_sig_ij_com, double& out_c_com_j) {
+inline void update_signal_velocities(const Reconstruction::ParticleState& p_i,
+                                     const Reconstruction::ParticleState& p_j,
+                                     double dx, double dy, double dz, double r2,
+                                     double gamma, double& v_sig_max_i,
+                                     double& v_sig_max_j,
+                                     double& out_v_sig_ij_com,
+                                     double& out_c_com_j) {
     double r = std::sqrt(r2);
 
     // Comoving sound speeds
@@ -92,6 +94,7 @@ static inline void update_signal_velocities(
 void compute_gradients(GasParticleSystem& gas, const Config& config) {
     if (gas.num_particles == 0) return;
     const Vec3& domain_size = config.domain_size;
+    const double max_condition_number = config.max_condition_number;
     size_t step_ill_conditioned = 0;
 
     size_t num_active = gas.get_num_active();
@@ -114,36 +117,15 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
             size_t i = gas.active_indices[k];
             neighbors.clear();
             double local_max_rel_ke = 0.0;
+            double search_sq = gas.h[i] * gas.h[i];
+            double p1_x = gas.pos_x[i];
+            double p1_y = gas.pos_y[i];
+            double p1_z = gas.pos_z[i];
 
-            int stack[128];
-            int stack_ptr = 0;
-            stack[stack_ptr++] = 0;
-
-            while (stack_ptr > 0) {
-                int node_idx = stack[--stack_ptr];
-                const BVHNode& node = gas.bvh_nodes[node_idx];
-
-                double dist_sq =
-                    min_periodic_dist_sq(gas.pos_x[i], node.bbox.min_x,
-                                         node.bbox.max_x, domain_size.x) +
-                    min_periodic_dist_sq(gas.pos_y[i], node.bbox.min_y,
-                                         node.bbox.max_y, domain_size.y) +
-                    min_periodic_dist_sq(gas.pos_z[i], node.bbox.min_z,
-                                         node.bbox.max_z, domain_size.z);
-
-                if (dist_sq > gas.h[i] * gas.h[i]) continue;
-
-                if (node.particle_idx != -1) {
-                    int j = node.particle_idx;
-
-                    double dx = periodic_displacement(
-                        gas.pos_x[j] - gas.pos_x[i], domain_size.x);
-                    double dy = periodic_displacement(
-                        gas.pos_y[j] - gas.pos_y[i], domain_size.y);
-                    double dz = periodic_displacement(
-                        gas.pos_z[j] - gas.pos_z[i], domain_size.z);
-                    double r2 = dx * dx + dy * dy + dz * dz;
-
+            LBVH::traverse(
+                gas.bvh_nodes.data(), gas.pos_x.data(), gas.pos_y.data(),
+                gas.pos_z.data(), p1_x, p1_y, p1_z, search_sq, domain_size,
+                [&](int j, double dx, double dy, double dz, double r2) {
                     if ((r2 < gas.h[i] * gas.h[i] ||
                          r2 < gas.h[j] * gas.h[j]) &&
                         r2 > 1e-24) {
@@ -158,16 +140,12 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
                             neighbors.push_back(j);
                         }
                     }
-                } else {
-                    stack[stack_ptr++] = node.left_child;
-                    stack[stack_ptr++] = node.right_child;
-                }
-            }
+                });
 
             gas.max_rel_ke[i] = local_max_rel_ke;
 
-            bool ill_conditioned =
-                (gas.cond_num[i] < 0.0 || gas.cond_num[i] > N_cond_crit);
+            bool ill_conditioned = (gas.cond_num[i] < 0.0 ||
+                                    gas.cond_num[i] > max_condition_number);
 
             Reconstruction::ParticleGradients grads =
                 Reconstruction::compute_single_particle_gradients(
@@ -186,13 +164,14 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
             }
         }
     }
-    gas.ill_conditioned_cases += step_ill_conditioned;
+    gas.diag.ill_conditioned += step_ill_conditioned;
 }
 
 // Solve the Riemann problem between neighbors and update hydro_acc and du_dt
 void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
     if (gas.num_particles == 0) return;
     const Vec3& domain_size = config.domain_size;
+    const double max_condition_number = config.max_condition_number;
 
     size_t num_active = gas.get_num_active();
     if (num_active == 0) return;
@@ -235,47 +214,24 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
         grad_i.grad_vy = gas.grad_vy[i];
         grad_i.grad_vz = gas.grad_vz[i];
         grad_i.ill_conditioned =
-            (gas.cond_num[i] < 0.0 || gas.cond_num[i] > N_cond_crit);
+            (gas.cond_num[i] < 0.0 || gas.cond_num[i] > max_condition_number);
 
-        int stack[128];
-        int stack_ptr = 0;
-        stack[stack_ptr++] = 0;
-
-        while (stack_ptr > 0) {
-            int node_idx = stack[--stack_ptr];
-            const BVHNode& node = gas.bvh_nodes[node_idx];
-
-            double dist_sq =
-                min_periodic_dist_sq(p_i.pos.x(), node.bbox.min_x,
-                                     node.bbox.max_x, domain_size.x) +
-                min_periodic_dist_sq(p_i.pos.y(), node.bbox.min_y,
-                                     node.bbox.max_y, domain_size.y) +
-                min_periodic_dist_sq(p_i.pos.z(), node.bbox.min_z,
-                                     node.bbox.max_z, domain_size.z);
-
-            if (dist_sq > p_i.h * p_i.h) continue;
-
-            if (node.particle_idx != -1) {
-                int j = node.particle_idx;
+        double search_sq = p_i.h * p_i.h;
+        LBVH::traverse(
+            gas.bvh_nodes.data(), gas.pos_x.data(), gas.pos_y.data(),
+            gas.pos_z.data(), p_i.pos.x(), p_i.pos.y(), p_i.pos.z(), search_sq,
+            domain_size,
+            [&](int j, double dx, double dy, double dz, double r2) {
+                if (r2 < 1e-24) return;
 
                 // Maintain N3L conservation for active pairs, but ensure
                 // inactive neighbors are always processed by the active
                 // particle
-                if (gas.is_active[j] && j <= static_cast<int>(i)) continue;
-
-                double dx = periodic_displacement(gas.pos_x[j] - p_i.pos.x(),
-                                                  domain_size.x);
-                double dy = periodic_displacement(gas.pos_y[j] - p_i.pos.y(),
-                                                  domain_size.y);
-                double dz = periodic_displacement(gas.pos_z[j] - p_i.pos.z(),
-                                                  domain_size.z);
-                double r2 = dx * dx + dy * dy + dz * dz;
-
-                if (r2 < 1e-24) continue;
+                if (gas.is_active[j] && j <= static_cast<int>(i)) return;
 
                 // Particles interact if they fall within either smoothing
                 // length
-                if (r2 < p_i.h * p_i.h || r2 < gas.h[j] * gas.h[j]) {
+                if (r2 < search_sq || r2 < gas.h[j] * gas.h[j]) {
                     Reconstruction::ParticleState p_j;
                     p_j.pos = Eigen::Vector3d(gas.pos_x[j], gas.pos_y[j],
                                               gas.pos_z[j]);
@@ -293,8 +249,9 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                     grad_j.grad_vx = gas.grad_vx[j];
                     grad_j.grad_vy = gas.grad_vy[j];
                     grad_j.grad_vz = gas.grad_vz[j];
-                    grad_j.ill_conditioned = (gas.cond_num[j] < 0.0 ||
-                                              gas.cond_num[j] > N_cond_crit);
+                    grad_j.ill_conditioned =
+                        (gas.cond_num[j] < 0.0 ||
+                         gas.cond_num[j] > max_condition_number);
 
                     // Solver pipeline
                     Reconstruction::ReconstructedFace face =
@@ -302,7 +259,7 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                             p_i, grad_i, p_j, grad_j, gas.B_matrix[i],
                             gas.B_matrix[j], config, pressure_floor);
 
-                    if (!face.is_valid) continue;
+                    if (!face.is_valid) return;
                     if (face.used_sph_fallback) step_sph_fallbacks++;
 
 #ifdef USE_MIDPOINT_QUADRATURE
@@ -371,7 +328,7 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                         P_star_com * v_star_lab.dot(face.area_vec);
                     double de_dt_i = -Rate_energy / p_i.mass;
 
-                    // Apply the flux to the active particle 'i'
+                // Apply the flux to the active particle 'i'
 #pragma omp atomic
                     gas.hydro_acc_x[i] -= Force_mom.x() / p_i.mass;
 #pragma omp atomic
@@ -420,14 +377,10 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                         }
                     }
                 }
-            } else {
-                stack[stack_ptr++] = node.left_child;
-                stack[stack_ptr++] = node.right_child;
-            }
-        }
+            });
     }
-    gas.sph_fallback_cases += step_sph_fallbacks;
-    gas.riemann_failed_cases += riemann_failed_cases;
+    gas.diag.sph_fallback += step_sph_fallbacks;
+    gas.diag.riemann_failed += riemann_failed_cases;
 
     // For sod test, keep boundaries static
     if (config.initial_setup == InitialSetup::SodShockTube) {
@@ -450,9 +403,8 @@ void step(GasParticleSystem& gas, const Config& config, double a) {
     compute_forces(gas, config, a);
 }
 
-double get_timestep(GasParticleSystem& gas, const Config& config) {
-    if (config.hydro_method != HydroMethod::MFM || gas.num_particles == 0 ||
-        config.individual_particle_timesteps) {
+double get_timestep(const GasParticleSystem& gas, const Config& config) {
+    if (gas.num_particles == 0 || config.individual_particle_timesteps) {
         return std::numeric_limits<double>::infinity();
     }
 

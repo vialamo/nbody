@@ -5,59 +5,14 @@
 #include "config.h"
 #include "state.h"
 
-PM::PM(const Config& config)
-    : rho(config.mesh_size),
-      phi(config.mesh_size),
-      acc_x(config.mesh_size),
-      acc_y(config.mesh_size),
-      acc_z(config.mesh_size) {
-    acc_x.setZero();
-    acc_y.setZero();
-    acc_z.setZero();
-
-    if (config.use_PM) {
-        int Nx = config.mesh_size.x;
-        int Ny = config.mesh_size.y;
-        int Nz = config.mesh_size.z;
-
-        // Allocate complex frequency-domain arrays
-        size_t complex_size = static_cast<size_t>(Nx) * Ny * (Nz / 2 + 1);
-        rho_k.resize(complex_size);
-        phi_k.resize(complex_size);
-
-        // Initialize FFTW OpenMP/Thread support
-        fftw_init_threads();
-        fftw_plan_with_nthreads(omp_get_max_threads());
-
-        fftw_complex* rho_k_fftw =
-            reinterpret_cast<fftw_complex*>(rho_k.data());
-        fftw_complex* phi_k_fftw =
-            reinterpret_cast<fftw_complex*>(phi_k.data());
-
-        // Create the plans and bind them to the grid memory addresses
-        forward_plan = fftw_plan_dft_r2c_3d(Nx, Ny, Nz,
-                                            const_cast<double*>(rho.raw_data()),
-                                            rho_k_fftw, FFTW_ESTIMATE);
-
-        backward_plan = fftw_plan_dft_c2r_3d(
-            Nx, Ny, Nz, phi_k_fftw, const_cast<double*>(phi.raw_data()),
-            FFTW_ESTIMATE);
-    }
-}
-
-PM::~PM() {
-    if (forward_plan) fftw_destroy_plan(forward_plan);
-    if (backward_plan) fftw_destroy_plan(backward_plan);
-    fftw_cleanup_threads();
-}
-
-static void bin_and_add_mass(const Config& config, size_t num_particles,
-                             const std::vector<double>& pos_x,
-                             const std::vector<double>& pos_y,
-                             const std::vector<double>& pos_z,
-                             const std::vector<double>& mass,
-                             std::vector<CIC_Data>& out_cic_data,
-                             Grid3D& out_rho_grid) {
+namespace {
+void bin_and_add_mass(const Config& config, size_t num_particles,
+                      const std::vector<double>& pos_x,
+                      const std::vector<double>& pos_y,
+                      const std::vector<double>& pos_z,
+                      const std::vector<double>& mass,
+                      std::vector<CIC_Data>& out_cic_data,
+                      Grid3D& out_rho_grid) {
     if (num_particles == 0) return;
 
     out_cic_data.assign(num_particles, {});
@@ -123,33 +78,12 @@ static void bin_and_add_mass(const Config& config, size_t num_particles,
     }
 }
 
-void PM::bin_and_assign_mass(SimState& state, const Config& config) {
-    rho.setZero();
-
-    ParticleSystem& dm = state.dm;
-    bin_and_add_mass(config, dm.num_particles, dm.pos_x, dm.pos_y, dm.pos_z,
-                     dm.mass, dm.cic_data, rho);
-
-    if (config.hydro_method == HydroMethod::MFM) {
-        GasParticleSystem& gas = *state.mfm_gas;
-        bin_and_add_mass(config, gas.num_particles, gas.pos_x, gas.pos_y,
-                         gas.pos_z, gas.mass, gas.cic_data, rho);
-    }
-
-    rho.data /= config.cell_volume;
-
-    if (config.hydro_method == HydroMethod::Eulerian) {
-        rho.data += state.gas->get_density().data;
-    }
-}
-
-static void interpolate_forces(const Config& config, size_t num_particles,
-                               const std::vector<CIC_Data>& cic_data,
-                               const Grid3D& ax_grid, const Grid3D& ay_grid,
-                               const Grid3D& az_grid,
-                               std::vector<double>& acc_x,
-                               std::vector<double>& acc_y,
-                               std::vector<double>& acc_z) {
+void interpolate_forces(const Config& config, size_t num_particles,
+                        const std::vector<CIC_Data>& cic_data,
+                        const Grid3D& ax_grid, const Grid3D& ay_grid,
+                        const Grid3D& az_grid, std::vector<double>& acc_x,
+                        std::vector<double>& acc_y,
+                        std::vector<double>& acc_z) {
     if (num_particles == 0) return;
 
     const int Nx = config.mesh_size.x;
@@ -181,17 +115,76 @@ static void interpolate_forces(const Config& config, size_t num_particles,
         acc_z[i] = interp(az_grid);
     }
 }
+}  // namespace
+
+PM::PM(const Config& config)
+    : rho(config.mesh_size),
+      phi(config.mesh_size),
+      acc_x(config.mesh_size),
+      acc_y(config.mesh_size),
+      acc_z(config.mesh_size) {
+    acc_x.setZero();
+    acc_y.setZero();
+    acc_z.setZero();
+
+    if (config.use_PM) {
+        int Nx = config.mesh_size.x;
+        int Ny = config.mesh_size.y;
+        int Nz = config.mesh_size.z;
+
+        // Allocate complex frequency-domain arrays
+        size_t complex_size = static_cast<size_t>(Nx) * Ny * (Nz / 2 + 1);
+        rho_k.resize(complex_size);
+        phi_k.resize(complex_size);
+
+        // Initialize FFTW OpenMP/Thread support
+        fftw_init_threads();
+        fftw_plan_with_nthreads(omp_get_max_threads());
+
+        fftw_complex* rho_k_fftw =
+            reinterpret_cast<fftw_complex*>(rho_k.data());
+        fftw_complex* phi_k_fftw =
+            reinterpret_cast<fftw_complex*>(phi_k.data());
+
+        // Create the plans and bind them to the grid memory addresses
+        forward_plan = fftw_plan_dft_r2c_3d(Nx, Ny, Nz,
+                                            const_cast<double*>(rho.raw_data()),
+                                            rho_k_fftw, FFTW_ESTIMATE);
+
+        backward_plan = fftw_plan_dft_c2r_3d(
+            Nx, Ny, Nz, phi_k_fftw, const_cast<double*>(phi.raw_data()),
+            FFTW_ESTIMATE);
+    }
+}
+
+PM::~PM() {
+    if (forward_plan) fftw_destroy_plan(forward_plan);
+    if (backward_plan) fftw_destroy_plan(backward_plan);
+    fftw_cleanup_threads();
+}
+
+void PM::bin_and_assign_mass(SimState& state, const Config& config) {
+    rho.setZero();
+
+    ParticleSystem& dm = state.dm;
+    bin_and_add_mass(config, dm.num_particles, dm.pos_x, dm.pos_y, dm.pos_z,
+                     dm.mass, dm.cic_data, rho);
+
+    GasParticleSystem& gas = state.gas;
+    bin_and_add_mass(config, gas.num_particles, gas.pos_x, gas.pos_y, gas.pos_z,
+                     gas.mass, gas.cic_data, rho);
+
+    rho.data /= config.cell_volume;
+}
 
 void PM::interpolate_forces(SimState& state, const Config& config) {
     ParticleSystem& dm = state.dm;
     ::interpolate_forces(config, dm.num_particles, dm.cic_data, acc_x, acc_y,
                          acc_z, dm.acc_x, dm.acc_y, dm.acc_z);
 
-    if (config.hydro_method == HydroMethod::MFM) {
-        GasParticleSystem& gas = *state.mfm_gas;
-        ::interpolate_forces(config, gas.num_particles, gas.cic_data, acc_x,
-                             acc_y, acc_z, gas.acc_x, gas.acc_y, gas.acc_z);
-    }
+    GasParticleSystem& gas = state.gas;
+    ::interpolate_forces(config, gas.num_particles, gas.cic_data, acc_x, acc_y,
+                         acc_z, gas.acc_x, gas.acc_y, gas.acc_z);
 }
 
 void PM::compute_acceleration(SimState& state, const Config& config) {

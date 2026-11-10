@@ -3,7 +3,8 @@
 #include <cstdint>
 #include <vector>
 
-struct Vec3;
+#include "math_utils.h"
+#include "types.h"
 
 struct BoundingBox {
     double min_x, min_y, min_z;
@@ -50,6 +51,54 @@ void update_h_and_bboxes(size_t num_particles, const std::vector<double>& pos_x,
                          const std::vector<double>& pos_z,
                          const std::vector<double>& h,
                          std::vector<BVHNode>& bvh_nodes);
+
+#ifdef USE_GPU
+#pragma omp declare target
+#endif
+template <typename LeafOperation>
+inline void traverse(const BVHNode* bvh_nodes, const double* target_pos_x,
+                     const double* target_pos_y, const double* target_pos_z,
+                     double px, double py, double pz, double search_sq,
+                     const Vec3& domain_size, LeafOperation&& leaf_op) {
+    int stack[128];
+    int stack_ptr = 0;
+    stack[stack_ptr++] = 0;
+
+    while (stack_ptr > 0) {
+        int node_idx = stack[--stack_ptr];
+        const BVHNode& node = bvh_nodes[node_idx];
+
+        double dist_sq = min_periodic_dist_sq(px, node.bbox.min_x,
+                                              node.bbox.max_x, domain_size.x) +
+                         min_periodic_dist_sq(py, node.bbox.min_y,
+                                              node.bbox.max_y, domain_size.y) +
+                         min_periodic_dist_sq(pz, node.bbox.min_z,
+                                              node.bbox.max_z, domain_size.z);
+
+        if (dist_sq > search_sq) continue;
+
+        if (node.particle_idx != -1) {
+            int j = node.particle_idx;
+
+            double dx =
+                periodic_displacement(target_pos_x[j] - px, domain_size.x);
+            double dy =
+                periodic_displacement(target_pos_y[j] - py, domain_size.y);
+            double dz =
+                periodic_displacement(target_pos_z[j] - pz, domain_size.z);
+            double r2 = dx * dx + dy * dy + dz * dz;
+
+            // Call the lambda
+            leaf_op(j, dx, dy, dz, r2);
+        } else {
+            stack[stack_ptr++] = node.left_child;
+            stack[stack_ptr++] = node.right_child;
+        }
+    }
+}
+#ifdef USE_GPU
+#pragma omp end declare target
+#endif
 
 // GPU specific versions
 #ifdef GRAVITY_GPU_MEMORY

@@ -11,18 +11,19 @@
 #include "config.h"
 #include "diagnostics.h"
 
+namespace {
 // Returns the Peak Resident Set Size (RSS) in Megabytes
-static double get_peak_memory_usage_MB() {
+double get_peak_memory_usage_MB() {
     struct rusage usage;
     getrusage(RUSAGE_SELF, &usage);
 
     // On Linux, ru_maxrss is returned in Kilobytes.
-    // Divide by 1024 to get Megabytes.
+    // Divide by 1024 to get Megabytes
     return static_cast<double>(usage.ru_maxrss) / 1024.0;
 }
 
 // Returns the Current Resident Set Size (RSS) in Megabytes
-static double get_current_memory_usage_MB() {
+double get_current_memory_usage_MB() {
     // /proc/self/statm contains memory stats for the current process
     std::ifstream statm("/proc/self/statm");
     if (!statm.is_open()) {
@@ -36,12 +37,13 @@ static double get_current_memory_usage_MB() {
     statm.close();
 
     // Linux allocates memory in "pages" (usually 4096 bytes).
-    // We multiply the page count by the page size to get total bytes.
+    // Multiply the page count by the page size to get total bytes
     long page_size_bytes = sysconf(_SC_PAGESIZE);
 
     // Convert bytes to Megabytes
     return static_cast<double>(rss_pages * page_size_bytes) / (1024.0 * 1024.0);
 }
+}  // namespace
 
 std::string Logger::format_double(double val, int precision, bool scientific) {
     std::stringstream ss;
@@ -132,10 +134,10 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
                  << diag.get_average(TimerRegion::Tree) << ","
                  << diag.get_average(TimerRegion::Density) << ","
                  << diag.get_io_time() << "," << wall_time_s << ","
-                 << diag.get_prof_average(ProfRegion::Transf) / 1000.0 << ","
-                 << diag.get_prof_average(ProfRegion::Ret) / 1000.0 << ","
-                 << diag.get_prof_average(ProfRegion::Compute) / 1000.0 << ","
-                 << peak_mem << "," << curr_mem << "\n";
+                 << diag.get_prof_average(GPUProfRegion::Transf) / 1000.0 << ","
+                 << diag.get_prof_average(GPUProfRegion::Ret) / 1000.0 << ","
+                 << diag.get_prof_average(GPUProfRegion::Compute) / 1000.0
+                 << "," << peak_mem << "," << curr_mem << "\n";
     }
 
     // Write to stdout
@@ -149,21 +151,20 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
     std::cout << "    - Mass Err: " << format_double(diag.mass_err, 1, true)
               << " | Momentum: " << format_double(diag.total_momentum, 1, true)
               << " | DM Err: " << format_double(diag.dm_energy_err, 1, true)
-              << " | Gas Err: " << format_double(diag.energy_err, 1, true)
+              << " | Gas Err: " << format_double(diag.gas_energy_err, 1, true)
               << "\n";
-    if (conf.hydro_method == HydroMethod::MFM) {
-        double flux_err = std::max(abs(diag.MFM_flux_energy_error),
-                                   diag.MFM_flux_momentum_error);
-        std::cout << "    - Vol Err: "
-                  << format_double(diag.volume_error, 1, true)
-                  << " | Flux Err: " << format_double(flux_err, 1, true)
-                  << " | Ill: " << format_double(diag.MFM_ill_percent, 1, true)
-                  << "% | Clamp: "
-                  << format_double(diag.MFM_clamp_percent, 1, true)
-                  // << "% | Incr: "
-                  // << format_double(diag.MFM_inc_percent, 1, false)
-                  << "%\n";
-    }
+
+    double flux_err =
+        std::max(abs(diag.MFM_flux_energy_error), diag.MFM_flux_momentum_error);
+    std::cout << "    - Vol Err: " << format_double(diag.volume_error, 1, true)
+              << " | Flux Err: " << format_double(flux_err, 1, true)
+              << " | Ill: " << format_double(diag.MFM_ill_percent, 1, true)
+              << "% | Clamp: "
+              << format_double(diag.MFM_clamp_percent, 1, true)
+              // << "% | Incr: "
+              // << format_double(diag.MFM_inc_percent, 1, false)
+              << "%\n";
+
     std::cout << "    - Softening: "
               << format_double(diag.softening_length, 2, true)
               << " | Physical softening (mpc): "
@@ -199,28 +200,30 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
               << "\n"
               << "    - I/O Spike: "
               << format_double(diag.get_io_time() * 1000.0, 0) << "\n";
-    if (diag.get_prof_average(ProfRegion::Compute) > 0.0) {
+    if (diag.get_prof_average(GPUProfRegion::Compute) > 0.0) {
         std::cout << "    - GPU Transfer: "
                   << format_double(
-                         diag.get_prof_average(ProfRegion::Transf) / 1000.0, 1)
+                         diag.get_prof_average(GPUProfRegion::Transf) / 1000.0,
+                         1)
                   << " | Return: "
                   << format_double(
-                         diag.get_prof_average(ProfRegion::Ret) / 1000.0, 1)
+                         diag.get_prof_average(GPUProfRegion::Ret) / 1000.0, 1)
                   << " | Compute: "
                   << format_double(
-                         diag.get_prof_average(ProfRegion::Compute) / 1000.0, 1)
+                         diag.get_prof_average(GPUProfRegion::Compute) / 1000.0,
+                         1)
                   << " | Tree: "
                   << format_double(
-                         diag.get_prof_average(ProfRegion::Tree) / 1000.0, 1)
+                         diag.get_prof_average(GPUProfRegion::Tree) / 1000.0, 1)
                   << "\n";
     }
     std::cout << "-------------------------------------------------------------"
                  "---------"
               << "\n";
 
-    if (diag.non_converged_cooling_cells > 0) {
+    if (diag.non_converged_cooling_particles > 0) {
         std::cout << "  [WARNING] Cooling solver failed to converge in "
-                  << diag.non_converged_cooling_cells << " cells\n";
+                  << diag.non_converged_cooling_particles << " particles\n";
     }
     if (diag.MFM_h_non_converged_cases > 0) {
         std::cout << "  [WARNING] MFM h non converged cases: "
@@ -248,8 +251,6 @@ void Logger::print_startup_info(const Config& config) {
     std::cout << "G = " << config.G << "\n" << std::endl;
 
     std::cout << "Mesh Size = " << config.mesh_size_1d << "\n";
-    std::cout << "Hydro Mode = " << HydroConfig::to_string(config.hydro_method)
-              << "\n";
     std::cout << "Initial Setup = "
               << InitialConfig::to_string(config.initial_setup) << "\n";
     if (config.individual_particle_timesteps) {

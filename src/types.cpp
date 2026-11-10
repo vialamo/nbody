@@ -3,8 +3,7 @@
 #include <omp.h>
 
 Grid3D Grid3D::roll(int shift, int axis) const {
-    Grid3D res(Vec3{static_cast<double>(nx), static_cast<double>(ny),
-                    static_cast<double>(nz)});
+    Grid3D res(Vec3i{nx, ny, nz});
 
 // Collapse flattens the 3 nested loops into 1 for thread distribution
 #pragma omp parallel for collapse(3)

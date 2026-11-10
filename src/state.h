@@ -5,7 +5,6 @@
 #include "cooling.h"
 #include "gas.h"
 #include "gravity.h"
-#include "mfm.h"
 #include "particles.h"
 #include "pm.h"
 #include "types.h"
@@ -16,8 +15,7 @@ struct SimState {
     double hubble_param = 0.0;
 
     ParticleSystem dm;
-    std::unique_ptr<GasGrid> gas;
-    std::unique_ptr<GasParticleSystem> mfm_gas;
+    GasParticleSystem gas;
     Cooling cooling;
     PM pm;
     GravitySolver gravity;

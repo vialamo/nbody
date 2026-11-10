@@ -1,7 +1,7 @@
 #include "thermodynamics.h"
 
+#include "gas.h"
 #include "integrator.h"
-#include "mfm.h"
 
 namespace Thermodynamics {
 
@@ -43,7 +43,7 @@ void initialize_primitive_variables(GasParticleSystem& gas,
         gas.pressure[i] = gamma_minus_1 * gas.rho[i] * u_temp;
     }
 
-    gas.accumulated_photoheating_energy += step_floor_heating;
+    gas.budget.photoheated += step_floor_heating;
 }
 
 void predict_primitive_variables(GasParticleSystem& gas, const Config& config,
@@ -122,34 +122,40 @@ void kick_particle_thermodynamics(GasParticleSystem& gas, size_t i,
 
     double u_cons = e_tot_post - ke_spec_new;
 
-    // Gravity Noise Thresholding
-    double a_grav_mag =
-        std::sqrt(gas.acc_x[i] * gas.acc_x[i] + gas.acc_y[i] * gas.acc_y[i] +
-                  gas.acc_z[i] * gas.acc_z[i]);
-    double delta_E_grav = a_grav_mag * gas.h[i];
+    if (dt > 0.0) {
+        // Gravity Noise Thresholding
+        double a_grav_mag = std::sqrt(gas.acc_x[i] * gas.acc_x[i] +
+                                      gas.acc_y[i] * gas.acc_y[i] +
+                                      gas.acc_z[i] * gas.acc_z[i]);
+        double delta_E_grav = a_grav_mag * gas.h[i];
 
-    // Arbitration (DEF & Entropy Switch)
-    double thresh_trunc = config.dual_energy_threshold * ke_spec_new;
-    double thresh_kin =
-        config.entropy_switch_akin * (gas.max_rel_ke[i] + u_raw);
-    double thresh_grav = config.entropy_switch_agrav * delta_E_grav;
+        // Arbitration (DEF & Entropy Switch)
+        double thresh_trunc = config.dual_energy_threshold * ke_spec_new;
+        double thresh_kin =
+            config.entropy_switch_akin * (gas.max_rel_ke[i] + u_raw);
+        double thresh_grav = config.entropy_switch_agrav * delta_E_grav;
 
-    if (u_raw < thresh_kin || u_raw < thresh_grav) {
-        // ENTROPY FALLBACK: Revert to pristine adiabatic state
-        double u_clean =
-            gas.entropy[i] * std::pow(rho, gamma_minus_1) / gamma_minus_1;
-        u_clean -= (u_clean * expansion_factor);
+        if (u_raw < thresh_kin || u_raw < thresh_grav) {
+            // ENTROPY FALLBACK: Revert to pristine adiabatic state
+            double u_clean =
+                gas.entropy[i] * std::pow(rho, gamma_minus_1) / gamma_minus_1;
+            u_clean -= (u_clean * expansion_factor);
 
-        work.switch_energy = (u_clean - u_raw) * m;
-        gas.u[i] = std::max(u_clean, min_energy);
-        gas.total_energy[i] = gas.u[i] + ke_spec_new;
-    } else if (u_cons < thresh_trunc) {
-        // DUAL ENERGY FORMALISM: Trust explicit integration
-        work.switch_energy = (u_raw - u_cons) * m;
-        gas.u[i] = u_raw;
-        gas.total_energy[i] = gas.u[i] + ke_spec_new;
+            work.switch_energy = (u_clean - u_raw) * m;
+            gas.u[i] = std::max(u_clean, min_energy);
+            gas.total_energy[i] = gas.u[i] + ke_spec_new;
+        } else if (u_cons < thresh_trunc) {
+            // DUAL ENERGY FORMALISM: Trust explicit integration
+            work.switch_energy = (u_raw - u_cons) * m;
+            gas.u[i] = u_raw;
+            gas.total_energy[i] = gas.u[i] + ke_spec_new;
+        } else {
+            // NORMAL REGIME: Trust conservative integration
+            gas.u[i] = std::max(u_cons, min_energy);
+            gas.total_energy[i] = e_tot_post;
+        }
     } else {
-        // NORMAL REGIME: Trust conservative integration
+        // When undoing a kick, trust the rewound values without clamping
         gas.u[i] = std::max(u_cons, min_energy);
         gas.total_energy[i] = e_tot_post;
     }

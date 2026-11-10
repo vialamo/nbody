@@ -10,11 +10,12 @@
 
 // #define SINGLE_PRECISION_TRANSCENDENTALS
 
+namespace {
 #ifdef USE_GPU
 #pragma omp declare target
 #endif
-static inline double compute_pm_taper(double r, double inv_two_r_s,
-                                      double taper_coeff) {
+inline double compute_pm_taper(double r, double inv_two_r_s,
+                               double taper_coeff) {
     double r_scaled = r * inv_two_r_s;
 #ifdef SINGLE_PRECISION_TRANSCENDENTALS
     return erfcf(static_cast<float>(r_scaled)) +
@@ -27,12 +28,13 @@ static inline double compute_pm_taper(double r, double inv_two_r_s,
 #ifdef USE_GPU
 #pragma omp end declare target
 #endif
+}  // namespace
 
 #ifdef GRAVITY_GPU_MEMORY
-void GravitySolver::prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
+void GravitySolver::prepare_arrays(ParticleSystem& dm, GasParticleSystem& gas,
                                    const Config& config, Diagnostics& diag) {
     size_t n_dm = dm.num_particles;
-    size_t n_gas = gas ? gas->num_particles : 0;
+    size_t n_gas = gas.num_particles;
     size_t n_total = n_dm + n_gas;
 
     if (n_total == 0) return;
@@ -142,12 +144,12 @@ void GravitySolver::prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
         loc_u_is_active[i] = d_dm_is_active[i];
     }
 
-    if (gas && n_gas > 0) {
-        double* d_gas_px = gas->pos_x.data();
-        double* d_gas_py = gas->pos_y.data();
-        double* d_gas_pz = gas->pos_z.data();
-        double* d_gas_m = gas->mass.data();
-        uint8_t* d_gas_is_active = gas->is_active.data();
+    if (n_gas > 0) {
+        double* d_gas_px = gas.pos_x.data();
+        double* d_gas_py = gas.pos_y.data();
+        double* d_gas_pz = gas.pos_z.data();
+        double* d_gas_m = gas.mass.data();
+        uint8_t* d_gas_is_active = gas.is_active.data();
 
 #pragma omp target teams distribute parallel for is_device_ptr(             \
         loc_u_px, loc_u_py, loc_u_pz, loc_u_m, loc_u_orig_idx, loc_u_type)  \
@@ -234,11 +236,11 @@ void GravitySolver::prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
     auto t_tree = std::chrono::high_resolution_clock::now();
 
     // Log the times to diagnostics
-    diag.add_prof_time(ProfRegion::Transf,
+    diag.add_prof_time(GPUProfRegion::Transf,
                        std::chrono::duration_cast<std::chrono::microseconds>(
                            t_transfer - t_start)
                            .count());
-    diag.add_prof_time(ProfRegion::Tree,
+    diag.add_prof_time(GPUProfRegion::Tree,
                        std::chrono::duration_cast<std::chrono::microseconds>(
                            t_tree - t_transfer)
                            .count());
@@ -247,11 +249,11 @@ void GravitySolver::prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
 #endif
 
 // Map accelerations back to native structures
-void GravitySolver::map_results(ParticleSystem& dm, GasParticleSystem* gas,
+void GravitySolver::map_results(ParticleSystem& dm, GasParticleSystem& gas,
                                 Diagnostics& diag) {
 #ifdef GRAVITY_GPU_MEMORY
     size_t n_dm = dm.num_particles;
-    size_t n_gas = gas ? gas->num_particles : 0;
+    size_t n_gas = gas.num_particles;
     size_t n_active = u_active_indices.size();
 
     if (n_active == 0) return;
@@ -285,9 +287,9 @@ void GravitySolver::map_results(ParticleSystem& dm, GasParticleSystem* gas,
         }
 
         if (n_gas > 0) {
-            double* d_gas_ax = gas->acc_x.data();
-            double* d_gas_ay = gas->acc_y.data();
-            double* d_gas_az = gas->acc_z.data();
+            double* d_gas_ax = gas.acc_x.data();
+            double* d_gas_ay = gas.acc_y.data();
+            double* d_gas_az = gas.acc_z.data();
 
 #pragma omp target teams distribute parallel for map(      \
         tofrom : d_gas_ax[0 : n_gas], d_gas_ay[0 : n_gas], \
@@ -306,7 +308,7 @@ void GravitySolver::map_results(ParticleSystem& dm, GasParticleSystem* gas,
     }
 
     auto end_return = std::chrono::high_resolution_clock::now();
-    diag.add_prof_time(ProfRegion::Ret,
+    diag.add_prof_time(GPUProfRegion::Ret,
                        std::chrono::duration_cast<std::chrono::microseconds>(
                            end_return - start_return)
                            .count());
@@ -314,11 +316,11 @@ void GravitySolver::map_results(ParticleSystem& dm, GasParticleSystem* gas,
 }
 
 #ifdef GRAVITY_GPU_MEMORY
-void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
+void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
                                  double a, const Config& config,
                                  Diagnostics& diag) {
     size_t n_dm = dm.num_particles;
-    size_t n_gas = gas ? gas->num_particles : 0;
+    size_t n_gas = gas.num_particles;
     size_t n_total = n_dm + n_gas;
 
     if (n_total == 0) return;
@@ -330,9 +332,6 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
 
     // Shared Force Constants
     const Vec3& domain_size = config.domain_size;
-    const double half_domain_x = 0.5 * domain_size.x;
-    const double half_domain_y = 0.5 * domain_size.y;
-    const double half_domain_z = 0.5 * domain_size.z;
     const double G = config.G / (a * a * a);
     const double r_s = config.PM_smoothing_cells * config.cell_size;
     const bool use_pm = config.use_PM;
@@ -363,81 +362,47 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
 
         double p1_x = d_px[i], p1_y = d_py[i], p1_z = d_pz[i];
         double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
-        int stack[128];
-        int stack_ptr = 0;
-        stack[stack_ptr++] = 0;
 
-        while (stack_ptr > 0) {
-            int node_idx = stack[--stack_ptr];
-            const BVHNode& node = d_bvh[node_idx];
+        LBVH::traverse(
+            d_bvh, d_px, d_py, d_pz, p1_x, p1_y, p1_z, search_sq, domain_size,
+            [=, &local_acc_x, &local_acc_y, &local_acc_z](
+                int j, double dx, double dy, double dz, double r2) {
+                if (r2 < search_sq) {
+                    double r = std::sqrt(r2 + 1e-24);
+                    double m_j = d_m[j];
 
-            double aabb_dist_sq =
-                min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
-                                     domain_size.x) +
-                min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
-                                     domain_size.y) +
-                min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
-                                     domain_size.z);
+                    double dphi_dr = Kernels::gravity_derivatives(r, epsilon);
+                    double force_mag_over_r = G * dphi_dr / r;
 
-            if (aabb_dist_sq > search_sq) continue;
+                    if (use_pm) {
+                        force_mag_over_r *=
+                            compute_pm_taper(r, inv_two_r_s, taper_coeff);
+                    }
 
-            if (node.particle_idx != -1) {
-                int j = node.particle_idx;
-
-                double dx = periodic_displacement(d_px[j] - p1_x, domain_size.x,
-                                                  half_domain_x);
-                double dy = periodic_displacement(d_py[j] - p1_y, domain_size.y,
-                                                  half_domain_y);
-                double dz = periodic_displacement(d_pz[j] - p1_z, domain_size.z,
-                                                  half_domain_z);
-
-                double dist_sq = dx * dx + dy * dy + dz * dz;
-
-                if (dist_sq > search_sq) continue;
-
-                double r = std::sqrt(dist_sq + 1e-24);
-                double m_j = d_m[j];
-
-                double dphi_dr = Kernels::gravity_derivatives(r, epsilon);
-                double force_mag_over_r = G * dphi_dr / r;
-
-                if (use_pm) {
-                    force_mag_over_r *=
-                        compute_pm_taper(r, inv_two_r_s, taper_coeff);
+                    local_acc_x += force_mag_over_r * m_j * dx;
+                    local_acc_y += force_mag_over_r * m_j * dy;
+                    local_acc_z += force_mag_over_r * m_j * dz;
                 }
-
-                local_acc_x += force_mag_over_r * m_j * dx;
-                local_acc_y += force_mag_over_r * m_j * dy;
-                local_acc_z += force_mag_over_r * m_j * dz;
-            } else {
-                stack[stack_ptr++] = node.left_child;
-                stack[stack_ptr++] = node.right_child;
-            }
-        }
+            });
         d_ax[i] += local_acc_x;
         d_ay[i] += local_acc_y;
         d_az[i] += local_acc_z;
     }
 
     auto end_compute = std::chrono::high_resolution_clock::now();
-    diag.add_prof_time(ProfRegion::Compute,
+    diag.add_prof_time(GPUProfRegion::Compute,
                        std::chrono::duration_cast<std::chrono::microseconds>(
                            end_compute - start_compute)
                            .count());
 }
 
 #else
-void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
+void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
                                  double a, const Config& config,
                                  Diagnostics& diag) {
-    if (dm.num_particles == 0 &&
-        (gas == nullptr || (gas && gas->num_particles == 0)))
-        return;
+    if (dm.num_particles == 0 && gas.num_particles == 0) return;
 
     const Vec3& domain_size = config.domain_size;
-    const double half_domain_x = 0.5 * domain_size.x;
-    const double half_domain_y = 0.5 * domain_size.y;
-    const double half_domain_z = 0.5 * domain_size.z;
     const double G = config.G / (a * a * a);
     const double r_s = config.PM_smoothing_cells * config.cell_size;
     const bool use_pm = config.use_PM;
@@ -452,9 +417,9 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
     const size_t dm_num_nodes = (n_dm > 0) ? (2 * n_dm - 1) : 0;
     const size_t n_dm_active = dm.get_num_active();
 
-    const size_t n_gas = gas ? gas->num_particles : 0;
+    const size_t n_gas = gas.num_particles;
     const size_t gas_num_nodes = (n_gas > 0) ? (2 * n_gas - 1) : 0;
-    const size_t n_gas_active = gas ? gas->get_num_active() : 0;
+    const size_t n_gas_active = gas.get_num_active();
 
     // Extract DM pointers
     double* d_dm_px = dm.pos_x.data();
@@ -468,15 +433,15 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
     int* d_dm_active_idx = dm.active_indices.data();
 
     // Extract Gas pointers
-    double* d_gas_px = gas ? gas->pos_x.data() : nullptr;
-    double* d_gas_py = gas ? gas->pos_y.data() : nullptr;
-    double* d_gas_pz = gas ? gas->pos_z.data() : nullptr;
-    double* d_gas_m = gas ? gas->mass.data() : nullptr;
-    double* d_gas_ax = gas ? gas->acc_x.data() : nullptr;
-    double* d_gas_ay = gas ? gas->acc_y.data() : nullptr;
-    double* d_gas_az = gas ? gas->acc_z.data() : nullptr;
-    BVHNode* d_gas_bvh = gas ? gas->bvh_nodes.data() : nullptr;
-    int* d_gas_active_idx = gas ? gas->active_indices.data() : nullptr;
+    double* d_gas_px = gas.pos_x.data();
+    double* d_gas_py = gas.pos_y.data();
+    double* d_gas_pz = gas.pos_z.data();
+    double* d_gas_m = gas.mass.data();
+    double* d_gas_ax = gas.acc_x.data();
+    double* d_gas_ay = gas.acc_y.data();
+    double* d_gas_az = gas.acc_z.data();
+    BVHNode* d_gas_bvh = gas.bvh_nodes.data();
+    int* d_gas_active_idx = gas.active_indices.data();
 
 #ifdef USE_GPU
     auto start_transfer = std::chrono::high_resolution_clock::now();
@@ -505,38 +470,14 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
             size_t i = d_dm_active_idx[k];
             double p1_x = d_dm_px[i], p1_y = d_dm_py[i], p1_z = d_dm_pz[i];
             double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
-            int stack[128];
+            LBVH::traverse(
+                d_dm_bvh, d_dm_px, d_dm_py, d_dm_pz, p1_x, p1_y, p1_z,
+                search_sq, domain_size,
+                [=, &local_acc_x, &local_acc_y, &local_acc_z](
+                    int j, double dx, double dy, double dz, double r2) {
+                    if (r2 > search_sq) return;
 
-            // Evaluate against DM Tree
-            int stack_ptr = 0;
-            stack[stack_ptr++] = 0;
-            while (stack_ptr > 0) {
-                int node_idx = stack[--stack_ptr];
-                const BVHNode& node = d_dm_bvh[node_idx];
-
-                double aabb_dist_sq =
-                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
-                                         domain_size.x) +
-                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
-                                         domain_size.y) +
-                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
-                                         domain_size.z);
-
-                if (aabb_dist_sq > search_sq) continue;
-
-                if (node.particle_idx != -1) {
-                    int j = node.particle_idx;
-                    double dx = periodic_displacement(
-                        d_dm_px[j] - p1_x, domain_size.x, half_domain_x);
-                    double dy = periodic_displacement(
-                        d_dm_py[j] - p1_y, domain_size.y, half_domain_y);
-                    double dz = periodic_displacement(
-                        d_dm_pz[j] - p1_z, domain_size.z, half_domain_z);
-                    double dist_sq = dx * dx + dy * dy + dz * dz;
-
-                    if (dist_sq > search_sq) continue;
-
-                    double r = std::sqrt(dist_sq + 1e-24);
+                    double r = std::sqrt(r2 + 1e-24);
                     double m_j = d_dm_m[j];
 
                     double dphi_dr = Kernels::gravity_derivatives(r, epsilon);
@@ -550,43 +491,18 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
                     local_acc_x += force_mag_over_r * m_j * dx;
                     local_acc_y += force_mag_over_r * m_j * dy;
                     local_acc_z += force_mag_over_r * m_j * dz;
-                } else {
-                    stack[stack_ptr++] = node.left_child;
-                    stack[stack_ptr++] = node.right_child;
-                }
-            }
+                });
 
             // Evaluate against Gas Tree
             if (n_gas > 0) {
-                stack_ptr = 0;
-                stack[stack_ptr++] = 0;
-                while (stack_ptr > 0) {
-                    int node_idx = stack[--stack_ptr];
-                    const BVHNode& node = d_gas_bvh[node_idx];
+                LBVH::traverse(
+                    d_gas_bvh, d_gas_px, d_gas_py, d_gas_pz, p1_x, p1_y, p1_z,
+                    search_sq, domain_size,
+                    [=, &local_acc_x, &local_acc_y, &local_acc_z](
+                        int j, double dx, double dy, double dz, double r2) {
+                        if (r2 > search_sq) return;
 
-                    double aabb_dist_sq =
-                        min_periodic_dist_sq(p1_x, node.bbox.min_x,
-                                             node.bbox.max_x, domain_size.x) +
-                        min_periodic_dist_sq(p1_y, node.bbox.min_y,
-                                             node.bbox.max_y, domain_size.y) +
-                        min_periodic_dist_sq(p1_z, node.bbox.min_z,
-                                             node.bbox.max_z, domain_size.z);
-
-                    if (aabb_dist_sq > search_sq) continue;
-
-                    if (node.particle_idx != -1) {
-                        int j = node.particle_idx;
-                        double dx = periodic_displacement(
-                            d_gas_px[j] - p1_x, domain_size.x, half_domain_x);
-                        double dy = periodic_displacement(
-                            d_gas_py[j] - p1_y, domain_size.y, half_domain_y);
-                        double dz = periodic_displacement(
-                            d_gas_pz[j] - p1_z, domain_size.z, half_domain_z);
-                        double dist_sq = dx * dx + dy * dy + dz * dz;
-
-                        if (dist_sq > search_sq) continue;
-
-                        double r = std::sqrt(dist_sq + 1e-24);
+                        double r = std::sqrt(r2 + 1e-24);
                         double m_j = d_gas_m[j];
 
                         double dphi_dr =
@@ -601,11 +517,7 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
                         local_acc_x += force_mag_over_r * m_j * dx;
                         local_acc_y += force_mag_over_r * m_j * dy;
                         local_acc_z += force_mag_over_r * m_j * dz;
-                    } else {
-                        stack[stack_ptr++] = node.left_child;
-                        stack[stack_ptr++] = node.right_child;
-                    }
-                }
+                    });
             }
 
             d_dm_ax[i] += local_acc_x;
@@ -625,38 +537,14 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
             size_t i = d_gas_active_idx[k];
             double p1_x = d_gas_px[i], p1_y = d_gas_py[i], p1_z = d_gas_pz[i];
             double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
-            int stack[128];
+            LBVH::traverse(
+                d_gas_bvh, d_gas_px, d_gas_py, d_gas_pz, p1_x, p1_y, p1_z,
+                search_sq, domain_size,
+                [=, &local_acc_x, &local_acc_y, &local_acc_z](
+                    int j, double dx, double dy, double dz, double r2) {
+                    if (r2 > search_sq) return;
 
-            // Evaluate against Gas Tree
-            int stack_ptr = 0;
-            stack[stack_ptr++] = 0;
-            while (stack_ptr > 0) {
-                int node_idx = stack[--stack_ptr];
-                const BVHNode& node = d_gas_bvh[node_idx];
-
-                double aabb_dist_sq =
-                    min_periodic_dist_sq(p1_x, node.bbox.min_x, node.bbox.max_x,
-                                         domain_size.x) +
-                    min_periodic_dist_sq(p1_y, node.bbox.min_y, node.bbox.max_y,
-                                         domain_size.y) +
-                    min_periodic_dist_sq(p1_z, node.bbox.min_z, node.bbox.max_z,
-                                         domain_size.z);
-
-                if (aabb_dist_sq > search_sq) continue;
-
-                if (node.particle_idx != -1) {
-                    int j = node.particle_idx;
-                    double dx = periodic_displacement(
-                        d_gas_px[j] - p1_x, domain_size.x, half_domain_x);
-                    double dy = periodic_displacement(
-                        d_gas_py[j] - p1_y, domain_size.y, half_domain_y);
-                    double dz = periodic_displacement(
-                        d_gas_pz[j] - p1_z, domain_size.z, half_domain_z);
-                    double dist_sq = dx * dx + dy * dy + dz * dz;
-
-                    if (dist_sq > search_sq) continue;
-
-                    double r = std::sqrt(dist_sq + 1e-24);
+                    double r = std::sqrt(r2 + 1e-24);
                     double m_j = d_gas_m[j];
 
                     double dphi_dr = Kernels::gravity_derivatives(r, epsilon);
@@ -670,43 +558,18 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
                     local_acc_x += force_mag_over_r * m_j * dx;
                     local_acc_y += force_mag_over_r * m_j * dy;
                     local_acc_z += force_mag_over_r * m_j * dz;
-                } else {
-                    stack[stack_ptr++] = node.left_child;
-                    stack[stack_ptr++] = node.right_child;
-                }
-            }
+                });
 
             // Evaluate against DM Tree
             if (n_dm > 0) {
-                stack_ptr = 0;
-                stack[stack_ptr++] = 0;
-                while (stack_ptr > 0) {
-                    int node_idx = stack[--stack_ptr];
-                    const BVHNode& node = d_dm_bvh[node_idx];
+                LBVH::traverse(
+                    d_dm_bvh, d_dm_px, d_dm_py, d_dm_pz, p1_x, p1_y, p1_z,
+                    search_sq, domain_size,
+                    [=, &local_acc_x, &local_acc_y, &local_acc_z](
+                        int j, double dx, double dy, double dz, double r2) {
+                        if (r2 > search_sq) return;
 
-                    double aabb_dist_sq =
-                        min_periodic_dist_sq(p1_x, node.bbox.min_x,
-                                             node.bbox.max_x, domain_size.x) +
-                        min_periodic_dist_sq(p1_y, node.bbox.min_y,
-                                             node.bbox.max_y, domain_size.y) +
-                        min_periodic_dist_sq(p1_z, node.bbox.min_z,
-                                             node.bbox.max_z, domain_size.z);
-
-                    if (aabb_dist_sq > search_sq) continue;
-
-                    if (node.particle_idx != -1) {
-                        int j = node.particle_idx;
-                        double dx = periodic_displacement(
-                            d_dm_px[j] - p1_x, domain_size.x, half_domain_x);
-                        double dy = periodic_displacement(
-                            d_dm_py[j] - p1_y, domain_size.y, half_domain_y);
-                        double dz = periodic_displacement(
-                            d_dm_pz[j] - p1_z, domain_size.z, half_domain_z);
-                        double dist_sq = dx * dx + dy * dy + dz * dz;
-
-                        if (dist_sq > search_sq) continue;
-
-                        double r = std::sqrt(dist_sq + 1e-24);
+                        double r = std::sqrt(r2 + 1e-24);
                         double m_j = d_dm_m[j];
 
                         double dphi_dr =
@@ -721,11 +584,7 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
                         local_acc_x += force_mag_over_r * m_j * dx;
                         local_acc_y += force_mag_over_r * m_j * dy;
                         local_acc_z += force_mag_over_r * m_j * dz;
-                    } else {
-                        stack[stack_ptr++] = node.left_child;
-                        stack[stack_ptr++] = node.right_child;
-                    }
-                }
+                    });
             }
 
             d_gas_ax[i] += local_acc_x;
@@ -749,15 +608,15 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
 
     auto end_return = std::chrono::high_resolution_clock::now();
 
-    diag.add_prof_time(ProfRegion::Transf,
+    diag.add_prof_time(GPUProfRegion::Transf,
                        std::chrono::duration_cast<std::chrono::microseconds>(
                            end_transfer - start_transfer)
                            .count());
-    diag.add_prof_time(ProfRegion::Compute,
+    diag.add_prof_time(GPUProfRegion::Compute,
                        std::chrono::duration_cast<std::chrono::microseconds>(
                            end_compute - start_compute)
                            .count());
-    diag.add_prof_time(ProfRegion::Ret,
+    diag.add_prof_time(GPUProfRegion::Ret,
                        std::chrono::duration_cast<std::chrono::microseconds>(
                            end_return - start_return)
                            .count());
@@ -765,7 +624,8 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas,
 }
 #endif
 
-static double calculate_max_acceleration(const ParticleSystem& dm) {
+namespace {
+double calculate_max_acceleration(const ParticleSystem& dm) {
     double local_max = 1e-9;
     const size_t n = dm.num_particles;
     const double* ax = dm.acc_x.data();
@@ -781,7 +641,7 @@ static double calculate_max_acceleration(const ParticleSystem& dm) {
     return std::sqrt(local_max);
 }
 
-static double calculate_max_acceleration(const GasParticleSystem& gas) {
+double calculate_max_acceleration(const GasParticleSystem& gas) {
     double local_max = 1e-9;
     const size_t n = gas.num_particles;
     const double* ax = gas.acc_x.data();
@@ -795,22 +655,20 @@ static double calculate_max_acceleration(const GasParticleSystem& gas) {
     }
     return std::sqrt(local_max);
 }
-
-double GravitySolver::get_timestep(const GasParticleSystem& gas,
-                                   const Config& config) const {
-    if (gas.num_particles == 0) return std::numeric_limits<double>::infinity();
-
-    double epsilon = softening_length;
-    double a_max = calculate_max_acceleration(gas);
-    return std::sqrt((2.0 * config.gravity_accuracy_eta * epsilon) / a_max);
-}
+}  // namespace
 
 double GravitySolver::get_timestep(const ParticleSystem& dm,
+                                   const GasParticleSystem& gas,
                                    const Config& config) const {
-    if (dm.num_particles == 0) return std::numeric_limits<double>::infinity();
+    if (dm.num_particles == 0 && gas.num_particles == 0)
+        return std::numeric_limits<double>::infinity();
+    double a_dm_max = 0;
+    if (dm.num_particles > 0) a_dm_max = calculate_max_acceleration(dm);
+    double a_gas_max = 0;
+    if (gas.num_particles > 0) a_gas_max = calculate_max_acceleration(gas);
 
+    double a_max = std::max(a_dm_max, a_gas_max);
     double epsilon = softening_length;
-    double a_max = calculate_max_acceleration(dm);
     return std::sqrt((2.0 * config.gravity_accuracy_eta * epsilon) / a_max);
 }
 
@@ -830,12 +688,9 @@ void GravitySolver::reset_accels(SimState& state, const Config& config) const {
     std::fill(state.dm.acc_x.begin(), state.dm.acc_x.end(), 0.0);
     std::fill(state.dm.acc_y.begin(), state.dm.acc_y.end(), 0.0);
     std::fill(state.dm.acc_z.begin(), state.dm.acc_z.end(), 0.0);
-    if (config.hydro_method == HydroMethod::MFM) {
-        GasParticleSystem& gas = *state.mfm_gas;
-        std::fill(gas.acc_x.begin(), gas.acc_x.end(), 0.0);
-        std::fill(gas.acc_y.begin(), gas.acc_y.end(), 0.0);
-        std::fill(gas.acc_z.begin(), gas.acc_z.end(), 0.0);
-    }
+    std::fill(state.gas.acc_x.begin(), state.gas.acc_x.end(), 0.0);
+    std::fill(state.gas.acc_y.begin(), state.gas.acc_y.end(), 0.0);
+    std::fill(state.gas.acc_z.begin(), state.gas.acc_z.end(), 0.0);
 }
 
 GravitySolver::GravitySolver() {}

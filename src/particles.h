@@ -34,8 +34,7 @@ class ParticleSystem {
 
     std::vector<double> mass;
 
-    double accumulated_gravitational_work = 0.0;
-    double accumulated_expansion_work = 0.0;
+    EnergyBudget budget;
 
     std::vector<uint8_t> is_active;
     std::vector<int> time_bin;

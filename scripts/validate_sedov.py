@@ -77,7 +77,6 @@ def validate_sedov_interactive(snapshot_dir):
     with h5py.File(files[0], 'r') as f:
         config = f['Config'].attrs
         setup_type = config.get('setup', b"").decode('utf-8')
-        hydro_method = config.get('hydro_method', b"none").decode('utf-8')
         gamma = config.get('gamma', 5.0/3.0)
         domain_size = config.get('domain_size', 1.0)
         center = domain_size / 2.0
@@ -92,33 +91,24 @@ def validate_sedov_interactive(snapshot_dir):
         with h5py.File(fname, 'r') as f:
             t = f['Header'].attrs['simulation_time']
             times.append(t)
-            
-            method = f['Config'].attrs.get('hydro_method', b'none').decode('utf-8')
 
             ph_e = f['Gas'].attrs.get('accumulated_photoheating_energy', 0.0)
             e_rad = f['Gas'].attrs.get('cumulative_radiated_energy', 0.0)
             w_grav = f['Gas'].attrs.get('cumulative_gravitational_work', 0.0)
             w_exp = f['Gas'].attrs.get('cumulative_expansion_work', 0.0)
-
-            if method == "mfm":
-                sw_e = f['Gas'].attrs.get('cumulative_entropy_switch_energy', 0.0)
-                mass = f['Gas/mass'][:]
-                if 'total_energy' in f['Gas']:
-                    u_tot_spec = f['Gas/total_energy'][:]
-                    E_tot = np.sum(mass * u_tot_spec)
-                else:
-                    u = f['Gas/internal_energy'][:]
-                    vx = f['Gas/velocity_x'][:]
-                    vy = f['Gas/velocity_y'][:]
-                    vz = f['Gas/velocity_z'][:]
-                    ke = 0.5 * (vx**2 + vy**2 + vz**2)
-                    E_tot = np.sum(mass * (u + ke))
+            
+            sw_e = f['Gas'].attrs.get('cumulative_entropy_switch_energy', 0.0)
+            mass = f['Gas/mass'][:]
+            if 'total_energy' in f['Gas']:
+                u_tot_spec = f['Gas/total_energy'][:]
+                E_tot = np.sum(mass * u_tot_spec)
             else:
-                sw_e = f['Gas'].attrs.get('cumulative_dual_energy_switch_energy', 0.0)
-                energy_dens = f['Gas/energy'][:]
-                N = f['Config'].attrs.get('mesh_size_1d', 32)
-                vol = (domain_size / N)**3
-                E_tot = np.sum(energy_dens) * vol
+                u = f['Gas/internal_energy'][:]
+                vx = f['Gas/velocity_x'][:]
+                vy = f['Gas/velocity_y'][:]
+                vz = f['Gas/velocity_z'][:]
+                ke = 0.5 * (vx**2 + vy**2 + vz**2)
+                E_tot = np.sum(mass * (u + ke))
                 
             switch_energies.append(sw_e)
             
@@ -134,7 +124,7 @@ def validate_sedov_interactive(snapshot_dir):
     e_errors = np.array(e_errors)
     switch_energies = np.array(switch_energies)
 
-    label_prefix = "Eulerian Grid" if hydro_method == "eulerian" else "MFM Particles"
+    label_prefix = "MFM Particles"
     
     # Clean 3x3 Layout
     fig = plt.figure(figsize=(22, 14))
@@ -237,86 +227,51 @@ def validate_sedov_interactive(snapshot_dir):
             vl_ts.set_xdata([time, time]) 
             
             cfg = f['Config'].attrs
-            method = cfg.get('hydro_method', b'none').decode('utf-8')
-            target_N = cfg.get('mfm_target_neighbors', 64)
+            target_N = cfg.get('target_neighbors', 32)
             line_target_nenc.set_ydata([target_N, target_N])
             
-            if method == "eulerian":
-                N = cfg.get('mesh_size_1d', 32)
-                dx_cell = domain_size / float(N)
-                coords = np.linspace(dx_cell/2.0, domain_size - dx_cell/2.0, N)
-                X, Y, Z = np.meshgrid(coords, coords, coords, indexing='ij')
-                x_full, y_full, z_full = X.flatten(), Y.flatten(), Z.flatten()
+            x_full = f['Gas/position_x'][:]
+            y_full = f['Gas/position_y'][:]
+            z_full = f['Gas/position_z'][:]
+            rho_flat = f['Gas/density'][:]
+            v_x = f['Gas/velocity_x'][:]
+            v_y = f['Gas/velocity_y'][:]
+            v_z = f['Gas/velocity_z'][:]
+            u_flat = f['Gas/internal_energy'][:]
+            P_flat = rho_flat * u_flat * (gamma - 1.0)
+            
+            dx = x_full - center
+            dy = y_full - center
+            dz = z_full - center
+            r_flat = np.sqrt(dx**2 + dy**2 + dz**2)
+            v_r_flat = (v_x*dx + v_y*dy + v_z*dz) / np.maximum(r_flat, 1e-8)
                 
-                dx = x_full - center
-                dy = y_full - center
-                dz = z_full - center
-                r_flat = np.sqrt(dx**2 + dy**2 + dz**2)
+            if 'grad_p' in f['Gas']:
+                grad_p = f['Gas/grad_p'][:]
+                gradP_mag_flat = (grad_p[:, 0]*dx + grad_p[:, 1]*dy + grad_p[:, 2]*dz) / np.maximum(r_flat, 1e-8)
+            else:
+                gradP_mag_flat = np.full_like(rho_flat, np.nan)
                 
-                rho_flat = f['Gas/density'][:].flatten()
-                mom_x_flat = f['Gas/momentum_x'][:].flatten()
-                mom_y_flat = f['Gas/momentum_y'][:].flatten()
-                mom_z_flat = f['Gas/momentum_z'][:].flatten()
-                P_flat = f['Gas/pressure'][:].flatten()
+            if 'condition_number' in f['Gas']:
+                cond_flat = f['Gas/condition_number'][:]
+            else:
+                cond_flat = np.full_like(rho_flat, np.nan)
                 
-                v_x = mom_x_flat / rho_flat
-                v_y = mom_y_flat / rho_flat
-                v_z = mom_z_flat / rho_flat
-                v_r_flat = (v_x*dx + v_y*dy + v_z*dz) / np.maximum(r_flat, 1e-8)
-                u_flat = P_flat / (rho_flat * (gamma - 1.0))
-                
-                gradP_mag_flat = np.full_like(r_flat, np.nan)
-                cond_flat = np.full_like(r_flat, np.nan)
-                nenc_flat = np.full_like(r_flat, np.nan)
-                
-                mid_idx = N // 2
-                x_slice = X[:, :, mid_idx].flatten()
-                y_slice = Y[:, :, mid_idx].flatten()
-                u_slice_2d = u_flat.reshape((N, N, N))[:, :, mid_idx].flatten()
-                
-            elif method == "mfm":
-                x_full = f['Gas/position_x'][:]
-                y_full = f['Gas/position_y'][:]
-                z_full = f['Gas/position_z'][:]
-                rho_flat = f['Gas/density'][:]
-                v_x = f['Gas/velocity_x'][:]
-                v_y = f['Gas/velocity_y'][:]
-                v_z = f['Gas/velocity_z'][:]
-                u_flat = f['Gas/internal_energy'][:]
-                P_flat = rho_flat * u_flat * (gamma - 1.0)
-                
-                dx = x_full - center
-                dy = y_full - center
-                dz = z_full - center
-                r_flat = np.sqrt(dx**2 + dy**2 + dz**2)
-                v_r_flat = (v_x*dx + v_y*dy + v_z*dz) / np.maximum(r_flat, 1e-8)
-                    
-                if 'grad_p' in f['Gas']:
-                    grad_p = f['Gas/grad_p'][:]
-                    gradP_mag_flat = (grad_p[:, 0]*dx + grad_p[:, 1]*dy + grad_p[:, 2]*dz) / np.maximum(r_flat, 1e-8)
-                else:
-                    gradP_mag_flat = np.full_like(rho_flat, np.nan)
-                    
-                if 'condition_number' in f['Gas']:
-                    cond_flat = f['Gas/condition_number'][:]
-                else:
-                    cond_flat = np.full_like(rho_flat, np.nan)
-                    
-                if 'n_enc' in f['Gas']:
-                    nenc_flat = f['Gas/n_enc'][:]
-                else:
-                    nenc_flat = np.full_like(rho_flat, np.nan)
+            if 'n_enc' in f['Gas']:
+                nenc_flat = f['Gas/n_enc'][:]
+            else:
+                nenc_flat = np.full_like(rho_flat, np.nan)
 
-                dz_slice = domain_size * 0.03
-                slice_mask = np.abs(z_full - center) < dz_slice
-                x_slice = x_full[slice_mask]
-                y_slice = y_full[slice_mask]
-                u_slice_2d = u_flat[slice_mask]
-                
-                sort_slice = np.argsort(u_slice_2d)
-                x_slice = x_slice[sort_slice]
-                y_slice = y_slice[sort_slice]
-                u_slice_2d = u_slice_2d[sort_slice]
+            dz_slice = domain_size * 0.03
+            slice_mask = np.abs(z_full - center) < dz_slice
+            x_slice = x_full[slice_mask]
+            y_slice = y_full[slice_mask]
+            u_slice_2d = u_flat[slice_mask]
+            
+            sort_slice = np.argsort(u_slice_2d)
+            x_slice = x_slice[sort_slice]
+            y_slice = y_slice[sort_slice]
+            u_slice_2d = u_slice_2d[sort_slice]
 
         max_dir = np.maximum(np.maximum(np.abs(dx), np.abs(dy)), np.abs(dz))
         angle_flat = np.degrees(np.arccos(max_dir / np.maximum(r_flat, 1e-8)))

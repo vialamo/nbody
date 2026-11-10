@@ -70,38 +70,24 @@ class True3DViewer:
                 with h5py.File(self.snapshot_files[0], 'r', libver='latest', swmr=True) as f:
                     config_attr = f['Config'].attrs
                     self.domain_size = config_attr.get('domain_size', 1.0)
-                    method = config_attr.get('hydro_method', b"none").decode('utf-8')
-                    self.use_eulerian_hydro = bool(method == "eulerian")
-                    self.use_particle_hydro = bool(method == "mfm")
-                    self.has_hydro = self.use_eulerian_hydro or self.use_particle_hydro
+                    self.use_particle_hydro = true
+                    self.has_hydro = true
                     mesh_size = config_attr.get('mesh_size_1d', 64)
                 
                 print("Reading the final snapshot to establish stable colormap bounds...")
                 with h5py.File(self.snapshot_files[-1], 'r', libver='latest', swmr=True) as f:
                     # Pre-calculate Gas Extents
                     if self.has_hydro and 'Gas' in f:
-                        if self.use_eulerian_hydro:
-                            if 'Gas/temperature' in f:
-                                temp = f['Gas/temperature'][:]
-                            else:
-                                pressure = f['Gas/pressure'][:]
-                                density = f['Gas/density'][:]
-                                KB, M_H = 1.380649e-16, 1.6726219e-24
-                                MU = f['Config'].attrs.get('primordial_mu', 1.22)
-                                v_unit = f['Units'].attrs.get('unit_velocity_in_cgs', 1.0)
-                                a = f['Header'].attrs.get('scale_factor', 1.0)
-                                temp = (pressure / density) * (v_unit**2) * (MU * M_H / KB) * (a**2)
-                        elif self.use_particle_hydro:
-                            if 'Gas/temperature' in f:
-                                temp = f['Gas/temperature'][:]
-                            else:
-                                u_int = f['Gas/internal_energy'][:]
-                                KB, M_H = 1.380649e-16, 1.6726219e-24
-                                MU = f['Config'].attrs.get('primordial_mu', 1.22)
-                                v_unit = f['Units'].attrs.get('unit_velocity_in_cgs', 1.0)
-                                a = f['Header'].attrs.get('scale_factor', 1.0)
-                                temp = u_int * (v_unit**2) * (MU * M_H / KB) * (a**2)
-                            
+                        if 'Gas/temperature' in f:
+                            temp = f['Gas/temperature'][:]
+                        else:
+                            u_int = f['Gas/internal_energy'][:]
+                            KB, M_H = 1.380649e-16, 1.6726219e-24
+                            MU = f['Config'].attrs.get('primordial_mu', 1.22)
+                            v_unit = f['Units'].attrs.get('unit_velocity_in_cgs', 1.0)
+                            a = f['Header'].attrs.get('scale_factor', 1.0)
+                            temp = u_int * (v_unit**2) * (MU * M_H / KB) * (a**2)
+                        
                         self.global_t_max_log = np.max(np.log10(np.clip(temp, 10.0, None)))
                         self.global_t_min_log = 1.0  # Safe floor of 10 K
                     else:
@@ -194,18 +180,8 @@ class True3DViewer:
         self.volume = None
         self.gas_particles = None
         
-        if self.use_eulerian_hydro:
-            self.volume = Volume(np.zeros((2, 2, 2), dtype=np.float32), cmap=self.custom_cmap, 
-                                 method='translucent', parent=self.view.scene)
-            with h5py.File(self.snapshot_files[0], 'r') as f:
-                N = f['Config'].attrs.get('mesh_size_1d', 64)
-            scale_factor = self.domain_size / N
-            self.volume.transform = scene.transforms.STTransform(
-                scale=(scale_factor, scale_factor, scale_factor))
-                
-        elif self.use_particle_hydro:
-            self.gas_particles = Markers(parent=self.view.scene)
-            self.gas_particles.set_gl_state('translucent', blend=True, depth_test=False)
+        self.gas_particles = Markers(parent=self.view.scene)
+        self.gas_particles.set_gl_state('translucent', blend=True, depth_test=False)
 
         # Setup Dark Matter Particles
         self.particles = Markers(parent=self.view.scene)
@@ -315,79 +291,47 @@ class True3DViewer:
             t_max = 0
             t_min_log, t_max_log = 1.0, 5.0
             
-            if self.has_hydro and 'Gas' in f:
-                if self.use_eulerian_hydro:
-                    if 'Gas/temperature' in f:
-                        temperature = f['Gas/temperature'][:]
-                        temperature = temperature.transpose(2, 1, 0)
-                    else:
-                        pressure = f['Gas/pressure'][:].transpose(2, 1, 0)
-                        density = f['Gas/density'][:].transpose(2, 1, 0)
-                        KB, M_H = 1.380649e-16, 1.6726219e-24
-                        MU = config_attr.get('primordial_mu', 1.22)
-                        v_unit_cgs = units_attr.get('unit_velocity_in_cgs', 1.0)
-                        specific_energy_cgs = (pressure / density) * (v_unit_cgs**2)
-                        temperature = specific_energy_cgs * (MU * M_H / KB) * (a**2)
+            if self.has_hydro and 'Gas' in f:      
+                g_pos_x = f['Gas/position_x'][:]
+                g_pos_y = f['Gas/position_y'][:]
+                g_pos_z = f['Gas/position_z'][:]
+                gas_positions = np.c_[g_pos_x, g_pos_y, g_pos_z]
 
-                    t_max = np.max(temperature)
-                    safe_temp = np.clip(temperature, 10.0, None) 
-                    log_temp = np.log10(safe_temp)
-                                
-                    if self.fixed_colormap:
-                        t_min_log = self.global_t_min_log
-                        t_max_log = self.global_t_max_log
-                    else:
-                        t_min_log, t_max_log = np.min(log_temp), np.max(log_temp)
-                    
-                    if t_max_log > t_min_log:
-                        normalized_temp = (log_temp - t_min_log) / (t_max_log - t_min_log)
-                        gamma_val = 2.5
-                        normalized_temp = normalized_temp ** gamma_val
-                        normalized_temp = normalized_temp.astype(np.float32)
-                        self.volume.set_data(normalized_temp)
-                        self.volume.clim = [0.0, 1.0]
+                if 'Gas/temperature' in f:
+                    temperature = f['Gas/temperature'][:]
+                else:
+                    u_int = f['Gas/internal_energy'][:]
+                    KB, M_H = 1.380649e-16, 1.6726219e-24
+                    MU = config_attr.get('primordial_mu', 1.22)
+                    v_unit_cgs = units_attr.get('unit_velocity_in_cgs', 1.0)
+                    temperature = u_int * (v_unit_cgs**2) * (MU * M_H / KB) * (a**2)
 
-                elif self.use_particle_hydro:
-                    g_pos_x = f['Gas/position_x'][:]
-                    g_pos_y = f['Gas/position_y'][:]
-                    g_pos_z = f['Gas/position_z'][:]
-                    gas_positions = np.c_[g_pos_x, g_pos_y, g_pos_z]
+                t_max = np.max(temperature)
+                safe_temp = np.clip(temperature, 10.0, None)
+                log_temp = np.log10(safe_temp)
 
-                    if 'Gas/temperature' in f:
-                        temperature = f['Gas/temperature'][:]
-                    else:
-                        u_int = f['Gas/internal_energy'][:]
-                        KB, M_H = 1.380649e-16, 1.6726219e-24
-                        MU = config_attr.get('primordial_mu', 1.22)
-                        v_unit_cgs = units_attr.get('unit_velocity_in_cgs', 1.0)
-                        temperature = u_int * (v_unit_cgs**2) * (MU * M_H / KB) * (a**2)
+                if self.fixed_colormap:
+                    t_min_log = self.global_t_min_log
+                    t_max_log = self.global_t_max_log
+                else:
+                    t_min_log, t_max_log = np.min(log_temp), np.max(log_temp)
 
-                    t_max = np.max(temperature)
-                    safe_temp = np.clip(temperature, 10.0, None)
-                    log_temp = np.log10(safe_temp)
+                if t_max_log > t_min_log:
+                    normalized_temp = (log_temp - t_min_log) / (t_max_log - t_min_log)
+                    normalized_temp = np.clip(normalized_temp, 0.0, 1.0)
+                else:
+                    normalized_temp = np.zeros_like(log_temp)
 
-                    if self.fixed_colormap:
-                        t_min_log = self.global_t_min_log
-                        t_max_log = self.global_t_max_log
-                    else:
-                        t_min_log, t_max_log = np.min(log_temp), np.max(log_temp)
+                # Extract RGBA values from the plasma colormap manually
+                cmap = plt.get_cmap('plasma')
+                gas_colors = cmap(normalized_temp).astype(np.float32)
 
-                    if t_max_log > t_min_log:
-                        normalized_temp = (log_temp - t_min_log) / (t_max_log - t_min_log)
-                        normalized_temp = np.clip(normalized_temp, 0.0, 1.0)
-                    else:
-                        normalized_temp = np.zeros_like(log_temp)
+                # Apply gamma curve to the Alpha channel to match the Eulerian fade
+                gamma_val = 2.5
+                # Cap opacity at 0.5 so dense cores don't completely block DM
+                gas_colors[:, 3] = (normalized_temp ** gamma_val) * 0.5 
 
-                    # Extract RGBA values from the plasma colormap manually
-                    cmap = plt.get_cmap('plasma')
-                    gas_colors = cmap(normalized_temp).astype(np.float32)
-
-                    # Apply gamma curve to the Alpha channel to match the Eulerian fade
-                    gamma_val = 2.5
-                    # Cap opacity at 0.5 so dense cores don't completely block DM
-                    gas_colors[:, 3] = (normalized_temp ** gamma_val) * 0.5 
-
-                    self.gas_particles.set_data(gas_positions, face_color=gas_colors, edge_width=0, size=1.5)
+                self.gas_particles.set_data(gas_positions, face_color=gas_colors, edge_width=0, size=1.5)
 
             if (not hasattr(self, 'temp_min_log') 
                 or self.temp_min_log != t_min_log 

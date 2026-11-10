@@ -4,9 +4,9 @@
 #include <cmath>
 
 #include "config.h"
+#include "gas.h"
 #include "kernels.h"
 #include "math_utils.h"
-#include "mfm.h"
 
 namespace Reconstruction {
 
@@ -125,6 +125,7 @@ ParticleGradients compute_single_particle_gradients(
     const FluidStateArrays& data, const Eigen::Matrix3d& B,
     bool ill_conditioned, const Config& config) {
     const Vec3& domain_size = config.domain_size;
+    const double max_condition_number = config.max_condition_number;
 
     ParticleGradients out;
     out.grad_rho = Eigen::Vector3d::Zero();
@@ -233,9 +234,10 @@ ParticleGradients compute_single_particle_gradients(
 
         double beta = config.gradient_limiter_beta_max;
         if (data.cond_num[i] > 0.0) {
-            beta = std::max(config.gradient_limiter_beta_min,
-                            config.gradient_limiter_beta_max *
-                                std::min(1.0, N_cond_crit / data.cond_num[i]));
+            beta = std::max(
+                config.gradient_limiter_beta_min,
+                config.gradient_limiter_beta_max *
+                    std::min(1.0, max_condition_number / data.cond_num[i]));
         }
 
         out.grad_rho *= compute_gradient_alpha(

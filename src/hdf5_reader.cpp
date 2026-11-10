@@ -146,15 +146,8 @@ GlassData HDF5Reader::read_glass_cube(const std::string& filepath) {
         if (h_dataset.getFloatType().getSize() == 4) {
             std::vector<float> h_buffer(data.num_particles);
             h_dataset.read(h_buffer.data(), H5::PredType::NATIVE_FLOAT);
-            for (size_t i = 0; i < data.num_particles; ++i) {
-                // Apply the SWIFT 0.3 scaling factor directly on read
-                data.h[i] = static_cast<double>(h_buffer[i]) * 0.3;
-            }
         } else {
             h_dataset.read(data.h.data(), H5::PredType::NATIVE_DOUBLE);
-            for (size_t i = 0; i < data.num_particles; ++i) {
-                data.h[i] *= 0.3;
-            }
         }
 
     } catch (const H5::Exception& e) {

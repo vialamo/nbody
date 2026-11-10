@@ -1,167 +1,258 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <vector>
 
 #include "config.h"
+#include "density.h"
+#include "hydro.h"
+#include "kernels.h"
 #include "gas.h"
+#include "particles.h"
+#include "reconstruction.h"
+
+namespace HydroSolver {
+void compute_gradients(GasParticleSystem& gas, const Config& config);
+void compute_forces(GasParticleSystem& gas, const Config& config, double a);
+}
 
 // ---------------------------------------------------------------------
-// Test Proxies to access private grid data
+// MFM Face Reconstruction and Limiting
 // ---------------------------------------------------------------------
-struct GasGridTestAccess {
-    static Grid3D& density(GasGrid& g) { return g.density; }
-    static Grid3D& momentum_x(GasGrid& g) { return g.momentum_x; }
-    static Grid3D& momentum_y(GasGrid& g) { return g.momentum_y; }
-    static Grid3D& momentum_z(GasGrid& g) { return g.momentum_z; }
-    static Grid3D& energy(GasGrid& g) { return g.energy; }
-    static Grid3D& internal_energy(GasGrid& g) { return g.internal_energy; }
-    static Grid3D& pressure(GasGrid& g) { return g.pressure; }
-    static void update_primitive_variables(GasGrid& g) {
-        g.update_primitive_variables(1.0);
+TEST_CASE("MFM Face Reconstruction and Limiting", "[hydro][mfm_reconstruction]") {
+    Config config;
+    config.domain_size = Vec3{10.0, 10.0, 10.0};
+    
+    double pressure_floor = 1e-16;
+
+    // Setup Particle i (Left)
+    Reconstruction::ParticleState p_i;
+    p_i.pos = Eigen::Vector3d(1.0, 0.0, 0.0);
+    p_i.rho = 1.0;
+    p_i.pressure = 2.0;
+    p_i.vel = Eigen::Vector3d::Zero();
+    p_i.h = 2.5;
+    p_i.mass = 1.0;
+
+    Reconstruction::ParticleGradients grad_i;
+    grad_i.grad_rho = Eigen::Vector3d::Zero();
+    grad_i.grad_p = Eigen::Vector3d::Zero();
+    grad_i.grad_vx = Eigen::Vector3d::Zero();
+    grad_i.grad_vy = Eigen::Vector3d::Zero();
+    grad_i.grad_vz = Eigen::Vector3d::Zero();
+    grad_i.ill_conditioned = false;
+
+    // Setup Particle j (Right)
+    Reconstruction::ParticleState p_j;
+    p_j.pos = Eigen::Vector3d(3.0, 0.0, 0.0);  // Distance of 2.0
+    p_j.rho = 2.0;
+    p_j.pressure = 4.0;
+    p_j.vel = Eigen::Vector3d::Zero();
+    p_j.h = 2.5;
+    p_j.mass = 2.0;
+
+    Reconstruction::ParticleGradients grad_j = grad_i;  // Copy zeros
+
+    Eigen::Matrix3d B_identity = Eigen::Matrix3d::Identity();
+
+    SECTION("First-order fallback (Zero Gradients)") {
+        // With zero gradients, the extrapolated face states should simply equal
+        // the base particle states
+        Reconstruction::ReconstructedFace face = Reconstruction::compute_face_reconstruction(
+            p_i, grad_i, p_j, grad_j, B_identity, B_identity, config, pressure_floor);
+
+        REQUIRE(face.is_valid == true);
+        REQUIRE(face.r == Catch::Approx(2.0));
+        REQUIRE(face.n.x() == Catch::Approx(1.0));
+
+        REQUIRE(face.rho_L == Catch::Approx(1.0));
+        REQUIRE(face.rho_R == Catch::Approx(2.0));
     }
-};
 
-struct RiemannSolverTestAccess {
-    static Grid3D& rho_L(RiemannSolver& s) { return s.rho_L; }
-    static Grid3D& rho_R(RiemannSolver& s) { return s.rho_R; }
-};
+    SECTION("Smooth second-order extrapolation") {
+        // Set gradients pointing along the correct slope
+        // distance dx = 2.0, midpoint is at dx=1.0 from each particle
+        grad_i.grad_rho.x() = 0.5;  // Extrapolate i's density by +0.5 to 1.5
+        grad_j.grad_rho.x() = 0.5;  // Extrapolate j's density by -0.5 to 1.5
 
-// ---------------------------------------------------------------------
-// Dual Energy Formalism Tests
-// ---------------------------------------------------------------------
-TEST_CASE("Dual Energy Switch protects pressure in hypersonic flows",
-          "[hydro][dual_energy]") {
-    Config conf;
-    conf.mesh_size_1d = 2;
-    conf.gamma = 5.0 / 3.0;
-    GasGrid grid(conf);
+        Reconstruction::ReconstructedFace face = Reconstruction::compute_face_reconstruction(
+            p_i, grad_i, p_j, grad_j, B_identity, B_identity, config, pressure_floor);
 
-    auto& rho = GasGridTestAccess::density(grid);
-    auto& mx = GasGridTestAccess::momentum_x(grid);
-    auto& en = GasGridTestAccess::energy(grid);
-    auto& ie = GasGridTestAccess::internal_energy(grid);
-    auto& pr = GasGridTestAccess::pressure(grid);
-
-    // Setup uniform density and safe internal energy
-    rho.fill(1.0);
-    ie.fill(1.0);  // P should be (5/3 - 1) * 1.0 = 0.66666...
-
-    SECTION("Thermal Dominated (Subsonic) - Trusts Total Energy") {
-        // Kinetic energy is small compared to total energy
-        mx.fill(1.0);  // v = 1.0, KE = 0.5
-        en.fill(1.5);  // Total energy = IE (1.0) + KE (0.5)
-
-        // Corrupt the tracked internal energy to prove it DOES NOT use it
-        ie.fill(999.0);
-
-        GasGridTestAccess::update_primitive_variables(grid);
-
-        // It should have computed ie = total - kinetic
-        // P = (gamma-1) * (E_tot - KE) = (2/3) * (1.5 - 0.5) = 0.6666...
-        REQUIRE(pr(0, 0, 0) == Catch::Approx(2.0 / 3.0));
-        // Tracked IE should be synced BACK to 1.0
-        REQUIRE(ie(0, 0, 0) == Catch::Approx(1.0));
+        // They should meet perfectly in the middle
+        REQUIRE(face.rho_L == Catch::Approx(1.5));
+        REQUIRE(face.rho_R == Catch::Approx(1.5));
     }
 
-    SECTION("Kinetic Dominated (Hypersonic) - Trusts Tracked Internal Energy") {
-        // Kinetic energy is > 99.9% of total energy
-        mx.fill(1000.0);    // v = 1000, KE = 500000
-        ie.fill(1.0);       // Safe internal energy
-        en.fill(500001.0);  // True total energy
+    SECTION("Vacuum flooring protects against negative states") {
+        p_i.pressure = -5.0; // Unphysical negative pressure
 
-        // Simulate catastrophic floating point cancellation by slightly
-        // corrupting Total Energy
-        en.fill(499999.0);  // If E_tot - KE is used, IE is negative!
+        Reconstruction::ReconstructedFace face = Reconstruction::compute_face_reconstruction(
+            p_i, grad_i, p_j, grad_j, B_identity, B_identity, config, pressure_floor);
 
-        GasGridTestAccess::update_primitive_variables(grid);
-
-        // It should have computed totak = ie + kinetic
-        // Because KE is dominant, the switch should trigger and use tracked IE
-        // instead. P = (gamma-1) * tracked_IE = (2/3) * 1.0 = 0.6666...
-        REQUIRE(pr(0, 0, 0) == Catch::Approx(2.0 / 3.0));
-        // Total energy should be safely synced to IE + KE
-        REQUIRE(en(0, 0, 0) == Catch::Approx(500001.0));
+        // Should catch the negative pressure and clamp it to the floor
+        REQUIRE(face.p_L == Catch::Approx(pressure_floor));
     }
 }
 
 // ---------------------------------------------------------------------
-// MUSCL Piecewise Linear Method Reconstruction & Minmod Limiter Tests
+// MFM Gradient Estimator
 // ---------------------------------------------------------------------
-TEST_CASE("MUSCL PLM applies Minmod limiter to extrema", "[hydro][muscl]") {
-    Config conf;
-    conf.mesh_size_1d = 4;
-    conf.gamma = 5.0 / 3.0;
-    GasGrid grid(conf);
+TEST_CASE("MFM Gradient Estimator recovers linear fields", "[hydro][mfm_gradients]") {
+    Config config;
+    config.domain_size = {10.0, 10.0, 10.0};
+    config.num_gas_particles = 27;
+    config.compute_derived_data();
+    
+    GasParticleSystem gas(config);
+    double spacing = 0.4;
+    double cell_volume = spacing * spacing * spacing;
+    
+    // Create a 3x3x3 grid of particles
+    for (int i = -1; i <= 1; ++i) {
+        for (int j = -1; j <= 1; ++j) {
+            for (int k = -1; k <= 1; ++k) {
+                double px = 5.0 + i * spacing;
+                double py = 5.0 + j * spacing;
+                double pz = 5.0 + k * spacing;
+                // Add dummy particle, properties overridden below
+                gas.add_particle(px, py, pz, 0, 0, 0, 1.0, 1.0, 0.7, 0.0);
+            }
+        }
+    }
+    
+    // Build the BVH to establish neighbors
+    gas.build_lbvh(config);
+    
+    // Manually impose a linear field
+    int central_idx = -1;
+    for (size_t i = 0; i < gas.num_particles; ++i) {
+        double px = gas.pos_x[i], py = gas.pos_y[i], pz = gas.pos_z[i];
+        
+        // Rho: 10.0 + 2x + 3y + 4z
+        // P:   20.0 - 1x + 5y - 2z
+        // Vx:  3.0x
+        gas.rho[i] = 10.0 + 2.0 * px + 3.0 * py + 4.0 * pz;
+        gas.pressure[i] = 20.0 - 1.0 * px + 5.0 * py - 2.0 * pz;
+        gas.vel_x[i] = 3.0 * px;
+        
+        gas.pressure_pred[i] = gas.pressure[i];
+        gas.vel_x_pred[i] = gas.vel_x[i];
+        gas.vel_y_pred[i] = 0.0;
+        gas.vel_z_pred[i] = 0.0;
+        
+        gas.mass[i] = gas.rho[i] * cell_volume;
+        gas.cond_num[i] = 1.0;
+        
+        if (std::abs(px - 5.0) < 1e-5 && std::abs(py - 5.0) < 1e-5 && std::abs(pz - 5.0) < 1e-5) {
+            central_idx = i;
+        }
+    }
+    
+    REQUIRE(central_idx != -1);
 
-    auto& rho = GasGridTestAccess::density(grid);
-    GasGridTestAccess::momentum_x(grid).fill(0.0);
-    GasGridTestAccess::momentum_y(grid).fill(0.0);
-    GasGridTestAccess::momentum_z(grid).fill(0.0);
-    GasGridTestAccess::energy(grid).fill(1.0);
-    GasGridTestAccess::internal_energy(grid).fill(1.0);
+    // Compute the B_matrix for each particle to mock the DensitySolver
+    for (size_t i = 0; i < gas.num_particles; ++i) {
+        Eigen::Matrix3d E = Eigen::Matrix3d::Zero();
+        for (size_t j = 0; j < gas.num_particles; ++j) {
+            if (i == j) continue;
+            
+            double dx = gas.pos_x[j] - gas.pos_x[i];
+            double dy = gas.pos_y[j] - gas.pos_y[i];
+            double dz = gas.pos_z[j] - gas.pos_z[i];
+            
+            // Periodic wrap
+            if (dx > 5.0) dx -= 10.0; else if (dx < -5.0) dx += 10.0;
+            if (dy > 5.0) dy -= 10.0; else if (dy < -5.0) dy += 10.0;
+            if (dz > 5.0) dz -= 10.0; else if (dz < -5.0) dz += 10.0;
+            
+            double r = std::sqrt(dx*dx + dy*dy + dz*dz);
+            
+            if (r < gas.h[i] && r > 1e-12) {
+                double W;
+                Kernels::cubic_spline_value(r, gas.h[i], W);
+                double V_j = gas.mass[j] / gas.rho[j];
+                double weight = W * V_j;
+                
+                E(0,0) += dx * dx * weight;
+                E(0,1) += dx * dy * weight;
+                E(0,2) += dx * dz * weight;
+                E(1,1) += dy * dy * weight;
+                E(1,2) += dy * dz * weight;
+                E(2,2) += dz * dz * weight;
+            }
+        }
+        E(1,0) = E(0,1);
+        E(2,0) = E(0,2);
+        E(2,1) = E(1,2);
+        
+        gas.B_matrix[i] = E.inverse();
+    }
+    
+    // Compute gradients globally
+    HydroSolver::compute_gradients(gas, config);
+    
+    // Density Gradient should equal (2, 3, 4)
+    REQUIRE(gas.grad_rho[central_idx].x() == Catch::Approx(2.0).margin(1e-12));
+    REQUIRE(gas.grad_rho[central_idx].y() == Catch::Approx(3.0).margin(1e-12));
+    REQUIRE(gas.grad_rho[central_idx].z() == Catch::Approx(4.0).margin(1e-12));
 
-    // Create a density spike (Extremum)
-    rho(0, 0, 0) = 1.0;
-    rho(1, 0, 0) = 10.0;  // The spike!
-    rho(2, 0, 0) = 1.0;
-    rho(3, 0, 0) = 1.0;
+    // Pressure Gradient should equal (-1, 5, -2)
+    REQUIRE(gas.grad_p[central_idx].x() == Catch::Approx(-1.0).margin(1e-12));
+    REQUIRE(gas.grad_p[central_idx].y() == Catch::Approx(5.0).margin(1e-12));
+    REQUIRE(gas.grad_p[central_idx].z() == Catch::Approx(-2.0).margin(1e-12));
 
-    GasGridTestAccess::update_primitive_variables(grid);
-
-    RiemannSolver solver(conf.mesh_size);
-    solver.compute_fluxes(grid, 0, conf.gamma);  // X-Axis sweep
-
-    auto& rho_L = RiemannSolverTestAccess::rho_L(solver);
-
-    // At i=1, the slope from the left is +9, but from the right is -9.
-    // The minmod limiter MUST return 0 for opposite signs.
-    // Therefore, the reconstructed left state at the interface should exactly
-    // equal the cell center.
-    REQUIRE(rho_L(1, 0, 0) == Catch::Approx(10.0));
+    // Vx Gradient should equal (3, 0, 0)
+    REQUIRE(gas.grad_vx[central_idx].x() == Catch::Approx(3.0).margin(1e-12));
+    REQUIRE(gas.grad_vx[central_idx].y() == Catch::Approx(0.0).margin(1e-12));
+    REQUIRE(gas.grad_vx[central_idx].z() == Catch::Approx(0.0).margin(1e-12));
 }
 
 // ---------------------------------------------------------------------
-// HLLC Riemann Solver Flux Tests
+// MFM Hydrodynamic Forces and Conservation
 // ---------------------------------------------------------------------
-TEST_CASE("HLLC correctly resolves upwind supersonic fluxes", "[hydro][hllc]") {
-    // Upwinding in a Supersonic Flow. Prove that the HLLC solver
-    // correctly realizes when a fluid is moving so fast that
-    // it outruns its own sound waves,
-    // preventing information from physically traveling backward.
-
-    Config conf;
-    conf.mesh_size_1d = 4;
-    conf.gamma = 5.0 / 3.0;
-    GasGrid grid(conf);
-
-    // Setup uniform supersonic flow to the right
-    GasGridTestAccess::density(grid).fill(1.0);
-    GasGridTestAccess::momentum_x(grid).fill(10.0);  // v = 10.0
-    GasGridTestAccess::momentum_y(grid).fill(0.0);
-    GasGridTestAccess::momentum_z(grid).fill(0.0);
-    GasGridTestAccess::internal_energy(grid).fill(1.0);
-    GasGridTestAccess::energy(grid).fill(51.0);  // IE(1.0) + KE(50.0)
-
-    GasGridTestAccess::update_primitive_variables(grid);
-
-    RiemannSolver solver(conf.mesh_size);
-    solver.compute_fluxes(grid, 0, conf.gamma);
-
-    // P = (gamma - 1) x ei = (conf.gamma(5/3) - 1) x 1 = 2/3
-    // The speed of sound in this gas is:
-    // cs = sqrt(gamma * P / rho) = sqrt((5/3)*(2/3)/1) ~ 1.05
-    // v = 10.0. Therefore, the leftmost (slowest) wave speed in the
-    // Riemann fan is S_L (approx) = v - c_s = 10.0 - 1.05 = 8.95.
-    // Since S_L > 0, the entire wave structure moves right.
-    // In this regime, HLLC flux must exactly equal F_L.
-
-    // F_dens = rho * v = 1.0 * 10.0 = 10.0
-    REQUIRE(solver.get_flux_density()(0, 0, 0) == Catch::Approx(10.0));
-
-    // F_mom_n = rho * v^2 + P = 1.0 * 100.0 + 2/3 = 100.666...
-    REQUIRE(solver.get_flux_mom_n()(0, 0, 0) ==
-            Catch::Approx(100.0 + 2.0 / 3.0));
-
-    // F_en = (E_tot + P) * v = (51.0 + 2/3) * 10.0 = 516.666...
-    REQUIRE(solver.get_flux_energy()(0, 0, 0) ==
-            Catch::Approx(516.66666666666));
+TEST_CASE("MFM Hydro Solver conserves momentum and energy", "[hydro][mfm_forces]") {
+    Config config;
+    config.domain_size = {10.0, 10.0, 10.0};
+    config.num_gas_particles = 2;
+    config.compute_derived_data();
+    
+    GasParticleSystem gas(config);
+    
+    // Particle 0 (Left)
+    gas.add_particle(4.8, 5.0, 5.0, 10.0, 0.0, 0.0, 1.0, 5.0, 0.5, 0.0);
+    // Particle 1 (Right)
+    gas.add_particle(5.2, 5.0, 5.0, -10.0, 0.0, 0.0, 1.0, 5.0, 0.5, 0.0);
+    
+    gas.build_lbvh(config);
+    
+    // Impose an arbitrary pressure/density differential
+    gas.rho[0] = 1.0; gas.pressure[0] = 2.0;
+    gas.rho[1] = 0.5; gas.pressure[1] = 1.0;
+    
+    // Mock the density solver dependencies
+    for (size_t i = 0; i < 2; ++i) {
+        gas.B_matrix[i] = Eigen::Matrix3d::Identity();
+        gas.cond_num[i] = 1.0;
+        gas.vel_x_pred[i] = gas.vel_x[i];
+        gas.pressure_pred[i] = gas.pressure[i];
+    }
+    
+    // We must run gradients first to prepare the arrays
+    HydroSolver::compute_gradients(gas, config);
+    
+    // Run the Riemann solver and flux exchange
+    double a = 1.0;
+    HydroSolver::compute_forces(gas, config, a);
+    
+    // Momentum Conservation: m0 * a0 = -m1 * a1
+    double force_x_0 = gas.mass[0] * gas.hydro_acc_x[0];
+    double force_x_1 = gas.mass[1] * gas.hydro_acc_x[1];
+    REQUIRE(force_x_0 == Catch::Approx(-force_x_1).margin(1e-14));
+    
+    // Ensure forces are actually being applied (particles are crashing into each other)
+    REQUIRE(std::abs(force_x_0) > 0.0);
+    
+    // Energy Conservation: Rate of change of total energy must balance
+    double power_0 = gas.mass[0] * gas.de_dt[0];
+    double power_1 = gas.mass[1] * gas.de_dt[1];
+    REQUIRE(power_0 == Catch::Approx(-power_1).margin(1e-14));
 }

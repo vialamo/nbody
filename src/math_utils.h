@@ -1,6 +1,5 @@
 #pragma once
-#include <Eigen/Dense>
-#include <cmath>
+#include <algorithm>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -16,29 +15,11 @@ inline double periodic_displacement(double dx, double domain_size) {
     dx = (dx < -half_domain) ? dx + domain_size : dx;
     return dx;
 }
-
-inline double periodic_displacement(double dx, double domain,
-                                    double half_domain) {
-    dx = (dx > half_domain) ? dx - domain : dx;
-    dx = (dx < -half_domain) ? dx + domain : dx;
-    return dx;
-}
 #ifdef USE_GPU
 #pragma omp end declare target
 #endif
 
-class QuadraticInterpolator {
-   private:
-    double a, b, c;
-
-   public:
-    QuadraticInterpolator(const Eigen::Vector2d& p1, const Eigen::Vector2d& p2,
-                          const Eigen::Vector2d& p3);
-
-    inline double evaluate(double x) const { return a * x * x + b * x + c; }
-};
-
-// Expands a 21-bit integer into 64 bits by inserting 2 zeros after each bit.
+// Expands a 21-bit integer into 64 bits by inserting 2 zeros after each bit
 inline uint64_t splitBy3(uint32_t a) {
     uint64_t x = a & 0x1fffff;  // 21 bits
     x = (x | x << 32) & 0x1f00000000ffff;
@@ -79,7 +60,7 @@ inline double min_periodic_dist_sq(double p, double min_b, double max_b,
     else if (p_wrapped_right > max_b)
         d_wrapped_right = p_wrapped_right - max_b;
 
-    double min_d = std::min({d, d_wrapped_left, d_wrapped_right});
+    double min_d = std::min(d, std::min(d_wrapped_left, d_wrapped_right));
     return min_d * min_d;
 }
 #pragma omp end declare target

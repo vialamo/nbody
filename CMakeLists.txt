@@ -59,8 +59,6 @@ set(CORE_SOURCES
     src/integrator.cpp
     src/lbvh.cpp
     src/logger.cpp
-    src/math_utils.cpp
-    src/mfm.cpp
     src/particles.cpp
     src/pm.cpp
     src/reconstruction.cpp
@@ -264,7 +262,6 @@ add_executable(run_tests
     tests/test_gravity.cpp
     tests/test_hydro.cpp
     tests/test_ics.cpp
-    tests/test_mfm.cpp
 )
 
 target_link_libraries(run_tests PRIVATE SimulationCore Catch2::Catch2WithMain)

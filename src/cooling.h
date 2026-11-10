@@ -22,13 +22,8 @@ class Cooling {
     // Encapsulated state
     CoolingData cooling_data;
     bool use_table = false;
-    double mean_rho_code = 0.0;
-    double subgrid_clumping_A = 0.0;
 
     // Private helper methods
-    double compute_clumping_factor(double rho_code, double a,
-                                   const Config& config) const;
-
     void load_cooling_tables(const Config& config);
 
     int get_index(double value, const std::vector<double>& axis) const;
@@ -37,8 +32,7 @@ class Cooling {
                                  double log_nH, double log_T) const;
 
     double compute_tabulated_cooling(double u_code, double rho_code, double Z,
-                                     double a, double clumping_factor,
-                                     const Config& config) const;
+                                     double a, const Config& config) const;
 
    public:
     static constexpr int MAX_ITER = 50;

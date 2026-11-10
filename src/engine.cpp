@@ -2,7 +2,6 @@
 
 #include "cosmology.h"
 #include "diagnostics.h"
-#include "gas.h"
 #include "gravity.h"
 #include "hdf5_writer.h"
 #include "hydro.h"
@@ -10,8 +9,9 @@
 #include "integrator.h"
 #include "logger.h"
 
-static double get_next_sync_dt(const std::vector<double>& t_end,
-                               size_t num_particles, double global_time) {
+namespace {
+double get_next_sync_dt(const std::vector<double>& t_end, size_t num_particles,
+                        double global_time) {
     double next_time = std::numeric_limits<double>::infinity();
     for (size_t i = 0; i < num_particles; ++i) {
         if (t_end[i] > global_time + 1e-10) {
@@ -22,6 +22,7 @@ static double get_next_sync_dt(const std::vector<double>& t_end,
                ? (next_time - global_time)
                : std::numeric_limits<double>::infinity();
 }
+}  // namespace
 
 SimulationEngine::SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5,
                                    Diagnostics& diag)
@@ -54,12 +55,8 @@ TimestepInfo SimulationEngine::get_timestep() const {
     TimestepInfo ts = {0};
 
     if (config.individual_particle_timesteps) {
-        double dt_gas = std::numeric_limits<double>::infinity();
-        if (config.hydro_method == HydroMethod::MFM) {
-            dt_gas = get_next_sync_dt(state.mfm_gas->t_end,
-                                      state.mfm_gas->num_particles,
-                                      state.total_time);
-        }
+        double dt_gas = get_next_sync_dt(
+            state.gas.t_end, state.gas.num_particles, state.total_time);
         double dt_dm = get_next_sync_dt(state.dm.t_end, state.dm.num_particles,
                                         state.total_time);
         ts.dt_macro = std::min(dt_gas, dt_dm);
@@ -67,21 +64,10 @@ TimestepInfo SimulationEngine::get_timestep() const {
     }
 
     // Get raw physics constraints
-    if (config.hydro_method == HydroMethod::Eulerian) {
-        ts.dt_hydro = state.gas->get_cfl_timestep();
-    } else if (config.hydro_method == HydroMethod::MFM) {
-        ts.dt_hydro = HydroSolver::get_timestep(*state.mfm_gas, config);
-    } else {
-        ts.dt_hydro = std::numeric_limits<double>::infinity();
-    }
+    ts.dt_hydro = HydroSolver::get_timestep(state.gas, config);
 
     if (config.use_PM || config.use_PP) {
-        double dt_grav_dm = state.gravity.get_timestep(state.dm, config);
-        double dt_grav_mfm = std::numeric_limits<double>::infinity();
-        if (config.hydro_method == HydroMethod::MFM) {
-            dt_grav_mfm = state.gravity.get_timestep(*state.mfm_gas, config);
-        }
-        ts.dt_grav = std::min(dt_grav_dm, dt_grav_mfm);
+        ts.dt_grav = state.gravity.get_timestep(state.dm, state.gas, config);
     } else {
         ts.dt_grav = std::numeric_limits<double>::infinity();
     }
@@ -134,7 +120,7 @@ void SimulationEngine::step() {
     // I/O and Logging
     bool is_synchronized = true;
     if (config.individual_particle_timesteps) {
-        // At a true macrostep boundary, all particles have reached their t_end
+        // At a macrostep boundary, all particles have reached their t_end
         // and are flagged as active for the upcoming cycle
         double ratio = state.total_time / config.fixed_dt;
         is_synchronized = (std::abs(ratio - std::round(ratio)) < 1e-7);
@@ -173,15 +159,12 @@ void SimulationEngine::step() {
         (!needs_more_cycles ||
          elapsed.count() >= config.debug_info_every_seconds)) {
         // Update dt_cool for diagnostics
-        if (config.hydro_method == HydroMethod::Eulerian) {
-            current_ts.dt_cool = state.gas->get_cooling_timestep(
-                state.scale_factor, state.cooling);
-        } else {
-            current_ts.dt_cool = std::numeric_limits<double>::infinity();
-        }
+        current_ts.dt_cool = std::numeric_limits<double>::infinity();
+
         diagnostics.update_physics(state, current_ts, config);
         logger.log(diagnostics, config);
         diagnostics.reset_accumulators();
+        state.gas.reset_diagnostic_counters();
 
         // Reset the timer for the next interval
         last_debug_time = std::chrono::high_resolution_clock::now();

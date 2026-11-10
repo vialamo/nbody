@@ -2,10 +2,11 @@
 
 namespace Riemann {
 
+namespace {
 // Helper function to compute Star states
-static inline void calculate_star_states(
-    const Reconstruction::ReconstructedFace& face, double vn_L, double vn_R,
-    double S_L, double S_R, double& S_star, double& P_star) {
+inline void calculate_star_states(const Reconstruction::ReconstructedFace& face,
+                                  double vn_L, double vn_R, double S_L,
+                                  double S_R, double& S_star, double& P_star) {
     double den_star = face.rho_L * (S_L - vn_L) - face.rho_R * (S_R - vn_R);
 
     if (std::abs(den_star) < 1e-15) {
@@ -20,6 +21,7 @@ static inline void calculate_star_states(
     S_star = std::max(S_L, std::min(S_star, S_R));
     P_star = face.p_L + face.rho_L * (S_L - vn_L) * (S_star - vn_L);
 }
+}  // namespace
 
 // Solves the HLLC Riemann problem at the moving face between particles.
 // INPUT: Reconstructed face states, relative frame velocity (v_frame), and
@@ -175,8 +177,8 @@ FaceFlux solve_exact(const Reconstruction::ReconstructedFace& face,
 
     // Newton-Raphson Iteration for Exact P_star
     double P_star = 0.5 * (P_L + P_R);
-    const int MAX_ITER = 100;
-    const double TOL = 1e-6;
+    constexpr int MAX_ITER = 100;
+    constexpr double TOL = 1e-6;
     double mu2 = (gamma - 1.0) / (gamma + 1.0);
 
     for (int iter = 0; iter < MAX_ITER; ++iter) {

@@ -52,8 +52,8 @@ TEST_CASE("Initial internal energy scales correctly with code units",
 
         // Calculate the exact physical specific internal energy (in erg/g)
         double u_phys_cgs =
-            (constants::K_B_CGS * T_kelvin) /
-            ((config.gamma - 1.0) * config.primordial_mu * constants::M_P_CGS);
+            (Constants::K_B_CGS * T_kelvin) /
+            ((config.gamma - 1.0) * config.primordial_mu * Constants::M_P_CGS);
 
         // Read the EXACT velocity unit the config actually generated
         double v_unit_cgs = config.unit_velocity_kms * 1.0e5;
@@ -72,10 +72,10 @@ TEST_CASE("initialize_state produces physically sound macro-states",
     config.mesh_size_1d = 32;
     config.box_size_mpc_1d = 100.0;
     config.num_dm_particles_1d = 32;
+    config.num_gas_particles_1d = 32;
     config.use_PM = true;
     config.use_PP = false;
     config.use_glass = false;
-    config.hydro_method = HydroMethod::Eulerian;
 
     config.compute_derived_data();
 
@@ -88,11 +88,12 @@ TEST_CASE("initialize_state produces physically sound macro-states",
         double conf_total_gas_mass = config.omega_baryon / config.omega_m;
 
         double total_gas_mass = 0.0;
-        int N3 = config.mesh_size.x * config.mesh_size.y * config.mesh_size.z;
-        for (int i = 0; i < N3; ++i) {
-            // Integrate density over Eulerian volume
-            total_gas_mass +=
-                state.gas->get_density().data[i] * config.cell_volume;
+        
+        // MFM: Sum the discrete mass of all active gas particles
+        const size_t n_active_gas = state.gas.get_num_active();
+        for (size_t k = 0; k < n_active_gas; ++k) {
+            size_t i = state.gas.active_indices[k];
+            total_gas_mass += state.gas.mass[i];
         }
 
         // The universe must have 1.0 code mass
@@ -104,18 +105,22 @@ TEST_CASE("initialize_state produces physically sound macro-states",
 
     SECTION("Conservation of Momentum") {
         double p_dm_x = 0.0;
-        for (size_t i = 0; i < state.dm.num_particles; ++i) {
+        
+        // Consistent active_indices loop for DM
+        const size_t n_active_dm = state.dm.get_num_active();
+        for (size_t k = 0; k < n_active_dm; ++k) {
+            size_t i = state.dm.active_indices[k];
             p_dm_x += state.dm.vel_x[i] * state.dm.mass[i];
         }
 
-        double p_gas_x_density = 0.0;
-        int N3 = config.mesh_size.x * config.mesh_size.y * config.mesh_size.z;
-        for (int i = 0; i < N3; ++i) {
-            p_gas_x_density += state.gas->get_momentum_x().data[i];
+        double physical_p_gas_x = 0.0;
+        
+        // MFM: Calculate physical momentum directly from particle kinematics (m * v)
+        const size_t n_active_gas = state.gas.get_num_active();
+        for (size_t k = 0; k < n_active_gas; ++k) {
+            size_t i = state.gas.active_indices[k];
+            physical_p_gas_x += state.gas.mass[i] * state.gas.vel_x[i];
         }
-
-        // Convert momentum density to actual physical momentum
-        double physical_p_gas_x = p_gas_x_density * config.cell_volume;
 
         // In a periodic box, the sum of all momenta must be zero
         REQUIRE(std::abs(p_dm_x) < 1e-10);
@@ -124,7 +129,10 @@ TEST_CASE("initialize_state produces physically sound macro-states",
 
     SECTION("Velocities are mathematically bound to cosmic expansion") {
         double max_v_dm = 0.0;
-        for (size_t i = 0; i < state.dm.num_particles; ++i) {
+        
+        const size_t n_active_dm = state.dm.get_num_active();
+        for (size_t k = 0; k < n_active_dm; ++k) {
+            size_t i = state.dm.active_indices[k];
             max_v_dm = std::max(max_v_dm, std::abs(state.dm.vel_x[i]));
         }
 

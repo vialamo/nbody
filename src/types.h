@@ -5,17 +5,18 @@ struct Vec3 {
     double x, y, z;
 };
 
+struct Vec3i {
+    int x, y, z;
+};
+
 struct Grid3D {
     int nx, ny, nz;
     Eigen::VectorXd data;
 
     Grid3D() : nx(0), ny(0), nz(0) {}
 
-    Grid3D(const Vec3& size)
-        : nx(static_cast<int>(size.x)),
-          ny(static_cast<int>(size.y)),
-          nz(static_cast<int>(size.z)),
-          data(nx * ny * nz) {
+    Grid3D(const Vec3i& size)
+        : nx(size.x), ny(size.y), nz(size.z), data(nx * ny * nz) {
         data.setZero();
     }
 
@@ -56,4 +57,24 @@ struct TimestepInfo {
     double dt_hydro;
     double dt_grav;
     double dt_cool;
+};
+
+struct EnergyBudget {
+    double radiated = 0.0;
+    double photoheated = 0.0;
+    double gravitational_work = 0.0;
+    double expansion_work = 0.0;
+    double entropy_switch = 0.0;
+    double floor_injection = 0.0;
+
+    // Allow addition of deltas
+    EnergyBudget& operator+=(const EnergyBudget& rhs) {
+        radiated += rhs.radiated;
+        photoheated += rhs.photoheated;
+        gravitational_work += rhs.gravitational_work;
+        expansion_work += rhs.expansion_work;
+        entropy_switch += rhs.entropy_switch;
+        floor_injection += rhs.floor_injection;
+        return *this;
+    }
 };

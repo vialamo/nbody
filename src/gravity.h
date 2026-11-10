@@ -36,7 +36,7 @@ class GravitySolver {
     LBVH::Workspace lbvh_ws;
 
     void free_gpu_resources();
-    void prepare_arrays(ParticleSystem& dm, GasParticleSystem* gas,
+    void prepare_arrays(ParticleSystem& dm, GasParticleSystem& gas,
                         const Config& config, Diagnostics& diag);
 #endif
 
@@ -46,17 +46,16 @@ class GravitySolver {
 
     void update_softening(double a, const Config& config);
 
-    void add_pp_accel(ParticleSystem& dm, GasParticleSystem* gas, double a,
+    void add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas, double a,
                       const Config& config, Diagnostics& diag);
 
-    void map_results(ParticleSystem& dm, GasParticleSystem* gas,
+    void map_results(ParticleSystem& dm, GasParticleSystem& gas,
                      Diagnostics& diag);
 
     void reset_accels(SimState& state, const Config& config) const;
 
     // Timestep
-    double get_timestep(const ParticleSystem& dm, const Config& config) const;
-    double get_timestep(const GasParticleSystem& gas,
+    double get_timestep(const ParticleSystem& dm, const GasParticleSystem& gas,
                         const Config& config) const;
 
     double softening_length;

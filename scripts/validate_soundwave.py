@@ -45,7 +45,6 @@ def validate_soundwave_interactive(snapshot_dir):
     # Extract configuration and empirical baselines from the very first snapshot
     with h5py.File(files[0], 'r') as f:
         config = f['Config'].attrs
-        hydro_method = config.get('hydro_method', b"none").decode('utf-8')
         gamma = config.get('gamma', 5.0/3.0)
         
         # Extract rectangular domain sizes, falling back to cubic 'domain_size' if absent
@@ -55,24 +54,9 @@ def validate_soundwave_interactive(snapshot_dir):
         domain_size_z = config.get('domain_size_z', domain_base)
 
         gas = f['Gas']
-        if hydro_method == "mfm":
-            rho_sim_init = gas['density'][:]
-            P_sim_init = gas['pressure'][:]
-        elif hydro_method == "eulerian":
-            N_base = config.get('mesh_size_1d', 32)
-            N_x = config.get('mesh_size_x', int(round(N_base * (domain_size_x / domain_base))))
-            N_y = config.get('mesh_size_y', int(round(N_base * (domain_size_y / domain_base))))
-            N_z = config.get('mesh_size_z', int(round(N_base * (domain_size_z / domain_base))))
-            
-            rho_3d = gas['density'][:].reshape((N_x, N_y, N_z))
-            P_3d = gas['pressure'][:].reshape((N_x, N_y, N_z))
-            
-            mid_y, mid_z = N_y // 2, N_z // 2
-            rho_sim_init = rho_3d[:, mid_y, mid_z]
-            P_sim_init = P_3d[:, mid_y, mid_z]
-        else:
-            rho_sim_init, P_sim_init = np.array([1.0]), np.array([1.0])
-
+        rho_sim_init = gas['density'][:]
+        P_sim_init = gas['pressure'][:]
+        
         rho_0_emp = np.mean(rho_sim_init)
         P_0_emp = np.mean(P_sim_init)
         
@@ -91,43 +75,26 @@ def validate_soundwave_interactive(snapshot_dir):
             if 'Gas' in f:
                 gas = f['Gas']
                 
-                if hydro_method == "mfm":
-                    x = gas['position_x'][:]
-                    rho_sim = gas['density'][:]
-                    mass = gas['mass'][:]
-                elif hydro_method == "eulerian":
-                    N_base = config.get('mesh_size_1d', 32)
-                    N_x = config.get('mesh_size_x', int(round(N_base * (domain_size_x / domain_base))))
-                    N_y = config.get('mesh_size_y', int(round(N_base * (domain_size_y / domain_base))))
-                    N_z = config.get('mesh_size_z', int(round(N_base * (domain_size_z / domain_base))))
-                    
-                    dx = domain_size_x / float(N_x)
-                    x = np.linspace(dx/2.0, domain_size_x - dx/2.0, N_x)
-                    
-                    rho_3d = gas['density'][:].reshape((N_x, N_y, N_z))
-                    mid_y, mid_z = N_y // 2, N_z // 2
-                    rho_sim = rho_3d[:, mid_y, mid_z]
-                    mass = None
-                else:
-                    x, rho_sim, mass = [], [], []
+                x = gas['position_x'][:]
+                rho_sim = gas['density'][:]
+                mass = gas['mass'][:]
+
 
                 if len(x) > 0:
                     rho_exact = get_exact_soundwave_solution(x, t, domain_size_x, gamma, rho_0_emp, P_0_emp)[0]
-                    if hydro_method == "mfm":
-                        # Volume-weighted continuous L1 norm 
-                        volume = mass / rho_sim
-                        l1_err = np.sum(np.abs(rho_sim - rho_exact) * volume) / np.sum(volume)
-                    else:
-                        # Uniform cell volume L1 norm
-                        l1_err = np.mean(np.abs(rho_sim - rho_exact))
+
+                    # Volume-weighted continuous L1 norm 
+                    volume = mass / rho_sim
+                    l1_err = np.sum(np.abs(rho_sim - rho_exact) * volume) / np.sum(volume)
+                    
                     l1_errors.append(l1_err)
                 else:
                     l1_errors.append(0.0)
             else:
                 l1_errors.append(0.0)
 
-    label_prefix = "Eulerian Grid" if hydro_method == "eulerian" else "MFM Particles"
-    color_prefix = "darkorange" if hydro_method == "eulerian" else "royalblue"
+    label_prefix = "MFM Particles"
+    color_prefix = "royalblue"
     
     fig = plt.figure(figsize=(14, 10))
     gs = fig.add_gridspec(3, 2, height_ratios=[1, 1, 0.4])
@@ -155,7 +122,7 @@ def validate_soundwave_interactive(snapshot_dir):
     ax_P.set_ylim(P_0_emp - 1.5*delta_P, P_0_emp + 1.5*delta_P) 
     ax_u.set_ylim(u_0_emp - 1.5*delta_u, u_0_emp + 1.5*delta_u)
     
-    scatter_kwargs = {'s': 6 if hydro_method == "eulerian" else 4, 
+    scatter_kwargs = {'s': 4, 
                       'color': color_prefix, 'alpha': 0.8, 'label': f'{label_prefix} Sim'}
     exact_line_kwargs = {'color': 'black', 'lw': 1.5, 'linestyle': '--', 'label': 'Exact Solution'}
     
@@ -210,33 +177,12 @@ def validate_soundwave_interactive(snapshot_dir):
         with h5py.File(target_file, 'r') as f:
             time = f['Header'].attrs['simulation_time']
             cfg = f['Config'].attrs
-            method = cfg.get('hydro_method', b'none').decode('utf-8')
             
-            if method == "eulerian":
-                N_base = cfg.get('mesh_size_1d', 32)
-                N_x = cfg.get('mesh_size_x', int(round(N_base * (domain_size_x / domain_base))))
-                N_y = cfg.get('mesh_size_y', int(round(N_base * (domain_size_y / domain_base))))
-                N_z = cfg.get('mesh_size_z', int(round(N_base * (domain_size_z / domain_base))))
-                
-                dx = domain_size_x / float(N_x)
-                x_v = np.linspace(dx/2.0, domain_size_x - dx/2.0, N_x)
-                
-                rho_3d = f['Gas/density'][:].reshape((N_x, N_y, N_z))
-                mom_x_3d = f['Gas/momentum_x'][:].reshape((N_x, N_y, N_z))
-                P_3d = f['Gas/pressure'][:].reshape((N_x, N_y, N_z))
-                
-                mid_y, mid_z = N_y // 2, N_z // 2
-                rho_v = rho_3d[:, mid_y, mid_z]
-                v_v = mom_x_3d[:, mid_y, mid_z] / rho_v
-                P_v = P_3d[:, mid_y, mid_z]
-                u_v = P_v / (rho_v * (gamma - 1.0))
-                
-            elif method == "mfm":
-                x_v = f['Gas/position_x'][:]
-                rho_v = f['Gas/density'][:]
-                v_v = f['Gas/velocity_x'][:]
-                u_v = f['Gas/internal_energy'][:]
-                P_v = rho_v * u_v * (gamma - 1.0)
+            x_v = f['Gas/position_x'][:]
+            rho_v = f['Gas/density'][:]
+            v_v = f['Gas/velocity_x'][:]
+            u_v = f['Gas/internal_energy'][:]
+            P_v = rho_v * u_v * (gamma - 1.0)
             
         fig.canvas.manager.set_window_title(os.path.basename(os.path.normpath(snapshot_dir)))
         fig.suptitle(f"Linear Soundwave Validation - Snapshot {idx} (t={time:.4f})", fontsize=16)

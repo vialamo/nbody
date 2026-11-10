@@ -18,7 +18,6 @@ def validate_kh_interactive(snapshot_dir):
 
     with h5py.File(files[0], 'r') as f: 
         config = f['Config'].attrs 
-        hydro_method = config.get('hydro_method', b"none").decode('utf-8') 
         gamma = config.get('gamma', 5.0/3.0) 
         domain_size = config.get('domain_size', 1.0) 
         center = domain_size / 2.0 
@@ -33,33 +32,25 @@ def validate_kh_interactive(snapshot_dir):
         with h5py.File(fname, 'r') as f: 
             t = f['Header'].attrs['simulation_time'] 
             times.append(t) 
-            
-            method = f['Config'].attrs.get('hydro_method', b'none').decode('utf-8') 
 
             ph_e = f['Gas'].attrs.get('accumulated_photoheating_energy', 0.0) 
             e_rad = f['Gas'].attrs.get('cumulative_radiated_energy', 0.0) 
             w_grav = f['Gas'].attrs.get('cumulative_gravitational_work', 0.0) 
             w_exp = f['Gas'].attrs.get('cumulative_expansion_work', 0.0) 
 
-            if method == "mfm": 
-                sw_e = f['Gas'].attrs.get('cumulative_entropy_switch_energy', 0.0) 
-                mass = f['Gas/mass'][:] 
-                if 'total_energy' in f['Gas']: 
-                    u_tot_spec = f['Gas/total_energy'][:] 
-                    E_tot = np.sum(mass * u_tot_spec) 
-                else: 
-                    u = f['Gas/internal_energy'][:] 
-                    vx = f['Gas/velocity_x'][:] 
-                    vy = f['Gas/velocity_y'][:] 
-                    vz = f['Gas/velocity_z'][:] 
-                    ke = 0.5 * (vx**2 + vy**2 + vz**2) 
-                    E_tot = np.sum(mass * (u + ke)) 
+            
+            sw_e = f['Gas'].attrs.get('cumulative_entropy_switch_energy', 0.0) 
+            mass = f['Gas/mass'][:] 
+            if 'total_energy' in f['Gas']: 
+                u_tot_spec = f['Gas/total_energy'][:] 
+                E_tot = np.sum(mass * u_tot_spec) 
             else: 
-                sw_e = f['Gas'].attrs.get('cumulative_dual_energy_switch_energy', 0.0) 
-                energy_dens = f['Gas/energy'][:] 
-                N = f['Config'].attrs.get('mesh_size_1d', 32) 
-                vol = (domain_size / N)**3 
-                E_tot = np.sum(energy_dens) * vol 
+                u = f['Gas/internal_energy'][:] 
+                vx = f['Gas/velocity_x'][:] 
+                vy = f['Gas/velocity_y'][:] 
+                vz = f['Gas/velocity_z'][:] 
+                ke = 0.5 * (vx**2 + vy**2 + vz**2) 
+                E_tot = np.sum(mass * (u + ke)) 
                 
             switch_energies.append(sw_e) 
             
@@ -128,45 +119,24 @@ def validate_kh_interactive(snapshot_dir):
             vl_ts.set_xdata([time, time]) 
             
             cfg = f['Config'].attrs 
-            method = cfg.get('hydro_method', b'none').decode('utf-8') 
             
-            if method == "eulerian": 
-                N = cfg.get('mesh_size_1d', 32) 
-                dx_cell = domain_size / float(N) 
-                coords = np.linspace(dx_cell/2.0, domain_size - dx_cell/2.0, N) 
-                X, Y, Z = np.meshgrid(coords, coords, coords, indexing='ij') 
-                
-                mid_idx = N // 2 
-                x_slice = X[:, :, mid_idx].flatten() 
-                y_slice = Y[:, :, mid_idx].flatten() 
-                
-                rho_slice = f['Gas/density'][:].reshape((N, N, N))[:, :, mid_idx].flatten()
-                mom_x_slice = f['Gas/momentum_x'][:].reshape((N, N, N))[:, :, mid_idx].flatten()
-                mom_y_slice = f['Gas/momentum_y'][:].reshape((N, N, N))[:, :, mid_idx].flatten()
-                P_slice = f['Gas/pressure'][:].reshape((N, N, N))[:, :, mid_idx].flatten()
-                
-                vx_slice = mom_x_slice / rho_slice
-                vy_slice = mom_y_slice / rho_slice
-                u_slice = P_slice / (rho_slice * (gamma - 1.0))
-                
-            elif method == "mfm": 
-                x_full = f['Gas/position_x'][:] 
-                y_full = f['Gas/position_y'][:] 
-                z_full = f['Gas/position_z'][:] 
-                rho_full = f['Gas/density'][:] 
-                vx_full = f['Gas/velocity_x'][:] 
-                vy_full = f['Gas/velocity_y'][:] 
-                u_full = f['Gas/internal_energy'][:] 
+            x_full = f['Gas/position_x'][:] 
+            y_full = f['Gas/position_y'][:] 
+            z_full = f['Gas/position_z'][:] 
+            rho_full = f['Gas/density'][:] 
+            vx_full = f['Gas/velocity_x'][:] 
+            vy_full = f['Gas/velocity_y'][:] 
+            u_full = f['Gas/internal_energy'][:] 
 
-                dz_slice = domain_size * 0.05 
-                slice_mask = np.abs(z_full - center) < dz_slice 
-                
-                x_slice = x_full[slice_mask] 
-                y_slice = y_full[slice_mask] 
-                rho_slice = rho_full[slice_mask]
-                vx_slice = vx_full[slice_mask]
-                vy_slice = vy_full[slice_mask]
-                u_slice = u_full[slice_mask] 
+            dz_slice = domain_size * 0.05 
+            slice_mask = np.abs(z_full - center) < dz_slice 
+            
+            x_slice = x_full[slice_mask] 
+            y_slice = y_full[slice_mask] 
+            rho_slice = rho_full[slice_mask]
+            vx_slice = vx_full[slice_mask]
+            vy_slice = vy_full[slice_mask]
+            u_slice = u_full[slice_mask] 
 
         if len(x_slice) > 0:
             coords = np.c_[x_slice, y_slice] 

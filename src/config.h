@@ -5,44 +5,10 @@
 
 #include "types.h"
 
-namespace EnumUtils {
-template <typename E>
-struct Traits;
-
-template <typename E>
-std::string to_string(E value) {
-    size_t idx = static_cast<size_t>(value);
-    if (idx < static_cast<size_t>(E::Count)) {
-        return Traits<E>::names[idx];
-    }
-    return Traits<E>::names[static_cast<size_t>(Traits<E>::default_value)];
-}
-
-template <typename E>
-E from_string(std::string str) {
-    std::transform(str.begin(), str.end(), str.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-
-    for (size_t i = 0; i < static_cast<size_t>(E::Count); ++i) {
-        if (str == Traits<E>::names[i]) {
-            return static_cast<E>(i);
-        }
-    }
-    return Traits<E>::default_value;
-}
-}  // namespace EnumUtils
-
-enum class HydroMethod { None, Eulerian, MFM, Count };
-template <>
-struct EnumUtils::Traits<HydroMethod> {
-    static constexpr const char* names[] = {"none", "eulerian", "mfm"};
-    static constexpr HydroMethod default_value = HydroMethod::None;
-};
-
 enum class InitialSetup {
     Cosmological,
+    RegularGrid,
     SodShockTube,
-    AdiabaticExpansion,
     SedovBlastwave,
     SoundWave,
     KelvinHelmholtz,
@@ -50,40 +16,42 @@ enum class InitialSetup {
     ZeldovichPancake,
     Count
 };
-template <>
-struct EnumUtils::Traits<InitialSetup> {
-    static constexpr const char* names[] = {
-        "cosmological",    "sod_shock_tube",   "adiabatic_expansion",
-        "sedov_blastwave", "sound_wave",       "kelvin_helmholtz",
-        "evrard_collapse", "zeldovich_pancake"};
-    static constexpr InitialSetup default_value = InitialSetup::Cosmological;
-};
-
-namespace HydroConfig {
-inline std::string to_string(HydroMethod method) {
-    return EnumUtils::to_string(method);
-}
-
-// Wrapper allows calling without <HydroMethod> template brackets
-inline HydroMethod from_string(std::string str) {
-    return EnumUtils::from_string<HydroMethod>(std::move(str));
-}
-}  // namespace HydroConfig
 
 namespace InitialConfig {
+
+constexpr const char* const setup_names[] = {
+    "cosmological", "regular_grid",     "sod_shock_tube",  "sedov_blastwave",
+    "sound_wave",   "kelvin_helmholtz", "evrard_collapse", "zeldovich_pancake"};
+
 inline std::string to_string(InitialSetup setup) {
-    return EnumUtils::to_string(setup);
+    size_t idx = static_cast<size_t>(setup);
+    if (idx < static_cast<size_t>(InitialSetup::Count)) {
+        return setup_names[idx];
+    }
+    // Default fallback
+    return setup_names[static_cast<size_t>(InitialSetup::Cosmological)];
 }
 
 inline InitialSetup from_string(std::string str) {
-    return EnumUtils::from_string<InitialSetup>(std::move(str));
+    // Lowercase the input in-place
+    std::transform(str.begin(), str.end(), str.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+
+    for (size_t i = 0; i < static_cast<size_t>(InitialSetup::Count); ++i) {
+        if (str == setup_names[i]) {
+            return static_cast<InitialSetup>(i);
+        }
+    }
+    // Default fallback
+    return InitialSetup::Cosmological;
 }
+
 }  // namespace InitialConfig
 
 struct Config {
     // Domain
-    double domain_size_x_factor = 1.0;
-    double mesh_size_1d = 64;
+    int domain_size_x_factor = 1;
+    int mesh_size_1d = 64;
     int num_dm_particles_1d = 64;
     int num_gas_particles_1d = 64;
     double box_size_mpc_1d = 96.0;
@@ -116,32 +84,30 @@ struct Config {
     std::string glass_folder_path = "";
 
     // Hydro
-    HydroMethod hydro_method = HydroMethod::Eulerian;
-    double gamma = 5.0 / 3.0;
-    bool enable_cooling = true;
-    double primordial_mu = 1.22;  // Mean molecular weight for neutral
-                                  // primordial gas (76% H, 24% He)
-    double temp_floor_k = 2.73;
-    double cooling_cutoff_k = 10000.0;
-    std::string cooling_table_path = "";
-
-    // MFM
-    double mfm_target_neighbors = 32.0;
-    double mfm_neighbor_tolerance = 0.01;
-    int mfm_max_iterations = 50;
-    double mfm_min_hsml_fraction = 0.25;
-    double dual_energy_threshold = 0.001;
-    double entropy_switch_akin = 0.001;
-    double entropy_switch_agrav = 0.001;
+    double target_neighbors = 32.0;
+    double neighbor_tolerance = 0.01;
+    int max_iterations = 50;
+    double min_hsml_fraction = 0.25;
+    double max_condition_number = 5.0;
     bool use_exact_riemann = false;
     double gradient_limiter_beta_max = 2.0;
     double gradient_limiter_beta_min = 1.0;
     double pairwise_limiter_psi1 = 0.5;
     double pairwise_limiter_psi2 = 0.25;
 
-    // Subgrid
-    bool enable_subgrid_clumping = false;
-    double subgrid_clumping_amplitude = -1.0;
+    // Thermodynamics
+    double gamma = 5.0 / 3.0;
+    double primordial_mu = 1.22;  // Mean molecular weight for neutral
+                                  // primordial gas (76% H, 24% He)
+    double temp_floor_k = 2.73;
+    double dual_energy_threshold = 0.001;
+    double entropy_switch_akin = 0.001;
+    double entropy_switch_agrav = 0.001;
+
+    // Cooling
+    bool enable_cooling = true;
+    double cooling_cutoff_k = 10000.0;
+    std::string cooling_table_path = "";
 
     // Time
     double max_dt_dynamical_factor = 1e-3;
@@ -170,7 +136,7 @@ struct Config {
     int num_gas_particles = 0;
     double base_comoving_softening = 0.0;
 
-    Vec3 mesh_size;
+    Vec3i mesh_size;
     Vec3 box_size_mpc;
 
     double fixed_dt = 0;

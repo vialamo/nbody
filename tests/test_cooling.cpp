@@ -3,16 +3,7 @@
 
 #include "config.h"
 #include "cooling.h"
-#include "gas.h"
 #include "thermodynamics.h"
-
-// Helper proxy to inject values into the GasGrid
-struct GasGridTestAccess {
-    static Grid3D& density(GasGrid& g) { return g.density; }
-    static Grid3D& momentum_x(GasGrid& g) { return g.momentum_x; }
-    static Grid3D& energy(GasGrid& g) { return g.energy; }
-    static Grid3D& internal_energy(GasGrid& g) { return g.internal_energy; }
-};
 
 TEST_CASE("Thermodynamic conversions are perfectly reversible",
           "[cooling][thermodynamics]") {
@@ -33,7 +24,6 @@ TEST_CASE("Thermodynamic conversions are perfectly reversible",
 
 TEST_CASE("Cooling rate behaves physically", "[cooling][physics]") {
     Config config;
-    config.enable_subgrid_clumping = false;
     config.compute_derived_data();
     double a = 1.0;
     double Z = 0.0;
@@ -143,48 +133,3 @@ TEST_CASE("Implicit backward Euler solver is unconditionally stable",
     }
 }
 
-TEST_CASE("GasGrid correctly extracts radiated energy from BOTH arrays",
-          "[cooling][gas]") {
-    Config config;
-    config.mesh_size_1d = 2;
-    config.enable_cooling = true;
-    config.compute_derived_data();
-    double a = 1.0;
-
-    GasGrid grid(config);
-    Cooling cooling(config);
-
-    auto& rho = GasGridTestAccess::density(grid);
-    auto& mx = GasGridTestAccess::momentum_x(grid);
-    auto& en = GasGridTestAccess::energy(grid);
-    auto& ie = GasGridTestAccess::internal_energy(grid);
-
-    // Setup a hot, dense cell
-    rho(0, 0, 0) = 10.0;
-
-    // Give it 50.0 Kinetic Energy (KE = 0.5 * rho * v^2)
-    // 50.0 = 0.5 * 10.0 * v^2  =>  v = sqrt(10)
-    // momentum = rho * v = 10 * sqrt(10)
-    mx(0, 0, 0) = 10.0 * std::sqrt(10.0);
-
-    // Give it 100.0 total energy, 50.0 of which is internal, 50.0 is kinetic
-    en(0, 0, 0) = 100.0;
-    ie(0, 0, 0) = 50.0;
-
-    // Apply cooling
-    double dt = 0.05;
-    grid.apply_cooling(dt, a, cooling);
-    double e_lost = grid.get_accumulated_radiated_energy();
-
-    // Verify energy was lost
-    REQUIRE(e_lost > 0.0);
-    REQUIRE(ie(0, 0, 0) < 50.0);
-    REQUIRE(en(0, 0, 0) < 100.0);
-
-    // Did total energy and internal energy drop by the EXACT SAME amount?
-    // This proves kinetic energy was perfectly preserved.
-    double ie_drop = 50.0 - ie(0, 0, 0);
-    double en_drop = 100.0 - en(0, 0, 0);
-
-    REQUIRE(ie_drop == Catch::Approx(en_drop));
-}

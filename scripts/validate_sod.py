@@ -91,7 +91,6 @@ def validate_sod_shock_interactive(snapshot_dir):
     with h5py.File(files[0], 'r') as f:
         config = f['Config'].attrs
         setup_type = config.get('setup', b"").decode('utf-8')
-        hydro_method = config.get('hydro_method', b"none").decode('utf-8')
         
         if setup_type != "sod_shock_tube":
             print(f"[ERROR] Expected config attribute 'setup'='sod_shock_tube'. Found: '{setup_type}'")
@@ -126,36 +125,20 @@ def validate_sod_shock_interactive(snapshot_dir):
             
             if 'Gas' in f:
                 gas = f['Gas']
-                if hydro_method == "mfm":
-                    if 'mass' in gas and 'internal_energy' in gas and 'velocity_x' in gas:
-                        mass = gas['mass'][:]
-                        u_ie = gas['internal_energy'][:]
-                        v_x = gas['velocity_x'][:]
-                        v_y = gas['velocity_y'][:] if 'velocity_y' in gas else 0.0
-                        v_z = gas['velocity_z'][:] if 'velocity_z' in gas else 0.0
-                        
-                        if 'total_energy' in gas:
-                            e_tot = gas['total_energy'][:]
-                            E_current = np.sum(mass * e_tot)
-                        else:
-                            ke = 0.5 * (v_x**2 + v_y**2 + v_z**2)
-                            E_current = np.sum(mass * (u_ie + ke))
-                    else:
-                        E_current = 0.0
-                        
-                elif hydro_method == "eulerian":
-                    N = config.get('mesh_size_1d', 32)
-                    dx = domain_size / N
-                    vol = dx**3
-                    rho_g = gas['density'][:]
-                    p_g = gas['pressure'][:]
-                    mom_x = gas['momentum_x'][:]
-                    mom_y = gas['momentum_y'][:] if 'momentum_y' in gas else 0.0
-                    mom_z = gas['momentum_z'][:] if 'momentum_z' in gas else 0.0
+
+                if 'mass' in gas and 'internal_energy' in gas and 'velocity_x' in gas:
+                    mass = gas['mass'][:]
+                    u_ie = gas['internal_energy'][:]
+                    v_x = gas['velocity_x'][:]
+                    v_y = gas['velocity_y'][:] if 'velocity_y' in gas else 0.0
+                    v_z = gas['velocity_z'][:] if 'velocity_z' in gas else 0.0
                     
-                    kin = 0.5 * (mom_x**2 + mom_y**2 + mom_z**2) / rho_g
-                    therm = p_g / (gamma - 1.0)
-                    E_current = np.sum((therm + kin) * vol)
+                    if 'total_energy' in gas:
+                        e_tot = gas['total_energy'][:]
+                        E_current = np.sum(mass * e_tot)
+                    else:
+                        ke = 0.5 * (v_x**2 + v_y**2 + v_z**2)
+                        E_current = np.sum(mass * (u_ie + ke))
                 else:
                     E_current = 0.0
 
@@ -185,8 +168,8 @@ def validate_sod_shock_interactive(snapshot_dir):
                 err_tot.append(0.0)
                 err_sw.append(0.0)
 
-    label_prefix = "Eulerian Grid" if hydro_method == "eulerian" else "MFM Particles"
-    color_prefix = "darkorange" if hydro_method == "eulerian" else "royalblue"
+    label_prefix = "MFM Particles"
+    color_prefix = "royalblue"
     
     # GridSpec setup: 3 rows, 2 columns. Bottom row spans both columns and is half the height.
     fig = plt.figure(figsize=(14, 14))
@@ -205,7 +188,7 @@ def validate_sod_shock_interactive(snapshot_dir):
     ax_v.set_ylim(-0.1, 1.2)  
     ax_P.set_ylim(-0.05, 1.15) 
     
-    scatter_kwargs = {'s': 6 if hydro_method == "eulerian" else 4, 'color': color_prefix, 'alpha': 0.8, 'label': f'{label_prefix} Sim'}
+    scatter_kwargs = {'s': 4, 'color': color_prefix, 'alpha': 0.8, 'label': f'{label_prefix} Sim'}
     exact_line_kwargs = {'color': 'black', 'lw': 1.5, 'linestyle': '--', 'label': 'Exact Solution'}
     
     # Density
@@ -257,46 +240,22 @@ def validate_sod_shock_interactive(snapshot_dir):
         with h5py.File(target_file, 'r') as f:
             time = f['Header'].attrs['simulation_time']
             cfg = f['Config'].attrs
-            method = cfg.get('hydro_method', b'none').decode('utf-8')
             
             left_bnd = 0.05 * domain_size_x
             right_bnd = 0.95 * domain_size_x
             
-            if method == "eulerian":
-                N = cfg.get('mesh_size_1d', 32)
-                dx = domain_size / float(N)
-                
-                x_all = np.linspace(dx/2.0, domain_size - dx/2.0, N)
-                rho_3d = f['Gas/density'][:].reshape((N, N, N))
-                mom_x_3d = f['Gas/momentum_x'][:].reshape((N, N, N))
-                P_3d = f['Gas/pressure'][:].reshape((N, N, N))
-                
-                mid = N // 2
-                rho_line = rho_3d[:, mid, mid]
-                v_line = mom_x_3d[:, mid, mid] / rho_line
-                P_line = P_3d[:, mid, mid]
-                u_line = P_line / (rho_line * (gamma - 1.0))
-                
-                valid_mask = (x_all >= left_bnd) & (x_all <= right_bnd)
-                x_v = x_all[valid_mask]
-                rho_v = rho_line[valid_mask]
-                v_v = v_line[valid_mask]
-                P_v = P_line[valid_mask]
-                u_v = u_line[valid_mask]
-                
-            elif method == "mfm":
-                x = f['Gas/position_x'][:]
-                rho = f['Gas/density'][:]
-                v_x = f['Gas/velocity_x'][:]
-                u = f['Gas/internal_energy'][:]
-                P = rho * u * (gamma - 1.0)
-                
-                valid_mask = (x >= left_bnd) & (x <= right_bnd)
-                x_v = x[valid_mask]
-                rho_v = rho[valid_mask]
-                v_v = v_x[valid_mask]
-                P_v = P[valid_mask]
-                u_v = u[valid_mask]
+            x = f['Gas/position_x'][:]
+            rho = f['Gas/density'][:]
+            v_x = f['Gas/velocity_x'][:]
+            u = f['Gas/internal_energy'][:]
+            P = rho * u * (gamma - 1.0)
+            
+            valid_mask = (x >= left_bnd) & (x <= right_bnd)
+            x_v = x[valid_mask]
+            rho_v = rho[valid_mask]
+            v_v = v_x[valid_mask]
+            P_v = P[valid_mask]
+            u_v = u[valid_mask]
             
         fig.canvas.manager.set_window_title(os.path.basename(os.path.normpath(snapshot_dir)))
         fig.suptitle(f"Sod Shock Validation - Snapshot {idx} (t={time:.4f})", fontsize=16)

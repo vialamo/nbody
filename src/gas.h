@@ -1,146 +1,131 @@
 #pragma once
+#include <Eigen/Dense>
+#include <vector>
 
+#include "lbvh.h"
 #include "types.h"
 
-class Cooling;
-class GasGrid;
 struct Config;
-struct SimState;
-struct ZeldovichField;
+class Integrator;
 
-class RiemannSolver {
-   private:
-    Grid3D rho_L, p_L, vn_L, vt1_L, vt2_L, E_L, mom_n_L, mom_t1_L, mom_t2_L;
-    Grid3D rho_R, p_R, vn_R, vt1_R, vt2_R, E_R, mom_n_R, mom_t1_R, mom_t2_R;
-    Grid3D cs_L, cs_R, S_L, S_R;
-    Grid3D F_dens_L, F_dens_R, F_momn_L, F_momn_R, F_momt1_L, F_momt1_R,
-        F_momt2_L, F_momt2_R, F_en_L, F_en_R;
-    Grid3D flux_density, flux_mom_n, flux_mom_t1, flux_mom_t2, flux_energy;
-    Grid3D flux_density_sh, flux_mom_n_sh, flux_mom_t1_sh, flux_mom_t2_sh,
-        flux_energy_sh;
-    Grid3D ie_L, ie_R, F_ie_L, F_ie_R, flux_ie, flux_ie_sh;
-    Grid3D q_minus, q_plus, dq_L, dq_R, slope;
-    Grid3D flux_metal, flux_metal_sh;
-    Grid3D Z, Z_L, Z_R;
-
-    Eigen::ArrayXd den_star, S_star, omega_L, omega_R, denom_L, denom_R;
-    Eigen::ArrayXd mom_n_star_L, mom_n_star_R, mom_t1_star_L, mom_t1_star_R;
-    Eigen::ArrayXd mom_t2_star_L, mom_t2_star_R, E_star_L, E_star_R, ie_star_L,
-        ie_star_R;
-
-    friend struct RiemannSolverTestAccess;
-
-    inline void reconstruct_muscl(const Grid3D& q, Grid3D& q_L, Grid3D& q_R,
-                                  int axis);
-
-    inline void apply_hllc_flux(const Grid3D& F_L, const Grid3D& F_R,
-                                const Grid3D& U_L, const Grid3D& U_R,
-                                const Eigen::ArrayXd& U_star_L,
-                                const Eigen::ArrayXd& U_star_R,
-                                const Eigen::ArrayXd& S_star, Grid3D& F_out);
-
+class GasParticleSystem {
    public:
-    RiemannSolver(const Vec3& mesh_size);
-    void compute_fluxes(const GasGrid& grid, int axis, double gamma);
+    size_t num_particles = 0;
 
-    const Grid3D& get_flux_density() const { return flux_density; }
-    const Grid3D& get_flux_density_sh() const { return flux_density_sh; }
-    const Grid3D& get_flux_mom_n() const { return flux_mom_n; }
-    const Grid3D& get_flux_mom_n_sh() const { return flux_mom_n_sh; }
-    const Grid3D& get_flux_mom_t1() const { return flux_mom_t1; }
-    const Grid3D& get_flux_mom_t1_sh() const { return flux_mom_t1_sh; }
-    const Grid3D& get_flux_mom_t2() const { return flux_mom_t2; }
-    const Grid3D& get_flux_mom_t2_sh() const { return flux_mom_t2_sh; }
-    const Grid3D& get_flux_energy() const { return flux_energy; }
-    const Grid3D& get_flux_energy_sh() const { return flux_energy_sh; }
-    const Grid3D& get_flux_ie() const { return flux_ie; }
-    const Grid3D& get_flux_ie_sh() const { return flux_ie_sh; }
-    const Grid3D& get_flux_metal() const { return flux_metal; }
-    const Grid3D& get_flux_metal_sh() const { return flux_metal_sh; }
-};
+    // Core physical quantities
+    std::vector<double> pos_x;  // Comoving coordinates [Code Length]
+    std::vector<double> pos_y;
+    std::vector<double> pos_z;
+    std::vector<double> vel_x;  // Comoving velocity [Code Velocity]
+    std::vector<double> vel_y;
+    std::vector<double> vel_z;
+    std::vector<double> acc_x;  // Comoving gravitational acceleration
+                                // [Code Vel / Code Time]
+    std::vector<double> acc_y;
+    std::vector<double> acc_z;
+    std::vector<double> mass;  // Particle mass [Code Mass]
 
-class GasGrid {
+    std::vector<double> hydro_acc_x;  // Comoving hydrodynamic acceleration
+                                      // [Code Vel / Code Time]
+    std::vector<double> hydro_acc_y;
+    std::vector<double> hydro_acc_z;
+    std::vector<double> h;    // Comoving smoothing length [Code Length]
+    std::vector<double> rho;  // Comoving density (rho_c = a^3 * rho_phys) [Code
+                              // Mass / Code Length^3]
+    std::vector<double>
+        pressure;  // Comoving pressure (P_c = (gamma-1) * rho_c * u) [Code Mass
+                   // / (Code Length * Code Time^2)]
+    std::vector<double>
+        total_energy;           // Specific total energy [Code Velocity^2]
+    std::vector<double> u;      // Specific internal energy [Code Velocity^2]
+    std::vector<double> du_dt;  // Rate of change of specific internal energy
+                                // [Code Velocity^2 / Code Time]
+    std::vector<double> de_dt;  // Rate of change of specific total energy [Code
+                                // Velocity^2 / Code Time]
+    std::vector<double>
+        metal_frac;  // Dimensionless metallicity mass fraction [0.0 to 1.0]
+    std::vector<Eigen::Matrix3d>
+        B_matrix;  // Geometric inverse matrix [1 / Code Length^2]
+
+    std::vector<double> cond_num;
+
+    std::vector<double>
+        entropy;  // Entropic function (S = P / rho^gamma)
+                  // [Code Velocity^2 / (Code Mass / Code Length^3)^(gamma-1)]
+    std::vector<double> max_rel_ke;  // Maximum specific relative kinetic energy
+                                     // of neighbors [Code Velocity^2]
+
+    // Gradients are evaluated with respect to comoving coordinates
+    // (d/dx_comoving)
+    std::vector<Eigen::Vector3d> grad_rho;  // [Density / Code Length]
+    std::vector<Eigen::Vector3d> grad_vx;   // [Velocity / Code Length]
+    std::vector<Eigen::Vector3d> grad_vy;
+    std::vector<Eigen::Vector3d> grad_vz;
+    std::vector<Eigen::Vector3d> grad_p;  // [Pressure / Code Length]
+
+    std::vector<double> v_sig_max;  // Cached maximum signal velocity
+
+    EnergyBudget budget;
+
+    // Spatial Hashing
+    std::vector<CIC_Data> cic_data;
+    std::vector<uint64_t> morton_codes;
+    std::vector<int> sorted_indices;
+    std::vector<BVHNode> bvh_nodes;
+
+    // Time tracking per particle (Hierarchical block time-stepping)
+    std::vector<int> time_bin;       // Power-of-two bin level (n)
+    std::vector<double> dt_step;     // Actual timestep size (Delta t_i)
+    std::vector<double> t_current;   // Time this particle was last drifted to
+    std::vector<double> t_end;       // Time this particle's current step ends
+    std::vector<uint8_t> is_active;  // Particle is synced with the global clock
+    std::vector<uint8_t>
+        needs_wakeup;  // Thread-safe flag for waking up sleeping particles
+    std::vector<int> active_indices;
+    double global_time = 0.0;
+    size_t get_num_active() const { return active_indices.size(); }
+
+    std::vector<double> vel_x_pred;
+    std::vector<double> vel_y_pred;
+    std::vector<double> vel_z_pred;
+    std::vector<double> pressure_pred;
+
+    // Debugging
+    std::vector<double> n_enc_final;
+
+    struct GasDiagnostics {
+        double active_particles_fraction = 0.0;
+        size_t active_particles_num_cycles = 0;
+        size_t ill_conditioned = 0;
+        size_t clamped_h = 0;
+        size_t non_converged_h = 0;
+        size_t not_enough_neighbors = 0;
+        size_t riemann_failed = 0;
+        size_t neighbor_increased = 0;
+        size_t sph_fallback = 0;
+        size_t cooling_failed = 0;
+    };
+    GasDiagnostics diag;
+
+    GasParticleSystem(const Config& config);
+
+    void add_particle(double px, double py, double pz, double vx, double vy,
+                      double vz, double m, double initial_u, double initial_h,
+                      double z_metal);
+
+    void build_lbvh(const Config& config);
+
+    // Assigns power-of-two block timesteps to all active particles
+    void update_particle_timesteps(double dt_max, double a,
+                                   const Config& config,
+                                   double softening_length);
+
+    // Sync the clock, process wakeups, and flag active particles
+    void sync_and_activate(Integrator& integrator, double dt, double a,
+                           double H, const Config& config);
+
+    void reset_diagnostic_counters();
+
    private:
-    Grid3D density, momentum_x, momentum_y, momentum_z, energy;
-    Grid3D pressure, velocity_x, velocity_y, velocity_z;
-    Grid3D internal_energy;
-    Grid3D metal_density;
-    size_t cooling_failed_cells;
-    size_t cooling_total_cycles;
-    double accumulated_radiated_energy;
-    double accumulated_photoheating_energy;
-    double accumulated_gravitational_work;
-    double accumulated_expansion_work;
-    double accumulated_dual_energy_switch_energy;
-    double pressure_floor;
-
-    RiemannSolver solver;
-    const Config& config;
-
-    friend struct GasGridTestAccess;
-    friend void initialize_gas(SimState& state, const Config& config,
-                               const ZeldovichField& zf);
-    friend void initialize_sod_shock_tube(SimState& state,
-                                          const Config& config);
-    friend void apply_mesh_gas_gravity_kick(GasGrid& gas, const Grid3D& grav_x,
-                                            const Grid3D& grav_y,
-                                            const Grid3D& grav_z, double dt,
-                                            double a, double H,
-                                            const Config& config);
-    friend void initialize_adiabatic_expansion(SimState& state,
-                                               const Config& config);
-    friend void initialize_sedov_blastwave(SimState& state,
-                                           const Config& config);
-
-    void compute_and_apply_fluxes(double dt, double a);
-
-   public:
-    GasGrid(const Config& conf);
-
-    void hydro_step(double dt, double a);
-    void apply_cooling(double dt, double a, Cooling& cooling);
-    double get_cfl_timestep() const;
-    double get_cooling_timestep(double a, Cooling& cooling) const;
-
-    const Grid3D& get_density() const { return density; }
-    const Grid3D& get_momentum_x() const { return momentum_x; }
-    const Grid3D& get_momentum_y() const { return momentum_y; }
-    const Grid3D& get_momentum_z() const { return momentum_z; }
-    const Grid3D& get_energy() const { return energy; }
-
-    const Grid3D& get_pressure() const { return pressure; }
-    const Grid3D& get_velocity_x() const { return velocity_x; }
-    const Grid3D& get_velocity_y() const { return velocity_y; }
-    const Grid3D& get_velocity_z() const { return velocity_z; }
-
-    const Grid3D& get_internal_energy() const { return internal_energy; }
-    const Grid3D& get_metal_density() const { return metal_density; }
-
-    size_t get_cooling_failed_cells() const { return cooling_failed_cells; }
-    size_t get_cooling_total_cycles() const { return cooling_total_cycles; }
-    double get_accumulated_radiated_energy() const {
-        return accumulated_radiated_energy;
-    }
-
-    double get_accumulated_photoheating_energy() const {
-        return accumulated_photoheating_energy;
-    }
-
-    double get_accumulated_gravitational_work() const {
-        return accumulated_gravitational_work;
-    }
-    double get_accumulated_expansion_work() const {
-        return accumulated_expansion_work;
-    }
-    double get_accumulated_dual_energy_switch_energy() const {
-        return accumulated_dual_energy_switch_energy;
-    }
-    void add_gravitational_work(double w) {
-        accumulated_gravitational_work += w;
-    }
-    void add_expansion_work(double w) { accumulated_expansion_work += w; }
-
-    Grid3D compute_thermal_timescale(double a, const Cooling& cooling) const;
-
-    void update_primitive_variables(double a);
+    void sort_arrays(const std::vector<int>& sorted_indices);
 };

@@ -4,9 +4,9 @@
 
 #include "config.h"
 #include "debug_utils.h"
+#include "gas.h"
 #include "kernels.h"
 #include "math_utils.h"
-#include "mfm.h"
 
 #define USE_NBG_LIST
 // #define USE_ADAPTIVE_CONDITION_NUMBER
@@ -17,18 +17,17 @@ namespace {  // Anonymous namespace for private helper functions
 
 // Evaluates the condition number of a geometric E matrix. Returns -1.0 if
 // singular
-static inline double evaluate_matrix_condition_number(
-    const Eigen::Matrix3d& E, const Eigen::Matrix3d& B) {
+inline double evaluate_matrix_condition_number(const Eigen::Matrix3d& E,
+                                               const Eigen::Matrix3d& B) {
     double det = E.determinant();
     if (std::abs(det) < 1e-30) return -1.0;
     return (1.0 / 3.0) * std::sqrt(E.squaredNorm() * B.squaredNorm());
 }
 
-#ifdef USE_ADAPTIVE_CONDITION_NUMBER
-static void evaluate_density_sum(const GasParticleSystem& gas,
-                                 size_t particle_idx, double h,
-                                 const Vec3& domain_size, double& out_n,
-                                 double& out_dn_dh, int& out_num_neighb) {
+#if defined USE_ADAPTIVE_CONDITION_NUMBER || !defined USE_NBG_LIST
+void evaluate_density_sum(const GasParticleSystem& gas, size_t particle_idx,
+                          double h, const Vec3& domain_size, double& out_n,
+                          double& out_dn_dh, int& out_num_neighb) {
     out_n = 0.0;
     out_dn_dh = 0.0;
     out_num_neighb = 0;
@@ -37,54 +36,26 @@ static void evaluate_density_sum(const GasParticleSystem& gas,
     double p1_y = gas.pos_y[particle_idx];
     double p1_z = gas.pos_z[particle_idx];
 
-    int stack[128];
-    int stack_ptr = 0;
-    stack[stack_ptr++] = 0;
-
-    while (stack_ptr > 0) {
-        int node_idx = stack[--stack_ptr];
-        const BVHNode& node = gas.bvh_nodes[node_idx];
-
-        double dist_sq = min_periodic_dist_sq(p1_x, node.bbox.min_x,
-                                              node.bbox.max_x, domain_size.x) +
-                         min_periodic_dist_sq(p1_y, node.bbox.min_y,
-                                              node.bbox.max_y, domain_size.y) +
-                         min_periodic_dist_sq(p1_z, node.bbox.min_z,
-                                              node.bbox.max_z, domain_size.z);
-
-        if (dist_sq > search_sq) continue;
-
-        if (node.particle_idx != -1) {
-            int j = node.particle_idx;
-            double dx =
-                periodic_displacement(gas.pos_x[j] - p1_x, domain_size.x);
-            double dy =
-                periodic_displacement(gas.pos_y[j] - p1_y, domain_size.y);
-            double dz =
-                periodic_displacement(gas.pos_z[j] - p1_z, domain_size.z);
-            double r2 = dx * dx + dy * dy + dz * dz;
-
-            if (r2 < search_sq) {
-                double r = std::sqrt(r2);
-                double W, dWdh;
-                Kernels::cubic_spline(r, h, W, dWdh);
-                out_n += W;
-                out_dn_dh += dWdh;
-                out_num_neighb++;
-            }
-        } else {
-            stack[stack_ptr++] = node.left_child;
-            stack[stack_ptr++] = node.right_child;
-        }
-    }
+    LBVH::traverse(gas.bvh_nodes.data(), gas.pos_x.data(), gas.pos_y.data(),
+                   gas.pos_z.data(), p1_x, p1_y, p1_z, search_sq, domain_size,
+                   [&](int j, double dx, double dy, double dz, double r2) {
+                       if (r2 < search_sq) {
+                           double r = std::sqrt(r2);
+                           double W, dWdh;
+                           Kernels::cubic_spline(r, h, W, dWdh);
+                           out_n += W;
+                           out_dn_dh += dWdh;
+                           out_num_neighb++;
+                       }
+                   });
 }
 #endif
 
 #ifdef USE_NBG_LIST
-static void gather_neighbors(const GasParticleSystem& gas, size_t particle_idx,
-                             double h, const Vec3& domain_size,
-                             std::vector<int>& out_indices,
-                             std::vector<double>& out_r2) {
+void gather_neighbors(const GasParticleSystem& gas, size_t particle_idx,
+                      double h, const Vec3& domain_size,
+                      std::vector<int>& out_indices,
+                      std::vector<double>& out_r2) {
     out_indices.clear();
     out_r2.clear();
     double search_sq = h * h;
@@ -92,48 +63,21 @@ static void gather_neighbors(const GasParticleSystem& gas, size_t particle_idx,
     double p1_y = gas.pos_y[particle_idx];
     double p1_z = gas.pos_z[particle_idx];
 
-    int stack[128];
-    int stack_ptr = 0;
-    stack[stack_ptr++] = 0;
-
-    while (stack_ptr > 0) {
-        int node_idx = stack[--stack_ptr];
-        const BVHNode& node = gas.bvh_nodes[node_idx];
-
-        double dist_sq = min_periodic_dist_sq(p1_x, node.bbox.min_x,
-                                              node.bbox.max_x, domain_size.x) +
-                         min_periodic_dist_sq(p1_y, node.bbox.min_y,
-                                              node.bbox.max_y, domain_size.y) +
-                         min_periodic_dist_sq(p1_z, node.bbox.min_z,
-                                              node.bbox.max_z, domain_size.z);
-
-        if (dist_sq > search_sq) continue;
-
-        if (node.particle_idx != -1) {
-            int j = node.particle_idx;
-            double dx =
-                periodic_displacement(gas.pos_x[j] - p1_x, domain_size.x);
-            double dy =
-                periodic_displacement(gas.pos_y[j] - p1_y, domain_size.y);
-            double dz =
-                periodic_displacement(gas.pos_z[j] - p1_z, domain_size.z);
-            double r2 = dx * dx + dy * dy + dz * dz;
-
-            if (r2 <= search_sq) {
-                out_indices.push_back(j);
-                out_r2.push_back(r2);
-            }
-        } else {
-            stack[stack_ptr++] = node.left_child;
-            stack[stack_ptr++] = node.right_child;
-        }
-    }
+    LBVH::traverse(gas.bvh_nodes.data(), gas.pos_x.data(), gas.pos_y.data(),
+                   gas.pos_z.data(), p1_x, p1_y, p1_z, search_sq, domain_size,
+                   [&](int j, double dx, double dy, double dz, double r2) {
+                       if (r2 < search_sq) {
+                           out_indices.push_back(j);
+                           out_r2.push_back(r2);
+                       }
+                   });
 }
 
-static void evaluate_density_sum_from_cache(
-    double h, const std::vector<int>& cached_indices,
-    const std::vector<double>& cached_r2, double& out_n, double& out_dn_dh,
-    int& out_num_neighb) {
+void evaluate_density_sum_from_cache(double h,
+                                     const std::vector<int>& cached_indices,
+                                     const std::vector<double>& cached_r2,
+                                     double& out_n, double& out_dn_dh,
+                                     int& out_num_neighb) {
     out_n = 0.0;
     out_dn_dh = 0.0;
     out_num_neighb = 0;
@@ -153,10 +97,10 @@ static void evaluate_density_sum_from_cache(
 }
 #endif
 
-static double build_matrix_and_compute_condition(const GasParticleSystem& gas,
-                                                 size_t particle_idx, double h,
-                                                 const Vec3& domain_size,
-                                                 Eigen::Matrix3d& B) {
+double build_matrix_and_compute_condition(const GasParticleSystem& gas,
+                                          size_t particle_idx, double h,
+                                          const Vec3& domain_size,
+                                          Eigen::Matrix3d& B) {
     Eigen::Matrix3d E = Eigen::Matrix3d::Zero();
 
     double p1_x = gas.pos_x[particle_idx];
@@ -164,59 +108,31 @@ static double build_matrix_and_compute_condition(const GasParticleSystem& gas,
     double p1_z = gas.pos_z[particle_idx];
     double search_sq = h * h;
 
-    int stack[128];
-    int stack_ptr = 0;
-    stack[stack_ptr++] = 0;
+    LBVH::traverse(gas.bvh_nodes.data(), gas.pos_x.data(), gas.pos_y.data(),
+                   gas.pos_z.data(), p1_x, p1_y, p1_z, search_sq, domain_size,
+                   [&](int j, double dx, double dy, double dz, double r2) {
+                       if (static_cast<size_t>(j) == particle_idx) return;
 
-    while (stack_ptr > 0) {
-        int node_idx = stack[--stack_ptr];
-        const BVHNode& node = gas.bvh_nodes[node_idx];
-
-        double dist_sq = min_periodic_dist_sq(p1_x, node.bbox.min_x,
-                                              node.bbox.max_x, domain_size.x) +
-                         min_periodic_dist_sq(p1_y, node.bbox.min_y,
-                                              node.bbox.max_y, domain_size.y) +
-                         min_periodic_dist_sq(p1_z, node.bbox.min_z,
-                                              node.bbox.max_z, domain_size.z);
-
-        if (dist_sq > search_sq) continue;
-
-        if (node.particle_idx != -1) {
-            int j = node.particle_idx;
-            if (static_cast<size_t>(j) == particle_idx) continue;
-
-            double dx =
-                periodic_displacement(gas.pos_x[j] - p1_x, domain_size.x);
-            double dy =
-                periodic_displacement(gas.pos_y[j] - p1_y, domain_size.y);
-            double dz =
-                periodic_displacement(gas.pos_z[j] - p1_z, domain_size.z);
-            double r2 = dx * dx + dy * dy + dz * dz;
-
-            if (r2 < search_sq && r2 > 1e-24) {
-                double r = std::sqrt(r2);
-                double W;
-                Kernels::cubic_spline_value(r, h, W);
+                       if (r2 < search_sq && r2 > 1e-24) {
+                           double r = std::sqrt(r2);
+                           double W;
+                           Kernels::cubic_spline_value(r, h, W);
 
 #ifdef USE_GEOMETRIC_MATRIX
-                double weight = W;
+                           double weight = W;
 #else
-                double V_j = gas.mass[j] / gas.rho[j];
-                double weight = W * V_j;
+                           double V_j = gas.mass[j] / gas.rho[j];
+                           double weight = W * V_j;
 #endif
 
-                E(0, 0) += dx * dx * weight;
-                E(0, 1) += dx * dy * weight;
-                E(0, 2) += dx * dz * weight;
-                E(1, 1) += dy * dy * weight;
-                E(1, 2) += dy * dz * weight;
-                E(2, 2) += dz * dz * weight;
-            }
-        } else {
-            stack[stack_ptr++] = node.left_child;
-            stack[stack_ptr++] = node.right_child;
-        }
-    }
+                           E(0, 0) += dx * dx * weight;
+                           E(0, 1) += dx * dy * weight;
+                           E(0, 2) += dx * dz * weight;
+                           E(1, 1) += dy * dy * weight;
+                           E(1, 2) += dy * dz * weight;
+                           E(2, 2) += dz * dz * weight;
+                       }
+                   });
 
     E(1, 0) = E(0, 1);
     E(2, 0) = E(0, 2);
@@ -291,11 +207,12 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
     if (gas.num_particles == 0) return;
 
     const Vec3& domain_size = config.domain_size;
-    double target_N = config.mfm_target_neighbors;
-    double tol = config.mfm_neighbor_tolerance;
-    int max_iter = config.mfm_max_iterations;
+    double target_N = config.target_neighbors;
+    double tol = config.neighbor_tolerance;
+    int max_iter = config.max_iterations;
+    double N_cond_crit = config.max_condition_number;
 
-    const double min_h_cap = config.mfm_min_hsml_fraction * softening_length;
+    const double min_h_cap = config.min_hsml_fraction * softening_length;
     const double max_h_cap = 0.5 * config.domain_size_1d;
 
     constexpr double sphere_volume_factor = (4.0 / 3.0) * M_PI;
@@ -307,10 +224,6 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
 
     size_t num_active = gas.get_num_active();
     if (num_active == 0) return;
-
-    // Cache to pass dn_dh to the adaptive softening loop without re-evaluating
-    // the tree
-    std::vector<double> cached_dn_dh(gas.num_particles, 0.0);
 
     // Cache the individual target_N so Pass 2 starts from Pass 1's expanded
     // target
@@ -443,7 +356,6 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
             gas.h[i] = h_guess;
             gas.rho[i] = gas.mass[i] * number_density;
             gas.n_enc_final[i] = effective_neighbors;
-            cached_dn_dh[i] = dn_dh;
             particle_target_N[i] = current_target_N;  // Save for Pass 2
 
             if (h_clamped) num_h_clamped++;
@@ -555,7 +467,6 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
                 gas.h[i] = h_guess;
                 gas.rho[i] = gas.mass[i] * number_density;
                 gas.n_enc_final[i] = effective_neighbors;
-                cached_dn_dh[i] = dn_dh;
 
                 if (h_clamped && h_guess >= max_h_cap) break;
             } else {
@@ -596,15 +507,15 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
         gas.cond_num[i] = build_matrix_and_compute_condition(
             gas, i, gas.h[i], domain_size, gas.B_matrix[i]);
 
-        if (gas.n_enc_final[i] > 3.0 * config.mfm_target_neighbors) {
+        if (gas.n_enc_final[i] > 3.0 * config.target_neighbors) {
             gas.cond_num[i] = 2 * N_cond_crit;
         }
     }
 
-    gas.clamped_h_cases += num_h_clamped;
-    gas.non_converged_h_cases += num_non_converged;
-    gas.neighbor_increased_cases += step_neighbor_increased_cases;
-    gas.not_enough_neighbors_cases += num_not_enough_neighbors;
+    gas.diag.clamped_h += num_h_clamped;
+    gas.diag.non_converged_h += num_non_converged;
+    gas.diag.neighbor_increased += step_neighbor_increased_cases;
+    gas.diag.not_enough_neighbors += num_not_enough_neighbors;
 
     // Refresh Bounding Boxes using the final smoothing lengths
     LBVH::update_h_and_bboxes(gas.num_particles, gas.pos_x, gas.pos_y,

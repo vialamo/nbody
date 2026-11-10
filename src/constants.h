@@ -1,6 +1,6 @@
 #pragma once
 
-namespace constants {
+namespace Constants {
 // ---------------------------------------------------------
 // Physical Constants
 // ---------------------------------------------------------
@@ -28,4 +28,4 @@ constexpr double GYR_CGS = 3.15576e16;     // Gigayear [s]
 constexpr double X_MASS_FRAC = 0.76;  // Primordial Hydrogen mass fraction
 constexpr double Y_MASS_FRAC = 0.24;  // Primordial Helium mass fraction
 constexpr double Z_SOLAR = 0.02;      // Standard Solar Metallicity
-}  // namespace constants
+}  // namespace Constants

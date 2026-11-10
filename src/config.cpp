@@ -28,7 +28,7 @@ void Config::init_derived_units() {
     // Velocity is Length / Time. When dividing unit_length_mpc by
     // unit_time_gyr, the 0.10227 conversion mathematically cancels out.
     // We are left with the base 100 km/s/Mpc multiplied by the inverse of the
-    // 2/3 scaling factor defined in H0_code. (100 * 3/2 = 150.0).
+    // 2/3 scaling factor defined in H0_code. (100 * 3/2 = 150.0)
     constexpr double hubble_velocity_scaling = 150;
     unit_velocity_kms = unit_length_mpc * hubble_velocity_scaling * hubble_h *
                         std::sqrt(omega_m);
@@ -37,7 +37,7 @@ void Config::init_derived_units() {
     // Mass
     // Base critical density of the universe: (3 * H0^2) / (8 * pi * G)
     // Evaluated for a baseline H0 = 100 km/s/Mpc, and converted into
-    // units of Solar Masses per cubic Megaparsec (M_sun / Mpc^3).
+    // units of Solar Masses per cubic Megaparsec (M_sun / Mpc^3)
     constexpr double rho_crit_base_msun_mpc3 = 2.775e11;
     double rho_crit = rho_crit_base_msun_mpc3 * (hubble_h * hubble_h);
     double box_volume_mpc3 = box_size_mpc.x * box_size_mpc.y * box_size_mpc.z;
@@ -48,18 +48,18 @@ void Config::init_derived_units() {
     // T = u * (gamma - 1) * mu * m_p / k_B
     double V_unit_m_s = unit_velocity_kms * 1000.0;
     factor_u_to_t = (V_unit_m_s * V_unit_m_s) * (gamma - 1.0) * primordial_mu *
-                    constants::M_P_SI / constants::K_B_SI;
+                    Constants::M_P_SI / Constants::K_B_SI;
     factor_t_to_u = 1.0 / factor_u_to_t;
 
     // Density conversion: Code -> CGS (g/cm^3)
-    double mass_cgs = unit_mass_msun * constants::MSUN_CGS;
-    double length_cgs = unit_length_mpc * constants::MPC_CGS;
+    double mass_cgs = unit_mass_msun * Constants::MSUN_CGS;
+    double length_cgs = unit_length_mpc * Constants::MPC_CGS;
     double vol_cgs = length_cgs * length_cgs * length_cgs;
     unit_density_cgs = mass_cgs / vol_cgs;
 
     // Cooling rate conversion: (erg/g/s) -> Code (u_code / t_code)
     double u_unit_cgs = unit_velocity_cgs * unit_velocity_cgs;
-    double t_unit_cgs = unit_time_gyr * constants::GYR_CGS;
+    double t_unit_cgs = unit_time_gyr * Constants::GYR_CGS;
     cooling_conversion_factor = t_unit_cgs / u_unit_cgs;
 }
 
@@ -76,22 +76,6 @@ void Config::compute_derived_data() {
     mesh_size.x *= domain_size_x_factor;
     box_size_mpc.x *= domain_size_x_factor;
 
-    if (hubble_h > 10.0) {
-        hubble_h /= 100.0;
-    }
-
-    if (initial_setup == InitialSetup::AdiabaticExpansion) {
-        expanding_universe = true;
-        enable_cooling = false;
-        use_PM = false;
-        use_PP = false;
-        num_dm_particles_1d = 0;
-        omega_lambda = 0.0;
-        omega_m = 1.0;
-        omega_baryon = 1.0;
-        gamma = 5.0 / 3.0;
-    }
-
     cell_size = domain_size_1d / mesh_size_1d;
     cell_volume = cell_size * cell_size * cell_size;
     omega_dm = omega_m - omega_baryon;
@@ -101,10 +85,8 @@ void Config::compute_derived_data() {
 
     num_dm_particles =
         num_dm_particles_1d * num_dm_particles_1d * num_dm_particles_1d;
-    if (hydro_method == HydroMethod::MFM) {
-        num_gas_particles =
-            num_gas_particles_1d * num_gas_particles_1d * num_gas_particles_1d;
-    }
+    num_gas_particles =
+        num_gas_particles_1d * num_gas_particles_1d * num_gas_particles_1d;
 
     G = std::pow(domain_size_1d, 3) / (6.0 * M_PI * total_mass);
 
@@ -149,10 +131,10 @@ void Config::load(const std::string& filename) {
 
     omega_baryon =
         config_file.get_double("cosmology", "omega_baryon", omega_baryon);
-    omega_m = config_file.get_double("cosmology", "omega_M", omega_m);
+    omega_m = config_file.get_double("cosmology", "omega_m", omega_m);
     omega_lambda =
         config_file.get_double("cosmology", "omega_lambda", omega_lambda);
-    hubble_h = config_file.get_double("cosmology", "Hubble_h", hubble_h);
+    hubble_h = config_file.get_double("cosmology", "hubble_h", hubble_h);
     expanding_universe = config_file.get_bool("cosmology", "expanding_universe",
                                               expanding_universe);
     sigma_8 = config_file.get_double("cosmology", "sigma_8", sigma_8);
@@ -187,51 +169,45 @@ void Config::load(const std::string& filename) {
     glass_folder_path = config_file.get("initial_conditions",
                                         "glass_folder_path", glass_folder_path);
 
-    std::string hydro_str = config_file.get(
-        "hydro", "hydro_method", HydroConfig::to_string(hydro_method));
-    hydro_method = HydroConfig::from_string(hydro_str);
-
-    gamma = config_file.get_double("hydro", "gamma", gamma);
-    enable_cooling =
-        config_file.get_bool("hydro", "enable_cooling", enable_cooling);
-    primordial_mu =
-        config_file.get_double("hydro", "primordial_mu", primordial_mu);
-    temp_floor_k =
-        config_file.get_double("hydro", "temp_floor_k", temp_floor_k);
-    cooling_cutoff_k =
-        config_file.get_double("hydro", "cooling_cutoff_k", cooling_cutoff_k);
-    cooling_table_path =
-        config_file.get("hydro", "cooling_table_path", cooling_table_path);
-
-    mfm_target_neighbors = config_file.get_double("mfm", "mfm_target_neighbors",
-                                                  mfm_target_neighbors);
-    mfm_neighbor_tolerance = config_file.get_double(
-        "mfm", "mfm_neighbor_tolerance", mfm_neighbor_tolerance);
-    mfm_max_iterations =
-        config_file.get_int("mfm", "mfm_max_iterations", mfm_max_iterations);
-    mfm_min_hsml_fraction = config_file.get_double(
-        "mfm", "mfm_min_hsml_fraction", mfm_min_hsml_fraction);
-    dual_energy_threshold = config_file.get_double(
-        "mfm", "dual_energy_threshold", dual_energy_threshold);
-    entropy_switch_akin = config_file.get_double(
-        "mfm", "entropy_switch_alpha_kin", entropy_switch_akin);
-    entropy_switch_agrav = config_file.get_double(
-        "mfm", "entropy_switch_alpha_grav", entropy_switch_agrav);
+    target_neighbors =
+        config_file.get_double("hydro", "target_neighbors", target_neighbors);
+    neighbor_tolerance = config_file.get_double("hydro", "neighbor_tolerance",
+                                                neighbor_tolerance);
+    max_iterations =
+        config_file.get_int("hydro", "max_iterations", max_iterations);
+    min_hsml_fraction =
+        config_file.get_double("hydro", "min_hsml_fraction", min_hsml_fraction);
+    max_condition_number = config_file.get_double(
+        "hydro", "max_condition_number", max_condition_number);
     use_exact_riemann =
-        config_file.get_bool("mfm", "use_exact_riemann", use_exact_riemann);
+        config_file.get_bool("hydro", "use_exact_riemann", use_exact_riemann);
     gradient_limiter_beta_max = config_file.get_double(
-        "mfm", "gradient_limiter_beta_max", gradient_limiter_beta_max);
+        "hydro", "gradient_limiter_beta_max", gradient_limiter_beta_max);
     gradient_limiter_beta_min = config_file.get_double(
-        "mfm", "gradient_limiter_beta_min", gradient_limiter_beta_min);
+        "hydro", "gradient_limiter_beta_min", gradient_limiter_beta_min);
     pairwise_limiter_psi1 = config_file.get_double(
-        "mfm", "pairwise_limiter_psi1", pairwise_limiter_psi1);
+        "hydro", "pairwise_limiter_psi1", pairwise_limiter_psi1);
     pairwise_limiter_psi2 = config_file.get_double(
-        "mfm", "pairwise_limiter_psi2", pairwise_limiter_psi2);
+        "hydro", "pairwise_limiter_psi2", pairwise_limiter_psi2);
 
-    enable_subgrid_clumping = config_file.get_bool(
-        "subgrid", "enable_subgrid_clumping", enable_subgrid_clumping);
-    subgrid_clumping_amplitude = config_file.get_double(
-        "subgrid", "subgrid_clumping_amplitude", subgrid_clumping_amplitude);
+    gamma = config_file.get_double("thermodynamics", "gamma", gamma);
+    primordial_mu = config_file.get_double("thermodynamics", "primordial_mu",
+                                           primordial_mu);
+    temp_floor_k =
+        config_file.get_double("thermodynamics", "temp_floor_k", temp_floor_k);
+    dual_energy_threshold = config_file.get_double(
+        "thermodynamics", "dual_energy_threshold", dual_energy_threshold);
+    entropy_switch_akin = config_file.get_double(
+        "thermodynamics", "entropy_switch_alpha_kin", entropy_switch_akin);
+    entropy_switch_agrav = config_file.get_double(
+        "thermodynamics", "entropy_switch_alpha_grav", entropy_switch_agrav);
+
+    enable_cooling =
+        config_file.get_bool("cooling", "enable_cooling", enable_cooling);
+    cooling_cutoff_k =
+        config_file.get_double("cooling", "cooling_cutoff_k", cooling_cutoff_k);
+    cooling_table_path =
+        config_file.get("cooling", "cooling_table_path", cooling_table_path);
 
     max_dt_dynamical_factor = config_file.get_double(
         "time", "max_dt_dynamical_factor", max_dt_dynamical_factor);
@@ -254,10 +230,31 @@ void Config::load(const std::string& filename) {
 
     num_threads = config_file.get_int("HPC", "num_threads", num_threads);
 
-    compute_derived_data();
-
+    if (omega_m <= 0) {
+        throw std::runtime_error("Error: omega_m must be greater than zero.");
+    }
     if (omega_baryon > omega_m) {
         throw std::runtime_error(
             "Error: omega_baryon cannot be larger than total omega_m.");
     }
+    if (hubble_h <= 0.0 || hubble_h > 2.0) {
+        throw std::runtime_error(
+            "Error: Invalid hubble_h. Expected the dimensionless parameter h "
+            "(typically ~0.7).");
+    }
+    if (a_start <= 0) {
+        throw std::runtime_error("Error: a_start must be greater than zero.");
+    }
+    if (mesh_size_1d <= 0) {
+        throw std::runtime_error(
+            "Error: mesh_size_1d must be greater than zero.");
+    }
+    if (num_dm_particles_1d + num_gas_particles_1d <= 0 ||
+        num_dm_particles_1d < 0 || num_gas_particles_1d < 0) {
+        throw std::runtime_error(
+            "Error: num_dm_particles_1d and num_gas_particles_1d must be zero "
+            "or greater, and both can't be zero.");
+    }
+
+    compute_derived_data();
 }

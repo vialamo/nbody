@@ -15,80 +15,9 @@
 #include "thermodynamics.h"
 #include "types.h"
 
-void apply_mesh_gas_gravity_kick(GasGrid& gas, const Grid3D& grav_x,
-                                 const Grid3D& grav_y, const Grid3D& grav_z,
-                                 double dt, double a, double H,
-                                 const Config& config) {
-    if (config.hydro_method != HydroMethod::Eulerian) return;
-
-    gas.update_primitive_variables(a);
-
-    Grid3D total_ax_gas(config.mesh_size), total_ay_gas(config.mesh_size),
-        total_az_gas(config.mesh_size);
-    total_ax_gas.data = grav_x.array() - (2 * H * gas.get_velocity_x().array());
-    total_ay_gas.data = grav_y.array() - (2 * H * gas.get_velocity_y().array());
-    total_az_gas.data = grav_z.array() - (2 * H * gas.get_velocity_z().array());
-
-    Grid3D g_mom_x_source(config.mesh_size), g_mom_y_source(config.mesh_size),
-        g_mom_z_source(config.mesh_size);
-    g_mom_x_source.data = gas.get_density().array() * total_ax_gas.array();
-    g_mom_y_source.data = gas.get_density().array() * total_ay_gas.array();
-    g_mom_z_source.data = gas.get_density().array() * total_az_gas.array();
-
-    // Calculate the change in momentum (dp)
-    auto dp_x = g_mom_x_source.array() * dt;
-    auto dp_y = g_mom_y_source.array() * dt;
-    auto dp_z = g_mom_z_source.array() * dt;
-
-    // Fetch current momentum
-    const auto& p_x = gas.get_momentum_x().array();
-    const auto& p_y = gas.get_momentum_y().array();
-    const auto& p_z = gas.get_momentum_z().array();
-
-    // Kinetic Energy work done by gravity: (P_new^2 - P_old^2) / (2*rho)
-    Eigen::ArrayXd gravity_work_density =
-        ((p_x + dp_x).square() + (p_y + dp_y).square() + (p_z + dp_z).square() -
-         (p_x.square() + p_y.square() + p_z.square())) /
-        (2.0 * gas.get_density().array());
-
-    // Apply updates
-    gas.momentum_x.array() += dp_x;
-    gas.momentum_y.array() += dp_y;
-    gas.momentum_z.array() += dp_z;
-    gas.energy.array() += gravity_work_density;
-
-    // Adiabatic Expansion Cooling (PdV Work)
-    //
-    // In physical units, adiabatic expansion causes the thermal energy to decay
-    // at a rate of -3(gamma - 1)H.
-    //
-    // However, we track comoving velocity as v = dx/dt, meaning
-    // physical kinetic energy scales as a^2 * v_code^2. To conserve total
-    // energy when adding kinetic and internal arrays together, our comoving
-    // internal energy must also absorb this scaling: E_phys = a^2 * E_code.
-    //
-    // Applying the chain rule (d/dt) to this a^2 transformation introduces an
-    // extra -2H mathematical decay just to keep the arrays synchronized.
-    // The total required numerical decay is -(3*gamma - 1)H.
-    double expansion_factor = (3.0 * config.gamma - 1.0) * H * dt;
-    Eigen::ArrayXd expansion_cooling =
-        expansion_factor * gas.get_internal_energy().array();
-
-    gas.energy.array() -= expansion_cooling;
-    gas.internal_energy.array() -= expansion_cooling;
-
-    // Accumulate global work for diagnostics
-    // sum() adds up the energy density of all cells. Multiply by volume to get
-    // total code energy.
-    double step_grav_work = gravity_work_density.sum() * config.cell_volume;
-    double step_exp_work = expansion_cooling.sum() * config.cell_volume;
-
-    gas.add_gravitational_work(step_grav_work);
-    gas.add_expansion_work(step_exp_work);
-}
-
-static void apply_dm_kick(ParticleSystem& dm, double dt, double a, double H,
-                          const Config& config, bool is_kick1) {
+namespace {
+void apply_dm_kick(ParticleSystem& dm, double dt, double a, double H,
+                   const Config& config, bool is_kick1) {
     double step_grav_work = 0.0;
     double step_exp_work = 0.0;
     const size_t n = dm.num_particles;
@@ -160,12 +89,11 @@ static void apply_dm_kick(ParticleSystem& dm, double dt, double a, double H,
         dm.vel_z[i] = vz_new;
     }
 
-    dm.accumulated_gravitational_work += step_grav_work;
-    dm.accumulated_expansion_work += step_exp_work;
+    dm.budget.gravitational_work += step_grav_work;
+    dm.budget.expansion_work += step_exp_work;
 }
 
-static void apply_dm_drift(ParticleSystem& dm, double dt,
-                           const Vec3& domain_size) {
+void apply_dm_drift(ParticleSystem& dm, double dt, const Vec3& domain_size) {
     double inv_domain_x = 1.0 / domain_size.x;
     double inv_domain_y = 1.0 / domain_size.y;
     double inv_domain_z = 1.0 / domain_size.z;
@@ -195,8 +123,8 @@ struct KickResult {
     double drag_work;
 };
 
-static inline KickResult apply_velocity_kicks(GasParticleSystem& gas, size_t i,
-                                              double dt, double drag_factor) {
+inline KickResult apply_velocity_kicks(GasParticleSystem& gas, size_t i,
+                                       double dt, double drag_factor) {
     KickResult res;
     const double m = gas.mass[i];
 
@@ -237,6 +165,46 @@ static inline KickResult apply_velocity_kicks(GasParticleSystem& gas, size_t i,
     return res;
 }
 
+void apply_gas_drift(GasParticleSystem& gas, double dt,
+                     const Vec3& domain_size) {
+    double inv_domain_x = 1.0 / domain_size.x;
+    double inv_domain_y = 1.0 / domain_size.y;
+    double inv_domain_z = 1.0 / domain_size.z;
+    const size_t n = gas.num_particles;
+
+    // Drift from t_current to global_time
+#pragma omp parallel for simd schedule(static)
+    for (size_t i = 0; i < n; i++) {
+        double drift_dt = gas.global_time - gas.t_current[i];
+        if (drift_dt <= 0.0) continue;  // Skip if already drifted
+
+        double nx = gas.pos_x[i] + gas.vel_x[i] * drift_dt;
+        double ny = gas.pos_y[i] + gas.vel_y[i] * drift_dt;
+        double nz = gas.pos_z[i] + gas.vel_z[i] * drift_dt;
+
+        // Periodic boundaries
+        gas.pos_x[i] = nx - domain_size.x * std::floor(nx * inv_domain_x);
+        gas.pos_y[i] = ny - domain_size.y * std::floor(ny * inv_domain_y);
+        gas.pos_z[i] = nz - domain_size.z * std::floor(nz * inv_domain_z);
+
+        gas.t_current[i] = gas.global_time;  // Mark as drifted
+    }
+}
+
+void apply_drift(SimState& state, double dt, const Config& config,
+                 Diagnostics& diag) {
+    apply_dm_drift(state.dm, dt, config.domain_size);
+    apply_gas_drift(state.gas, dt, config.domain_size);
+}
+
+void update_timesteps(SimState& state, const Config& config) {
+    state.dm.update_particle_timesteps(config.fixed_dt, config,
+                                       state.gravity.softening_length);
+    state.gas.update_particle_timesteps(config.fixed_dt, state.scale_factor,
+                                        config, state.gravity.softening_length);
+}
+}  // namespace
+
 Integrator::KickWork Integrator::kick_single_gas_particle(
     GasParticleSystem& gas, size_t i, double dt, double a, double H,
     const Config& config) {
@@ -264,14 +232,15 @@ void Integrator::apply_gas_kick(GasParticleSystem& gas, double dt, double a,
     double step_grav_work = 0.0;
     double step_exp_work = 0.0;
     double step_switch_energy = 0.0;
-    double step_photoheating_energy = 0.0;
+    double step_injected_energy = 0.0;
     const size_t n = gas.num_particles;
 
     // dt passed to this function is half of the macro step
     double dt_macro = 2.0 * dt;
 
-#pragma omp parallel for reduction(+ : step_grav_work, step_exp_work) \
-    schedule(static)
+#pragma omp parallel for reduction(+ : step_grav_work, step_exp_work, \
+                                       step_switch_energy,            \
+                                       step_injected_energy) schedule(static)
     for (size_t i = 0; i < n; i++) {
         // Determine if this particle should be kicked based on timeline
         if (config.individual_particle_timesteps) {
@@ -296,40 +265,14 @@ void Integrator::apply_gas_kick(GasParticleSystem& gas, double dt, double a,
         step_grav_work += work.grav_work;
         step_exp_work += work.exp_work;
         step_switch_energy += work.switch_energy;
-        step_photoheating_energy += work.injected_energy;
+        step_injected_energy += work.injected_energy;
     }
 
     // Update global diagnostics
-    gas.accumulated_gravitational_work += step_grav_work;
-    gas.accumulated_expansion_work += step_exp_work;
-    gas.accumulated_entropy_switch_energy += step_switch_energy;
-    gas.accumulated_photoheating_energy += step_photoheating_energy;
-}
-
-static void apply_gas_drift(GasParticleSystem& gas, double dt,
-                            const Vec3& domain_size) {
-    double inv_domain_x = 1.0 / domain_size.x;
-    double inv_domain_y = 1.0 / domain_size.y;
-    double inv_domain_z = 1.0 / domain_size.z;
-    const size_t n = gas.num_particles;
-
-    // Drift from t_current to global_time
-#pragma omp parallel for simd schedule(static)
-    for (size_t i = 0; i < n; i++) {
-        double drift_dt = gas.global_time - gas.t_current[i];
-        if (drift_dt <= 0.0) continue;  // Skip if already drifted
-
-        double nx = gas.pos_x[i] + gas.vel_x[i] * drift_dt;
-        double ny = gas.pos_y[i] + gas.vel_y[i] * drift_dt;
-        double nz = gas.pos_z[i] + gas.vel_z[i] * drift_dt;
-
-        // Periodic boundaries
-        gas.pos_x[i] = nx - domain_size.x * std::floor(nx * inv_domain_x);
-        gas.pos_y[i] = ny - domain_size.y * std::floor(ny * inv_domain_y);
-        gas.pos_z[i] = nz - domain_size.z * std::floor(nz * inv_domain_z);
-
-        gas.t_current[i] = gas.global_time;  // Mark as drifted
-    }
+    gas.budget.gravitational_work += step_grav_work;
+    gas.budget.expansion_work += step_exp_work;
+    gas.budget.entropy_switch += step_switch_energy;
+    gas.budget.floor_injection += step_injected_energy;
 }
 
 void Integrator::compute_forces(SimState& state, const Config& config,
@@ -343,9 +286,7 @@ void Integrator::compute_forces(SimState& state, const Config& config,
 #ifndef GRAVITY_GPU_MEMORY
         state.dm.build_lbvh(config);
 #endif
-        if (config.hydro_method == HydroMethod::MFM) {
-            state.mfm_gas->build_lbvh(config);
-        }
+        state.gas.build_lbvh(config);
     }
 
     // PM
@@ -366,22 +307,20 @@ void Integrator::compute_forces(SimState& state, const Config& config,
         ScopedTimer pp_timer(diag, TimerRegion::PP);
         pp_worker.launch([&]() {
             ScopedTimer pp_timer(diag, TimerRegion::PP_GPU);
-            state.gravity.add_pp_accel(state.dm, state.mfm_gas.get(),
-                                       state.scale_factor, config, diag);
+            state.gravity.add_pp_accel(state.dm, state.gas, state.scale_factor,
+                                       config, diag);
         });
     }
 #endif
 
-    if (config.hydro_method == HydroMethod::MFM) {
-        {
-            ScopedTimer timer(diag, TimerRegion::Density);
-            DensitySolver::compute_density_and_h(
-                *state.mfm_gas, config, state.gravity.softening_length);
-        }
-        {
-            ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
-            HydroSolver::step(*state.mfm_gas, config, state.scale_factor);
-        }
+    {
+        ScopedTimer timer(diag, TimerRegion::Density);
+        DensitySolver::compute_density_and_h(state.gas, config,
+                                             state.gravity.softening_length);
+    }
+    {
+        ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
+        HydroSolver::step(state.gas, config, state.scale_factor);
     }
 
     if (config.use_PP) {
@@ -389,24 +328,10 @@ void Integrator::compute_forces(SimState& state, const Config& config,
 #ifdef GPU_CPU_PARALLEL_EXECUTION
         pp_worker.wait();
 #else
-        state.gravity.add_pp_accel(state.dm, state.mfm_gas.get(),
-                                   state.scale_factor, config, diag);
+        state.gravity.add_pp_accel(state.dm, state.gas, state.scale_factor,
+                                   config, diag);
 #endif
-        state.gravity.map_results(state.dm, state.mfm_gas.get(), diag);
-    }
-}
-
-static void eulerian_mesh_flux(SimState& state, Diagnostics& diag,
-                               const Config& config, double dt) {
-    // Approximate the scale factor at the half-step (t + dt/2)
-    double mid_a = state.scale_factor * (1.0 + 0.5 * state.hubble_param * dt);
-    {
-        ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
-        state.gas->hydro_step(dt, mid_a);
-    }
-    if (config.enable_cooling) {
-        ScopedTimer cooling_timer(diag, TimerRegion::Cool);
-        state.gas->apply_cooling(dt, mid_a, state.cooling);
+        state.gravity.map_results(state.dm, state.gas, diag);
     }
 }
 
@@ -416,45 +341,16 @@ void Integrator::apply_kick(SimState& state, double dt, const Config& config,
     apply_dm_kick(state.dm, dt, state.scale_factor, state.hubble_param, config,
                   is_kick1);
 
-    if (config.hydro_method == HydroMethod::Eulerian) {
-        apply_mesh_gas_gravity_kick(*state.gas, state.pm.acc_x, state.pm.acc_y,
-                                    state.pm.acc_z, dt, state.scale_factor,
-                                    state.hubble_param, config);
-    } else if (config.hydro_method == HydroMethod::MFM) {
-        apply_gas_kick(*state.mfm_gas, dt, state.scale_factor,
-                       state.hubble_param, config, is_kick1);
-    }
-}
-
-static void apply_drift(SimState& state, double dt, const Config& config,
-                        Diagnostics& diag) {
-    apply_dm_drift(state.dm, dt, config.domain_size);
-
-    if (config.hydro_method == HydroMethod::Eulerian) {
-        eulerian_mesh_flux(state, diag, config, dt);
-    } else if (config.hydro_method == HydroMethod::MFM) {
-        apply_gas_drift(*state.mfm_gas, dt, config.domain_size);
-    }
-}
-
-static void update_timesteps(SimState& state, const Config& config) {
-    state.dm.update_particle_timesteps(config.fixed_dt, config,
-                                       state.gravity.softening_length);
-    if (config.hydro_method == HydroMethod::MFM) {
-        state.mfm_gas->update_particle_timesteps(
-            config.fixed_dt, state.scale_factor, config,
-            state.gravity.softening_length);
-    }
+    apply_gas_kick(state.gas, dt, state.scale_factor, state.hubble_param,
+                   config, is_kick1);
 }
 
 void Integrator::KDK_step(SimState& state, double dt, const Config& config,
                           Diagnostics& diag) {
     // Clock sync and wake-ups
     state.dm.sync_and_activate(dt, config);
-    if (config.hydro_method == HydroMethod::MFM) {
-        state.mfm_gas->sync_and_activate(*this, dt, state.scale_factor,
-                                         state.hubble_param, config);
-    }
+    state.gas.sync_and_activate(*this, dt, state.scale_factor,
+                                state.hubble_param, config);
 
     // KICK 1 (Half step)
     apply_kick(state, dt / 2.0, config, true);
@@ -470,9 +366,9 @@ void Integrator::KDK_step(SimState& state, double dt, const Config& config,
     // KICK 2 (Half step)
     apply_kick(state, dt / 2.0, config, false);
 
-    if (config.hydro_method == HydroMethod::MFM && config.enable_cooling) {
+    if (config.enable_cooling) {
         ScopedTimer cooling_timer(diag, TimerRegion::Cool);
-        state.cooling.apply_cooling(*state.mfm_gas, config, state.scale_factor);
+        state.cooling.apply_cooling(state.gas, config, state.scale_factor);
     }
 
     // Time bin assignment
@@ -481,19 +377,16 @@ void Integrator::KDK_step(SimState& state, double dt, const Config& config,
 
 void Integrator::initialize(SimState& state, const Config& config) {
     state.gravity.update_softening(state.scale_factor, config);
-    if (config.hydro_method == HydroMethod::MFM) {
-        state.mfm_gas->build_lbvh(config);
-        DensitySolver::compute_density_and_h(*state.mfm_gas, config,
-                                             state.gravity.softening_length);
-        Thermodynamics::initialize_primitive_variables(*state.mfm_gas, config,
-                                                       state.scale_factor);
-    }
+
+    state.gas.build_lbvh(config);
+    DensitySolver::compute_density_and_h(state.gas, config,
+                                         state.gravity.softening_length);
+    Thermodynamics::initialize_primitive_variables(state.gas, config,
+                                                   state.scale_factor);
 
     state.dm.sync_and_activate(0.0, config);
-    if (config.hydro_method == HydroMethod::MFM) {
-        state.mfm_gas->sync_and_activate(*this, 0.0, state.scale_factor,
-                                         state.hubble_param, config);
-    }
+    state.gas.sync_and_activate(*this, 0.0, state.scale_factor,
+                                state.hubble_param, config);
 
     Diagnostics dummy_diag;
     compute_forces(state, config, dummy_diag);

@@ -17,7 +17,7 @@ def get_analytical_zeldovich(z, config, T_i, z_i, unit_length_mpc):
     k_phys = 2.0 * np.pi / (Lx * unit_length_mpc)
     z_c = 1.0
     
-    H_0_kms = 100.0 * config.get('Hubble_h', 1.0)
+    H_0_kms = 100.0 * config.get('hubble_h', 1.0)
     
     x = q - ((1.0 + z_c) / (1.0 + z)) * (np.sin(k_code * q) / k_code)
     rho_rel = np.abs(1.0 / (1.0 - ((1.0 + z_c) / (1.0 + z)) * np.cos(k_code * q)))
@@ -76,28 +76,22 @@ def validate_zeldovich_interactive(snapshot_dir):
             t = f['Header'].attrs['simulation_time'] 
             times.append(t) 
             
-            method = f['Config'].attrs.get('hydro_method', b'none').decode('utf-8') 
             w_grav = f['Gas'].attrs.get('cumulative_gravitational_work', 0.0) 
             w_exp = f['Gas'].attrs.get('cumulative_expansion_work', 0.0) 
             sw_e = f['Gas'].attrs.get('cumulative_entropy_switch_energy', 0.0)
 
-            if method == "mfm": 
-                mass = f['Gas/mass'][:] 
-                if 'total_energy' in f['Gas']: 
-                    u_tot_spec = f['Gas/total_energy'][:] 
-                    E_tot = np.sum(mass * u_tot_spec) 
-                else: 
-                    u = f['Gas/internal_energy'][:] 
-                    vx = f['Gas/velocity_x'][:] 
-                    vy = f['Gas/velocity_y'][:] 
-                    vz = f['Gas/velocity_z'][:] 
-                    ke = 0.5 * (vx**2 + vy**2 + vz**2) 
-                    E_tot = np.sum(mass * (u + ke)) 
+
+            mass = f['Gas/mass'][:] 
+            if 'total_energy' in f['Gas']: 
+                u_tot_spec = f['Gas/total_energy'][:] 
+                E_tot = np.sum(mass * u_tot_spec) 
             else: 
-                energy_dens = f['Gas/energy'][:] 
-                N = f['Config'].attrs.get('mesh_size_1d', 32) 
-                vol = (domain_size / N)**3 
-                E_tot = np.sum(energy_dens) * vol 
+                u = f['Gas/internal_energy'][:] 
+                vx = f['Gas/velocity_x'][:] 
+                vy = f['Gas/velocity_y'][:] 
+                vz = f['Gas/velocity_z'][:] 
+                ke = 0.5 * (vx**2 + vy**2 + vz**2) 
+                E_tot = np.sum(mass * (u + ke))
                 
             if E_initial is None: 
                 E_initial = E_tot 

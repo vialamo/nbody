@@ -21,7 +21,6 @@ def validate_pdv_expansion(snapshot_dir):
         
         gamma = config.get('gamma', 5.0/3.0)
         a_start = header['scale_factor']
-        hydro_method = config.get('hydro_method', b"none").decode('utf-8')
         
         # Load CGS conversion factors
         unit_density_cgs = units['unit_density_in_cgs']
@@ -84,8 +83,8 @@ def validate_pdv_expansion(snapshot_dir):
     P_exact = P_phys_0 * (a_exact / a_start)**(-3.0 * gamma)
 
     # Styling based on solver method
-    label_prefix = "Eulerian Grid" if hydro_method == "eulerian" else "MFM Particles"
-    color_prefix = "darkorange" if hydro_method == "eulerian" else "royalblue"
+    label_prefix = "MFM Particles"
+    color_prefix = "royalblue"
 
     # Plot Setup
     fig, axs = plt.subplots(1, 3, figsize=(18, 5))

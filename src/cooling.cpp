@@ -10,14 +10,14 @@
 
 #include "config.h"
 #include "constants.h"
-#include "math_utils.h"  // Needed for QuadraticInterpolator
-#include "mfm.h"
+#include "gas.h"
 #include "thermodynamics.h"
 
+namespace {
 // Helper function to read an entire HDF5 dataset into a flattened 1D
 // std::vector
-static std::vector<double> read_hdf5_dataset(const H5::H5File& file,
-                                             const std::string& dataset_name) {
+std::vector<double> read_hdf5_dataset(const H5::H5File& file,
+                                      const std::string& dataset_name) {
     H5::DataSet dataset = file.openDataSet(dataset_name);
     H5::DataSpace dataspace = dataset.getSpace();
 
@@ -30,9 +30,9 @@ static std::vector<double> read_hdf5_dataset(const H5::H5File& file,
 }
 
 // Helper function to read a 1D HDF5 Attribute attached to a dataset
-static std::vector<double> read_hdf5_attribute(const H5::H5File& file,
-                                               const std::string& dataset_name,
-                                               const std::string& attr_name) {
+std::vector<double> read_hdf5_attribute(const H5::H5File& file,
+                                        const std::string& dataset_name,
+                                        const std::string& attr_name) {
     H5::DataSet dataset = file.openDataSet(dataset_name);
     H5::Attribute attr = dataset.openAttribute(attr_name);
     H5::DataSpace dataspace = attr.getSpace();
@@ -43,6 +43,7 @@ static std::vector<double> read_hdf5_attribute(const H5::H5File& file,
     attr.read(H5::PredType::NATIVE_DOUBLE, data.data());
     return data;
 }
+}  // namespace
 
 void Cooling::load_cooling_tables(const Config& config) {
     if (config.cooling_table_path.empty() || !config.enable_cooling) {
@@ -94,7 +95,7 @@ void Cooling::load_cooling_tables(const Config& config) {
         }
 
         // Precalculate cgs to code unit conversions
-        double X_over_mp = constants::X_MASS_FRAC / constants::M_P_CGS;
+        double X_over_mp = Constants::X_MASS_FRAC / Constants::M_P_CGS;
 
         // Both Cooling and Heating scale with (rho_code / a^5) because both are
         // normalized by nH^2
@@ -136,30 +137,7 @@ void Cooling::load_cooling_tables(const Config& config) {
     }
 }
 
-Cooling::Cooling(const Config& config) {
-    load_cooling_tables(config);
-
-    // Empirical fit for subgrid clumping
-    // x = resolution, y = A factor
-    Eigen::Vector2d p1(0.325, 0.5);
-    Eigen::Vector2d p2(0.5, 1.4);
-    Eigen::Vector2d p3(1.04, 10.0);
-
-    double gas_total_mass = config.omega_baryon / config.omega_m;
-
-    QuadraticInterpolator A_curve(p1, p2, p3);
-    mean_rho_code =
-        gas_total_mass /
-        (config.domain_size.x * config.domain_size.y * config.domain_size.z);
-
-    double resolution = config.box_size_mpc_1d / config.mesh_size_1d;
-    double default_clumping_A =
-        std::max(0.0, (use_table ? 0.12 : 1.0) * A_curve.evaluate(resolution));
-
-    subgrid_clumping_A = config.subgrid_clumping_amplitude < 0
-                             ? default_clumping_A
-                             : config.subgrid_clumping_amplitude;
-}
+Cooling::Cooling(const Config& config) { load_cooling_tables(config); }
 
 inline int Cooling::get_index(double value,
                               const std::vector<double>& axis) const {
@@ -231,7 +209,6 @@ double Cooling::trilinear_interpolate(const std::vector<double>& data, double z,
 
 double Cooling::compute_tabulated_cooling(double u_code, double rho_code,
                                           double Z, double a,
-                                          double clumping_factor,
                                           const Config& config) const {
     // Values for the axes
     double T_kelvin =
@@ -239,7 +216,7 @@ double Cooling::compute_tabulated_cooling(double u_code, double rho_code,
     double log_T = std::log10(T_kelvin);
 
     double rho_cgs = (rho_code * config.unit_density_cgs) / (a * a * a);
-    double nH_cgs = (rho_cgs * constants::X_MASS_FRAC) / constants::M_P_CGS;
+    double nH_cgs = (rho_cgs * Constants::X_MASS_FRAC) / Constants::M_P_CGS;
     double log_nH = std::log10(nH_cgs);
 
     double z = 1.0 / a - 1.0;
@@ -256,7 +233,7 @@ double Cooling::compute_tabulated_cooling(double u_code, double rho_code,
                                               z, log_nH, log_T);
 
     // Combine rates based on metallicity
-    double metal_ratio = Z / constants::Z_SOLAR;
+    double metal_ratio = Z / Constants::Z_SOLAR;
 
     double lambda_scaled = lambda_prim + (lambda_metal * metal_ratio);
     double gamma_scaled = gamma_prim + (gamma_metal * metal_ratio);
@@ -267,34 +244,17 @@ double Cooling::compute_tabulated_cooling(double u_code, double rho_code,
     double a2 = a * a;
     double a5 = a2 * a2 * a;
 
-    double heating_code = (gamma_scaled * rho_code * clumping_factor) / a5;
-    double cooling_code = (lambda_scaled * rho_code * clumping_factor) / a5;
+    double heating_code = (gamma_scaled * rho_code) / a5;
+    double cooling_code = (lambda_scaled * rho_code) / a5;
 
     // Return the final volumetric code energy change
     return heating_code - cooling_code;
 }
 
-double Cooling::compute_clumping_factor(double rho_code, double a,
-                                        const Config& config) const {
-    double clumping_factor = 1.0;
-    if (config.enable_subgrid_clumping) {
-        double overdensity = rho_code / mean_rho_code;
-        // Apply clumping only in collapsing regions
-        if (overdensity > 1.0) {
-            constexpr double B = 0.7;
-            double A_dynamic = subgrid_clumping_A * a;
-            clumping_factor = 1.0 + A_dynamic * std::pow(overdensity, B);
-        }
-    }
-    return clumping_factor;
-}
-
 double Cooling::compute_du_dt(double u_code, double rho_code, double Z,
                               double a, const Config& config) const {
-    double clumping_factor = compute_clumping_factor(rho_code, a, config);
     if (use_table) {
-        return compute_tabulated_cooling(u_code, rho_code, Z, a,
-                                         clumping_factor, config);
+        return compute_tabulated_cooling(u_code, rho_code, Z, a, config);
     } else {
         double T =
             Thermodynamics::get_temp_from_internal_energy(u_code, a, config);
@@ -303,10 +263,10 @@ double Cooling::compute_du_dt(double u_code, double rho_code, double Z,
         double rho_cgs = (rho_code * config.unit_density_cgs) / (a * a * a);
 
         // Number density (n_e = n_i = n)
-        double n = rho_cgs / (config.primordial_mu * constants::M_P_CGS);
+        double n = rho_cgs / (config.primordial_mu * Constants::M_P_CGS);
 
         // Bremsstrahlung specific energy loss rate (erg / g / s)
-        double lambda_cgs = 1.4e-27 * std::sqrt(T) * n * n * clumping_factor;
+        double lambda_cgs = 1.4e-27 * std::sqrt(T) * n * n;
         double du_dt_cgs = -lambda_cgs / rho_cgs;
 
         // Convert back to code units
@@ -417,7 +377,6 @@ void Cooling::apply_cooling(GasParticleSystem& gas, const Config& config,
     double total_radiated = 0.0;
     double total_photoheated = 0.0;
     size_t non_converged_count = 0;
-    size_t total_cycles = 0;
 
     double gamma_minus_1 = config.gamma - 1.0;
 
@@ -463,9 +422,7 @@ void Cooling::apply_cooling(GasParticleSystem& gas, const Config& config,
         }
     }
 
-    gas.cooling_total_cycles =
-        gas.num_particles > 0 ? (total_cycles / gas.num_particles) : 0;
-    gas.cooling_failed_cells = non_converged_count;
-    gas.accumulated_radiated_energy += total_radiated;
-    gas.accumulated_photoheating_energy += total_photoheated;
+    gas.diag.cooling_failed = non_converged_count;
+    gas.budget.radiated += total_radiated;
+    gas.budget.photoheated += total_photoheated;
 }
