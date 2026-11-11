@@ -1,8 +1,8 @@
 # Notes on Cosmological Simulations
 
-This is a living document—a collection of knowledge that I have gathered while learning about cosmological simulations. It is not a formal text but rather a journal, an attempt to solidify concepts by structuring and explaining them in my own way.
+This is a living document—a collection of knowledge that I have gathered while learning about cosmological simulations. It is a journal, an attempt to structure and explain the concepts in my own way.
 
-Along the way, I have been developing a proof-of-concept N-body/hydrodynamics simulation, which allowed me to understand algorithms by implementing them, and to appreciate physical principles by seeing their effects in a virtual universe. The explanations in this document are reflected in this practical work.
+Along the way, I have been developing a proof-of-concept cosmological code, which allowed me to experiment with different algorithms. The explanations in this document are reflected in this practical work.
 
 This is my best effort to present this knowledge in the way that I would have found most helpful at the start of my learning process.
 
@@ -15,13 +15,7 @@ vialamo@gmail.com
 
 Because astrophysicists cannot experiment on stars or galaxies in a laboratory, they use computers to build virtual patches of the cosmos. By seeding a simulation volume with the initial conditions of the Big Bang and stepping it forward in time using the laws of physics, we can watch 13.8 billion years of cosmic evolution unfold in a matter of days.
 
-**The Origins**
-
-The endeavor to simulate the cosmos began in the 1970s. Early N-body simulations used just a few hundred particles to study how galaxies might cluster together under gravity. By the 1980s, researchers were running the first 3-dimensional models of Cold Dark Matter (CDM). These early simulations treated entire galaxies as single points of mass and modeled only the force of gravity, ignoring the complex fluid dynamics of gas. 
-
-**Applications**
-
-Projects like the Millennium Simulation, Illustris, and EAGLE utilize supercomputing clusters to track billions—and sometimes trillions—of particles. These virtual universes serve three main purposes:
+Projects like the Millennium Simulation, Illustris, and EAGLE utilize supercomputing clusters to perform huge simulations. These virtual universes serve several purposes:
 
 * **Testing the Standard Model:** We can easily alter the parameters of a simulation—adding more dark energy, changing the mass of dark matter particles, or altering the laws of gravity. By comparing the resulting "mock universe" to the real one, we can prove or disprove fundamental theories of physics.
 * **Calibrating Telescope Data:** Massive modern observatories (like the James Webb Space Telescope and the Euclid satellite) gather an overwhelming amount of data. Simulations provide the theoretical maps required to interpret those observations, helping astronomers distinguish between optical illusions (like redshift-space distortions) and true physical structures.
@@ -32,7 +26,7 @@ Projects like the Millennium Simulation, Illustris, and EAGLE utilize supercompu
 A cosmological code contains different ingredients to mimic the composition and behavior of the universe.
 
 * **Collisionless Dark Matter :** Dark matter accounts for roughly 85% of the matter in the universe and dominates its gravitational landscape. Because it does not interact with light or experience thermodynamic pressure, we model it as "collisionless" particles. This is handled by an **N-body solver**, which tracks millions of discrete, massive particles moving purely under the influence of gravity.
-* **Baryonic Gas:** Normal, visible matter behaves differently from dark matter. Gas clouds crash into each other, heat up, form shockwaves, and exert pressure. To simulate this, we require a **Hydrodynamics solver**. This typically involves tracking the conservation of mass, momentum, and energy as the fluid flows through space, while gravity links the dark matter and the gas together.
+* **Baryonic Gas:** Normal, visible matter behaves differently from dark matter. Gas clouds crash into each other, heat up, form shockwaves, and exert pressure. To simulate this, we require a **Hydrodynamics solver**. This typically involves tracking the conservation of mass, momentum, and energy of the fluid, while gravity links the dark matter and the gas together.
 * **The Expanding Background:** A cosmological simulation takes place in an expanding universe. Both the dark matter and the hydrodynamic gas must be subjected to a cosmological background model to properly account for the dilution of density and the slowing of velocities due to cosmic expansion.
 
 ### The Major Cosmological Codes
@@ -50,6 +44,7 @@ Here is a summary of the most prominent cosmological codes and the underlying en
 | **ENZO** | Particle-Mesh | AMR (Adaptive Mesh Refinement) | Renaissance Simulations | [enzo-project.org](https://enzo-project.org/) |
 | **AREPO** | TreePM | Moving Voronoi Mesh (Unstructured grid) | Illustris, IllustrisTNG | [arepo-code.org](https://arepo-code.org/) |
 | **SWIFT** | Fast Multipole Method (Tree) | Modern SPH / Meshless Finite Mass | Flamingo | [swiftsim.com](http://swiftsim.com/) / [GitHub](https://github.com/SWIFTSIM/swiftsim) |
+| **GIZMO** | TreePM | Meshless Finite Mass (MFM) / MFV / SPH | FIRE | [tapir.caltech.edu/~phopkins](http://www.tapir.caltech.edu/~phopkins/Site/GIZMO.html) |
 
 ## The N-Body Problem
 
@@ -111,53 +106,15 @@ Bagla, J. S., & Padmanabhan, T. (2004). *Cosmological N-Body Simulations*. arXiv
 
 ## The Integrator
 
-### The Euler Method
-
-To move the particles through time, we need an "integrator"—an algorithm that takes the current state of a particle (its position and velocity) and predicts its state a small moment later. A straightforward approach is the **Euler method**.
-
-The Euler method assumes that the velocity and acceleration are constant over one small time step, $\Delta t$. It calculates the force on the particle at its current position to find its acceleration, and then takes a linear step forward.
-
-The update equations are:
-
-1.  **Update Position:** $\mathbf{x}_{n+1} = \mathbf{x}_n + \mathbf{v}_n \Delta t$
-2.  **Update Velocity:** $\mathbf{v}_{n+1} = \mathbf{v}_n + \mathbf{a}_n \Delta t$
-
-While simple, the Euler method's is blind to any changes that occur during the step. This error, while tiny on each step, is **systematic**. Over thousands of steps, it accumulates, failing to conserve energy. This makes the Euler method unsuitable where long-term stability is important.
-
-### Velocity Verlet
-
-**Velocity Verlet** is an integrator that accounts for the fact that forces change *during* a time step. Instead of just using the acceleration from the beginning of the step, it uses the average of the accelerations from the beginning and the end of the step.
-
-The algorithm proceeds in three steps:
-
-1.  **Calculate the New Position:** First, advance the position using the current velocity and acceleration.
-    $$\mathbf{x}(t + \Delta t) = \mathbf{x}(t) + \mathbf{v}(t)\Delta t + \frac{1}{2}\mathbf{a}(t)\Delta t^2$$
-
-2.  **Calculate the New Acceleration:** With the new position, calculate the new force vector $\mathbf{F}(\mathbf{x}(t + \Delta t))$ and from it, the new acceleration.
-    $$\mathbf{a}(t + \Delta t) = \frac{\mathbf{F}(\mathbf{x}(t + \Delta t))}{m}$$
-
-3.  **Calculate the New Velocity:** Finally, update the velocity using the **average** of the old acceleration $\mathbf{a}(t)$ and the new acceleration $\mathbf{a}(t + \Delta t)$.
-    $$\mathbf{v}(t + \Delta t) = \mathbf{v}(t) + \frac{\mathbf{a}(t) + \mathbf{a}(t + \Delta t)}{2} \Delta t$$
-
-This final step of averaging the accelerations corrects the systematic drift of the Euler method, and makes Velocity Verlet a **symplectic integrator**. This enables the algorithm to produce stable trajectories, conserving energy remarkably well over long periods.
-
-### Symplectic Integration
-
-A **symplectic integrator** is designed to respect the underlying geometry of physics, a property that allows it to conserve a system's total energy over very long periods. This is best understood by comparing how different integrators handle a simple gravitational problem, like a planet orbiting a star.
-
-* A **non-symplectic** integrator, like the Euler method, consistently makes an error in the same direction. It always "cuts the corner" of the orbit, pushing the planet slightly outwards. These errors add up, causing the planet's energy to systematically increase and its orbit to spiral away.
-
-* A **symplectic** integrator, like Verlet, makes errors that are correlated. On one step, it might slightly overshoot the true orbit, but on a later step, it will undershoot it. The errors effectively cancel each other out over time. The simulated planet executes a stable "wobble" along the correct orbital path. The shape of the orbit might oscillate, but its average size and energy remain correct in the long term.
+To move the particles through time, we need an "integrator"—an algorithm that takes the current state of a particle (its position and velocity) and predicts its state a moment later. A **symplectic integrator** produces stable trajectories, conserving energy well over long periods.
 
 The deeper reason for this stability lies in a concept from classical mechanics called **phase space**. Phase space is an abstract map where every point represents the complete state of a particle—both its **position** and its **momentum**. For a system where energy is conserved, a rule known as **Liouville's Theorem** states that the "area" (or volume) of any group of states in phase space must stay constant as the system evolves.
 
-Symplectic integrators **preserve this phase space volume**. The bounded energy error (the "wobble") is a direct consequence of this property.
+Symplectic integrators **preserve this phase space volume**. The bounded energy error is a direct consequence of this property.
 
 ### The Kick-Drift-Kick Integrator
 
-The introduction of cosmic expansion adds a velocity-dependent term to the equations of motion (the "Hubble drag", explored in a later section). This new term creates a challenge for the standard Verlet algorithm because its symplectic nature is defined for forces that depend only on position, not velocity. To handle this new term gracefully, we adopt a different formulation known as a **Leapfrog** scheme. The most common implementation, the **Kick-Drift-Kick (KDK)** integrator, is a common choice in cosmological simulations.
-
-The KDK scheme advances the system from a time $t$ to $t+\Delta t$ in three stages:
+The **Kick-Drift-Kick (KDK)** integrator is a common choice in cosmological simulations. This scheme advances the system from a time $t$ to $t+\Delta t$ in three stages:
 
 **1. First "Kick" (Velocity Half-Step)**
 
@@ -174,15 +131,15 @@ $$\mathbf{x}(t + \Delta t) = \mathbf{x}(t) + \mathbf{v}(t + \tfrac{1}{2}\Delta t
 Finally, the new acceleration, $\mathbf{a}(t + \Delta t)$, is computed from the forces at the new positions, $\mathbf{x}(t + \Delta t)$, and the **mid-step velocity**, $\mathbf{v}(t + \frac{1}{2}\Delta t)$. The acceleration is then used to complete the velocity update for the second half of the time step.
 $$\mathbf{v}(t + \Delta t) = \mathbf{v}(t + \tfrac{1}{2}\Delta t) + \mathbf{a}(t + \Delta t)\frac{\Delta t}{2}$$
 
-This staggered formulation is more robust for handling the time-varying and velocity-dependent forces present in a cosmological simulation.
+This staggered formulation is robust for handling the time-varying and velocity-dependent forces present in a cosmological simulation.
 
 #### Symmetry and Second-Order Accuracy
 
-In numerical physics, the "order of accuracy" dictates how fast errors shrink when we take smaller timesteps ($\Delta t$). The Forward Euler method is only *first-order* accurate ($O(\Delta t)$); if we cut the timestep in half, the error only drops by half.
+The integrator's "order of accuracy" dictates how fast errors shrink when we take smaller timesteps ($\Delta t$). The Forward Euler method is only *first-order* accurate ($O(\Delta t)$); if we cut the timestep in half, the error only drops by half.
 
 The KDK scheme achieves higher accuracy through its **symmetry**. By splitting the velocity kick into two equal halves that bracket the position drift, the algorithm becomes **time-reversible**. For conservative forces like gravity, this means that if we paused the simulation, reversed all the velocities, and ran the KDK math backward, the particles would trace their steps back to their starting positions.
 
-In numerical calculus, any integration scheme that is symmetric and time-reversible causes the leading, first-order Taylor series error terms to cancel each other out. Because the first-order error is gone, the largest surviving error scales with the square of the timestep ($O(\Delta t^2)$). This means KDK is **second-order accurate**—if we cut the timestep in half, the integration error drops by a factor of four.
+Any integration scheme that is symmetric and time-reversible causes the first-order Taylor series error terms to cancel each other out. Because the first-order error is gone, the largest surviving error scales with the square of the timestep ($O(\Delta t^2)$). This means KDK is **second-order accurate**—if we cut the timestep in half, the integration error drops by a factor of four.
 
 *Key Literature & Further Reading*  
 Springel, V. (2005). *The cosmological simulation code GADGET-2. Monthly Notices of the Royal Astronomical Society*, 364(4), 1105-1134. arXiv:astro-ph/0505010. Available at [https://arxiv.org/abs/astro-ph/0505010](https://arxiv.org/abs/astro-ph/0505010)

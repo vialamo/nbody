@@ -53,10 +53,18 @@ struct ReconstructedFace {
     bool used_sph_fallback;  // Diagnostic flag
 };
 
+struct NeighborInfo {
+    int index;
+    double dx;
+    double dy;
+    double dz;
+    double r;
+};
+
 // Computes spatial gradients using least-squares matrix inversion
 ParticleGradients compute_single_particle_gradients(
     size_t i,                             // The central particle index
-    const int* neighbor_indices,          // Flat array of neighbor indices
+    const NeighborInfo* neighbors,        // Flat array of neighbor indices
     size_t num_neighbors,                 // Number of neighbors
     const FluidStateArrays& system_data,  // Pointers to global SoA
     const Eigen::Matrix3d& B, bool ill_conditioned, const Config& config);
@@ -66,6 +74,7 @@ ReconstructedFace compute_face_reconstruction(
     const ParticleState& p_i, const ParticleGradients& grad_i,
     const ParticleState& p_j, const ParticleGradients& grad_j,
     const Eigen::Matrix3d& B_matrix_i, const Eigen::Matrix3d& B_matrix_j,
-    const Config& config, double pressure_floor);
+    const Eigen::Vector3d& dx_vec, double r2, const Config& config,
+    double pressure_floor);
 
 }  // namespace Reconstruction

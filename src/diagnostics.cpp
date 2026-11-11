@@ -4,6 +4,8 @@
 #include "state.h"
 
 namespace {
+constexpr double MIN_ENERGY_EPS = 1e-12;
+
 struct HydroConservationError {
     Eigen::Vector3d momentum_error_rate;  // Net un-conserved force
     double energy_error_rate;             // Net un-conserved power
@@ -117,10 +119,11 @@ void Diagnostics::compute_dm_metrics(const ParticleSystem& dm) {
     double delta_ke_dm = ke_dm - initial_dm_energy;
     double dm_absolute_error =
         delta_ke_dm - dm.budget.gravitational_work + dm.budget.expansion_work;
-    double denominator =
-        (initial_dm_energy > 1e-12) ? initial_dm_energy : ke_dm;
 
-    this->dm_energy_err = (std::abs(denominator) > 1e-12)
+    double denominator =
+        (initial_dm_energy > MIN_ENERGY_EPS) ? initial_dm_energy : ke_dm;
+
+    this->dm_energy_err = (denominator > MIN_ENERGY_EPS)
                               ? std::abs(dm_absolute_error / denominator)
                               : 0.0;
 }
@@ -138,8 +141,8 @@ double Diagnostics::calculate_hydro_energy_error(double current_energy,
                             budget.photoheated;
     double denominator = std::abs(initial_gas_energy);
 
-    return (denominator > 1e-12) ? absolute_error / denominator
-                                 : absolute_error;
+    return (denominator > MIN_ENERGY_EPS) ? absolute_error / denominator
+                                          : absolute_error;
 }
 
 void Diagnostics::compute_gas_metrics(const GasParticleSystem& gas,
@@ -167,7 +170,7 @@ void Diagnostics::compute_gas_metrics(const GasParticleSystem& gas,
 
         sum_ke += 0.5 * m * v_sq;
         sum_ie += m * gas.u[i];
-        total_sim_volume += m / std::max(gas.rho[i], 1e-12);
+        total_sim_volume += m / gas.rho[i];
     }
 
     this->max_gas_density = max_rho;
@@ -187,10 +190,10 @@ void Diagnostics::compute_gas_metrics(const GasParticleSystem& gas,
 
     // MFM Specific Diagnostics
     const size_t num_gas_particles = gas.num_particles;
-    this->MFM_h_non_converged_cases = gas.diag.non_converged_h;
-    this->MFM_not_enough_nbg_cases = gas.diag.not_enough_neighbors;
-    this->MFM_sph_fallback_cases = gas.diag.sph_fallback;
-    this->MFM_riemann_failed_cases = gas.diag.riemann_failed;
+    this->h_non_converged_cases = gas.diag.non_converged_h;
+    this->not_enough_nbg_cases = gas.diag.not_enough_neighbors;
+    this->sph_fallback_cases = gas.diag.sph_fallback;
+    this->riemann_failed_cases = gas.diag.riemann_failed;
 
     this->percent_particles_updated =
         (config.individual_particle_timesteps &&
@@ -201,14 +204,14 @@ void Diagnostics::compute_gas_metrics(const GasParticleSystem& gas,
 
     double cycle_div = std::max(1, cycle);
     if (num_gas_particles > 0) {
-        this->MFM_ill_percent =
+        this->ill_cond_percent =
             100.0 *
             (static_cast<double>(gas.diag.ill_conditioned) / cycle_div) /
             num_gas_particles;
-        this->MFM_clamp_percent =
+        this->h_clamp_percent =
             100.0 * (static_cast<double>(gas.diag.clamped_h) / cycle_div) /
             num_gas_particles;
-        this->MFM_inc_percent =
+        this->h_inc_percent =
             100.0 *
             (static_cast<double>(gas.diag.neighbor_increased) /
              std::max(1, accumulated_cycles)) /
@@ -220,8 +223,8 @@ void Diagnostics::compute_gas_metrics(const GasParticleSystem& gas,
     this->volume_error = (total_sim_volume / box_volume) - 1.0;
 
     auto hce = diagnose_hydro_conservation_error(gas);
-    this->MFM_flux_energy_error = hce.energy_error_rate;
-    this->MFM_flux_momentum_error = hce.momentum_error_rate.norm();
+    this->flux_energy_error = hce.energy_error_rate;
+    this->flux_momentum_error = hce.momentum_error_rate.norm();
 }
 
 double Diagnostics::compute_potential_energy(const Grid3D& total_rho,

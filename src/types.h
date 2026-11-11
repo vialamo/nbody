@@ -1,6 +1,22 @@
 #pragma once
 #include <Eigen/Dense>
 
+namespace TimeConstants {
+// The smallest valid macro-step the engine can take.
+// Steps smaller than this are considered rounding noise
+constexpr double MIN_VALID_DT = 1e-10;
+
+// The floating-point precision limit for checking if two times are aligned.
+// Used to check if a particle's local clock matches the global clock
+constexpr double SYNC_TOLERANCE = 1e-12;
+
+// The tolerance for verifying if a continuous global time matches
+// an integer multiple of a fixed time bin or snapshot interval
+constexpr double BIN_BOUNDARY_TOLERANCE = 1e-7;
+
+constexpr int MAX_TIMESTEP_BIN_DEPTH = 30;
+}  // namespace TimeConstants
+
 struct Vec3 {
     double x, y, z;
 };

@@ -242,8 +242,8 @@ void Config::load(const std::string& filename) {
             "Error: Invalid hubble_h. Expected the dimensionless parameter h "
             "(typically ~0.7).");
     }
-    if (a_start <= 0) {
-        throw std::runtime_error("Error: a_start must be greater than zero.");
+    if (a_start < 0) {
+        throw std::runtime_error("Error: a_start can't be negative.");
     }
     if (mesh_size_1d <= 0) {
         throw std::runtime_error(

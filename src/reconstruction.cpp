@@ -5,12 +5,16 @@
 
 #include "config.h"
 #include "gas.h"
+#include "hydro.h"
 #include "kernels.h"
 #include "math_utils.h"
 
 namespace Reconstruction {
 
 namespace {  // Anonymous namespace for private helper functions
+
+// Smallest allowed difference in fluid states before the limiter is bypassed
+constexpr double LIMITER_DENOM_EPSILON = 1e-14;
 
 inline double compute_gradient_alpha(double d_phi_max, double d_phi_min,
                                      double d_mid_max, double d_mid_min,
@@ -37,7 +41,7 @@ double apply_pairwise_limiter(double phi_L_center, double phi_R_center,
                               double phi_mid_0, double phi_bar,
                               const Config& config) {
     double d_phi = std::abs(phi_L_center - phi_R_center);
-    if (d_phi < 1e-14) return phi_L_center;
+    if (d_phi < LIMITER_DENOM_EPSILON) return phi_L_center;
 
     double phi_min = std::min(phi_L_center, phi_R_center);
     double phi_max = std::max(phi_L_center, phi_R_center);
@@ -63,7 +67,7 @@ double apply_pairwise_limiter(double phi_L_center, double phi_R_center,
 
 inline double compute_velocity_alpha(double vi, double vj, double dv_raw,
                                      double fraction, const Config& config) {
-    if (std::abs(dv_raw) < 1e-14) return 1.0;
+    if (std::abs(dv_raw) < LIMITER_DENOM_EPSILON) return 1.0;
 
     double psi_1 = config.pairwise_limiter_psi1;
     double psi_2 = config.pairwise_limiter_psi2;
@@ -121,10 +125,9 @@ Eigen::Vector3d compute_face_area_vector(
 }  // end anonymous namespace
 
 ParticleGradients compute_single_particle_gradients(
-    size_t i, const int* neighbor_indices, size_t num_neighbors,
+    size_t i, const NeighborInfo* neighbors, size_t num_neighbors,
     const FluidStateArrays& data, const Eigen::Matrix3d& B,
     bool ill_conditioned, const Config& config) {
-    const Vec3& domain_size = config.domain_size;
     const double max_condition_number = config.max_condition_number;
 
     ParticleGradients out;
@@ -147,17 +150,7 @@ ParticleGradients compute_single_particle_gradients(
         double d_v_max = 0.0;
 
         for (size_t n = 0; n < num_neighbors; ++n) {
-            int j = neighbor_indices[n];
-
-            double dx = periodic_displacement(data.pos_x[j] - data.pos_x[i],
-                                              domain_size.x);
-            double dy = periodic_displacement(data.pos_y[j] - data.pos_y[i],
-                                              domain_size.y);
-            double dz = periodic_displacement(data.pos_z[j] - data.pos_z[i],
-                                              domain_size.z);
-
-            double r2 = dx * dx + dy * dy + dz * dz;
-            double r = std::sqrt(r2);
+            int j = neighbors[n].index;
 
             double dv_x = data.vel_x[j] - data.vel_x[i];
             double dv_y = data.vel_y[j] - data.vel_y[i];
@@ -172,8 +165,9 @@ ParticleGradients compute_single_particle_gradients(
             d_v_max = std::max(d_v_max, dv_mag);
 
             double W;
-            Kernels::cubic_spline_value(r, data.h[i], W);
-            Eigen::Vector3d dx_vec(dx, dy, dz);
+            Kernels::cubic_spline_value(neighbors[n].r, data.h[i], W);
+            Eigen::Vector3d dx_vec(neighbors[n].dx, neighbors[n].dy,
+                                   neighbors[n].dz);
             double V_j = data.mass[j] / data.rho[j];
 #ifdef USE_GEOMETRIC_MATRIX
             double weight = W;
@@ -199,14 +193,7 @@ ParticleGradients compute_single_particle_gradients(
         double phi_mid_max_v = 0.0;
 
         for (size_t n = 0; n < num_neighbors; ++n) {
-            int j = neighbor_indices[n];
-
-            double dx = periodic_displacement(data.pos_x[j] - data.pos_x[i],
-                                              domain_size.x);
-            double dy = periodic_displacement(data.pos_y[j] - data.pos_y[i],
-                                              domain_size.y);
-            double dz = periodic_displacement(data.pos_z[j] - data.pos_z[i],
-                                              domain_size.z);
+            int j = neighbors[n].index;
 
 #ifdef USE_MIDPOINT_QUADRATURE
             double fraction_i = 0.5;
@@ -214,7 +201,8 @@ ParticleGradients compute_single_particle_gradients(
             double fraction_i = data.h[i] / (data.h[i] + data.h[j]);
 #endif
             Eigen::Vector3d dx_face_i =
-                fraction_i * Eigen::Vector3d(dx, dy, dz);
+                fraction_i * Eigen::Vector3d(neighbors[n].dx, neighbors[n].dy,
+                                             neighbors[n].dz);
 
             double d_mid_rho = out.grad_rho.dot(dx_face_i);
             phi_mid_max_rho = std::max(phi_mid_max_rho, d_mid_rho);
@@ -246,7 +234,7 @@ ParticleGradients compute_single_particle_gradients(
                                              phi_mid_min_p, beta);
 
         double alpha_v =
-            compute_gradient_alpha(d_v_max, 0.f, phi_mid_max_v, 0.f, beta);
+            compute_gradient_alpha(d_v_max, 0.0, phi_mid_max_v, 0.0, beta);
 
         out.grad_vx *= alpha_v;
         out.grad_vy *= alpha_v;
@@ -292,28 +280,22 @@ ReconstructedFace compute_face_reconstruction(
     const ParticleState& p_i, const ParticleGradients& grad_i,
     const ParticleState& p_j, const ParticleGradients& grad_j,
     const Eigen::Matrix3d& B_matrix_i, const Eigen::Matrix3d& B_matrix_j,
-    const Config& config, double pressure_floor) {
-    const Vec3& domain_size = config.domain_size;
+    const Eigen::Vector3d& dx_vec, double r2, const Config& config,
+    double pressure_floor) {
     const double density_floor = config.density_floor;
     ReconstructedFace face;
     face.is_valid = false;
     face.used_sph_fallback = false;
 
-    double dx = periodic_displacement(p_j.pos.x() - p_i.pos.x(), domain_size.x);
-    double dy = periodic_displacement(p_j.pos.y() - p_i.pos.y(), domain_size.y);
-    double dz = periodic_displacement(p_j.pos.z() - p_i.pos.z(), domain_size.z);
-
-    double r2 = dx * dx + dy * dy + dz * dz;
-    if (r2 < 1e-24) return face;
-
     face.r = std::sqrt(r2);
-    Eigen::Vector3d dx_vec(dx, dy, dz);
     face.area_vec = compute_face_area_vector(
         p_i, grad_i.ill_conditioned, p_j, grad_j.ill_conditioned, B_matrix_i,
         B_matrix_j, face.r, dx_vec, face.used_sph_fallback);
 
+    // Minimum face area magnitude before the face is discarded as degenerate
+    constexpr double MIN_FACE_AREA_EPSILON = 1e-20;
     double A_mag = face.area_vec.norm();
-    if (A_mag < 1e-20) return face;
+    if (A_mag < MIN_FACE_AREA_EPSILON) return face;
 
     face.n = face.area_vec / A_mag;
 

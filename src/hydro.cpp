@@ -16,6 +16,10 @@ namespace HydroSolver {
 
 namespace {  // Anonymous namespace for internal hydro helpers
 
+// Floor for squared distances to prevent division-by-zero
+// when computing face normal vectors between overlapping particles
+constexpr double MIN_R2_EPSILON = 1e-24;
+
 // Fast atomic max using Compare-and-Swap (CAS) to avoid OpenMP lock
 // overhead
 inline void atomic_update_max(double* address, double val) {
@@ -109,7 +113,7 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
 #pragma omp parallel reduction(+ : step_ill_conditioned)
     {
         // Declare the reusable buffer once per thread
-        std::vector<int> neighbors;
+        std::vector<Reconstruction::NeighborInfo> neighbors;
         neighbors.reserve(256);
 
 #pragma omp for schedule(dynamic, 64)
@@ -128,7 +132,7 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
                 [&](int j, double dx, double dy, double dz, double r2) {
                     if ((r2 < gas.h[i] * gas.h[i] ||
                          r2 < gas.h[j] * gas.h[j]) &&
-                        r2 > 1e-24) {
+                        r2 > MIN_R2_EPSILON) {
                         double rel_vx = gas.vel_x[j] - gas.vel_x[i];
                         double rel_vy = gas.vel_y[j] - gas.vel_y[i];
                         double rel_vz = gas.vel_z[j] - gas.vel_z[i];
@@ -137,7 +141,7 @@ void compute_gradients(GasParticleSystem& gas, const Config& config) {
                         local_max_rel_ke =
                             std::max(local_max_rel_ke, 0.5 * rel_v2);
                         if (r2 < gas.h[i] * gas.h[i]) {
-                            neighbors.push_back(j);
+                            neighbors.push_back({j, dx, dy, dz, std::sqrt(r2)});
                         }
                     }
                 });
@@ -222,7 +226,7 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
             gas.pos_z.data(), p_i.pos.x(), p_i.pos.y(), p_i.pos.z(), search_sq,
             domain_size,
             [&](int j, double dx, double dy, double dz, double r2) {
-                if (r2 < 1e-24) return;
+                if (r2 < MIN_R2_EPSILON) return;
 
                 // Maintain N3L conservation for active pairs, but ensure
                 // inactive neighbors are always processed by the active
@@ -257,7 +261,8 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                     Reconstruction::ReconstructedFace face =
                         compute_face_reconstruction(
                             p_i, grad_i, p_j, grad_j, gas.B_matrix[i],
-                            gas.B_matrix[j], config, pressure_floor);
+                            gas.B_matrix[j], Eigen::Vector3d(dx, dy, dz), r2,
+                            config, pressure_floor);
 
                     if (!face.is_valid) return;
                     if (face.used_sph_fallback) step_sph_fallbacks++;
@@ -413,7 +418,7 @@ double get_timestep(const GasParticleSystem& gas, const Config& config) {
 #pragma omp parallel for reduction(min : min_dt) schedule(static)
     for (size_t i = 0; i < gas.num_particles; ++i) {
         // v_sig_max is cached in physical units during compute_hydro_forces
-        if (gas.v_sig_max[i] > 1e-9) {
+        if (gas.v_sig_max[i] > MIN_SIGNAL_VELOCITY) {
             double dt_i = gas.h[i] / gas.v_sig_max[i];
             if (dt_i < min_dt) {
                 min_dt = dt_i;

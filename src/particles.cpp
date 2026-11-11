@@ -174,10 +174,14 @@ void ParticleSystem::sync_and_activate(double dt, const Config& config) {
     // Flag active particles
     for (size_t i = 0; i < num_particles; ++i) {
         // A particle is active if its block step ends at the new global time
-        is_active[i] = (std::abs(t_end[i] - global_time) < 1e-10) ? 1 : 0;
+        is_active[i] =
+            (std::abs(t_end[i] - global_time) < TimeConstants::SYNC_TOLERANCE)
+                ? 1
+                : 0;
 
         // BOOTSTRAP: If it's the very first step (t=0), everyone is active
-        if (global_time <= dt + 1e-12 && t_end[i] == 0.0) {
+        if (global_time <= dt + TimeConstants::SYNC_TOLERANCE &&
+            t_end[i] == 0.0) {
             is_active[i] = 1;
             dt_step[i] =
                 dt;  // Give them a tiny initial dt so kicks work properly
@@ -247,7 +251,9 @@ void ParticleSystem::update_particle_timesteps(double dt_max,
         // is aligned to an integer multiple of that bin's boundary.
         // If not aligned, it must drop to a smaller bin that IS aligned
         double ratio = global_time / dt_bin;
-        while (std::abs(ratio - std::round(ratio)) > 1e-5 && n < 30) {
+        while (std::abs(ratio - std::round(ratio)) >
+                   TimeConstants::BIN_BOUNDARY_TOLERANCE &&
+               n < TimeConstants::MAX_TIMESTEP_BIN_DEPTH) {
             dt_bin *= 0.5;
             n++;
             ratio = global_time / dt_bin;

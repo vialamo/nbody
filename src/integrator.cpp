@@ -33,10 +33,12 @@ void apply_dm_kick(ParticleSystem& dm, double dt, double a, double H,
             double t_start = dm.t_end[i] - dm.dt_step[i];
             bool do_kick = false;
             if (is_kick1) {
-                if (std::abs(dm.global_time - dt_macro - t_start) < 1e-10)
+                if (std::abs(dm.global_time - dt_macro - t_start) <
+                    TimeConstants::SYNC_TOLERANCE)
                     do_kick = true;
             } else {
-                if (std::abs(dm.global_time - dm.t_end[i]) < 1e-10)
+                if (std::abs(dm.global_time - dm.t_end[i]) <
+                    TimeConstants::SYNC_TOLERANCE)
                     do_kick = true;
             }
             if (!do_kick) continue;
@@ -247,10 +249,12 @@ void Integrator::apply_gas_kick(GasParticleSystem& gas, double dt, double a,
             double t_start = gas.t_end[i] - gas.dt_step[i];
             bool do_kick = false;
             if (is_kick1) {
-                if (std::abs(gas.global_time - dt_macro - t_start) < 1e-10)
+                if (std::abs(gas.global_time - dt_macro - t_start) <
+                    TimeConstants::SYNC_TOLERANCE)
                     do_kick = true;
             } else {
-                if (std::abs(gas.global_time - gas.t_end[i]) < 1e-10)
+                if (std::abs(gas.global_time - gas.t_end[i]) <
+                    TimeConstants::SYNC_TOLERANCE)
                     do_kick = true;
             }
             if (!do_kick) continue;

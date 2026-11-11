@@ -155,14 +155,14 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
               << "\n";
 
     double flux_err =
-        std::max(abs(diag.MFM_flux_energy_error), diag.MFM_flux_momentum_error);
+        std::max(abs(diag.flux_energy_error), diag.flux_momentum_error);
     std::cout << "    - Vol Err: " << format_double(diag.volume_error, 1, true)
               << " | Flux Err: " << format_double(flux_err, 1, true)
-              << " | Ill: " << format_double(diag.MFM_ill_percent, 1, true)
+              << " | Ill: " << format_double(diag.ill_cond_percent, 1, true)
               << "% | Clamp: "
-              << format_double(diag.MFM_clamp_percent, 1, true)
+              << format_double(diag.h_clamp_percent, 1, true)
               // << "% | Incr: "
-              // << format_double(diag.MFM_inc_percent, 1, false)
+              // << format_double(diag.h_inc_percent, 1, false)
               << "%\n";
 
     std::cout << "    - Softening: "
@@ -225,17 +225,17 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
         std::cout << "  [WARNING] Cooling solver failed to converge in "
                   << diag.non_converged_cooling_particles << " particles\n";
     }
-    if (diag.MFM_h_non_converged_cases > 0) {
-        std::cout << "  [WARNING] MFM h non converged cases: "
-                  << diag.MFM_h_non_converged_cases << "\n";
+    if (diag.h_non_converged_cases > 0) {
+        std::cout << "  [WARNING] h non converged cases: "
+                  << diag.h_non_converged_cases << "\n";
     }
-    if (diag.MFM_not_enough_nbg_cases > 0) {
-        std::cout << "  [WARNING] MFM not enough neighbor cases: "
-                  << diag.MFM_not_enough_nbg_cases << "\n";
+    if (diag.not_enough_nbg_cases > 0) {
+        std::cout << "  [WARNING] Density: not enough neighbor cases: "
+                  << diag.not_enough_nbg_cases << "\n";
     }
-    if (diag.MFM_riemann_failed_cases > 0) {
-        std::cout << "  [WARNING] MFM Riemann failed cases: "
-                  << diag.MFM_riemann_failed_cases << "\n";
+    if (diag.riemann_failed_cases > 0) {
+        std::cout << "  [WARNING] Riemann failed cases: "
+                  << diag.riemann_failed_cases << "\n";
     }
 }
 

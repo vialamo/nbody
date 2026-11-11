@@ -14,11 +14,11 @@ double get_next_sync_dt(const std::vector<double>& t_end, size_t num_particles,
                         double global_time) {
     double next_time = std::numeric_limits<double>::infinity();
     for (size_t i = 0; i < num_particles; ++i) {
-        if (t_end[i] > global_time + 1e-10) {
+        if (t_end[i] > global_time + TimeConstants::MIN_VALID_DT) {
             next_time = std::min(next_time, t_end[i]);
         }
     }
-    return (next_time - global_time > 1e-10)
+    return (next_time - global_time > TimeConstants::MIN_VALID_DT)
                ? (next_time - global_time)
                : std::numeric_limits<double>::infinity();
 }
@@ -90,8 +90,8 @@ TimestepInfo SimulationEngine::get_timestep() const {
             Cosmology::get_time_from_scale_factor(next_output_a, config);
 
         double dt_snapshot = target_t - current_t;
-        const double MIN_VALID_DT = 1e-10;
-        if (dt_snapshot > MIN_VALID_DT && dt_snapshot < ts.dt_macro) {
+        if (dt_snapshot > TimeConstants::MIN_VALID_DT &&
+            dt_snapshot < ts.dt_macro) {
             ts.dt_macro = dt_snapshot;
         }
     }
@@ -123,11 +123,11 @@ void SimulationEngine::step() {
         // At a macrostep boundary, all particles have reached their t_end
         // and are flagged as active for the upcoming cycle
         double ratio = state.total_time / config.fixed_dt;
-        is_synchronized = (std::abs(ratio - std::round(ratio)) < 1e-7);
+        is_synchronized = (std::abs(ratio - std::round(ratio)) <
+                           TimeConstants::BIN_BOUNDARY_TOLERANCE);
     }
 
-    constexpr double TOLERANCE = 1e-7;
-    double next_out = next_output_a - TOLERANCE;
+    double next_out = next_output_a - TimeConstants::BIN_BOUNDARY_TOLERANCE;
     bool must_save_snapshot =
         is_synchronized &&
         ((config.expanding_universe && state.scale_factor >= next_out) ||

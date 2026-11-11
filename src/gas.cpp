@@ -1,6 +1,7 @@
 #include "gas.h"
 
 #include "config.h"
+#include "hydro.h"
 #include "integrator.h"
 
 GasParticleSystem::GasParticleSystem(const Config& config)
@@ -348,10 +349,14 @@ void GasParticleSystem::sync_and_activate(Integrator& integrator, double dt,
 #pragma omp parallel for schedule(static)
     for (size_t i = 0; i < num_particles; ++i) {
         // A particle is active if its block step ends at the new global time
-        is_active[i] = (std::abs(t_end[i] - global_time) < 1e-10) ? 1 : 0;
+        is_active[i] =
+            (std::abs(t_end[i] - global_time) < TimeConstants::SYNC_TOLERANCE)
+                ? 1
+                : 0;
 
         // BOOTSTRAP: If it's the first step (t=0), everyone is active
-        if (global_time <= dt + 1e-12 && t_end[i] == 0.0) {
+        if (global_time <= dt + TimeConstants::SYNC_TOLERANCE &&
+            t_end[i] == 0.0) {
             is_active[i] = 1;
             dt_step[i] = dt;  // Give them a tiny initial dt so Kick 2 works
             t_end[i] = global_time;
@@ -416,7 +421,7 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
 
         // CFL Timestep (Using cached signal velocity from compute_hydro_forces)
         double v_sig_max_phys = v_sig_max[i];
-        if (v_sig_max_phys > 1e-9) {
+        if (v_sig_max_phys > HydroSolver::MIN_SIGNAL_VELOCITY) {
             double dt_cfl =
                 ((a * h[i]) / v_sig_max_phys) * config.hydro_courant_factor;
             dt_ideal = std::min(dt_ideal, dt_cfl);
@@ -436,7 +441,9 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
         // is aligned to an integer multiple of that bin's boundary.
         // If not aligned, it must drop to a smaller bin that IS aligned
         double ratio = global_time / dt_bin;
-        while (std::abs(ratio - std::round(ratio)) > 1e-5 && n < 30) {
+        while (std::abs(ratio - std::round(ratio)) >
+                   TimeConstants::BIN_BOUNDARY_TOLERANCE &&
+               n < TimeConstants::MAX_TIMESTEP_BIN_DEPTH) {
             dt_bin *= 0.5;
             n++;
             ratio = global_time / dt_bin;
