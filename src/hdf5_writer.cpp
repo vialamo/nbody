@@ -42,20 +42,6 @@ void HDF5Writer::set_attr_string(H5::H5Object& obj, const char* attr_name,
     attr.close();
 }
 
-void HDF5Writer::write_grid(H5::Group& group, const char* dataset_name,
-                            const Grid3D& grid) {
-    hsize_t dims[3] = {static_cast<hsize_t>(grid.nx),
-                       static_cast<hsize_t>(grid.ny),
-                       static_cast<hsize_t>(grid.nz)};
-
-    H5::DataSpace dataspace(3, dims);
-
-    H5::DataSet dataset = group.createDataSet(
-        dataset_name, H5::PredType::NATIVE_DOUBLE, dataspace);
-    dataset.write(grid.raw_data(), H5::PredType::NATIVE_DOUBLE);
-    dataset.close();
-}
-
 void HDF5Writer::write_particle_vec(H5::Group& group, const char* dataset_name,
                                     const std::vector<double>& vec) {
     hsize_t dims[1] = {vec.size()};

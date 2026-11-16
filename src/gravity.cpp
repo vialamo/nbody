@@ -11,6 +11,10 @@
 // #define SINGLE_PRECISION_TRANSCENDENTALS
 
 namespace {
+// Microscopic floor for squared distances to prevent 1/r singularities
+// when particles perfectly overlap
+constexpr double MIN_R2_EPSILON = 1e-24;
+
 #ifdef USE_GPU
 #pragma omp declare target
 #endif
@@ -368,7 +372,7 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
             [=, &local_acc_x, &local_acc_y, &local_acc_z](
                 int j, double dx, double dy, double dz, double r2) {
                 if (r2 < search_sq) {
-                    double r = std::sqrt(r2 + 1e-24);
+                    double r = std::sqrt(r2 + MIN_R2_EPSILON);
                     double m_j = d_m[j];
 
                     double dphi_dr = Kernels::gravity_derivatives(r, epsilon);
@@ -477,7 +481,7 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
                     int j, double dx, double dy, double dz, double r2) {
                     if (r2 > search_sq) return;
 
-                    double r = std::sqrt(r2 + 1e-24);
+                    double r = std::sqrt(r2 + MIN_R2_EPSILON);
                     double m_j = d_dm_m[j];
 
                     double dphi_dr = Kernels::gravity_derivatives(r, epsilon);
@@ -502,7 +506,7 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
                         int j, double dx, double dy, double dz, double r2) {
                         if (r2 > search_sq) return;
 
-                        double r = std::sqrt(r2 + 1e-24);
+                        double r = std::sqrt(r2 + MIN_R2_EPSILON);
                         double m_j = d_gas_m[j];
 
                         double dphi_dr =
@@ -544,7 +548,7 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
                     int j, double dx, double dy, double dz, double r2) {
                     if (r2 > search_sq) return;
 
-                    double r = std::sqrt(r2 + 1e-24);
+                    double r = std::sqrt(r2 + MIN_R2_EPSILON);
                     double m_j = d_gas_m[j];
 
                     double dphi_dr = Kernels::gravity_derivatives(r, epsilon);
@@ -569,7 +573,7 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
                         int j, double dx, double dy, double dz, double r2) {
                         if (r2 > search_sq) return;
 
-                        double r = std::sqrt(r2 + 1e-24);
+                        double r = std::sqrt(r2 + MIN_R2_EPSILON);
                         double m_j = d_dm_m[j];
 
                         double dphi_dr =

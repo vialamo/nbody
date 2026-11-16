@@ -16,36 +16,43 @@
 #include "types.h"
 
 namespace {
-void apply_dm_kick(ParticleSystem& dm, double dt, double a, double H,
+inline double get_particle_kick_half_dt(const Config& config,
+                                        uint64_t ti_global_time,
+                                        uint64_t ti_dt_macro, uint64_t ti_end,
+                                        uint64_t ti_step, bool is_kick1) {
+    double dt_step = ti_step * config.timebase_to_float;
+    if (!config.individual_particle_timesteps) return dt_step / 2.0;
+
+    uint64_t ti_start = ti_end - ti_step;
+    bool do_kick = false;
+
+    if (is_kick1) {
+        // KICK 1: Particle's step started when this macro-step started
+        do_kick = (ti_start == (ti_global_time - ti_dt_macro));
+    } else {
+        // KICK 2: Particle's step ends right now
+        do_kick = (ti_end == ti_global_time);
+    }
+
+    return do_kick ? (dt_step / 2.0) : 0.0;
+}
+
+void apply_dm_kick(ParticleSystem& dm, uint64_t ti_dt, double a, double H,
                    const Config& config, bool is_kick1) {
     double step_grav_work = 0.0;
     double step_exp_work = 0.0;
     const size_t n = dm.num_particles;
 
-    // dt passed to this function is half of the macro step
-    double dt_macro = 2.0 * dt;
-
 #pragma omp parallel for reduction(+ : step_grav_work, step_exp_work) \
     schedule(static)
     for (size_t i = 0; i < n; i++) {
-        // Gate the kick based on the individual timeline boundaries
-        if (config.individual_particle_timesteps) {
-            double t_start = dm.t_end[i] - dm.dt_step[i];
-            bool do_kick = false;
-            if (is_kick1) {
-                if (std::abs(dm.global_time - dt_macro - t_start) < 1e-10)
-                    do_kick = true;
-            } else {
-                if (std::abs(dm.global_time - dm.t_end[i]) < 1e-10)
-                    do_kick = true;
-            }
-            if (!do_kick) continue;
-        }
+        double half_dt =
+            get_particle_kick_half_dt(config, dm.ti_global_time, ti_dt,
+                                      dm.ti_end[i], dm.ti_step[i], is_kick1);
 
-        // Use the exact half-step of the individual particle
-        double half_dt = dm.dt_step[i] / 2.0;
+        if (half_dt <= 0.0) continue;
 
-        // Calculate cosmological damping factor tailored to this specific step
+        // Calculate cosmological damping factor for this step
         double drag_factor = 1.0;
         if (H > 0.0 && a > 0.0) {
             double a_next = a + a * H * half_dt;
@@ -93,27 +100,30 @@ void apply_dm_kick(ParticleSystem& dm, double dt, double a, double H,
     dm.budget.expansion_work += step_exp_work;
 }
 
-void apply_dm_drift(ParticleSystem& dm, double dt, const Vec3& domain_size) {
-    double inv_domain_x = 1.0 / domain_size.x;
-    double inv_domain_y = 1.0 / domain_size.y;
-    double inv_domain_z = 1.0 / domain_size.z;
+void apply_dm_drift(ParticleSystem& dm, const Config& config) {
+    double inv_domain_x = 1.0 / config.domain_size.x;
+    double inv_domain_y = 1.0 / config.domain_size.y;
+    double inv_domain_z = 1.0 / config.domain_size.z;
     const size_t n = dm.num_particles;
 
 #pragma omp parallel for simd schedule(static)
     for (size_t i = 0; i < n; i++) {
-        double drift_dt = dm.global_time - dm.t_current[i];
-        if (drift_dt <= 0.0) continue;
+        if (dm.ti_global_time <= dm.ti_current[i])
+            continue;  // Skip if already drifted
+
+        uint64_t ti_drift = dm.ti_global_time - dm.ti_current[i];
+        double drift_dt = ti_drift * config.timebase_to_float;
 
         double nx = dm.pos_x[i] + dm.vel_x[i] * drift_dt;
         double ny = dm.pos_y[i] + dm.vel_y[i] * drift_dt;
         double nz = dm.pos_z[i] + dm.vel_z[i] * drift_dt;
 
         // SIMD-friendly periodic boundary using independent axes
-        dm.pos_x[i] = nx - domain_size.x * std::floor(nx * inv_domain_x);
-        dm.pos_y[i] = ny - domain_size.y * std::floor(ny * inv_domain_y);
-        dm.pos_z[i] = nz - domain_size.z * std::floor(nz * inv_domain_z);
+        dm.pos_x[i] = nx - config.domain_size.x * std::floor(nx * inv_domain_x);
+        dm.pos_y[i] = ny - config.domain_size.y * std::floor(ny * inv_domain_y);
+        dm.pos_z[i] = nz - config.domain_size.z * std::floor(nz * inv_domain_z);
 
-        dm.t_current[i] = dm.global_time;
+        dm.ti_current[i] = dm.ti_global_time;
     }
 }
 
@@ -165,43 +175,45 @@ inline KickResult apply_velocity_kicks(GasParticleSystem& gas, size_t i,
     return res;
 }
 
-void apply_gas_drift(GasParticleSystem& gas, double dt,
-                     const Vec3& domain_size) {
-    double inv_domain_x = 1.0 / domain_size.x;
-    double inv_domain_y = 1.0 / domain_size.y;
-    double inv_domain_z = 1.0 / domain_size.z;
+void apply_gas_drift(GasParticleSystem& gas, const Config& config) {
+    double inv_domain_x = 1.0 / config.domain_size.x;
+    double inv_domain_y = 1.0 / config.domain_size.y;
+    double inv_domain_z = 1.0 / config.domain_size.z;
     const size_t n = gas.num_particles;
 
     // Drift from t_current to global_time
 #pragma omp parallel for simd schedule(static)
     for (size_t i = 0; i < n; i++) {
-        double drift_dt = gas.global_time - gas.t_current[i];
-        if (drift_dt <= 0.0) continue;  // Skip if already drifted
+        if (gas.ti_global_time <= gas.ti_current[i])
+            continue;  // Skip if already drifted
+
+        uint64_t ti_drift = gas.ti_global_time - gas.ti_current[i];
+        double drift_dt = ti_drift * config.timebase_to_float;
 
         double nx = gas.pos_x[i] + gas.vel_x[i] * drift_dt;
         double ny = gas.pos_y[i] + gas.vel_y[i] * drift_dt;
         double nz = gas.pos_z[i] + gas.vel_z[i] * drift_dt;
 
         // Periodic boundaries
-        gas.pos_x[i] = nx - domain_size.x * std::floor(nx * inv_domain_x);
-        gas.pos_y[i] = ny - domain_size.y * std::floor(ny * inv_domain_y);
-        gas.pos_z[i] = nz - domain_size.z * std::floor(nz * inv_domain_z);
+        gas.pos_x[i] =
+            nx - config.domain_size.x * std::floor(nx * inv_domain_x);
+        gas.pos_y[i] =
+            ny - config.domain_size.y * std::floor(ny * inv_domain_y);
+        gas.pos_z[i] =
+            nz - config.domain_size.z * std::floor(nz * inv_domain_z);
 
-        gas.t_current[i] = gas.global_time;  // Mark as drifted
+        gas.ti_current[i] = gas.ti_global_time;
     }
 }
 
-void apply_drift(SimState& state, double dt, const Config& config,
-                 Diagnostics& diag) {
-    apply_dm_drift(state.dm, dt, config.domain_size);
-    apply_gas_drift(state.gas, dt, config.domain_size);
+void apply_drift(SimState& state, const Config& config, Diagnostics& diag) {
+    apply_dm_drift(state.dm, config);
+    apply_gas_drift(state.gas, config);
 }
 
 void update_timesteps(SimState& state, const Config& config) {
-    state.dm.update_particle_timesteps(config.fixed_dt, config,
-                                       state.gravity.softening_length);
-    state.gas.update_particle_timesteps(config.fixed_dt, state.scale_factor,
-                                        config, state.gravity.softening_length);
+    state.dm.update_particle_timesteps(config, state.gravity.softening_length);
+    state.gas.update_particle_timesteps(config, state.gravity.softening_length);
 }
 }  // namespace
 
@@ -227,37 +239,26 @@ Integrator::KickWork Integrator::kick_single_gas_particle(
     return work;
 }
 
-void Integrator::apply_gas_kick(GasParticleSystem& gas, double dt, double a,
-                                double H, const Config& config, bool is_kick1) {
+void Integrator::apply_gas_kick(GasParticleSystem& gas, uint64_t ti_dt,
+                                double a, double H, const Config& config,
+                                bool is_kick1) {
     double step_grav_work = 0.0;
     double step_exp_work = 0.0;
     double step_switch_energy = 0.0;
     double step_injected_energy = 0.0;
     const size_t n = gas.num_particles;
 
-    // dt passed to this function is half of the macro step
-    double dt_macro = 2.0 * dt;
-
 #pragma omp parallel for reduction(+ : step_grav_work, step_exp_work, \
                                        step_switch_energy,            \
                                        step_injected_energy) schedule(static)
     for (size_t i = 0; i < n; i++) {
         // Determine if this particle should be kicked based on timeline
-        if (config.individual_particle_timesteps) {
-            double t_start = gas.t_end[i] - gas.dt_step[i];
-            bool do_kick = false;
-            if (is_kick1) {
-                if (std::abs(gas.global_time - dt_macro - t_start) < 1e-10)
-                    do_kick = true;
-            } else {
-                if (std::abs(gas.global_time - gas.t_end[i]) < 1e-10)
-                    do_kick = true;
-            }
-            if (!do_kick) continue;
-        }
+        double half_dt =
+            get_particle_kick_half_dt(config, gas.ti_global_time, ti_dt,
+                                      gas.ti_end[i], gas.ti_step[i], is_kick1);
 
-        // Execute the kick
-        double half_dt = gas.dt_step[i] / 2.0;
+        if (half_dt <= 0.0) continue;
+
         Integrator::KickWork work =
             kick_single_gas_particle(gas, i, half_dt, a, H, config);
 
@@ -335,36 +336,38 @@ void Integrator::compute_forces(SimState& state, const Config& config,
     }
 }
 
-void Integrator::apply_kick(SimState& state, double dt, const Config& config,
-                            bool is_kick1) {
+void Integrator::apply_kick(SimState& state, uint64_t ti_dt,
+                            const Config& config, bool is_kick1) {
     // Forward the config and kick state to the updated DM function
-    apply_dm_kick(state.dm, dt, state.scale_factor, state.hubble_param, config,
-                  is_kick1);
+    apply_dm_kick(state.dm, ti_dt, state.scale_factor, state.hubble_param,
+                  config, is_kick1);
 
-    apply_gas_kick(state.gas, dt, state.scale_factor, state.hubble_param,
+    apply_gas_kick(state.gas, ti_dt, state.scale_factor, state.hubble_param,
                    config, is_kick1);
 }
 
-void Integrator::KDK_step(SimState& state, double dt, const Config& config,
+void Integrator::KDK_step(SimState& state, uint64_t ti_dt, const Config& config,
                           Diagnostics& diag) {
     // Clock sync and wake-ups
-    state.dm.sync_and_activate(dt, config);
-    state.gas.sync_and_activate(*this, dt, state.scale_factor,
+    state.dm.sync_and_activate(ti_dt, config);
+    state.gas.sync_and_activate(*this, ti_dt, state.scale_factor,
                                 state.hubble_param, config);
 
     // KICK 1 (Half step)
-    apply_kick(state, dt / 2.0, config, true);
+    apply_kick(state, ti_dt, config, true);
 
     // DRIFT
-    apply_drift(state, dt, config, diag);
+    apply_drift(state, config, diag);
 
     // Update cosmology and compute forces
-    state.total_time += dt;
+    state.ti_total_time += ti_dt;
+    state.total_time = state.ti_total_time * config.timebase_to_float;
+
     Cosmology::update(state, config);
     compute_forces(state, config, diag);
 
     // KICK 2 (Half step)
-    apply_kick(state, dt / 2.0, config, false);
+    apply_kick(state, ti_dt, config, false);
 
     if (config.enable_cooling) {
         ScopedTimer cooling_timer(diag, TimerRegion::Cool);
@@ -384,8 +387,8 @@ void Integrator::initialize(SimState& state, const Config& config) {
     Thermodynamics::initialize_primitive_variables(state.gas, config,
                                                    state.scale_factor);
 
-    state.dm.sync_and_activate(0.0, config);
-    state.gas.sync_and_activate(*this, 0.0, state.scale_factor,
+    state.dm.sync_and_activate(0, config);
+    state.gas.sync_and_activate(*this, 0, state.scale_factor,
                                 state.hubble_param, config);
 
     Diagnostics dummy_diag;

@@ -140,6 +140,7 @@ struct Config {
     Vec3 box_size_mpc;
 
     double fixed_dt = 0;
+    double timebase_to_float = 0.0;
 
     // Derived unit conversions (calculated once)
     double unit_length_mpc = 0.0;    // 1 code length = X Mpc

@@ -65,7 +65,6 @@ set(CORE_SOURCES
     src/riemann.cpp
     src/state.cpp
     src/thermodynamics.cpp
-    src/types.cpp
     src/utils.cpp
 )
 
@@ -168,7 +167,7 @@ if(USE_GPU_OFFLOAD)
         set(NVC_ARCH "cc${COMPUTE_VERSION}")
         message(STATUS "Detected nvc++. Targeting NVIDIA GPU (OpenMP Offload): ${NVC_ARCH}")
         
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fast -mp=gpu -gpu=${NVC_ARCH} -Minfo=mp")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fast -mp=gpu -gpu=${NVC_ARCH} -Minfo=mp,accel")
         set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -mp=gpu -gpu=${NVC_ARCH}")
 
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")

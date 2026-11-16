@@ -7,6 +7,7 @@
 #include "hydro.h"
 #include "kernels.h"
 #include "gas.h"
+#include "math_utils.h"
 #include "particles.h"
 #include "reconstruction.h"
 
@@ -49,6 +50,12 @@ TEST_CASE("MFM Face Reconstruction and Limiting", "[hydro][mfm_reconstruction]")
     p_j.vel = Eigen::Vector3d::Zero();
     p_j.h = 2.5;
     p_j.mass = 2.0;
+    
+    double dx = periodic_displacement(p_j.pos.x() - p_i.pos.x(), config.domain_size.x);
+    double dy = periodic_displacement(p_j.pos.y() - p_i.pos.y(), config.domain_size.y);
+    double dz = periodic_displacement(p_j.pos.z() - p_i.pos.z(), config.domain_size.z);
+    double r2 = dx*dx + dy*dy + dz*dz;
+    Eigen::Vector3d dx_vec(dx, dy, dz);
 
     Reconstruction::ParticleGradients grad_j = grad_i;  // Copy zeros
 
@@ -58,7 +65,7 @@ TEST_CASE("MFM Face Reconstruction and Limiting", "[hydro][mfm_reconstruction]")
         // With zero gradients, the extrapolated face states should simply equal
         // the base particle states
         Reconstruction::ReconstructedFace face = Reconstruction::compute_face_reconstruction(
-            p_i, grad_i, p_j, grad_j, B_identity, B_identity, config, pressure_floor);
+            p_i, grad_i, p_j, grad_j, B_identity, B_identity, dx_vec, r2, config, pressure_floor);
 
         REQUIRE(face.is_valid == true);
         REQUIRE(face.r == Catch::Approx(2.0));
@@ -75,7 +82,7 @@ TEST_CASE("MFM Face Reconstruction and Limiting", "[hydro][mfm_reconstruction]")
         grad_j.grad_rho.x() = 0.5;  // Extrapolate j's density by -0.5 to 1.5
 
         Reconstruction::ReconstructedFace face = Reconstruction::compute_face_reconstruction(
-            p_i, grad_i, p_j, grad_j, B_identity, B_identity, config, pressure_floor);
+            p_i, grad_i, p_j, grad_j, B_identity, B_identity, dx_vec, r2, config, pressure_floor);
 
         // They should meet perfectly in the middle
         REQUIRE(face.rho_L == Catch::Approx(1.5));
@@ -86,7 +93,7 @@ TEST_CASE("MFM Face Reconstruction and Limiting", "[hydro][mfm_reconstruction]")
         p_i.pressure = -5.0; // Unphysical negative pressure
 
         Reconstruction::ReconstructedFace face = Reconstruction::compute_face_reconstruction(
-            p_i, grad_i, p_j, grad_j, B_identity, B_identity, config, pressure_floor);
+            p_i, grad_i, p_j, grad_j, B_identity, B_identity, dx_vec, r2, config, pressure_floor);
 
         // Should catch the negative pressure and clamp it to the floor
         REQUIRE(face.p_L == Catch::Approx(pressure_floor));

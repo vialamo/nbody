@@ -76,11 +76,11 @@ void Logger::write_header() {
     if (!log_file.is_open() || header_written) return;
 
     log_file
-        << "cycle,sim_time,scale_factor,"
+        << "cycle,i_sim_time,sim_time,scale_factor,"
         << "total_mass_gas,total_mass_dm,total_momentum_gas_x,total_"
            "momentum_gas_y,total_momentum_gas_z,total_momentum_dm_x,total_"
            "momentum_dm_y,total_momentum_dm_z,"
-        << "ke_gas,ke_dm,pe_dm,ie_gas,radiated_energy,heated_energy,"
+        << "ke_gas,ke_dm,ie_gas,radiated_energy,heated_energy,"
         << "dt_cfl,dt_gravity,dt_cool,dt_final,"
         << "max_gas_density,max_gas_pressure,max_gas_velocity,"
         << "wall_time_total,wall_time_pm,wall_time_pp,wall_time_hydro,"
@@ -112,16 +112,17 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
 
     // Write to CSV file
     if (log_file.is_open()) {
-        log_file << diag.cycle << "," << diag.sim_time << ","
-                 << diag.scale_factor << "," << diag.total_mass_gas << ","
-                 << diag.total_mass_dm << "," << diag.total_momentum_gas.x()
-                 << "," << diag.total_momentum_gas.y() << ","
+        log_file << diag.cycle << "," << diag.ti_total_time << ","
+                 << diag.sim_time << "," << diag.scale_factor << ","
+                 << diag.total_mass_gas << "," << diag.total_mass_dm << ","
+                 << diag.total_momentum_gas.x() << ","
+                 << diag.total_momentum_gas.y() << ","
                  << diag.total_momentum_gas.z() << ","
                  << diag.total_momentum_dm.x() << ","
                  << diag.total_momentum_dm.y() << ","
                  << diag.total_momentum_dm.z() << "," << diag.ke_gas << ","
-                 << diag.ke_dm << "," << diag.pe_total << "," << diag.ie_gas
-                 << "," << diag.total_radiated_energy << ","
+                 << diag.ke_dm << "," << diag.ie_gas << ","
+                 << diag.total_radiated_energy << ","
                  << diag.total_heated_energy << "," << diag.dt_cfl << ","
                  << diag.dt_gravity << "," << diag.dt_cool << ","
                  << diag.dt_final << "," << diag.max_gas_density << ","
@@ -137,7 +138,8 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
                  << diag.get_prof_average(GPUProfRegion::Transf) / 1000.0 << ","
                  << diag.get_prof_average(GPUProfRegion::Ret) / 1000.0 << ","
                  << diag.get_prof_average(GPUProfRegion::Compute) / 1000.0
-                 << "," << peak_mem << "," << curr_mem << "\n";
+                 << "," << peak_mem << "," << curr_mem << "\n"
+                 << std::flush;
     }
 
     // Write to stdout
@@ -155,14 +157,14 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
               << "\n";
 
     double flux_err =
-        std::max(abs(diag.MFM_flux_energy_error), diag.MFM_flux_momentum_error);
+        std::max(abs(diag.flux_energy_error), diag.flux_momentum_error);
     std::cout << "    - Vol Err: " << format_double(diag.volume_error, 1, true)
               << " | Flux Err: " << format_double(flux_err, 1, true)
-              << " | Ill: " << format_double(diag.MFM_ill_percent, 1, true)
+              << " | Ill: " << format_double(diag.ill_cond_percent, 1, true)
               << "% | Clamp: "
-              << format_double(diag.MFM_clamp_percent, 1, true)
+              << format_double(diag.h_clamp_percent, 1, true)
               // << "% | Incr: "
-              // << format_double(diag.MFM_inc_percent, 1, false)
+              // << format_double(diag.h_inc_percent, 1, false)
               << "%\n";
 
     std::cout << "    - Softening: "
@@ -225,17 +227,21 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
         std::cout << "  [WARNING] Cooling solver failed to converge in "
                   << diag.non_converged_cooling_particles << " particles\n";
     }
-    if (diag.MFM_h_non_converged_cases > 0) {
-        std::cout << "  [WARNING] MFM h non converged cases: "
-                  << diag.MFM_h_non_converged_cases << "\n";
+    if (diag.h_non_converged_cases > 0) {
+        std::cout << "  [WARNING] h non converged cases: "
+                  << diag.h_non_converged_cases << "\n";
     }
-    if (diag.MFM_not_enough_nbg_cases > 0) {
-        std::cout << "  [WARNING] MFM not enough neighbor cases: "
-                  << diag.MFM_not_enough_nbg_cases << "\n";
+    if (diag.not_enough_nbg_cases > 0) {
+        std::cout << "  [WARNING] Density: not enough neighbor cases: "
+                  << diag.not_enough_nbg_cases << "\n";
     }
-    if (diag.MFM_riemann_failed_cases > 0) {
-        std::cout << "  [WARNING] MFM Riemann failed cases: "
-                  << diag.MFM_riemann_failed_cases << "\n";
+    if (diag.riemann_failed_cases > 0) {
+        std::cout << "  [WARNING] Riemann failed cases: "
+                  << diag.riemann_failed_cases << "\n";
+    }
+    if (diag.particles_at_min_dt > 0) {
+        std::cout << "  [WARNING] Particles at min dt cases: "
+                  << diag.particles_at_min_dt << "\n";
     }
 }
 

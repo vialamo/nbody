@@ -2,6 +2,7 @@
 
 #include <fftw3.h>
 
+#include <Eigen/Dense>
 #include <vector>
 
 #include "types.h"
@@ -17,6 +18,43 @@ class PM {
     fftw_plan backward_plan = nullptr;
 
    public:
+    struct Grid3D {
+        int nx, ny, nz;
+        Eigen::VectorXd data;
+
+        Grid3D() : nx(0), ny(0), nz(0) {}
+
+        Grid3D(const Vec3i& size)
+            : nx(size.x), ny(size.y), nz(size.z), data(nx * ny * nz) {
+            data.setZero();
+        }
+
+        // Access operator (row-major mapping: x varies slowest, z fastest)
+        inline double& operator()(int x, int y, int z) {
+            return data[x * ny * nz + y * nz + z];
+        }
+
+        inline const double& operator()(int x, int y, int z) const {
+            return data[x * ny * nz + y * nz + z];
+        }
+
+        // Pass-throughs for Eigen array operations (Unchanged)
+        auto array() { return data.array(); }
+        auto array() const { return data.array(); }
+        void setZero() { data.setZero(); }
+        void fill(double val) { data.setConstant(val); }
+        double minCoeff() const { return data.minCoeff(); }
+        double maxCoeff() const { return data.maxCoeff(); }
+        double sum() const { return data.sum(); }
+
+        Grid3D roll(int shift, int axis) const;
+
+        inline size_t size() const { return data.size(); }
+
+        // For HDF5 pointers
+        const double* raw_data() const { return data.data(); }
+    };
+
     Grid3D rho;
     Grid3D phi;
 

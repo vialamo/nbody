@@ -23,11 +23,7 @@ inline void cubic_spline(double r, double h, double& W, double& dWdh) {
 
     if (q < 0.5) {
         W = norm * (1.0 - 6.0 * q * q + 6.0 * q * q * q);
-        if (r > 1e-12) {
-            dWdr = norm * (-12.0 * q + 18.0 * q * q) / h;
-        } else {
-            dWdr = 0.0;
-        }
+        dWdr = norm * (-12.0 * q + 18.0 * q * q) / h;
     } else if (q < 1.0) {
         double diff = 1.0 - q;
         W = norm * 2.0 * diff * diff * diff;

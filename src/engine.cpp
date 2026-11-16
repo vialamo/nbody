@@ -10,17 +10,15 @@
 #include "logger.h"
 
 namespace {
-double get_next_sync_dt(const std::vector<double>& t_end, size_t num_particles,
-                        double global_time) {
-    double next_time = std::numeric_limits<double>::infinity();
+uint64_t get_next_sync_ti(const std::vector<uint64_t>& ti_end,
+                          size_t num_particles, uint64_t ti_global_time) {
+    uint64_t next_ti = std::numeric_limits<uint64_t>::max();
     for (size_t i = 0; i < num_particles; ++i) {
-        if (t_end[i] > global_time + 1e-10) {
-            next_time = std::min(next_time, t_end[i]);
+        if (ti_end[i] > ti_global_time) {
+            next_ti = std::min(next_ti, ti_end[i]);
         }
     }
-    return (next_time - global_time > 1e-10)
-               ? (next_time - global_time)
-               : std::numeric_limits<double>::infinity();
+    return next_ti - ti_global_time;
 }
 }  // namespace
 
@@ -55,11 +53,14 @@ TimestepInfo SimulationEngine::get_timestep() const {
     TimestepInfo ts = {0};
 
     if (config.individual_particle_timesteps) {
-        double dt_gas = get_next_sync_dt(
-            state.gas.t_end, state.gas.num_particles, state.total_time);
-        double dt_dm = get_next_sync_dt(state.dm.t_end, state.dm.num_particles,
-                                        state.total_time);
-        ts.dt_macro = std::min(dt_gas, dt_dm);
+        uint64_t ti_gas =
+            get_next_sync_ti(state.gas.ti_end, state.gas.num_particles,
+                             state.gas.ti_global_time);
+        uint64_t ti_dm = get_next_sync_ti(
+            state.dm.ti_end, state.dm.num_particles, state.dm.ti_global_time);
+
+        ts.ti_macro = std::min(ti_gas, ti_dm);
+        ts.dt_macro = ts.ti_macro * config.timebase_to_float;
         return ts;
     }
 
@@ -90,11 +91,17 @@ TimestepInfo SimulationEngine::get_timestep() const {
             Cosmology::get_time_from_scale_factor(next_output_a, config);
 
         double dt_snapshot = target_t - current_t;
-        const double MIN_VALID_DT = 1e-10;
-        if (dt_snapshot > MIN_VALID_DT && dt_snapshot < ts.dt_macro) {
+        if (dt_snapshot >= config.timebase_to_float &&
+            dt_snapshot < ts.dt_macro) {
             ts.dt_macro = dt_snapshot;
         }
     }
+
+    // Quantize the continuous physics limit to the nearest integer tick BELOW
+    // the limit. We truncate (static_cast) rather than round
+    ts.ti_macro = static_cast<uint64_t>(ts.dt_macro / config.timebase_to_float);
+    if (ts.ti_macro == 0) ts.ti_macro = 1;
+    ts.dt_macro = ts.ti_macro * config.timebase_to_float;
 
     return ts;
 }
@@ -102,7 +109,7 @@ TimestepInfo SimulationEngine::get_timestep() const {
 void SimulationEngine::step() {
     {
         ScopedTimer step_timer(diagnostics, TimerRegion::Step);
-        integrator.KDK_step(state, current_ts.dt_macro, config, diagnostics);
+        integrator.KDK_step(state, current_ts.ti_macro, config, diagnostics);
     }
 
     diagnostics.increment_cycle();
@@ -112,22 +119,21 @@ void SimulationEngine::step() {
     // Update Timestep for next cycle
     current_ts = get_timestep();
 
-    needs_more_cycles =
-        ((config.expanding_universe && state.scale_factor < config.a_end) ||
-         (!config.expanding_universe && state.total_time < config.a_end)) &&
-        cycle_count < config.max_cycles;
-
     // I/O and Logging
     bool is_synchronized = true;
     if (config.individual_particle_timesteps) {
-        // At a macrostep boundary, all particles have reached their t_end
-        // and are flagged as active for the upcoming cycle
-        double ratio = state.total_time / config.fixed_dt;
-        is_synchronized = (std::abs(ratio - std::round(ratio)) < 1e-7);
+        // Synchronized when the integer total time is a multiple of the
+        // TIMEBASE
+        is_synchronized = (state.ti_total_time % TimeConstants::TIMEBASE == 0);
     }
 
-    constexpr double TOLERANCE = 1e-7;
-    double next_out = next_output_a - TOLERANCE;
+    needs_more_cycles =
+        !is_synchronized ||
+        (cycle_count < config.max_cycles &&
+         ((config.expanding_universe && state.scale_factor < config.a_end) ||
+          (!config.expanding_universe && state.total_time < config.a_end)));
+
+    double next_out = next_output_a - (config.timebase_to_float / 2.0);
     bool must_save_snapshot =
         is_synchronized &&
         ((config.expanding_universe && state.scale_factor >= next_out) ||

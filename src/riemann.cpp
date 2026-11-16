@@ -3,14 +3,17 @@
 namespace Riemann {
 
 namespace {
+
 // Helper function to compute Star states
 inline void calculate_star_states(const Reconstruction::ReconstructedFace& face,
                                   double vn_L, double vn_R, double S_L,
                                   double S_R, double& S_star, double& P_star) {
     double den_star = face.rho_L * (S_L - vn_L) - face.rho_R * (S_R - vn_R);
 
-    if (std::abs(den_star) < 1e-15) {
-        den_star = (den_star > 0.0 ? 1e-15 : -1e-15);
+    // Prevents division by zero
+    constexpr double HLLC_DENOM_EPS = 1e-15;
+    if (std::abs(den_star) < HLLC_DENOM_EPS) {
+        den_star = (den_star > 0.0 ? HLLC_DENOM_EPS : -HLLC_DENOM_EPS);
     }
 
     S_star = (face.p_R - face.p_L + face.rho_L * vn_L * (S_L - vn_L) -
@@ -219,7 +222,8 @@ FaceFlux solve_exact(const Reconstruction::ReconstructedFace& face,
         double df = df_L + df_R;
 
         // Derivative collapse check
-        if (std::abs(df) < 1e-15) {
+        constexpr double NR_DERIV_EPS = 1e-15;  // Prevents div by zero
+        if (std::abs(df) < NR_DERIV_EPS) {
             out.success = false;
             out.error = SolverError::DerivativeCollapse;
             return out;
@@ -234,8 +238,10 @@ FaceFlux solve_exact(const Reconstruction::ReconstructedFace& face,
             P_new = 0.5 * P_star;
         }
 
-        // Use a small epsilon (1e-14) for the relative error denominator
-        double rel_err = std::abs(P_new - P_star) / (P_star + 1e-14);
+        // Use a small epsilon for the relative error denominator
+        constexpr double REL_ERR_VACUUM_EPS = 1e-14;
+        double rel_err =
+            std::abs(P_new - P_star) / (P_star + REL_ERR_VACUUM_EPS);
         P_star = P_new;
 
         if (rel_err < TOL) break;

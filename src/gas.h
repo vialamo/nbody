@@ -63,7 +63,7 @@ class GasParticleSystem {
     std::vector<Eigen::Vector3d> grad_vz;
     std::vector<Eigen::Vector3d> grad_p;  // [Pressure / Code Length]
 
-    std::vector<double> v_sig_max;  // Cached maximum signal velocity
+    std::vector<double> v_sig_max;  // Cached max signal velocity (code units)
 
     EnergyBudget budget;
 
@@ -74,16 +74,15 @@ class GasParticleSystem {
     std::vector<BVHNode> bvh_nodes;
 
     // Time tracking per particle (Hierarchical block time-stepping)
-    std::vector<int> time_bin;       // Power-of-two bin level (n)
-    std::vector<double> dt_step;     // Actual timestep size (Delta t_i)
-    std::vector<double> t_current;   // Time this particle was last drifted to
-    std::vector<double> t_end;       // Time this particle's current step ends
+    uint64_t ti_global_time = 0;
+    std::vector<uint64_t> ti_step;     // Duration of the current step
+    std::vector<uint64_t> ti_current;  // Time this particle was last drifted to
+    std::vector<uint64_t> ti_end;      // Time this particle's current step ends
+
     std::vector<uint8_t> is_active;  // Particle is synced with the global clock
-    std::vector<uint8_t>
-        needs_wakeup;  // Thread-safe flag for waking up sleeping particles
     std::vector<int> active_indices;
-    double global_time = 0.0;
     size_t get_num_active() const { return active_indices.size(); }
+    std::vector<uint8_t> needs_wakeup;
 
     std::vector<double> vel_x_pred;
     std::vector<double> vel_y_pred;
@@ -104,6 +103,7 @@ class GasParticleSystem {
         size_t neighbor_increased = 0;
         size_t sph_fallback = 0;
         size_t cooling_failed = 0;
+        size_t particles_at_min_dt = 0;
     };
     GasDiagnostics diag;
 
@@ -116,12 +116,11 @@ class GasParticleSystem {
     void build_lbvh(const Config& config);
 
     // Assigns power-of-two block timesteps to all active particles
-    void update_particle_timesteps(double dt_max, double a,
-                                   const Config& config,
+    void update_particle_timesteps(const Config& config,
                                    double softening_length);
 
     // Sync the clock, process wakeups, and flag active particles
-    void sync_and_activate(Integrator& integrator, double dt, double a,
+    void sync_and_activate(Integrator& integrator, uint64_t ti_dt, double a,
                            double H, const Config& config);
 
     void reset_diagnostic_counters();

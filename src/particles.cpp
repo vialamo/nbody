@@ -2,6 +2,8 @@
 
 #include <omp.h>
 
+#include <cmath>
+
 #include "config.h"
 
 ParticleSystem::ParticleSystem(const Config& config)
@@ -28,11 +30,11 @@ ParticleSystem::ParticleSystem(const Config& config)
     }
 
     is_active.reserve(config.num_dm_particles);
-    time_bin.reserve(config.num_dm_particles);
-    dt_step.reserve(config.num_dm_particles);
-    t_current.reserve(config.num_dm_particles);
-    t_end.reserve(config.num_dm_particles);
     active_indices.reserve(config.num_dm_particles);
+
+    ti_step.reserve(config.num_dm_particles);
+    ti_current.reserve(config.num_dm_particles);
+    ti_end.reserve(config.num_dm_particles);
 }
 
 void ParticleSystem::add_particle(double px, double py, double pz, double vx,
@@ -48,12 +50,11 @@ void ParticleSystem::add_particle(double px, double py, double pz, double vx,
     acc_z.push_back(0.0);
     mass.push_back(m);
 
-    time_bin.push_back(0);
-    dt_step.push_back(0.0);
-    t_current.push_back(0.0);
-    t_end.push_back(0.0);
-    is_active.push_back(1);
+    ti_step.push_back(0);
+    ti_current.push_back(0);
+    ti_end.push_back(0);
 
+    is_active.push_back(1);
     active_indices.push_back(num_particles);
 
     num_particles++;
@@ -70,10 +71,11 @@ void ParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
         new_az(num_particles);
     std::vector<double> new_m(num_particles);
 
-    std::vector<int> new_time_bin(num_particles);
-    std::vector<double> new_dt_step(num_particles),
-        new_t_current(num_particles), new_t_end(num_particles);
     std::vector<uint8_t> new_is_active(num_particles);
+
+    std::vector<uint64_t> new_ti_step(num_particles);
+    std::vector<uint64_t> new_ti_current(num_particles);
+    std::vector<uint64_t> new_ti_end(num_particles);
 
     // CIC_Data is only needed for PM gravity
     std::vector<CIC_Data> new_cic;
@@ -99,10 +101,10 @@ void ParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
 
         new_m[i] = mass[src];
 
-        new_time_bin[i] = time_bin[src];
-        new_dt_step[i] = dt_step[src];
-        new_t_current[i] = t_current[src];
-        new_t_end[i] = t_end[src];
+        new_ti_step[i] = ti_step[src];
+        new_ti_current[i] = ti_current[src];
+        new_ti_end[i] = ti_end[src];
+
         new_is_active[i] = is_active[src];
 
         if (has_cic) new_cic[i] = cic_data[src];
@@ -123,11 +125,11 @@ void ParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
 
     mass = std::move(new_m);
 
-    time_bin = std::move(new_time_bin);
-    dt_step = std::move(new_dt_step);
-    t_current = std::move(new_t_current);
-    t_end = std::move(new_t_end);
     is_active = std::move(new_is_active);
+
+    ti_step = std::move(new_ti_step);
+    ti_current = std::move(new_ti_current);
+    ti_end = std::move(new_ti_end);
 
     if (has_cic) cic_data = std::move(new_cic);
 
@@ -155,33 +157,33 @@ void ParticleSystem::build_lbvh(const Config& config) {
                                        nullptr, morton_codes, bvh_nodes);
 }
 
-void ParticleSystem::sync_and_activate(double dt, const Config& config) {
+void ParticleSystem::sync_and_activate(uint64_t ti_dt, const Config& config) {
     if (!config.individual_particle_timesteps) {
-        global_time += dt;
+        ti_global_time += ti_dt;
         for (size_t i = 0; i < num_particles; ++i) {
             is_active[i] = 1;
-            dt_step[i] = dt;
-            t_end[i] = global_time;  // Keep timeline synced
+            ti_step[i] = ti_dt;
+            ti_end[i] = ti_global_time;
         }
         return;
     }
 
-    double new_global_time = global_time + dt;
+    uint64_t new_ti_global_time = ti_global_time + ti_dt;
 
     // Advance global clock
-    global_time = new_global_time;
+    ti_global_time = new_ti_global_time;
 
     // Flag active particles
+#pragma omp parallel for schedule(static)
     for (size_t i = 0; i < num_particles; ++i) {
         // A particle is active if its block step ends at the new global time
-        is_active[i] = (std::abs(t_end[i] - global_time) < 1e-10) ? 1 : 0;
+        is_active[i] = (ti_end[i] == ti_global_time) ? 1 : 0;
 
         // BOOTSTRAP: If it's the very first step (t=0), everyone is active
-        if (global_time <= dt + 1e-12 && t_end[i] == 0.0) {
+        if (ti_global_time == ti_dt && ti_end[i] == 0) {
             is_active[i] = 1;
-            dt_step[i] =
-                dt;  // Give them a tiny initial dt so kicks work properly
-            t_end[i] = global_time;
+            ti_step[i] = ti_dt;
+            ti_end[i] = ti_global_time;
         }
     }
 
@@ -193,18 +195,21 @@ void ParticleSystem::sync_and_activate(double dt, const Config& config) {
     }
 }
 
-void ParticleSystem::update_particle_timesteps(double dt_max,
-                                               const Config& config,
+void ParticleSystem::update_particle_timesteps(const Config& config,
                                                double softening_length) {
     if (num_particles == 0) return;
 
+    double dt_max = config.fixed_dt;
+
     if (!config.individual_particle_timesteps) {
-        // Under global timesteps, all particles just take the macro step
+        // Under global timesteps, calculate the integer step from dt_max
+        uint64_t ti_dt =
+            static_cast<uint64_t>(dt_max / config.timebase_to_float);
+        if (ti_dt == 0) ti_dt = 1;
+
         for (size_t i = 0; i < num_particles; ++i) {
-            dt_step[i] = dt_max;
-            time_bin[i] = 0;
-            // t_end is already synced in sync_and_activate for the global
-            // scheme
+            ti_step[i] = ti_dt;
+            ti_end[i] = ti_global_time + ti_dt;
         }
         return;
     }
@@ -232,31 +237,29 @@ void ParticleSystem::update_particle_timesteps(double dt_max,
             dt_ideal = std::min(dt_ideal, dt_grav);
         }
 
-        // POWER-OF-TWO BINNING
+        // Integer Power-of-two binning
         int n = 0;
-        double dt_bin = dt_max;
+        uint64_t ti_bin = TimeConstants::TIMEBASE;
+        double dt_bin = config.fixed_dt;  // Always anchor to the fixed_dt
 
-        // Halve the timestep until it safely bounds the ideal timestep
-        // constraint
-        while (dt_bin > dt_ideal) {
+        // Halve the timestep until it bounds the ideal timestep
+        while (dt_bin > dt_ideal && n < TimeConstants::MAX_TIMESTEP_BIN_DEPTH) {
+            ti_bin >>= 1;  // Fast integer divide by 2
             dt_bin *= 0.5;
             n++;
         }
 
         // A particle can ONLY adopt a timestep bin if the current global clock
-        // is aligned to an integer multiple of that bin's boundary.
-        // If not aligned, it must drop to a smaller bin that IS aligned
-        double ratio = global_time / dt_bin;
-        while (std::abs(ratio - std::round(ratio)) > 1e-5 && n < 30) {
+        // is aligned to an integer multiple of that bin's boundary
+        while ((ti_global_time % ti_bin) != 0 &&
+               n < TimeConstants::MAX_TIMESTEP_BIN_DEPTH) {
+            ti_bin >>= 1;
             dt_bin *= 0.5;
             n++;
-            ratio = global_time / dt_bin;
         }
 
-        time_bin[i] = n;
-        dt_step[i] = dt_bin;
-
-        // Project the end time of the new step
-        t_end[i] = global_time + dt_bin;
+        // Update the Integer Source of Truth
+        ti_step[i] = ti_bin;
+        ti_end[i] = ti_global_time + ti_bin;
     }
 }

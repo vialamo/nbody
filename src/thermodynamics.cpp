@@ -48,37 +48,41 @@ void initialize_primitive_variables(GasParticleSystem& gas,
 
 void predict_primitive_variables(GasParticleSystem& gas, const Config& config,
                                  double a) {
-    size_t num_active = gas.get_num_active();
-    if (num_active == 0) return;
+    if (gas.num_particles == 0) return;
 
     const double gamma_minus_1 = config.gamma - 1.0;
     const double u_floor =
         get_internal_energy_from_temp(config.temp_floor_k, a, config);
 
 #pragma omp parallel for schedule(static)
-    for (size_t k = 0; k < num_active; ++k) {
-        size_t i = gas.active_indices[k];
+    for (size_t i = 0; i < gas.num_particles; ++i) {
+        // Project from the Kick 1 half-step to the current global time
+        uint64_t ti_kicked_to = gas.ti_end[i] - (gas.ti_step[i] / 2);
 
-        // Project from the Kick 1 half-step to the global time (t + dt)
-        double dt_pred_i =
-            gas.global_time - (gas.t_end[i] - gas.dt_step[i] / 2.0);
+        // Use signed integer math, as the particle's Kick 1 target could
+        // theoretically be ahead of or behind the current global time if it is
+        // a sleeping particle
+        int64_t ti_pred = static_cast<int64_t>(gas.ti_global_time) -
+                          static_cast<int64_t>(ti_kicked_to);
+
+        double dt_pred = ti_pred * config.timebase_to_float;
 
         gas.vel_x_pred[i] =
-            gas.vel_x[i] + (gas.acc_x[i] + gas.hydro_acc_x[i]) * dt_pred_i;
+            gas.vel_x[i] + (gas.acc_x[i] + gas.hydro_acc_x[i]) * dt_pred;
         gas.vel_y_pred[i] =
-            gas.vel_y[i] + (gas.acc_y[i] + gas.hydro_acc_y[i]) * dt_pred_i;
+            gas.vel_y[i] + (gas.acc_y[i] + gas.hydro_acc_y[i]) * dt_pred;
         gas.vel_z_pred[i] =
-            gas.vel_z[i] + (gas.acc_z[i] + gas.hydro_acc_z[i]) * dt_pred_i;
+            gas.vel_z[i] + (gas.acc_z[i] + gas.hydro_acc_z[i]) * dt_pred;
 
         // Predict the new internal energy adiabatically using the new density.
         // This captures the mechanical PdV work of the drift
-        double u_pred_i = gas.entropy[i] * std::pow(gas.rho[i], gamma_minus_1) /
-                          gamma_minus_1;
+        double u_pred = gas.entropy[i] * std::pow(gas.rho[i], gamma_minus_1) /
+                        gamma_minus_1;
 
         // Enforce the thermodynamic floor on the predicted state
-        if (u_pred_i < u_floor) u_pred_i = u_floor;
+        if (u_pred < u_floor) u_pred = u_floor;
 
-        gas.pressure_pred[i] = gamma_minus_1 * gas.rho[i] * u_pred_i;
+        gas.pressure_pred[i] = gamma_minus_1 * gas.rho[i] * u_pred;
     }
 }
 

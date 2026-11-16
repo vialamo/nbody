@@ -7,7 +7,6 @@ struct Config;
 struct EnergyBudget;
 struct SimState;
 struct TimestepInfo;
-struct Grid3D;
 class GasParticleSystem;
 class ParticleSystem;
 
@@ -28,6 +27,7 @@ enum class GPUProfRegion { Transf, Ret, Compute, Tree, NUM_PROF_REGIONS };
 class Diagnostics {
    private:
     int cycle = 0;
+    uint64_t ti_total_time = 0;
     double sim_time = 0.0;
     double scale_factor = 1.0;
     double softening_length = 0.0;
@@ -55,16 +55,17 @@ class Diagnostics {
     double max_gas_density = 0.0, max_gas_pressure = 0.0,
            max_gas_velocity = 0.0;
 
+    size_t particles_at_min_dt = 0;
     size_t non_converged_cooling_particles = 0;
-    size_t MFM_h_non_converged_cases = 0;
-    size_t MFM_not_enough_nbg_cases = 0;
-    size_t MFM_sph_fallback_cases = 0;
-    size_t MFM_riemann_failed_cases = 0;
-    double MFM_ill_percent = 0.0;
-    double MFM_clamp_percent = 0.0;
-    double MFM_inc_percent = 0.0;
-    double MFM_flux_energy_error = 0.0;
-    double MFM_flux_momentum_error = 0.0;
+    size_t not_enough_nbg_cases = 0;
+    size_t sph_fallback_cases = 0;
+    size_t riemann_failed_cases = 0;
+    size_t h_non_converged_cases = 0;
+    double h_clamp_percent = 0.0;
+    double h_inc_percent = 0.0;
+    double ill_cond_percent = 0.0;
+    double flux_energy_error = 0.0;
+    double flux_momentum_error = 0.0;
     double percent_particles_updated = 0;
     double volume_error = 0.0;
 
@@ -80,8 +81,6 @@ class Diagnostics {
                                         const EnergyBudget& budget);
     void compute_gas_metrics(const GasParticleSystem& gas,
                              const Config& config);
-    double compute_potential_energy(const Grid3D& total_rho, const Grid3D& phi,
-                                    const Config& config);
 
     friend class Logger;
 

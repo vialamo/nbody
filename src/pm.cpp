@@ -12,7 +12,7 @@ void bin_and_add_mass(const Config& config, size_t num_particles,
                       const std::vector<double>& pos_z,
                       const std::vector<double>& mass,
                       std::vector<CIC_Data>& out_cic_data,
-                      Grid3D& out_rho_grid) {
+                      PM::Grid3D& out_rho_grid) {
     if (num_particles == 0) return;
 
     out_cic_data.assign(num_particles, {});
@@ -80,8 +80,8 @@ void bin_and_add_mass(const Config& config, size_t num_particles,
 
 void interpolate_forces(const Config& config, size_t num_particles,
                         const std::vector<CIC_Data>& cic_data,
-                        const Grid3D& ax_grid, const Grid3D& ay_grid,
-                        const Grid3D& az_grid, std::vector<double>& acc_x,
+                        const PM::Grid3D& ax_grid, const PM::Grid3D& ay_grid,
+                        const PM::Grid3D& az_grid, std::vector<double>& acc_x,
                         std::vector<double>& acc_y,
                         std::vector<double>& acc_z) {
     if (num_particles == 0) return;
@@ -99,7 +99,7 @@ void interpolate_forces(const Config& config, size_t num_particles,
         int iz0 = (cd.iz + Nz) % Nz, iz1 = (cd.iz + 1 + Nz) % Nz;
 
         // Gather force from the 8 intersecting grid nodes
-        auto interp = [&](const Grid3D& grid) {
+        auto interp = [&](const PM::Grid3D& grid) {
             return grid(ix0, iy0, iz0) * cd.w000 +
                    grid(ix1, iy0, iz0) * cd.w100 +
                    grid(ix0, iy1, iz0) * cd.w010 +
@@ -116,6 +116,30 @@ void interpolate_forces(const Config& config, size_t num_particles,
     }
 }
 }  // namespace
+
+PM::Grid3D PM::Grid3D::roll(int shift, int axis) const {
+    Grid3D res(Vec3i{nx, ny, nz});
+
+// Collapse flattens the 3 nested loops into 1 for thread distribution
+#pragma omp parallel for collapse(3)
+    for (int i = 0; i < nx; ++i) {
+        for (int j = 0; j < ny; ++j) {
+            for (int k = 0; k < nz; ++k) {
+                if (axis == 0) {
+                    int new_i = ((i + shift) % nx + nx) % nx;
+                    res(new_i, j, k) = (*this)(i, j, k);
+                } else if (axis == 1) {
+                    int new_j = ((j + shift) % ny + ny) % ny;
+                    res(i, new_j, k) = (*this)(i, j, k);
+                } else if (axis == 2) {
+                    int new_k = ((k + shift) % nz + nz) % nz;
+                    res(i, j, new_k) = (*this)(i, j, k);
+                }
+            }
+        }
+    }
+    return res;
+}
 
 PM::PM(const Config& config)
     : rho(config.mesh_size),

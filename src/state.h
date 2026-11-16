@@ -10,6 +10,7 @@
 #include "types.h"
 
 struct SimState {
+    uint64_t ti_total_time = 0;
     double total_time = 0.0;
     double scale_factor = 1.0;
     double hubble_param = 0.0;

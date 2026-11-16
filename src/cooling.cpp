@@ -380,6 +380,8 @@ void Cooling::apply_cooling(GasParticleSystem& gas, const Config& config,
 
     double gamma_minus_1 = config.gamma - 1.0;
 
+    const double timebase_to_float = config.timebase_to_float;
+
     size_t num_active = gas.get_num_active();
     if (num_active != 0) {
 #pragma omp parallel for schedule(static) \
@@ -391,7 +393,7 @@ void Cooling::apply_cooling(GasParticleSystem& gas, const Config& config,
             if (local_rho > config.density_floor) {  // Skip vacuum particles
                 double local_Z_frac = gas.metal_frac[i];
                 double u_initial = gas.u[i];
-                double dt_particle = gas.dt_step[i];
+                double dt_particle = gas.ti_step[i] * timebase_to_float;
 
                 int iters = 0;
                 // Solve cooling implicitly across the full macro-step

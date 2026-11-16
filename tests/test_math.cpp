@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "math_utils.h"
+#include "pm.h"
 
 // ---------------------------------------------------------------------
 // Particle Spatial Displacement (Periodic Boundaries)
@@ -56,7 +57,7 @@ TEST_CASE("Grid rolling correctly wraps memory boundaries",
     // It's small enough to do the mental math, but large enough to have a
     // distinct middle.
     const int N = 4;
-    Grid3D grid(Vec3i{N, N, N});
+    PM::Grid3D grid(Vec3i{N, N, N});
 
     // Manually fill the grid with zeros
     for (int i = 0; i < N * N * N; ++i) {
@@ -71,7 +72,7 @@ TEST_CASE("Grid rolling correctly wraps memory boundaries",
 
     SECTION("Rolling +1 along X axis wraps to the opposite face") {
         // Roll the grid +1 cell along axis 0 (X-axis)
-        Grid3D shifted_grid = grid.roll(1, 0);
+        PM::Grid3D shifted_grid = grid.roll(1, 0);
 
         // The value 1.0 should have wrapped around to (x=0, y=0, z=0)
         size_t wrapped_idx = 0 * N * N + 0 * N + 0;
@@ -84,7 +85,7 @@ TEST_CASE("Grid rolling correctly wraps memory boundaries",
 
     SECTION("Rolling -1 along X axis shifts normally without wrapping") {
         // Roll the grid -1 cell along axis 0 (X-axis)
-        Grid3D shifted_grid = grid.roll(-1, 0);
+        PM::Grid3D shifted_grid = grid.roll(-1, 0);
 
         // The value 1.0 should step backwards to (x=2, y=0, z=0)
         size_t normal_idx = 2 * N * N + 0 * N + 0;
@@ -94,7 +95,7 @@ TEST_CASE("Grid rolling correctly wraps memory boundaries",
 
     SECTION("Rolling along Y axis shifts entire memory strides correctly") {
         // Roll the grid +1 cell along axis 1 (Y-axis)
-        Grid3D shifted_grid = grid.roll(1, 1);
+        PM::Grid3D shifted_grid = grid.roll(1, 1);
 
         // The value 1.0 should step sideways to (x=3, y=1, z=0)
         size_t stride_idx = 3 * N * N + 1 * N + 0;

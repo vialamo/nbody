@@ -36,13 +36,13 @@ class ParticleSystem {
 
     EnergyBudget budget;
 
+    uint64_t ti_global_time = 0;
+    std::vector<uint64_t> ti_step;     // Duration of the current step
+    std::vector<uint64_t> ti_current;  // Time this particle was last drifted to
+    std::vector<uint64_t> ti_end;      // Time this particle's current step ends
+
     std::vector<uint8_t> is_active;
-    std::vector<int> time_bin;
-    std::vector<double> dt_step;
-    std::vector<double> t_current;
-    std::vector<double> t_end;
     std::vector<int> active_indices;
-    double global_time = 0.0;
     size_t get_num_active() const { return active_indices.size(); }
 
     ParticleSystem(const Config& config);
@@ -52,9 +52,9 @@ class ParticleSystem {
     void add_particle(double px, double py, double pz, double vx, double vy,
                       double vz, double m);
 
-    void update_particle_timesteps(double dt_max, const Config& config,
+    void update_particle_timesteps(const Config& config,
                                    double softening_length);
-    void sync_and_activate(double dt, const Config& config);
+    void sync_and_activate(uint64_t ti_dt, const Config& config);
 
    private:
     void sort_arrays(const std::vector<int>& sorted_indices);

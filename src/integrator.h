@@ -13,7 +13,7 @@ class GasParticleSystem;
 class Integrator {
    public:
     void initialize(SimState& state, const Config& config);
-    void KDK_step(SimState& state, double dt, const Config& config,
+    void KDK_step(SimState& state, uint64_t ti_dt, const Config& config,
                   Diagnostics& diag);
 
     struct KickWork {
@@ -31,10 +31,10 @@ class Integrator {
     ~Integrator() = default;
 
    private:
-    void apply_kick(SimState& state, double dt, const Config& config,
+    void apply_kick(SimState& state, uint64_t ti_dt, const Config& config,
                     bool is_kick1);
-    void apply_gas_kick(GasParticleSystem& gas, double dt, double a, double H,
-                        const Config& config, bool is_kick1);
+    void apply_gas_kick(GasParticleSystem& gas, uint64_t ti_dt, double a,
+                        double H, const Config& config, bool is_kick1);
     void compute_forces(SimState& state, const Config& config,
                         Diagnostics& diag);
 

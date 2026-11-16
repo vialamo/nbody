@@ -20,8 +20,6 @@ This repository contains a TreePM/MFM cosmological C++ code, along with document
     * **Parameter Input:** Configuration parameters are read at runtime from a plain-text `ini` file.
     * **Snapshot Output:** Snapshots are saved periodically using the HDF5 (Hierarchical Data Format) file format.
     * **Diagnostics:** Real-time logging of diagnostic metrics to stdout and CSV.
-    
-![Cosmological Simulation Animation](docs/images/simulation.gif)
 
 ## Repository Structure
 

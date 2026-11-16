@@ -1,6 +1,7 @@
 #include "gas.h"
 
 #include "config.h"
+#include "hydro.h"
 #include "integrator.h"
 
 GasParticleSystem::GasParticleSystem(const Config& config)
@@ -51,10 +52,10 @@ GasParticleSystem::GasParticleSystem(const Config& config)
     cond_num.reserve(config.num_gas_particles);
     n_enc_final.reserve(config.num_gas_particles);
 
-    time_bin.reserve(config.num_gas_particles);
-    dt_step.reserve(config.num_gas_particles);
-    t_current.reserve(config.num_gas_particles);
-    t_end.reserve(config.num_gas_particles);
+    ti_step.reserve(config.num_gas_particles);
+    ti_current.reserve(config.num_gas_particles);
+    ti_end.reserve(config.num_gas_particles);
+
     is_active.reserve(config.num_gas_particles);
     needs_wakeup.reserve(config.num_gas_particles);
     active_indices.reserve(config.num_gas_particles);
@@ -118,10 +119,10 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
     cond_num.push_back(0);
     n_enc_final.push_back(0);
 
-    time_bin.push_back(0);
-    dt_step.push_back(0.0);
-    t_current.push_back(0.0);
-    t_end.push_back(0.0);
+    ti_step.push_back(0);
+    ti_current.push_back(0);
+    ti_end.push_back(0);
+
     is_active.push_back(1);  // All particles start active at t=0
     needs_wakeup.push_back(0);
 
@@ -162,11 +163,13 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     std::vector<double> new_cond_num(num_particles);
     std::vector<double> new_n_enc_final(num_particles);
 
-    std::vector<int> new_time_bin(num_particles);
-    std::vector<double> new_dt_step(num_particles),
-        new_t_current(num_particles), new_t_end(num_particles);
     std::vector<uint8_t> new_is_active(num_particles);
     std::vector<uint8_t> new_needs_wakeup(num_particles);
+
+    std::vector<uint64_t> new_ti_step(num_particles);
+    std::vector<uint64_t> new_ti_current(num_particles);
+    std::vector<uint64_t> new_ti_end(num_particles);
+
     std::vector<double> new_v_sig_max(num_particles);
 
     for (size_t i = 0; i < num_particles; ++i) {
@@ -209,10 +212,11 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
         new_max_rel_ke[i] = max_rel_ke[src];
         new_cond_num[i] = cond_num[src];
         new_n_enc_final[i] = n_enc_final[src];
-        new_time_bin[i] = time_bin[src];
-        new_dt_step[i] = dt_step[src];
-        new_t_current[i] = t_current[src];
-        new_t_end[i] = t_end[src];
+
+        new_ti_step[i] = ti_step[src];
+        new_ti_current[i] = ti_current[src];
+        new_ti_end[i] = ti_end[src];
+
         new_is_active[i] = is_active[src];
         new_needs_wakeup[i] = needs_wakeup[src];
         new_v_sig_max[i] = v_sig_max[src];
@@ -256,10 +260,11 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     max_rel_ke = std::move(new_max_rel_ke);
     cond_num = std::move(new_cond_num);
     n_enc_final = std::move(new_n_enc_final);
-    time_bin = std::move(new_time_bin);
-    dt_step = std::move(new_dt_step);
-    t_current = std::move(new_t_current);
-    t_end = std::move(new_t_end);
+
+    ti_step = std::move(new_ti_step);
+    ti_current = std::move(new_ti_current);
+    ti_end = std::move(new_ti_end);
+
     is_active = std::move(new_is_active);
     needs_wakeup = std::move(new_needs_wakeup);
     v_sig_max = std::move(new_v_sig_max);
@@ -287,101 +292,89 @@ void GasParticleSystem::build_lbvh(const Config& config) {
                                        &h, morton_codes, bvh_nodes);
 }
 
-void GasParticleSystem::sync_and_activate(Integrator& integrator, double dt,
-                                          double a, double H,
+void GasParticleSystem::sync_and_activate(Integrator& integrator,
+                                          uint64_t ti_dt, double a, double H,
                                           const Config& config) {
+    double timebase_to_float = config.timebase_to_float;
     if (!config.individual_particle_timesteps) {
-        global_time += dt;
+        ti_global_time += ti_dt;
         for (size_t i = 0; i < num_particles; ++i) {
             is_active[i] = 1;
-            dt_step[i] = dt;
-            t_end[i] = global_time;  // Keep timeline synced
+            ti_step[i] = ti_dt;
+            ti_end[i] = ti_global_time;
             needs_wakeup[i] = 0;
         }
         return;
     }
 
-    double new_global_time = global_time + dt;
+    uint64_t new_ti_global_time = ti_global_time + ti_dt;
 
-    // Process wakeups from the previous cycle
+    // Process wakeups from previous cycle
     for (size_t i = 0; i < num_particles; ++i) {
         if (needs_wakeup[i]) {
-            double dt_old = dt_step[i];
-            double dt_new = dt;
+            uint64_t ti_start_old = ti_end[i] - ti_step[i];
+            uint64_t ti_kicked_to = ti_start_old + (ti_step[i] / 2);
 
-            // The particle previously received Kick 1 for dt_old / 2.
-            // This projected its velocity to t_kicked_to
-            double t_start_old = t_end[i] - dt_old;
-            double t_kicked_to = t_start_old + (dt_old / 2.0);
+            // If the particle was kicked past the current global time, rewind
+            // it
+            if (ti_kicked_to > ti_global_time) {
+                uint64_t ti_excess = ti_kicked_to - ti_global_time;
+                double dt_excess = ti_excess * timebase_to_float;
 
-            // We must rewind the velocity back to the CURRENT
-            // global_time. Then the engine will natively apply Kick 1 for
-            // dt_new / 2
-            double dt_excess = t_kicked_to - global_time;
+                Integrator::KickWork work = integrator.kick_single_gas_particle(
+                    *this, i, -dt_excess, a, H, config);
 
-            // Rewind kicks using negative time
-            // Note that we should better compute the a and H which
-            // originally kicked the particle
-            Integrator::KickWork work = integrator.kick_single_gas_particle(
-                *this, i, -dt_excess, a, H, config);
+                budget.gravitational_work += work.grav_work;
+                budget.expansion_work += work.exp_work;
+            }
 
-            // Adjust global accumulators (adding negative work subtracts the
-            // phantom work)
-            budget.gravitational_work += work.grav_work;
-            budget.expansion_work += work.exp_work;
-
-            // GIZMO Wake-up logic:
-            // Snap the particle to the current active micro-step size.
-            // It will drift the full distance since it last moved (using
-            // t_current), but its kicks and cooling will use this tiny
-            // micro-step
-            dt_step[i] = dt_new;
-            t_end[i] = new_global_time;  // Force sync to the current clock
+            ti_step[i] = ti_dt;
+            ti_end[i] = new_ti_global_time;
             needs_wakeup[i] = 0;
         }
     }
 
     // Advance global clock
-    global_time = new_global_time;
+    ti_global_time = new_ti_global_time;
 
-    // Flag active particles
+    // Flag active particles using
 #pragma omp parallel for schedule(static)
     for (size_t i = 0; i < num_particles; ++i) {
-        // A particle is active if its block step ends at the new global time
-        is_active[i] = (std::abs(t_end[i] - global_time) < 1e-10) ? 1 : 0;
+        is_active[i] = (ti_end[i] == ti_global_time) ? 1 : 0;
 
-        // BOOTSTRAP: If it's the first step (t=0), everyone is active
-        if (global_time <= dt + 1e-12 && t_end[i] == 0.0) {
+        // BOOTSTRAP: First step assignment
+        if (ti_global_time == ti_dt && ti_end[i] == 0) {
             is_active[i] = 1;
-            dt_step[i] = dt;  // Give them a tiny initial dt so Kick 2 works
-            t_end[i] = global_time;
+            ti_step[i] = ti_dt;
+            ti_end[i] = ti_global_time;
         }
     }
 
     active_indices.clear();
     for (size_t i = 0; i < num_particles; ++i) {
-        if (is_active[i]) {
-            active_indices.push_back(i);
-        }
+        if (is_active[i]) active_indices.push_back(i);
     }
-    size_t num_active = get_num_active();
 
     diag.active_particles_fraction +=
-        static_cast<double>(num_active) / static_cast<double>(num_particles);
+        static_cast<double>(get_num_active()) / num_particles;
     diag.active_particles_num_cycles++;
 }
 
-void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
-                                                  const Config& config,
+void GasParticleSystem::update_particle_timesteps(const Config& config,
                                                   double softening_length) {
     if (num_particles == 0) return;
 
+    double dt_max = config.fixed_dt;
+
     if (!config.individual_particle_timesteps) {
-        // Under global timesteps, the engine already calculated dt_max as the
-        // global minimum
+        // Under global timesteps, calculate the integer step from dt_max
+        uint64_t ti_dt =
+            static_cast<uint64_t>(dt_max / config.timebase_to_float);
+        if (ti_dt == 0) ti_dt = 1;
+
         for (size_t i = 0; i < num_particles; ++i) {
-            dt_step[i] = dt_max;
-            time_bin[i] = 0;
+            ti_step[i] = ti_dt;
+            ti_end[i] = ti_global_time + ti_dt;
         }
         return;
     }
@@ -390,14 +383,6 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
 
     size_t num_active = get_num_active();
     if (num_active == 0) return;
-
-    double current_min_dt = dt_max;
-    for (size_t j = 0; j < num_particles; ++j) {
-        if (dt_step[j] > 0.0) {
-            current_min_dt = std::min(current_min_dt, dt_step[j]);
-        }
-    }
-    double cooling_clamp_floor = std::min(current_min_dt, dt_max / 16.0);
 
 #pragma omp parallel for schedule(dynamic, 64)
     for (size_t k = 0; k < num_active; ++k) {
@@ -415,38 +400,41 @@ void GasParticleSystem::update_particle_timesteps(double dt_max, double a,
         }
 
         // CFL Timestep (Using cached signal velocity from compute_hydro_forces)
-        double v_sig_max_phys = v_sig_max[i];
-        if (v_sig_max_phys > 1e-9) {
-            double dt_cfl =
-                ((a * h[i]) / v_sig_max_phys) * config.hydro_courant_factor;
+        if (v_sig_max[i] > HydroSolver::MIN_SIGNAL_VELOCITY) {
+            double dt_cfl = (h[i] / v_sig_max[i]) * config.hydro_courant_factor;
             dt_ideal = std::min(dt_ideal, dt_cfl);
         }
 
-        // Power-of-two binning
+        // Integer Power-of-two binning
         int n = 0;
-        double dt_bin = dt_max;
+        uint64_t ti_bin = TimeConstants::TIMEBASE;
+        double dt_bin = config.fixed_dt;
 
         // Halve the timestep until it bounds the ideal timestep
-        while (dt_bin > dt_ideal) {
+        while (dt_bin > dt_ideal && n < TimeConstants::MAX_TIMESTEP_BIN_DEPTH) {
+            ti_bin >>= 1;  // Fast integer divide by 2
             dt_bin *= 0.5;
             n++;
         }
 
         // A particle can ONLY adopt a timestep bin if the current global clock
-        // is aligned to an integer multiple of that bin's boundary.
-        // If not aligned, it must drop to a smaller bin that IS aligned
-        double ratio = global_time / dt_bin;
-        while (std::abs(ratio - std::round(ratio)) > 1e-5 && n < 30) {
+        // is aligned to an integer multiple of that bin's boundary
+        while ((ti_global_time % ti_bin) != 0 &&
+               n < TimeConstants::MAX_TIMESTEP_BIN_DEPTH) {
+            ti_bin >>= 1;
             dt_bin *= 0.5;
             n++;
-            ratio = global_time / dt_bin;
         }
 
-        time_bin[i] = n;
-        dt_step[i] = dt_bin;
+        // Diagnostic tracker
+        if (n == TimeConstants::MAX_TIMESTEP_BIN_DEPTH && ti_global_time > 0) {
+#pragma omp atomic
+            diag.particles_at_min_dt++;
+        }
 
-        // Project the end time of the new step
-        t_end[i] = global_time + dt_bin;
+        // Update the Integer
+        ti_step[i] = ti_bin;
+        ti_end[i] = ti_global_time + ti_bin;
     }
 }
 

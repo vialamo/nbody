@@ -15,7 +15,6 @@
 struct Config;
 struct SimState;
 struct TimestepInfo;
-struct Grid3D;
 
 class HDF5Writer {
    private:
@@ -27,8 +26,6 @@ class HDF5Writer {
                          double value);
     void set_attr_int(H5::H5Object& obj, const char* attr_name, int value);
     void set_attr_bool(H5::H5Object& obj, const char* attr_name, bool value);
-    void write_grid(H5::Group& group, const char* dataset_name,
-                    const Grid3D& grid);
     void write_particle_vec(H5::Group& group, const char* dataset_name,
                             const std::vector<double>& vec);
     void write_particle_vec3d(H5::Group& group, const char* dataset_name,

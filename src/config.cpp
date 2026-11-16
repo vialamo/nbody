@@ -104,6 +104,7 @@ void Config::compute_derived_data() {
     double raw_fixed_dt = max_dt_dynamical_factor * dynamical_time;
     // Snap to the nearest lower power of 2
     fixed_dt = std::pow(2.0, std::floor(std::log2(raw_fixed_dt)));
+    timebase_to_float = fixed_dt / static_cast<double>(TimeConstants::TIMEBASE);
 
     init_derived_units();
 }
@@ -242,8 +243,8 @@ void Config::load(const std::string& filename) {
             "Error: Invalid hubble_h. Expected the dimensionless parameter h "
             "(typically ~0.7).");
     }
-    if (a_start <= 0) {
-        throw std::runtime_error("Error: a_start must be greater than zero.");
+    if (a_start < 0) {
+        throw std::runtime_error("Error: a_start can't be negative.");
     }
     if (mesh_size_1d <= 0) {
         throw std::runtime_error(

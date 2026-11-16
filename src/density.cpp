@@ -113,7 +113,7 @@ double build_matrix_and_compute_condition(const GasParticleSystem& gas,
                    [&](int j, double dx, double dy, double dz, double r2) {
                        if (static_cast<size_t>(j) == particle_idx) return;
 
-                       if (r2 < search_sq && r2 > 1e-24) {
+                       if (r2 < search_sq) {
                            double r = std::sqrt(r2);
                            double W;
                            Kernels::cubic_spline_value(r, h, W);
