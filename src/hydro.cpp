@@ -361,20 +361,27 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                         gas.du_dt[j] += du_dt_j;
 #pragma omp atomic
                         gas.de_dt[j] += de_dt_j;
-                    } else if (!gas.needs_wakeup[j]) {
-                        // Wake up the sleeping neighbor if the signal
-                        // velocity of the interaction exceeds 3x its own
-                        // sound speed
-                        bool v_sig_trigger = (v_sig_ij > 3.0 * c_j);
 
-                        // Saitoh & Makino (2009) Timestep Limiter
-                        // Wake up the sleeping neighbor if its timestep is
-                        // 4x larger than the particle hitting it
-                        bool dt_step_trigger =
-                            (gas.ti_step[j] >= 4 * gas.ti_step[i]);
-                        if (v_sig_trigger || dt_step_trigger) {
+                    } else {
+                        uint8_t current_wakeup_state;
+#pragma omp atomic read
+                        current_wakeup_state = gas.needs_wakeup[j];
+
+                        if (current_wakeup_state == 0) {
+                            // Wake up the sleeping neighbor if the signal
+                            // velocity of the interaction exceeds x times its
+                            // own sound speed
+                            bool v_sig_trigger = (v_sig_ij > 1.5 * c_j);
+
+                            // Saitoh & Makino (2009) Timestep Limiter
+                            // Wake up the sleeping neighbor if its timestep is
+                            // x times larger than the particle hitting it
+                            bool dt_step_trigger =
+                                (gas.ti_step[j] >= 4 * gas.ti_step[i]);
+                            if (v_sig_trigger || dt_step_trigger) {
 #pragma omp atomic write
-                            gas.needs_wakeup[j] = 1;
+                                gas.needs_wakeup[j] = 1;
+                            }
                         }
                     }
                 }

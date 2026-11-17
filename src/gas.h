@@ -117,7 +117,8 @@ class GasParticleSystem {
 
     // Assigns power-of-two block timesteps to all active particles
     void update_particle_timesteps(const Config& config,
-                                   double softening_length);
+                                   double softening_length,
+                                   double hubble_param);
 
     // Sync the clock, process wakeups, and flag active particles
     void sync_and_activate(Integrator& integrator, uint64_t ti_dt, double a,

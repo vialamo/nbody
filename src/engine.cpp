@@ -76,7 +76,7 @@ TimestepInfo SimulationEngine::get_timestep() const {
     // Cosmological Expansion Limiter
     double dt_expansion = std::numeric_limits<double>::infinity();
     if (config.expanding_universe && state.hubble_param > 0.0) {
-        dt_expansion = 0.01 / state.hubble_param;
+        dt_expansion = config.max_expansion_step / state.hubble_param;
     }
 
     ts.dt_macro =

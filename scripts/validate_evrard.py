@@ -19,7 +19,7 @@ def validate_evrard_interactive(snapshot_dir):
     with h5py.File(files[0], 'r') as f: 
         config = f['Config'].attrs 
         gamma = config.get('gamma', 5.0/3.0) 
-        domain_size = config.get('domain_size', 2.0) 
+        domain_size = config.get('domain_size', 1.0) 
         center = domain_size / 2.0 
 
     print("Pre-computing global time-series diagnostics...") 

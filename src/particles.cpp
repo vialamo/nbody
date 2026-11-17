@@ -6,8 +6,9 @@
 
 #include "config.h"
 
-ParticleSystem::ParticleSystem(const Config& config)
-    : cic_data(config.num_dm_particles) {
+ParticleSystem::ParticleSystem(const Config& config) {
+    cic_data.reserve(config.num_dm_particles);
+
     pos_x.reserve(config.num_dm_particles);
     pos_y.reserve(config.num_dm_particles);
     pos_z.reserve(config.num_dm_particles);
@@ -54,6 +55,8 @@ void ParticleSystem::add_particle(double px, double py, double pz, double vx,
     ti_current.push_back(0);
     ti_end.push_back(0);
 
+    cic_data.push_back({});
+
     is_active.push_back(1);
     active_indices.push_back(num_particles);
 
@@ -77,12 +80,7 @@ void ParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     std::vector<uint64_t> new_ti_current(num_particles);
     std::vector<uint64_t> new_ti_end(num_particles);
 
-    // CIC_Data is only needed for PM gravity
-    std::vector<CIC_Data> new_cic;
-    bool has_cic = !cic_data.empty();
-    if (has_cic) {
-        new_cic.resize(num_particles);
-    }
+    std::vector<CIC_Data> new_cic(num_particles);
 
     for (size_t i = 0; i < num_particles; ++i) {
         int src = sorted_indices[i];
@@ -107,7 +105,7 @@ void ParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
 
         new_is_active[i] = is_active[src];
 
-        if (has_cic) new_cic[i] = cic_data[src];
+        new_cic[i] = cic_data[src];
     }
 
     // Move sorted data back
@@ -131,7 +129,7 @@ void ParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     ti_current = std::move(new_ti_current);
     ti_end = std::move(new_ti_end);
 
-    if (has_cic) cic_data = std::move(new_cic);
+    cic_data = std::move(new_cic);
 
     active_indices.clear();
     for (size_t i = 0; i < num_particles; ++i) {

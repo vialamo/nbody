@@ -213,7 +213,8 @@ void apply_drift(SimState& state, const Config& config, Diagnostics& diag) {
 
 void update_timesteps(SimState& state, const Config& config) {
     state.dm.update_particle_timesteps(config, state.gravity.softening_length);
-    state.gas.update_particle_timesteps(config, state.gravity.softening_length);
+    state.gas.update_particle_timesteps(config, state.gravity.softening_length,
+                                        state.hubble_param);
 }
 }  // namespace
 
@@ -380,10 +381,11 @@ void Integrator::KDK_step(SimState& state, uint64_t ti_dt, const Config& config,
 
 void Integrator::initialize(SimState& state, const Config& config) {
     state.gravity.update_softening(state.scale_factor, config);
-
     state.gas.build_lbvh(config);
+
     DensitySolver::compute_density_and_h(state.gas, config,
                                          state.gravity.softening_length);
+
     Thermodynamics::initialize_primitive_variables(state.gas, config,
                                                    state.scale_factor);
 

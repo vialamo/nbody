@@ -120,6 +120,7 @@ def validate_pdv_expansion(snapshot_dir):
         ax.grid(True, linestyle=':', alpha=0.6)
         ax.legend(loc='upper right', fontsize=10)
 
+    fig.canvas.manager.set_window_title(os.path.basename(os.path.normpath(snapshot_dir))) 
     fig.suptitle("PdV Expansion Validation (Physical Units)", fontsize=16, fontweight='bold')
     plt.show()
 
@@ -136,7 +137,7 @@ if __name__ == "__main__":
     target_dir = args.path
     
     if args.latest:
-        runs = sorted(glob.glob(os.path.join(target_dir, "run_*")))
+        runs = sorted(glob.glob(os.path.join(target_dir, "regular_grid*")))
         if runs: target_dir = runs[-1]
         
     validate_pdv_expansion(target_dir)

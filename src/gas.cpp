@@ -4,8 +4,9 @@
 #include "hydro.h"
 #include "integrator.h"
 
-GasParticleSystem::GasParticleSystem(const Config& config)
-    : cic_data(config.num_gas_particles) {
+GasParticleSystem::GasParticleSystem(const Config& config) {
+    cic_data.reserve(config.num_gas_particles);
+
     pos_x.reserve(config.num_gas_particles);
     pos_y.reserve(config.num_gas_particles);
     pos_z.reserve(config.num_gas_particles);
@@ -118,6 +119,8 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
 
     cond_num.push_back(0);
     n_enc_final.push_back(0);
+
+    cic_data.push_back({});
 
     ti_step.push_back(0);
     ti_current.push_back(0);
@@ -356,15 +359,23 @@ void GasParticleSystem::sync_and_activate(Integrator& integrator,
     }
 
     diag.active_particles_fraction +=
-        static_cast<double>(get_num_active()) / num_particles;
+        num_particles > 0
+            ? static_cast<double>(get_num_active()) / num_particles
+            : 0;
     diag.active_particles_num_cycles++;
 }
 
 void GasParticleSystem::update_particle_timesteps(const Config& config,
-                                                  double softening_length) {
+                                                  double softening_length,
+                                                  double hubble_param) {
     if (num_particles == 0) return;
 
     double dt_max = config.fixed_dt;
+
+    // Apply cosmological expansion limiter
+    if (config.expanding_universe && hubble_param > 0.0) {
+        dt_max = std::min(dt_max, config.max_expansion_step / hubble_param);
+    }
 
     if (!config.individual_particle_timesteps) {
         // Under global timesteps, calculate the integer step from dt_max

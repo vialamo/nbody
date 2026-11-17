@@ -18,7 +18,7 @@ def get_analytical_collapse(t, G, M=1.0, R=0.35):
         return r0, rho, v
 
     # Initial unperturbed radii
-    r0 = np.logspace(-4, np.log10(R), 1000)
+    r0 = np.logspace(-4, np.log10(R), 50000)
     
     # Dimensionless time parameter for each shell
     tau = t * np.sqrt(2.0 * G * M / (R**2 * r0))
@@ -58,8 +58,8 @@ def validate_dm_collapse_interactive(snapshot_dir):
         return
 
     with h5py.File(files[0], 'r') as f: 
-        config = f['Config'].attrs 
-        domain_size = config.get('domain_size_x', 2.0) 
+        config = dict(f['Config'].attrs)
+        domain_size = config.get('domain_size_x', 1.0) 
         center = domain_size / 2.0 
 
     print("Pre-computing global time-series diagnostics...") 
@@ -194,7 +194,7 @@ def validate_dm_collapse_interactive(snapshot_dir):
         fig.suptitle(f"Collisionless Spherical Collapse - Snapshot {idx} (t={time:.4f})", fontsize=16) 
         
         # Plot Analytical Solution (Assumes M=1, R=0.35)
-        G = config.get('G', 1.0) 
+        G = config.get('G', 1.0)
         r_theo, rho_theo, v_theo = get_analytical_collapse(time, G, M=1.0, R=0.35)
         if r_theo is not None:
             line_rho_theo.set_data(r_theo, rho_theo)

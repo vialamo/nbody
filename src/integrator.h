@@ -1,6 +1,8 @@
 #pragma once
 
 #include <stddef.h>
+
+#include <cstdint>
 #ifdef GPU_CPU_PARALLEL_EXECUTION
 #include "worker.h"
 #endif
