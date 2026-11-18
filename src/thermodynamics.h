@@ -18,7 +18,7 @@ void kick_particle_thermodynamics(GasParticleSystem& gas, size_t i,
                                   double ke_spec_new, double grav_work,
                                   double drag_work, double dt,
                                   double expansion_factor, double a,
-                                  const Config& config,
+                                  const Config& config, bool is_kick1,
                                   Integrator::KickWork& work);
 
 double get_u_floor(double a, const Config& config);

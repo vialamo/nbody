@@ -27,7 +27,7 @@ class Integrator {
 
     KickWork kick_single_gas_particle(GasParticleSystem& gas, size_t i,
                                       double dt, double a, double H,
-                                      const Config& config);
+                                      const Config& config, bool is_kick1);
 
     Integrator() = default;
     ~Integrator() = default;

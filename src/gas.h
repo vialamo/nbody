@@ -89,6 +89,12 @@ class GasParticleSystem {
     std::vector<double> vel_z_pred;
     std::vector<double> pressure_pred;
 
+    std::vector<double> hydro_dv_x;
+    std::vector<double> hydro_dv_y;
+    std::vector<double> hydro_dv_z;
+    std::vector<double> hydro_du;
+    std::vector<double> hydro_de;
+
     // Debugging
     std::vector<double> n_enc_final;
 

@@ -103,7 +103,7 @@ void kick_particle_thermodynamics(GasParticleSystem& gas, size_t i,
                                   double ke_spec_new, double grav_work,
                                   double drag_work, double dt,
                                   double expansion_factor, double a,
-                                  const Config& config,
+                                  const Config& config, bool is_kick1,
                                   Integrator::KickWork& work) {
     constexpr double min_energy = 0.0;
     const double gamma_minus_1 = config.gamma - 1.0;
@@ -114,15 +114,23 @@ void kick_particle_thermodynamics(GasParticleSystem& gas, size_t i,
     work.injected_energy = 0.0;
 
     // Base Integration (Explicit and Conservative)
-    double u_post_hydro = gas.u[i] + gas.du_dt[i] * dt;
+    double u_post_hydro =
+        gas.u[i] + /*gas.du_dt[i] * dt*/ (is_kick1 ? 0.0 : gas.hydro_du[i]);
     double u_cooling = u_post_hydro * expansion_factor;
 
     double u_raw = std::max(u_post_hydro - u_cooling, min_energy);
     work.exp_work = -drag_work + (u_cooling * m);
 
-    double e_tot_post = gas.total_energy[i] + (gas.de_dt[i] * dt) +
-                        (grav_work / m) + (drag_work / m) - u_cooling;
+    double e_tot_post =
+        gas.total_energy[i] +
+        /*(gas.de_dt[i] * dt)*/ (is_kick1 ? 0.0 : gas.hydro_de[i]) +
+        (grav_work / m) + (drag_work / m) - u_cooling;
     e_tot_post = std::max(e_tot_post, min_energy);
+
+    if (!is_kick1) {
+        gas.hydro_du[i] = 0.0;
+        gas.hydro_de[i] = 0.0;
+    }
 
     double u_cons = e_tot_post - ke_spec_new;
 

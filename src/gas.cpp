@@ -61,6 +61,12 @@ GasParticleSystem::GasParticleSystem(const Config& config) {
     needs_wakeup.reserve(config.num_gas_particles);
     active_indices.reserve(config.num_gas_particles);
 
+    hydro_dv_x.reserve(config.num_gas_particles);
+    hydro_dv_y.reserve(config.num_gas_particles);
+    hydro_dv_z.reserve(config.num_gas_particles);
+    hydro_du.reserve(config.num_gas_particles);
+    hydro_de.reserve(config.num_gas_particles);
+
     size_t num_nodes =
         (config.num_gas_particles > 0) ? (2 * config.num_gas_particles - 1) : 0;
     if (config.num_gas_particles > 0) {
@@ -131,6 +137,12 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
 
     active_indices.push_back(num_particles);
 
+    hydro_dv_x.push_back(0.0);
+    hydro_dv_y.push_back(0.0);
+    hydro_dv_z.push_back(0.0);
+    hydro_du.push_back(0.0);
+    hydro_de.push_back(0.0);
+
     num_particles++;
 }
 
@@ -174,6 +186,12 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     std::vector<uint64_t> new_ti_end(num_particles);
 
     std::vector<double> new_v_sig_max(num_particles);
+
+    std::vector<double> new_hydro_dv_x(num_particles);
+    std::vector<double> new_hydro_dv_y(num_particles);
+    std::vector<double> new_hydro_dv_z(num_particles);
+    std::vector<double> new_hydro_du(num_particles);
+    std::vector<double> new_hydro_de(num_particles);
 
     for (size_t i = 0; i < num_particles; ++i) {
         int src = sorted_indices[i];
@@ -223,6 +241,12 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
         new_is_active[i] = is_active[src];
         new_needs_wakeup[i] = needs_wakeup[src];
         new_v_sig_max[i] = v_sig_max[src];
+
+        new_hydro_dv_x[i] = hydro_dv_x[src];
+        new_hydro_dv_y[i] = hydro_dv_y[src];
+        new_hydro_dv_z[i] = hydro_dv_z[src];
+        new_hydro_du[i] = hydro_du[src];
+        new_hydro_de[i] = hydro_de[src];
     }
 
     pos_x = std::move(new_px);
@@ -271,6 +295,12 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     is_active = std::move(new_is_active);
     needs_wakeup = std::move(new_needs_wakeup);
     v_sig_max = std::move(new_v_sig_max);
+
+    hydro_dv_x = std::move(new_hydro_dv_x);
+    hydro_dv_y = std::move(new_hydro_dv_y);
+    hydro_dv_z = std::move(new_hydro_dv_z);
+    hydro_du = std::move(new_hydro_du);
+    hydro_de = std::move(new_hydro_de);
 
     active_indices.clear();
     for (size_t i = 0; i < num_particles; ++i) {
@@ -325,7 +355,7 @@ void GasParticleSystem::sync_and_activate(Integrator& integrator,
                 double dt_excess = ti_excess * timebase_to_float;
 
                 Integrator::KickWork work = integrator.kick_single_gas_particle(
-                    *this, i, -dt_excess, a, H, config);
+                    *this, i, -dt_excess, a, H, config, true);
 
                 budget.gravitational_work += work.grav_work;
                 budget.expansion_work += work.exp_work;

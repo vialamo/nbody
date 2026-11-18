@@ -283,11 +283,9 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                             Riemann::solve_hllc(face, v_frame, config.gamma);
                     }
 
-                    // Fallback to First-Order Reconstruction if solvers still
-                    // fail
+                    // Fallback to First-Order Reconstruction if solvers fail
                     if (!flux_1d.success) {
-                        // Overwrite the extrapolated face states with the
-                        // particle center values
+                        // Use particle center values
                         face.rho_L = p_i.rho;
                         face.rho_R = p_j.rho;
                         face.p_L = p_i.pressure;
@@ -317,7 +315,6 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                                              config.gamma, gas.v_sig_max[i],
                                              gas.v_sig_max[j], v_sig_ij, c_j);
 
-                    // Back to code units
                     double P_star_com = flux_1d.P_star;
 
                     Eigen::Vector3d Force_mom = P_star_com * face.area_vec;
@@ -332,6 +329,39 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                         P_star_com * v_star_lab.dot(face.area_vec);
                     double de_dt_i = -Rate_energy / p_i.mass;
 
+                    double work_j =
+                        P_star_com * (v_star_lab - p_j.vel).dot(face.area_vec);
+                    double du_dt_j = work_j / p_j.mass;
+                    double de_dt_j = Rate_energy / p_j.mass;
+
+                    // Determine the interaction timestep (minimum of both)
+                    double dt_i = gas.ti_step[i] * config.timebase_to_float;
+                    double dt_j = gas.ti_step[j] * config.timebase_to_float;
+                    double dt_int = std::min(dt_i, dt_j);
+
+#pragma omp atomic
+                    gas.hydro_dv_x[i] -= (Force_mom.x() / p_i.mass) * dt_int;
+#pragma omp atomic
+                    gas.hydro_dv_y[i] -= (Force_mom.y() / p_i.mass) * dt_int;
+#pragma omp atomic
+                    gas.hydro_dv_z[i] -= (Force_mom.z() / p_i.mass) * dt_int;
+#pragma omp atomic
+                    gas.hydro_du[i] += du_dt_i * dt_int;
+#pragma omp atomic
+                    gas.hydro_de[i] += de_dt_i * dt_int;
+
+                // Populate IMPULSES for particle j (Active or Inactive)
+#pragma omp atomic
+                    gas.hydro_dv_x[j] += (Force_mom.x() / p_j.mass) * dt_int;
+#pragma omp atomic
+                    gas.hydro_dv_y[j] += (Force_mom.y() / p_j.mass) * dt_int;
+#pragma omp atomic
+                    gas.hydro_dv_z[j] += (Force_mom.z() / p_j.mass) * dt_int;
+#pragma omp atomic
+                    gas.hydro_du[j] += du_dt_j * dt_int;
+#pragma omp atomic
+                    gas.hydro_de[j] += de_dt_j * dt_int;
+
                 // Apply the flux to the active particle 'i'
 #pragma omp atomic
                     gas.hydro_acc_x[i] -= Force_mom.x() / p_i.mass;
@@ -344,7 +374,7 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
 #pragma omp atomic
                     gas.de_dt[i] += de_dt_i;
 
-                    // Apply the reverse flux to j if j is ALSO active
+                    // Apply the reverse flux to j if j is also active
                     if (gas.is_active[j]) {
                         double work_j =
                             P_star_com *
