@@ -78,10 +78,8 @@ class GasParticleSystem {
     std::vector<uint64_t> ti_step;     // Duration of the current step
     std::vector<uint64_t> ti_current;  // Time this particle was last drifted to
     std::vector<uint64_t> ti_end;      // Time this particle's current step ends
-
-    std::vector<uint64_t> ti_ideal;               // The desired timestep
-    std::vector<uint64_t> min_neighbor_ti_ideal;  // The smallest ti_ideal of
-                                                  // any interacting neighbor
+    std::vector<uint64_t> min_neighbor_ti;  // The smallest step of
+                                            // any interacting neighbor
 
     std::vector<uint8_t> is_active;  // Particle is synced with the global clock
     std::vector<int> active_indices;

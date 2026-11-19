@@ -1,5 +1,7 @@
 #include "gas.h"
 
+#include <iostream>
+
 #include "config.h"
 #include "hydro.h"
 #include "integrator.h"
@@ -56,9 +58,7 @@ GasParticleSystem::GasParticleSystem(const Config& config) {
     ti_step.reserve(config.num_gas_particles);
     ti_current.reserve(config.num_gas_particles);
     ti_end.reserve(config.num_gas_particles);
-
-    ti_ideal.reserve(config.num_gas_particles);
-    min_neighbor_ti_ideal.reserve(config.num_gas_particles);
+    min_neighbor_ti.reserve(config.num_gas_particles);
 
     is_active.reserve(config.num_gas_particles);
     needs_wakeup.reserve(config.num_gas_particles);
@@ -142,9 +142,7 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
     ti_step.push_back(0);
     ti_current.push_back(0);
     ti_end.push_back(0);
-
-    ti_ideal.push_back(TimeConstants::TIMEBASE);
-    min_neighbor_ti_ideal.push_back(UINT64_MAX);
+    min_neighbor_ti.push_back(UINT64_MAX);
 
     is_active.push_back(1);  // All particles start active at t=0
     needs_wakeup.push_back(0);
@@ -206,9 +204,7 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     std::vector<uint64_t> new_ti_step(num_particles);
     std::vector<uint64_t> new_ti_current(num_particles);
     std::vector<uint64_t> new_ti_end(num_particles);
-
-    std::vector<uint64_t> new_ti_ideal(num_particles);
-    std::vector<uint64_t> new_min_neighbor_ti_ideal(num_particles);
+    std::vector<uint64_t> new_min_neighbor_ti(num_particles);
 
     std::vector<double> new_v_sig_max(num_particles);
 
@@ -270,9 +266,7 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
         new_ti_step[i] = ti_step[src];
         new_ti_current[i] = ti_current[src];
         new_ti_end[i] = ti_end[src];
-
-        new_ti_ideal[i] = ti_ideal[src];
-        new_min_neighbor_ti_ideal[i] = min_neighbor_ti_ideal[src];
+        new_min_neighbor_ti[i] = min_neighbor_ti[src];
 
         new_is_active[i] = is_active[src];
         new_needs_wakeup[i] = needs_wakeup[src];
@@ -335,9 +329,7 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     ti_step = std::move(new_ti_step);
     ti_current = std::move(new_ti_current);
     ti_end = std::move(new_ti_end);
-
-    ti_ideal = std::move(new_ti_ideal);
-    min_neighbor_ti_ideal = std::move(new_min_neighbor_ti_ideal);
+    min_neighbor_ti = std::move(new_min_neighbor_ti);
 
     is_active = std::move(new_is_active);
     needs_wakeup = std::move(new_needs_wakeup);
@@ -396,62 +388,113 @@ void GasParticleSystem::sync_and_activate(Integrator& integrator,
 
     uint64_t new_ti_global_time = ti_global_time + ti_dt;
 
-    // double timebase_to_float = config.timebase_to_float;
+    bool print_diag = false;
+    // new_ti_global_time > 0.05 / config.timebase_to_float;
 
     // Process wakeups from previous cycle
     for (size_t i = 0; i < num_particles; ++i) {
         if (needs_wakeup[i]) {
-            /*uint64_t ti_start_old = ti_end[i] - ti_step[i];
+#define DYNAMIC_WAKEUP
+#ifdef DYNAMIC_WAKEUP
+            uint64_t ti_start_old = ti_end[i] - ti_step[i];
             uint64_t ti_kicked_to = ti_start_old + (ti_step[i] / 2);
 
+            if (print_diag) {
+                std::cout << "\n=== WAKEUP TRIGGERED FOR PARTICLE " << i
+                          << " ===\n"
+                          << "  Timeline: Old ti_step = " << ti_step[i]
+                          << ", New forced ti_dt = " << ti_dt << "\n"
+                          << "  BEFORE RESET: \n"
+                          << "    vel = (" << vel_x[i] << ", " << vel_y[i]
+                          << ", " << vel_z[i] << ")\n"
+                          << "    u = " << u[i]
+                          << ", tot_E = " << total_energy[i]
+                          << ", P = " << pressure[i] << ", S = " << entropy[i]
+                          << "\n";
+            }
 
-                        // If the particle was kicked past the current global
-               time, rewind
-                        // it
-                        if (ti_kicked_to > ti_global_time) {
-                            uint64_t ti_excess = ti_kicked_to - ti_global_time;
-                            double dt_excess = ti_excess * timebase_to_float;
+            /*
+            // If the particle was kicked past the current global time, rewind
+            // it
+            if (ti_kicked_to > ti_global_time) {
+                uint64_t ti_excess = ti_kicked_to - ti_global_time;
+                double dt_excess = ti_excess * timebase_to_float;
 
-                            Integrator::KickWork work =
-               integrator.kick_single_gas_particle( *this, i, -dt_excess, a, H,
-               config, true);
+                Integrator::KickWork work =
+   integrator.kick_single_gas_particle( *this, i, -dt_excess, a, H,
+   config, true);
 
-                            budget.gravitational_work += work.grav_work;
-                            budget.expansion_work += work.exp_work;
-                        }*/
+                budget.gravitational_work += work.grav_work;
+                budget.expansion_work += work.exp_work;
+            }
+            */
 
             // Restore
-            /*    vel_x[i] = snap_vel_x[i];
-                vel_y[i] = snap_vel_y[i];
-                vel_z[i] = snap_vel_z[i];
-                u[i] = snap_u[i];
-                total_energy[i] = snap_total_energy[i];
-                pressure[i] = snap_pressure[i];
-                entropy[i] = snap_entropy[i];
+            vel_x[i] = snap_vel_x[i];
+            vel_y[i] = snap_vel_y[i];
+            vel_z[i] = snap_vel_z[i];
+            u[i] = snap_u[i];
+            total_energy[i] = snap_total_energy[i];
+            pressure[i] = snap_pressure[i];
+            entropy[i] = snap_entropy[i];
 
-                // Calculate how long it was actually asleep before waking up
-                uint64_t ti_actual_asleep = ti_global_time - ti_start_old;
-                double dt_actual_half_kick = (ti_actual_asleep *
-               timebase_to_float) / 2.0;*/
+            if (print_diag) {
+                std::cout << "  AFTER RESET (Snapshot Restore): \n"
+                          << "    vel = (" << vel_x[i] << ", " << vel_y[i]
+                          << ", " << vel_z[i] << ")\n"
+                          << "    u = " << u[i]
+                          << ", tot_E = " << total_energy[i]
+                          << ", P = " << pressure[i] << ", S = " << entropy[i]
+                          << "\n";
+            }
+
+            // Calculate how long it was actually asleep before waking up
+            uint64_t ti_actual_asleep = ti_global_time - ti_start_old;
+            double dt_actual_half_kick =
+                (ti_actual_asleep * config.timebase_to_float) / 2.0;
+
+            if (print_diag) {
+                std::cout << "  KICK TIMESTEP (dt_actual_half_kick) = "
+                          << dt_actual_half_kick << "\n";
+            }
 
             // Simulate Kick 1 for the actual time asleep (Gravity/Cosmo
             // only)
-            /*Integrator::KickWork work1 = integrator.kick_single_gas_particle(
+            Integrator::KickWork work1 = integrator.kick_single_gas_particle(
                 *this, i, dt_actual_half_kick, a, H, config, true);
 
+            if (print_diag) {
+                std::cout << "  AFTER KICK 1 (Gravity/Cosmo): \n"
+                          << "    vel = (" << vel_x[i] << ", " << vel_y[i]
+                          << ", " << vel_z[i] << ")\n"
+                          << "    u = " << u[i]
+                          << ", tot_E = " << total_energy[i] << "\n";
+            }
+
             // Simulate Kick 2 to FINALIZE the step (Applies the accumulated
-            hydro impulses & evaluates DEF!) Integrator::KickWork work2 =
-            integrator.kick_single_gas_particle( *this, i, dt_actual_half_kick,
-            a, H, config, false);
+            // hydro impulses & evaluates DEF!)
+            Integrator::KickWork work2 = integrator.kick_single_gas_particle(
+                *this, i, dt_actual_half_kick, a, H, config, false);
+
+            if (print_diag) {
+                std::cout << "  AFTER KICK 2 (Hydro + DEF): \n"
+                          << "    vel = (" << vel_x[i] << ", " << vel_y[i]
+                          << ", " << vel_z[i] << ")\n"
+                          << "    u = " << u[i]
+                          << ", tot_E = " << total_energy[i] << "\n"
+                          << "========================================\n";
+            }
 
             budget.gravitational_work += work1.grav_work + work2.grav_work;
             budget.expansion_work += work1.exp_work + work2.exp_work;
-            budget.entropy_switch += work1.switch_energy + work2.switch_energy;
-            budget.floor_injection += work1.injected_energy +
-            work2.injected_energy;*/
+            budget.entropy_switch +=
+                work1.entropy_energy + work2.entropy_energy;
+            budget.floor_injection +=
+                work1.injected_energy + work2.injected_energy;
 
-            /*ti_step[i] = ti_dt;
-            ti_end[i] = new_ti_global_time;*/
+            ti_step[i] = ti_dt;
+            ti_end[i] = new_ti_global_time;
+#endif
             needs_wakeup[i] = 0;
         }
     }
@@ -514,9 +557,19 @@ void GasParticleSystem::update_particle_timesteps(const Config& config,
     size_t num_active = get_num_active();
     if (num_active == 0) return;
 
+#define ENFORCE_STRICT_NGB_TIMESTEP
+#ifdef ENFORCE_STRICT_NGB_TIMESTEP
+    // Keep track of the old timesteps to know if they shrank
+    std::vector<uint64_t> old_ti_step(num_active);
+#endif
+
 #pragma omp parallel for schedule(dynamic, 64)
     for (size_t k = 0; k < num_active; ++k) {
         size_t i = active_indices[k];
+
+#ifdef ENFORCE_STRICT_NGB_TIMESTEP
+        old_ti_step[k] = ti_step[i];
+#endif
 
         double dt_ideal = dt_max;
 
@@ -547,12 +600,12 @@ void GasParticleSystem::update_particle_timesteps(const Config& config,
             n++;
         }
 
-        // Limit the target bin to be at most 4x larger than the smallest
-        // interacting neighbor's ideal bin
-        ti_ideal[i] = ti_bin;
-        uint64_t max_allowed_ti = (min_neighbor_ti_ideal[i] == UINT64_MAX)
-                                      ? ti_bin
-                                      : (min_neighbor_ti_ideal[i] * 4);
+        // Limit the target bin to be at most x times larger than the smallest
+        // interacting neighbor's bin
+        uint64_t max_allowed_ti =
+            (min_neighbor_ti[i] == UINT64_MAX || min_neighbor_ti[i] == 0)
+                ? ti_bin
+                : (min_neighbor_ti[i] * TimeConstants::MAX_NGB_TIME_FACTOR);
         ti_bin = std::min(ti_bin, max_allowed_ti);
 
         // A particle can ONLY adopt a timestep bin if the current global clock
@@ -572,8 +625,68 @@ void GasParticleSystem::update_particle_timesteps(const Config& config,
         // Update
         ti_step[i] = ti_bin;
         ti_end[i] = ti_global_time + ti_bin;
-        min_neighbor_ti_ideal[i] = UINT64_MAX;
+        min_neighbor_ti[i] = UINT64_MAX;
     }
+
+#ifdef ENFORCE_STRICT_NGB_TIMESTEP
+    // SECOND PASS: Actively enforce the limiter on active neighbors
+    // for particles whose timestep decreased or was just initialized.
+#pragma omp parallel for schedule(dynamic, 64)
+    for (size_t k = 0; k < num_active; ++k) {
+        size_t i = active_indices[k];
+
+        // Check if the timestep decreased or was 0 (first step)
+        if (old_ti_step[k] == 0 || ti_step[i] < old_ti_step[k]) {
+            double search_sq = h[i] * h[i];
+            double px = pos_x[i];
+            double py = pos_y[i];
+            double pz = pos_z[i];
+
+            LBVH::traverse(
+                bvh_nodes.data(), pos_x.data(), pos_y.data(), pos_z.data(), px,
+                py, pz, search_sq, config.domain_size,
+                [&](int j, double dx, double dy, double dz, double r2) {
+                    // Exclude self and check interacting distance (standard SPH
+                    // overlap check)
+                    if (j != static_cast<int>(i) &&
+                        (r2 < search_sq || r2 < h[j] * h[j])) {
+                        if (is_active[j]) {
+                            uint64_t max_allowed =
+                                ti_step[i] * TimeConstants::MAX_NGB_TIME_FACTOR;
+
+                            uint64_t current_tj;
+#pragma omp atomic read
+                            current_tj = ti_step[j];
+
+                            if (current_tj > max_allowed) {
+                                // Calculate the new aligned timestep for the
+                                // neighbor
+                                uint64_t new_tj = max_allowed;
+                                int depth = 0;
+                                while (
+                                    (ti_global_time % new_tj) != 0 &&
+                                    depth <
+                                        TimeConstants::MAX_TIMESTEP_BIN_DEPTH) {
+                                    new_tj >>= 1;
+                                    depth++;
+                                }
+
+// Apply safely using a critical section, verifying another thread hasn't
+// already shrunk it further while we were aligning the clock.
+#pragma omp critical
+                                {
+                                    if (new_tj < ti_step[j]) {
+                                        ti_step[j] = new_tj;
+                                        ti_end[j] = ti_global_time + new_tj;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+        }
+    }
+#endif
 }
 
 void GasParticleSystem::reset_diagnostic_counters() {

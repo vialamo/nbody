@@ -5,6 +5,7 @@
 namespace TimeConstants {
 constexpr int MAX_TIMESTEP_BIN_DEPTH = 30;
 constexpr uint64_t TIMEBASE = 1ULL << MAX_TIMESTEP_BIN_DEPTH;
+constexpr int MAX_NGB_TIME_FACTOR = 2;
 }  // namespace TimeConstants
 
 struct Vec3 {

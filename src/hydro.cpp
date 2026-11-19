@@ -349,10 +349,10 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                     double dt_j = gas.ti_step[j] * config.timebase_to_float;
                     double dt_int = std::min(dt_i, dt_j);
 
-                    atomic_update_min_uint64(&gas.min_neighbor_ti_ideal[i],
-                                             gas.ti_ideal[j]);
-                    atomic_update_min_uint64(&gas.min_neighbor_ti_ideal[j],
-                                             gas.ti_ideal[i]);
+                    atomic_update_min_uint64(&gas.min_neighbor_ti[i],
+                                             gas.ti_step[j]);
+                    atomic_update_min_uint64(&gas.min_neighbor_ti[j],
+                                             gas.ti_step[i]);
 
 #pragma omp atomic
                     gas.hydro_dv_x[i] -= (Force_mom.x() / p_i.mass) * dt_int;
@@ -416,13 +416,15 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                             // Wake up the sleeping neighbor if the signal
                             // velocity of the interaction exceeds x times its
                             // own sound speed
-                            bool v_sig_trigger = (v_sig_ij > 1.5 * c_j);
+                            bool v_sig_trigger = (v_sig_ij > 3.0 * c_j);
 
                             // Saitoh & Makino (2009) Timestep Limiter
                             // Wake up the sleeping neighbor if its timestep is
                             // x times larger than the particle hitting it
                             bool dt_step_trigger =
-                                (gas.ti_step[j] >= 4 * gas.ti_step[i]);
+                                (gas.ti_step[j] >
+                                 TimeConstants::MAX_NGB_TIME_FACTOR *
+                                     gas.ti_step[i]);
                             if (v_sig_trigger || dt_step_trigger) {
 #pragma omp atomic write
                                 gas.needs_wakeup[j] = 1;

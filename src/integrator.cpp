@@ -109,7 +109,7 @@ void apply_dm_drift(ParticleSystem& dm, const Config& config) {
 #pragma omp parallel for simd schedule(static)
     for (size_t i = 0; i < n; i++) {
         if (dm.ti_global_time <= dm.ti_current[i])
-            continue;  // Skip if already drifted
+            continue;  // This should never happen
 
         uint64_t ti_drift = dm.ti_global_time - dm.ti_current[i];
         double drift_dt = ti_drift * config.timebase_to_float;
@@ -195,7 +195,7 @@ void apply_gas_drift(GasParticleSystem& gas, const Config& config) {
 #pragma omp parallel for simd schedule(static)
     for (size_t i = 0; i < n; i++) {
         if (gas.ti_global_time <= gas.ti_current[i])
-            continue;  // Skip if already drifted
+            continue;  // This should never happen
 
         uint64_t ti_drift = gas.ti_global_time - gas.ti_current[i];
         double drift_dt = ti_drift * config.timebase_to_float;
