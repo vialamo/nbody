@@ -97,7 +97,7 @@ def validate_sedov_interactive(snapshot_dir):
             w_grav = f['Gas'].attrs.get('cumulative_gravitational_work', 0.0)
             w_exp = f['Gas'].attrs.get('cumulative_expansion_work', 0.0)
             
-            sw_e = f['Gas'].attrs.get('cumulative_entropy_switch_energy', 0.0)
+            sw_e = f['Gas'].attrs.get('cumulative_def_switch_energy', 0.0)
             mass = f['Gas/mass'][:]
             if 'total_energy' in f['Gas']:
                 u_tot_spec = f['Gas/total_energy'][:]

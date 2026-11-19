@@ -57,6 +57,9 @@ GasParticleSystem::GasParticleSystem(const Config& config) {
     ti_current.reserve(config.num_gas_particles);
     ti_end.reserve(config.num_gas_particles);
 
+    ti_ideal.reserve(config.num_gas_particles);
+    min_neighbor_ti_ideal.reserve(config.num_gas_particles);
+
     is_active.reserve(config.num_gas_particles);
     needs_wakeup.reserve(config.num_gas_particles);
     active_indices.reserve(config.num_gas_particles);
@@ -66,6 +69,14 @@ GasParticleSystem::GasParticleSystem(const Config& config) {
     hydro_dv_z.reserve(config.num_gas_particles);
     hydro_du.reserve(config.num_gas_particles);
     hydro_de.reserve(config.num_gas_particles);
+
+    snap_vel_x.reserve(config.num_gas_particles);
+    snap_vel_y.reserve(config.num_gas_particles);
+    snap_vel_z.reserve(config.num_gas_particles);
+    snap_u.reserve(config.num_gas_particles);
+    snap_total_energy.reserve(config.num_gas_particles);
+    snap_pressure.reserve(config.num_gas_particles);
+    snap_entropy.reserve(config.num_gas_particles);
 
     size_t num_nodes =
         (config.num_gas_particles > 0) ? (2 * config.num_gas_particles - 1) : 0;
@@ -132,6 +143,9 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
     ti_current.push_back(0);
     ti_end.push_back(0);
 
+    ti_ideal.push_back(TimeConstants::TIMEBASE);
+    min_neighbor_ti_ideal.push_back(UINT64_MAX);
+
     is_active.push_back(1);  // All particles start active at t=0
     needs_wakeup.push_back(0);
 
@@ -142,6 +156,14 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
     hydro_dv_z.push_back(0.0);
     hydro_du.push_back(0.0);
     hydro_de.push_back(0.0);
+
+    snap_vel_x.push_back(0.0);
+    snap_vel_y.push_back(0.0);
+    snap_vel_z.push_back(0.0);
+    snap_u.push_back(0.0);
+    snap_total_energy.push_back(0.0);
+    snap_pressure.push_back(0.0);
+    snap_entropy.push_back(0.0);
 
     num_particles++;
 }
@@ -185,6 +207,9 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     std::vector<uint64_t> new_ti_current(num_particles);
     std::vector<uint64_t> new_ti_end(num_particles);
 
+    std::vector<uint64_t> new_ti_ideal(num_particles);
+    std::vector<uint64_t> new_min_neighbor_ti_ideal(num_particles);
+
     std::vector<double> new_v_sig_max(num_particles);
 
     std::vector<double> new_hydro_dv_x(num_particles);
@@ -192,6 +217,14 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     std::vector<double> new_hydro_dv_z(num_particles);
     std::vector<double> new_hydro_du(num_particles);
     std::vector<double> new_hydro_de(num_particles);
+
+    std::vector<double> new_snap_vel_x(num_particles);
+    std::vector<double> new_snap_vel_y(num_particles);
+    std::vector<double> new_snap_vel_z(num_particles);
+    std::vector<double> new_snap_u(num_particles);
+    std::vector<double> new_snap_total_energy(num_particles);
+    std::vector<double> new_snap_pressure(num_particles);
+    std::vector<double> new_snap_entropy(num_particles);
 
     for (size_t i = 0; i < num_particles; ++i) {
         int src = sorted_indices[i];
@@ -238,6 +271,9 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
         new_ti_current[i] = ti_current[src];
         new_ti_end[i] = ti_end[src];
 
+        new_ti_ideal[i] = ti_ideal[src];
+        new_min_neighbor_ti_ideal[i] = min_neighbor_ti_ideal[src];
+
         new_is_active[i] = is_active[src];
         new_needs_wakeup[i] = needs_wakeup[src];
         new_v_sig_max[i] = v_sig_max[src];
@@ -247,6 +283,14 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
         new_hydro_dv_z[i] = hydro_dv_z[src];
         new_hydro_du[i] = hydro_du[src];
         new_hydro_de[i] = hydro_de[src];
+
+        new_snap_vel_x[i] = snap_vel_x[src];
+        new_snap_vel_y[i] = snap_vel_y[src];
+        new_snap_vel_z[i] = snap_vel_z[src];
+        new_snap_u[i] = snap_u[src];
+        new_snap_total_energy[i] = snap_total_energy[src];
+        new_snap_pressure[i] = snap_pressure[src];
+        new_snap_entropy[i] = snap_entropy[src];
     }
 
     pos_x = std::move(new_px);
@@ -292,6 +336,9 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     ti_current = std::move(new_ti_current);
     ti_end = std::move(new_ti_end);
 
+    ti_ideal = std::move(new_ti_ideal);
+    min_neighbor_ti_ideal = std::move(new_min_neighbor_ti_ideal);
+
     is_active = std::move(new_is_active);
     needs_wakeup = std::move(new_needs_wakeup);
     v_sig_max = std::move(new_v_sig_max);
@@ -301,6 +348,14 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     hydro_dv_z = std::move(new_hydro_dv_z);
     hydro_du = std::move(new_hydro_du);
     hydro_de = std::move(new_hydro_de);
+
+    snap_vel_x = std::move(new_snap_vel_x);
+    snap_vel_y = std::move(new_snap_vel_y);
+    snap_vel_z = std::move(new_snap_vel_z);
+    snap_u = std::move(new_snap_u);
+    snap_total_energy = std::move(new_snap_total_energy);
+    snap_pressure = std::move(new_snap_pressure);
+    snap_entropy = std::move(new_snap_entropy);
 
     active_indices.clear();
     for (size_t i = 0; i < num_particles; ++i) {
@@ -328,7 +383,6 @@ void GasParticleSystem::build_lbvh(const Config& config) {
 void GasParticleSystem::sync_and_activate(Integrator& integrator,
                                           uint64_t ti_dt, double a, double H,
                                           const Config& config) {
-    double timebase_to_float = config.timebase_to_float;
     if (!config.individual_particle_timesteps) {
         ti_global_time += ti_dt;
         for (size_t i = 0; i < num_particles; ++i) {
@@ -342,27 +396,62 @@ void GasParticleSystem::sync_and_activate(Integrator& integrator,
 
     uint64_t new_ti_global_time = ti_global_time + ti_dt;
 
+    // double timebase_to_float = config.timebase_to_float;
+
     // Process wakeups from previous cycle
     for (size_t i = 0; i < num_particles; ++i) {
         if (needs_wakeup[i]) {
-            uint64_t ti_start_old = ti_end[i] - ti_step[i];
+            /*uint64_t ti_start_old = ti_end[i] - ti_step[i];
             uint64_t ti_kicked_to = ti_start_old + (ti_step[i] / 2);
 
-            // If the particle was kicked past the current global time, rewind
-            // it
-            if (ti_kicked_to > ti_global_time) {
-                uint64_t ti_excess = ti_kicked_to - ti_global_time;
-                double dt_excess = ti_excess * timebase_to_float;
 
-                Integrator::KickWork work = integrator.kick_single_gas_particle(
-                    *this, i, -dt_excess, a, H, config, true);
+                        // If the particle was kicked past the current global
+               time, rewind
+                        // it
+                        if (ti_kicked_to > ti_global_time) {
+                            uint64_t ti_excess = ti_kicked_to - ti_global_time;
+                            double dt_excess = ti_excess * timebase_to_float;
 
-                budget.gravitational_work += work.grav_work;
-                budget.expansion_work += work.exp_work;
-            }
+                            Integrator::KickWork work =
+               integrator.kick_single_gas_particle( *this, i, -dt_excess, a, H,
+               config, true);
 
-            ti_step[i] = ti_dt;
-            ti_end[i] = new_ti_global_time;
+                            budget.gravitational_work += work.grav_work;
+                            budget.expansion_work += work.exp_work;
+                        }*/
+
+            // Restore
+            /*    vel_x[i] = snap_vel_x[i];
+                vel_y[i] = snap_vel_y[i];
+                vel_z[i] = snap_vel_z[i];
+                u[i] = snap_u[i];
+                total_energy[i] = snap_total_energy[i];
+                pressure[i] = snap_pressure[i];
+                entropy[i] = snap_entropy[i];
+
+                // Calculate how long it was actually asleep before waking up
+                uint64_t ti_actual_asleep = ti_global_time - ti_start_old;
+                double dt_actual_half_kick = (ti_actual_asleep *
+               timebase_to_float) / 2.0;*/
+
+            // Simulate Kick 1 for the actual time asleep (Gravity/Cosmo
+            // only)
+            /*Integrator::KickWork work1 = integrator.kick_single_gas_particle(
+                *this, i, dt_actual_half_kick, a, H, config, true);
+
+            // Simulate Kick 2 to FINALIZE the step (Applies the accumulated
+            hydro impulses & evaluates DEF!) Integrator::KickWork work2 =
+            integrator.kick_single_gas_particle( *this, i, dt_actual_half_kick,
+            a, H, config, false);
+
+            budget.gravitational_work += work1.grav_work + work2.grav_work;
+            budget.expansion_work += work1.exp_work + work2.exp_work;
+            budget.entropy_switch += work1.switch_energy + work2.switch_energy;
+            budget.floor_injection += work1.injected_energy +
+            work2.injected_energy;*/
+
+            /*ti_step[i] = ti_dt;
+            ti_end[i] = new_ti_global_time;*/
             needs_wakeup[i] = 0;
         }
     }
@@ -458,12 +547,19 @@ void GasParticleSystem::update_particle_timesteps(const Config& config,
             n++;
         }
 
+        // Limit the target bin to be at most 4x larger than the smallest
+        // interacting neighbor's ideal bin
+        ti_ideal[i] = ti_bin;
+        uint64_t max_allowed_ti = (min_neighbor_ti_ideal[i] == UINT64_MAX)
+                                      ? ti_bin
+                                      : (min_neighbor_ti_ideal[i] * 4);
+        ti_bin = std::min(ti_bin, max_allowed_ti);
+
         // A particle can ONLY adopt a timestep bin if the current global clock
         // is aligned to an integer multiple of that bin's boundary
         while ((ti_global_time % ti_bin) != 0 &&
                n < TimeConstants::MAX_TIMESTEP_BIN_DEPTH) {
             ti_bin >>= 1;
-            dt_bin *= 0.5;
             n++;
         }
 
@@ -473,9 +569,10 @@ void GasParticleSystem::update_particle_timesteps(const Config& config,
             diag.particles_at_min_dt++;
         }
 
-        // Update the Integer
+        // Update
         ti_step[i] = ti_bin;
         ti_end[i] = ti_global_time + ti_bin;
+        min_neighbor_ti_ideal[i] = UINT64_MAX;
     }
 }
 

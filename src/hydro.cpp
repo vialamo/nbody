@@ -91,6 +91,16 @@ inline void update_signal_velocities(const Reconstruction::ParticleState& p_i,
     atomic_update_max(&v_sig_max_j, v_sig_ij);
 }
 
+inline void atomic_update_min_uint64(uint64_t* address, uint64_t val) {
+    uint64_t old_val = *address;
+    while (old_val > val) {
+        uint64_t actual_old =
+            __sync_val_compare_and_swap(address, old_val, val);
+        if (actual_old == old_val) break;
+        old_val = actual_old;
+    }
+}
+
 }  // end anonymous namespace
 
 // Compute the least-squares matrix gradients for all primitive variables
@@ -338,6 +348,11 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                     double dt_i = gas.ti_step[i] * config.timebase_to_float;
                     double dt_j = gas.ti_step[j] * config.timebase_to_float;
                     double dt_int = std::min(dt_i, dt_j);
+
+                    atomic_update_min_uint64(&gas.min_neighbor_ti_ideal[i],
+                                             gas.ti_ideal[j]);
+                    atomic_update_min_uint64(&gas.min_neighbor_ti_ideal[j],
+                                             gas.ti_ideal[i]);
 
 #pragma omp atomic
                     gas.hydro_dv_x[i] -= (Force_mom.x() / p_i.mass) * dt_int;

@@ -79,6 +79,10 @@ class GasParticleSystem {
     std::vector<uint64_t> ti_current;  // Time this particle was last drifted to
     std::vector<uint64_t> ti_end;      // Time this particle's current step ends
 
+    std::vector<uint64_t> ti_ideal;               // The desired timestep
+    std::vector<uint64_t> min_neighbor_ti_ideal;  // The smallest ti_ideal of
+                                                  // any interacting neighbor
+
     std::vector<uint8_t> is_active;  // Particle is synced with the global clock
     std::vector<int> active_indices;
     size_t get_num_active() const { return active_indices.size(); }
@@ -94,6 +98,10 @@ class GasParticleSystem {
     std::vector<double> hydro_dv_z;
     std::vector<double> hydro_du;
     std::vector<double> hydro_de;
+
+    std::vector<double> snap_vel_x, snap_vel_y, snap_vel_z;
+    std::vector<double> snap_u, snap_total_energy;
+    std::vector<double> snap_pressure, snap_entropy;
 
     // Debugging
     std::vector<double> n_enc_final;

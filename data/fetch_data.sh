@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "Downloading Asimov simulation data..."
+echo "Downloading simulation data..."
 
 wget https://virgodb.cosma.dur.ac.uk/swift-webstorage/ICs/glassCube_8.hdf5
 wget https://virgodb.cosma.dur.ac.uk/swift-webstorage/ICs/glassCube_16.hdf5

@@ -110,7 +110,8 @@ void kick_particle_thermodynamics(GasParticleSystem& gas, size_t i,
     const double m = gas.mass[i];
     const double rho = gas.rho[i];
 
-    work.switch_energy = 0.0;
+    work.entropy_energy = 0.0;
+    work.def_energy = 0.0;
     work.injected_energy = 0.0;
 
     // Base Integration (Explicit and Conservative)
@@ -153,12 +154,12 @@ void kick_particle_thermodynamics(GasParticleSystem& gas, size_t i,
                 gas.entropy[i] * std::pow(rho, gamma_minus_1) / gamma_minus_1;
             u_clean -= (u_clean * expansion_factor);
 
-            work.switch_energy = (u_clean - u_raw) * m;
+            work.entropy_energy = (u_clean - u_raw) * m;
             gas.u[i] = std::max(u_clean, min_energy);
             gas.total_energy[i] = gas.u[i] + ke_spec_new;
         } else if (u_cons < thresh_trunc) {
             // DUAL ENERGY FORMALISM: Trust explicit integration
-            work.switch_energy = (u_raw - u_cons) * m;
+            work.def_energy = (u_raw - u_cons) * m;
             gas.u[i] = u_raw;
             gas.total_energy[i] = gas.u[i] + ke_spec_new;
         } else {

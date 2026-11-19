@@ -255,12 +255,13 @@ void Integrator::apply_gas_kick(GasParticleSystem& gas, uint64_t ti_dt,
                                 bool is_kick1) {
     double step_grav_work = 0.0;
     double step_exp_work = 0.0;
-    double step_switch_energy = 0.0;
+    double step_def_energy = 0.0;
+    double step_entropy_energy = 0.0;
     double step_injected_energy = 0.0;
     const size_t n = gas.num_particles;
 
-#pragma omp parallel for reduction(+ : step_grav_work, step_exp_work, \
-                                       step_switch_energy,            \
+#pragma omp parallel for reduction(+ : step_grav_work, step_exp_work,        \
+                                       step_def_energy, step_entropy_energy, \
                                        step_injected_energy) schedule(static)
     for (size_t i = 0; i < n; i++) {
         // Determine if this particle should be kicked based on timeline
@@ -270,20 +271,32 @@ void Integrator::apply_gas_kick(GasParticleSystem& gas, uint64_t ti_dt,
 
         if (half_dt <= 0.0) continue;
 
+        if (is_kick1) {
+            gas.snap_vel_x[i] = gas.vel_x[i];
+            gas.snap_vel_y[i] = gas.vel_y[i];
+            gas.snap_vel_z[i] = gas.vel_z[i];
+            gas.snap_u[i] = gas.u[i];
+            gas.snap_total_energy[i] = gas.total_energy[i];
+            gas.snap_pressure[i] = gas.pressure[i];
+            gas.snap_entropy[i] = gas.entropy[i];
+        }
+
         Integrator::KickWork work =
             kick_single_gas_particle(gas, i, half_dt, a, H, config, is_kick1);
 
         // Accumulate local diagnostic work
         step_grav_work += work.grav_work;
         step_exp_work += work.exp_work;
-        step_switch_energy += work.switch_energy;
+        step_def_energy += work.def_energy;
+        step_entropy_energy += work.entropy_energy;
         step_injected_energy += work.injected_energy;
     }
 
     // Update global diagnostics
     gas.budget.gravitational_work += step_grav_work;
     gas.budget.expansion_work += step_exp_work;
-    gas.budget.entropy_switch += step_switch_energy;
+    gas.budget.def_switch += step_def_energy;
+    gas.budget.entropy_switch += step_entropy_energy;
     gas.budget.floor_injection += step_injected_energy;
 }
 

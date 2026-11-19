@@ -21,7 +21,8 @@ class Integrator {
     struct KickWork {
         double grav_work = 0.0;
         double exp_work = 0.0;
-        double switch_energy = 0.0;
+        double def_energy = 0.0;
+        double entropy_energy = 0.0;
         double injected_energy = 0.0;
     };
 
