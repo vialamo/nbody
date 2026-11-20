@@ -407,20 +407,21 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                         gas.de_dt[j] += de_dt_j;
 
                     } else {
-                        uint8_t current_wakeup_state;
-#pragma omp atomic read
-                        current_wakeup_state = gas.needs_wakeup[j];
+                        /*          uint8_t current_wakeup_state;
+          #pragma omp atomic read
+                                  current_wakeup_state = gas.needs_wakeup[j];
 
-                        // Saitoh & Makino (2009) Timestep Limiter
-                        // Wake up the sleeping neighbor if its timestep is
-                        // x times larger than the particle hitting it
-                        if (current_wakeup_state == 0 &&
-                            gas.ti_step[j] >
-                                TimeConstants::MAX_NGB_TIME_FACTOR *
-                                    gas.ti_step[i]) {
-#pragma omp atomic write
-                            gas.needs_wakeup[j] = 1;
-                        }
+                                  // Saitoh & Makino (2009) Timestep Limiter
+                                  // Wake up the sleeping neighbor if its
+          timestep is
+                                  // x times larger than the particle hitting it
+                                  if (current_wakeup_state == 0 &&
+                                      gas.ti_step[j] >
+                                          TimeConstants::MAX_NGB_TIME_FACTOR *
+                                              gas.ti_step[i]) {
+          #pragma omp atomic write
+                                      gas.needs_wakeup[j] = 1;
+                                  }*/
                     }
                 }
             });

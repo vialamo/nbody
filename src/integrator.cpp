@@ -228,8 +228,6 @@ void update_timesteps(SimState& state, const Config& config) {
 void Integrator::kick_wakeup_catchup(GasParticleSystem& gas, size_t i,
                                      double dt_actual, double a, double H,
                                      const Config& config) {
-    const double u_floor = Thermodynamics::get_u_floor(a, config);
-
     // Kinematic update using continuous rates computed before sleep
     gas.vel_x[i] += (gas.acc_x[i] + gas.hydro_acc_x[i]) * dt_actual;
     gas.vel_y[i] += (gas.acc_y[i] + gas.hydro_acc_y[i]) * dt_actual;
@@ -245,23 +243,8 @@ void Integrator::kick_wakeup_catchup(GasParticleSystem& gas, size_t i,
     gas.vel_y[i] *= drag_factor;
     gas.vel_z[i] *= drag_factor;
 
-    // Thermodynamic update using continuous rates
-    gas.u[i] += gas.du_dt[i] * dt_actual;
-    gas.total_energy[i] += gas.de_dt[i] * dt_actual;
-
-    // Apply adiabatic expansion cooling
-    gas.u[i] -= gas.u[i] * expansion_factor;
-    gas.total_energy[i] -= gas.u[i] * expansion_factor;
-
-    // Floor enforcement to prevent crashes during the catch-up
-    gas.u[i] = std::max(gas.u[i], u_floor);
-    gas.total_energy[i] = std::max(gas.total_energy[i], u_floor);
-
-    // Re-sync EOS state
-    double gamma_minus_1 = config.gamma - 1.0;
-    gas.entropy[i] =
-        gamma_minus_1 * gas.u[i] / std::pow(gas.rho[i], gamma_minus_1);
-    gas.pressure[i] = gamma_minus_1 * gas.rho[i] * gas.u[i];
+    Thermodynamics::kick_wakeup_catchup(gas, i, a, dt_actual, expansion_factor,
+                                        config);
 }
 
 void Integrator::apply_gas_kick(GasParticleSystem& gas, uint64_t ti_dt,
@@ -400,6 +383,7 @@ void Integrator::apply_kick(SimState& state, uint64_t ti_dt,
 void Integrator::KDK_step(SimState& state, uint64_t ti_dt, const Config& config,
                           Diagnostics& diag) {
     // Clock sync and wake-ups
+    state.gas.enforce_timestep_restrictions(ti_dt, config);
     state.dm.sync_and_activate(ti_dt, config);
     state.gas.sync_and_activate(*this, ti_dt, state.scale_factor,
                                 state.hubble_param, config);

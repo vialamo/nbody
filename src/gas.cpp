@@ -4,6 +4,18 @@
 #include "hydro.h"
 #include "integrator.h"
 
+namespace {
+inline void atomic_update_min_uint64(uint64_t* address, uint64_t val) {
+    uint64_t old_val = *address;
+    while (old_val > val) {
+        uint64_t actual_old =
+            __sync_val_compare_and_swap(address, old_val, val);
+        if (actual_old == old_val) break;
+        old_val = actual_old;
+    }
+}
+}
+
 GasParticleSystem::GasParticleSystem(const Config& config) {
     cic_data.reserve(config.num_gas_particles);
 
@@ -388,6 +400,14 @@ void GasParticleSystem::sync_and_activate(Integrator& integrator,
 
     // Process wakeups from previous cycle
     for (size_t i = 0; i < num_particles; ++i) {
+        // Saitoh & Makino (2009) Timestep Limiter
+        /*if (!is_active[i] && ti_step[i] > TimeConstants::MAX_NGB_TIME_FACTOR *
+                                              min_neighbor_ti[i]) {
+            needs_wakeup[i] = 1;
+        }*/
+
+        min_neighbor_ti[i] = UINT64_MAX;
+
         if (needs_wakeup[i]) {
 #define DYNAMIC_WAKEUP
 #ifdef DYNAMIC_WAKEUP
@@ -540,11 +560,13 @@ void GasParticleSystem::update_particle_timesteps(const Config& config,
         // Update
         ti_step[i] = ti_bin;
         ti_end[i] = ti_global_time + ti_bin;
-        min_neighbor_ti[i] = UINT64_MAX;
     }
 }
 
-void GasParticleSystem::enforce_timestep_restrictions(const Config& config) {
+void GasParticleSystem::enforce_timestep_restrictions(uint64_t ti_dt,
+                                                      const Config& config) {
+    if (!config.individual_particle_timesteps) return;
+
     // Enforce the timestep limiter on neighbors
 #define ENFORCE_NGB_TIMESTEP
 #ifdef ENFORCE_NGB_TIMESTEP
@@ -555,11 +577,21 @@ void GasParticleSystem::enforce_timestep_restrictions(const Config& config) {
 
     const std::vector<uint64_t> calc_ti_step = ti_step;
 
+    // The absolute maximum ti_step any particle can possibly have
+    const uint64_t max_system_ti_step =
+        static_cast<uint64_t>(config.fixed_dt / config.timebase_to_float);
+
     if (ti_global_time == 0 || enforce_nbg_timestep) {
 #pragma omp parallel for schedule(dynamic, 64)
         for (size_t i = 0; i < num_particles; ++i) {
             // Process only particles that will be active
-            if (ti_end[i] > ti_global_time) {
+            if (ti_end[i] > ti_global_time + ti_dt) {
+                continue;
+            }
+
+            uint64_t max_allowed =
+                calc_ti_step[i] * TimeConstants::MAX_NGB_TIME_FACTOR;
+            if (max_allowed >= max_system_ti_step) {
                 continue;
             }
 
@@ -575,13 +607,9 @@ void GasParticleSystem::enforce_timestep_restrictions(const Config& config) {
                     // Exclude self and check interacting distance
                     if (j != static_cast<int>(i) &&
                         (r2 < search_sq || r2 < h[j] * h[j])) {
-                        uint64_t max_allowed =
-                            calc_ti_step[i] *
-                            TimeConstants::MAX_NGB_TIME_FACTOR;
                         uint64_t current_tj;
 #pragma omp atomic read
                         current_tj = ti_step[j];
-
                         if (current_tj > max_allowed) {
                             uint64_t new_tj = max_allowed;
                             int depth = 0;
@@ -592,16 +620,14 @@ void GasParticleSystem::enforce_timestep_restrictions(const Config& config) {
                                 depth++;
                             }
 
-#pragma omp critical
-                            {
-                                if (is_active[j]) {
-                                    if (new_tj < ti_step[j]) {
-                                        ti_step[j] = new_tj;
-                                        ti_end[j] = ti_global_time + new_tj;
-                                    }
-                                } else {
-                                    needs_wakeup[j] = 1;
+                            if (is_active[j]) {
+                                if (new_tj < current_tj) {
+                                    atomic_update_min_uint64(&ti_step[j], new_tj);
+                                    atomic_update_min_uint64(&ti_end[j], ti_global_time + new_tj);
                                 }
+                            } else {
+#pragma omp atomic write
+                                needs_wakeup[j] = 1;
                             }
                         }
                     }

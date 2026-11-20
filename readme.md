@@ -99,11 +99,11 @@ ctest --output-on-failure
 ### Post processing scripts
 The `dashboard.py` script generates a visual diagnostic suite. It tracks the macroscopic state of the simulation, including cosmic expansion, structure growth, energy conservation, and thermodynamic phase diagrams. There are other scripts specifically for validating other kinds of simulations like Sod Shock Tube or Sedov Blaswave tests that work in the same way.
 
-1.  **Prerequisites:** Requires `matplotlib` and `camb` in addition to `numpy` and `h5py`.
+1.  **Prerequisites:** Requires `matplotlib`, `camb`, `numpy` and `h5py`.
     ```bash
-    pip install matplotlib camb
+    pip install matplotlib camb numpy h5py
     ```
-    The viewer script requires as well vispy, pyqt5, PyOpenGL and h5py
+    The viewer script requires as well vispy, pyqt5 and PyOpenGL
 
 2.  **Run:** Navigate to your project root and execute the script, passing the directory containing your `.hdf5` snapshots as an argument:
     ```bash

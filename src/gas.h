@@ -137,7 +137,7 @@ class GasParticleSystem {
                                    double softening_length,
                                    double hubble_param);
 
-    void enforce_timestep_restrictions(const Config& config);
+    void enforce_timestep_restrictions(uint64_t ti_dt, const Config& config);
 
     // Sync the clock, process wakeups, and flag active particles
     void sync_and_activate(Integrator& integrator, uint64_t ti_dt, double a,

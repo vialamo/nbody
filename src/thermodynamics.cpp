@@ -186,4 +186,28 @@ void kick_particle_thermodynamics(GasParticleSystem& gas, size_t i,
     gas.pressure[i] = gamma_minus_1 * rho * gas.u[i];
 }
 
+void kick_wakeup_catchup(GasParticleSystem& gas, size_t i, double a,
+                         double dt_actual, double expansion_factor,
+                         const Config& config) {
+    const double u_floor = get_u_floor(a, config);
+
+    // Thermodynamic update using continuous rates
+    gas.u[i] += gas.du_dt[i] * dt_actual;
+    gas.total_energy[i] += gas.de_dt[i] * dt_actual;
+
+    // Apply adiabatic expansion cooling
+    gas.u[i] -= gas.u[i] * expansion_factor;
+    gas.total_energy[i] -= gas.u[i] * expansion_factor;
+
+    // Floor enforcement to prevent crashes during the catch-up
+    gas.u[i] = std::max(gas.u[i], u_floor);
+    gas.total_energy[i] = std::max(gas.total_energy[i], u_floor);
+
+    // Re-sync EOS state
+    double gamma_minus_1 = config.gamma - 1.0;
+    gas.entropy[i] =
+        gamma_minus_1 * gas.u[i] / std::pow(gas.rho[i], gamma_minus_1);
+    gas.pressure[i] = gamma_minus_1 * gas.rho[i] * gas.u[i];
+}
+
 }  // namespace Thermodynamics
