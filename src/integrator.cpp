@@ -37,6 +37,61 @@ inline double get_particle_kick_half_dt(const Config& config,
     return do_kick ? (dt_step / 2.0) : 0.0;
 }
 
+struct KickResult {
+    double ke_spec_new;
+    double grav_work;
+    double drag_work;
+};
+
+inline KickResult apply_velocity_kicks(GasParticleSystem& gas, size_t i,
+                                       double dt, double drag_factor,
+                                       bool is_kick1) {
+    KickResult res;
+    const double m = gas.mass[i];
+
+    // Cache old velocities
+    double vx_old = gas.vel_x[i];
+    double vy_old = gas.vel_y[i];
+    double vz_old = gas.vel_z[i];
+
+    double ke_old =
+        0.5 * m * (vx_old * vx_old + vy_old * vy_old + vz_old * vz_old);
+
+    // Gravity-only integration (for diagnostics)
+    double vx_g = vx_old + gas.acc_x[i] * dt;
+    double vy_g = vy_old + gas.acc_y[i] * dt;
+    double vz_g = vz_old + gas.acc_z[i] * dt;
+    double ke_g = 0.5 * m * (vx_g * vx_g + vy_g * vy_g + vz_g * vz_g);
+    res.grav_work = ke_g - ke_old;
+
+    // Total physical integration (Gravity + Hydro)
+    double vx_phys = vx_g + (!is_kick1 ? gas.hydro_dv_x[i] : 0.0);
+    double vy_phys = vy_g + (!is_kick1 ? gas.hydro_dv_y[i] : 0.0);
+    double vz_phys = vz_g + (!is_kick1 ? gas.hydro_dv_z[i] : 0.0);
+    double ke_phys =
+        0.5 * m * (vx_phys * vx_phys + vy_phys * vy_phys + vz_phys * vz_phys);
+
+    if (!is_kick1) {
+        gas.hydro_dv_x[i] = 0.0;
+        gas.hydro_dv_y[i] = 0.0;
+        gas.hydro_dv_z[i] = 0.0;
+    }
+
+    // Cosmological drag applied directly to the global arrays
+    gas.vel_x[i] = vx_phys * drag_factor;
+    gas.vel_y[i] = vy_phys * drag_factor;
+    gas.vel_z[i] = vz_phys * drag_factor;
+
+    double ke_new = 0.5 * m *
+                    (gas.vel_x[i] * gas.vel_x[i] + gas.vel_y[i] * gas.vel_y[i] +
+                     gas.vel_z[i] * gas.vel_z[i]);
+
+    res.drag_work = ke_new - ke_phys;
+    res.ke_spec_new = ke_new / m;
+
+    return res;
+}
+
 void apply_dm_kick(ParticleSystem& dm, uint64_t ti_dt, double a, double H,
                    const Config& config, bool is_kick1) {
     double step_grav_work = 0.0;
@@ -127,64 +182,6 @@ void apply_dm_drift(ParticleSystem& dm, const Config& config) {
     }
 }
 
-struct KickResult {
-    double ke_spec_new;
-    double grav_work;
-    double drag_work;
-};
-
-inline KickResult apply_velocity_kicks(GasParticleSystem& gas, size_t i,
-                                       double dt, double drag_factor,
-                                       bool is_kick1) {
-    KickResult res;
-    const double m = gas.mass[i];
-
-    // Cache old velocities
-    double vx_old = gas.vel_x[i];
-    double vy_old = gas.vel_y[i];
-    double vz_old = gas.vel_z[i];
-
-    double ke_old =
-        0.5 * m * (vx_old * vx_old + vy_old * vy_old + vz_old * vz_old);
-
-    // Gravity-only integration (for diagnostics)
-    double vx_g = vx_old + gas.acc_x[i] * dt;
-    double vy_g = vy_old + gas.acc_y[i] * dt;
-    double vz_g = vz_old + gas.acc_z[i] * dt;
-    double ke_g = 0.5 * m * (vx_g * vx_g + vy_g * vy_g + vz_g * vz_g);
-    res.grav_work = ke_g - ke_old;
-
-    // Total physical integration (Gravity + Hydro)
-    /*    double vx_phys = vx_g + gas.hydro_acc_x[i] * dt;
-        double vy_phys = vy_g + gas.hydro_acc_y[i] * dt;
-        double vz_phys = vz_g + gas.hydro_acc_z[i] * dt;*/
-    double vx_phys = vx_g + (!is_kick1 ? gas.hydro_dv_x[i] : 0.0);
-    double vy_phys = vy_g + (!is_kick1 ? gas.hydro_dv_y[i] : 0.0);
-    double vz_phys = vz_g + (!is_kick1 ? gas.hydro_dv_z[i] : 0.0);
-    double ke_phys =
-        0.5 * m * (vx_phys * vx_phys + vy_phys * vy_phys + vz_phys * vz_phys);
-
-    if (!is_kick1) {
-        gas.hydro_dv_x[i] = 0.0;
-        gas.hydro_dv_y[i] = 0.0;
-        gas.hydro_dv_z[i] = 0.0;
-    }
-
-    // Cosmological drag applied directly to the global arrays
-    gas.vel_x[i] = vx_phys * drag_factor;
-    gas.vel_y[i] = vy_phys * drag_factor;
-    gas.vel_z[i] = vz_phys * drag_factor;
-
-    double ke_new = 0.5 * m *
-                    (gas.vel_x[i] * gas.vel_x[i] + gas.vel_y[i] * gas.vel_y[i] +
-                     gas.vel_z[i] * gas.vel_z[i]);
-
-    res.drag_work = ke_new - ke_phys;
-    res.ke_spec_new = ke_new / m;
-
-    return res;
-}
-
 void apply_gas_drift(GasParticleSystem& gas, const Config& config) {
     double inv_domain_x = 1.0 / config.domain_size.x;
     double inv_domain_y = 1.0 / config.domain_size.y;
@@ -228,26 +225,43 @@ void update_timesteps(SimState& state, const Config& config) {
 }
 }  // namespace
 
-Integrator::KickWork Integrator::kick_single_gas_particle(
-    GasParticleSystem& gas, size_t i, double dt, double a, double H,
-    const Config& config, bool is_kick1) {
-    KickWork work;
+void Integrator::kick_wakeup_catchup(GasParticleSystem& gas, size_t i,
+                                     double dt_actual, double a, double H,
+                                     const Config& config) {
+    const double u_floor = Thermodynamics::get_u_floor(a, config);
 
-    // Cosmological Factors
-    double drag_factor, expansion_factor;
-    Cosmology::compute_step_factors(a, H, dt, config.gamma, drag_factor,
+    // Kinematic update using continuous rates computed before sleep
+    gas.vel_x[i] += (gas.acc_x[i] + gas.hydro_acc_x[i]) * dt_actual;
+    gas.vel_y[i] += (gas.acc_y[i] + gas.hydro_acc_y[i]) * dt_actual;
+    gas.vel_z[i] += (gas.acc_z[i] + gas.hydro_acc_z[i]) * dt_actual;
+
+    // Apply Hubble Drag
+    double drag_factor = 1.0;
+    double expansion_factor = 0.0;
+    Cosmology::compute_step_factors(a, H, dt_actual, config.gamma, drag_factor,
                                     expansion_factor);
 
-    // Kinematics (In-place velocity updates & mechanical work)
-    auto kin = apply_velocity_kicks(gas, i, dt, drag_factor, is_kick1);
-    work.grav_work = kin.grav_work;
+    gas.vel_x[i] *= drag_factor;
+    gas.vel_y[i] *= drag_factor;
+    gas.vel_z[i] *= drag_factor;
 
-    // Thermodynamic Update (In-place integration & arbitration)
-    Thermodynamics::kick_particle_thermodynamics(
-        gas, i, kin.ke_spec_new, kin.grav_work, kin.drag_work, dt,
-        expansion_factor, a, config, is_kick1, work);
+    // Thermodynamic update using continuous rates
+    gas.u[i] += gas.du_dt[i] * dt_actual;
+    gas.total_energy[i] += gas.de_dt[i] * dt_actual;
 
-    return work;
+    // Apply adiabatic expansion cooling
+    gas.u[i] -= gas.u[i] * expansion_factor;
+    gas.total_energy[i] -= gas.u[i] * expansion_factor;
+
+    // Floor enforcement to prevent crashes during the catch-up
+    gas.u[i] = std::max(gas.u[i], u_floor);
+    gas.total_energy[i] = std::max(gas.total_energy[i], u_floor);
+
+    // Re-sync EOS state
+    double gamma_minus_1 = config.gamma - 1.0;
+    gas.entropy[i] =
+        gamma_minus_1 * gas.u[i] / std::pow(gas.rho[i], gamma_minus_1);
+    gas.pressure[i] = gamma_minus_1 * gas.rho[i] * gas.u[i];
 }
 
 void Integrator::apply_gas_kick(GasParticleSystem& gas, uint64_t ti_dt,
@@ -281,8 +295,21 @@ void Integrator::apply_gas_kick(GasParticleSystem& gas, uint64_t ti_dt,
             gas.snap_entropy[i] = gas.entropy[i];
         }
 
-        Integrator::KickWork work =
-            kick_single_gas_particle(gas, i, half_dt, a, H, config, is_kick1);
+        Integrator::KickWork work;
+
+        // Cosmological Factors
+        double drag_factor, expansion_factor;
+        Cosmology::compute_step_factors(a, H, half_dt, config.gamma,
+                                        drag_factor, expansion_factor);
+
+        // Kinematics (In-place velocity updates & mechanical work)
+        auto kin = apply_velocity_kicks(gas, i, half_dt, drag_factor, is_kick1);
+        work.grav_work = kin.grav_work;
+
+        // Thermodynamic Update (In-place integration & arbitration)
+        Thermodynamics::kick_particle_thermodynamics(
+            gas, i, kin.ke_spec_new, kin.grav_work, kin.drag_work, half_dt,
+            expansion_factor, a, config, is_kick1, work);
 
         // Accumulate local diagnostic work
         step_grav_work += work.grav_work;

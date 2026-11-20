@@ -62,7 +62,7 @@ inline void update_signal_velocities(const Reconstruction::ParticleState& p_i,
                                      const Reconstruction::ParticleState& p_j,
                                      double dx, double dy, double dz, double r2,
                                      double gamma, double& v_sig_max_i,
-                                     double& v_sig_max_j, double& out_v_sig_ij,
+                                     double& v_sig_max_j, double& out_c_i,
                                      double& out_c_j) {
     double r = std::sqrt(r2);
 
@@ -70,6 +70,7 @@ inline void update_signal_velocities(const Reconstruction::ParticleState& p_i,
     double c_i = std::sqrt(gamma * p_i.pressure / p_i.rho);
     double c_j = std::sqrt(gamma * p_j.pressure / p_j.rho);
 
+    out_c_i = c_i;
     out_c_j = c_j;
 
     // Comoving relative velocities
@@ -83,8 +84,6 @@ inline void update_signal_velocities(const Reconstruction::ParticleState& p_i,
     if (dv_dot_dx < 0.0) {
         v_sig_ij -= dv_dot_dx / r;
     }
-
-    out_v_sig_ij = v_sig_ij;
 
     // Update particle i and j using the atomic CAS
     atomic_update_max(&v_sig_max_i, v_sig_ij);
@@ -320,10 +319,10 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
 
                     // Calculate Maximum Signal Velocity for the CFL
                     // condition
-                    double v_sig_ij, c_j;
+                    double c_i, c_j;
                     update_signal_velocities(p_i, p_j, dx, dy, dz, r2,
                                              config.gamma, gas.v_sig_max[i],
-                                             gas.v_sig_max[j], v_sig_ij, c_j);
+                                             gas.v_sig_max[j], c_i, c_j);
 
                     double P_star_com = flux_1d.P_star;
 
@@ -412,23 +411,15 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
 #pragma omp atomic read
                         current_wakeup_state = gas.needs_wakeup[j];
 
-                        if (current_wakeup_state == 0) {
-                            // Wake up the sleeping neighbor if the signal
-                            // velocity of the interaction exceeds x times its
-                            // own sound speed
-                            bool v_sig_trigger = (v_sig_ij > 3.0 * c_j);
-
-                            // Saitoh & Makino (2009) Timestep Limiter
-                            // Wake up the sleeping neighbor if its timestep is
-                            // x times larger than the particle hitting it
-                            bool dt_step_trigger =
-                                (gas.ti_step[j] >
-                                 TimeConstants::MAX_NGB_TIME_FACTOR *
-                                     gas.ti_step[i]);
-                            if (v_sig_trigger || dt_step_trigger) {
+                        // Saitoh & Makino (2009) Timestep Limiter
+                        // Wake up the sleeping neighbor if its timestep is
+                        // x times larger than the particle hitting it
+                        if (current_wakeup_state == 0 &&
+                            gas.ti_step[j] >
+                                TimeConstants::MAX_NGB_TIME_FACTOR *
+                                    gas.ti_step[i]) {
 #pragma omp atomic write
-                                gas.needs_wakeup[j] = 1;
-                            }
+                            gas.needs_wakeup[j] = 1;
                         }
                     }
                 }
@@ -447,6 +438,11 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                 gas.hydro_acc_y[i] = 0.0;
                 gas.hydro_acc_z[i] = 0.0;
                 gas.du_dt[i] = 0.0;
+                gas.hydro_dv_x[i] = 0.0;
+                gas.hydro_dv_y[i] = 0.0;
+                gas.hydro_dv_z[i] = 0.0;
+                gas.hydro_du[i] = 0.0;
+                gas.hydro_de[i] = 0.0;
             }
         }
     }

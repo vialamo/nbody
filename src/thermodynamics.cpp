@@ -115,17 +115,15 @@ void kick_particle_thermodynamics(GasParticleSystem& gas, size_t i,
     work.injected_energy = 0.0;
 
     // Base Integration (Explicit and Conservative)
-    double u_post_hydro =
-        gas.u[i] + /*gas.du_dt[i] * dt*/ (is_kick1 ? 0.0 : gas.hydro_du[i]);
+    double u_post_hydro = gas.u[i] + (is_kick1 ? 0.0 : gas.hydro_du[i]);
     double u_cooling = u_post_hydro * expansion_factor;
 
     double u_raw = std::max(u_post_hydro - u_cooling, min_energy);
     work.exp_work = -drag_work + (u_cooling * m);
 
-    double e_tot_post =
-        gas.total_energy[i] +
-        /*(gas.de_dt[i] * dt)*/ (is_kick1 ? 0.0 : gas.hydro_de[i]) +
-        (grav_work / m) + (drag_work / m) - u_cooling;
+    double e_tot_post = gas.total_energy[i] +
+                        (is_kick1 ? 0.0 : gas.hydro_de[i]) + (grav_work / m) +
+                        (drag_work / m) - u_cooling;
     e_tot_post = std::max(e_tot_post, min_energy);
 
     if (!is_kick1) {

@@ -63,9 +63,8 @@ class Diagnostics {
     size_t h_non_converged_cases = 0;
     double h_clamp_percent = 0.0;
     double h_inc_percent = 0.0;
+    double forced_wakeup_percent = 0.0;
     double ill_cond_percent = 0.0;
-    double flux_energy_error = 0.0;
-    double flux_momentum_error = 0.0;
     double percent_particles_updated = 0;
     double volume_error = 0.0;
 

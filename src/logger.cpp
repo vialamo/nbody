@@ -156,16 +156,11 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
               << " | Gas Err: " << format_double(diag.gas_energy_err, 1, true)
               << "\n";
 
-    double flux_err =
-        std::max(abs(diag.flux_energy_error), diag.flux_momentum_error);
     std::cout << "    - Vol Err: " << format_double(diag.volume_error, 1, true)
-              << " | Flux Err: " << format_double(flux_err, 1, true)
               << " | Ill: " << format_double(diag.ill_cond_percent, 1, true)
-              << "% | Clamp: "
-              << format_double(diag.h_clamp_percent, 1, true)
-              // << "% | Incr: "
-              // << format_double(diag.h_inc_percent, 1, false)
-              << "%\n";
+              << "% | Clamp: " << format_double(diag.h_clamp_percent, 1, true)
+              << "% | Wake: "
+              << format_double(diag.forced_wakeup_percent, 1, false) << "%\n";
 
     std::cout << "    - Softening: "
               << format_double(diag.softening_length, 2, true)

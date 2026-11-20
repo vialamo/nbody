@@ -97,9 +97,13 @@ class GasParticleSystem {
     std::vector<double> hydro_du;
     std::vector<double> hydro_de;
 
-    std::vector<double> snap_vel_x, snap_vel_y, snap_vel_z;
-    std::vector<double> snap_u, snap_total_energy;
-    std::vector<double> snap_pressure, snap_entropy;
+    std::vector<double> snap_vel_x;
+    std::vector<double> snap_vel_y;
+    std::vector<double> snap_vel_z;
+    std::vector<double> snap_u;
+    std::vector<double> snap_total_energy;
+    std::vector<double> snap_pressure;
+    std::vector<double> snap_entropy;
 
     // Debugging
     std::vector<double> n_enc_final;
@@ -116,6 +120,7 @@ class GasParticleSystem {
         size_t sph_fallback = 0;
         size_t cooling_failed = 0;
         size_t particles_at_min_dt = 0;
+        size_t forced_wakeup = 0;
     };
     GasDiagnostics diag;
 
@@ -131,6 +136,8 @@ class GasParticleSystem {
     void update_particle_timesteps(const Config& config,
                                    double softening_length,
                                    double hubble_param);
+
+    void enforce_timestep_restrictions(const Config& config);
 
     // Sync the clock, process wakeups, and flag active particles
     void sync_and_activate(Integrator& integrator, uint64_t ti_dt, double a,
