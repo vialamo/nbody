@@ -53,7 +53,8 @@ class ParticleSystem {
                       double vz, double m);
 
     void update_particle_timesteps(const Config& config,
-                                   double softening_length);
+                                   double softening_length,
+                                   double hubble_param);
     void sync_and_activate(uint64_t ti_dt, const Config& config);
 
    private:

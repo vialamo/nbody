@@ -37,6 +37,61 @@ inline double get_particle_kick_half_dt(const Config& config,
     return do_kick ? (dt_step / 2.0) : 0.0;
 }
 
+struct KickResult {
+    double ke_spec_new;
+    double grav_work;
+    double drag_work;
+};
+
+inline KickResult apply_velocity_kicks(GasParticleSystem& gas, size_t i,
+                                       double dt, double drag_factor,
+                                       bool is_kick1) {
+    KickResult res;
+    const double m = gas.mass[i];
+
+    // Cache old velocities
+    double vx_old = gas.vel_x[i];
+    double vy_old = gas.vel_y[i];
+    double vz_old = gas.vel_z[i];
+
+    double ke_old =
+        0.5 * m * (vx_old * vx_old + vy_old * vy_old + vz_old * vz_old);
+
+    // Gravity-only integration (for diagnostics)
+    double vx_g = vx_old + gas.acc_x[i] * dt;
+    double vy_g = vy_old + gas.acc_y[i] * dt;
+    double vz_g = vz_old + gas.acc_z[i] * dt;
+    double ke_g = 0.5 * m * (vx_g * vx_g + vy_g * vy_g + vz_g * vz_g);
+    res.grav_work = ke_g - ke_old;
+
+    // Total physical integration (Gravity + Hydro)
+    double vx_phys = vx_g + (!is_kick1 ? gas.hydro_dv_x[i] : 0.0);
+    double vy_phys = vy_g + (!is_kick1 ? gas.hydro_dv_y[i] : 0.0);
+    double vz_phys = vz_g + (!is_kick1 ? gas.hydro_dv_z[i] : 0.0);
+    double ke_phys =
+        0.5 * m * (vx_phys * vx_phys + vy_phys * vy_phys + vz_phys * vz_phys);
+
+    if (!is_kick1) {
+        gas.hydro_dv_x[i] = 0.0;
+        gas.hydro_dv_y[i] = 0.0;
+        gas.hydro_dv_z[i] = 0.0;
+    }
+
+    // Cosmological drag applied directly to the global arrays
+    gas.vel_x[i] = vx_phys * drag_factor;
+    gas.vel_y[i] = vy_phys * drag_factor;
+    gas.vel_z[i] = vz_phys * drag_factor;
+
+    double ke_new = 0.5 * m *
+                    (gas.vel_x[i] * gas.vel_x[i] + gas.vel_y[i] * gas.vel_y[i] +
+                     gas.vel_z[i] * gas.vel_z[i]);
+
+    res.drag_work = ke_new - ke_phys;
+    res.ke_spec_new = ke_new / m;
+
+    return res;
+}
+
 void apply_dm_kick(ParticleSystem& dm, uint64_t ti_dt, double a, double H,
                    const Config& config, bool is_kick1) {
     double step_grav_work = 0.0;
@@ -109,7 +164,7 @@ void apply_dm_drift(ParticleSystem& dm, const Config& config) {
 #pragma omp parallel for simd schedule(static)
     for (size_t i = 0; i < n; i++) {
         if (dm.ti_global_time <= dm.ti_current[i])
-            continue;  // Skip if already drifted
+            continue;  // This should never happen
 
         uint64_t ti_drift = dm.ti_global_time - dm.ti_current[i];
         double drift_dt = ti_drift * config.timebase_to_float;
@@ -118,61 +173,13 @@ void apply_dm_drift(ParticleSystem& dm, const Config& config) {
         double ny = dm.pos_y[i] + dm.vel_y[i] * drift_dt;
         double nz = dm.pos_z[i] + dm.vel_z[i] * drift_dt;
 
-        // SIMD-friendly periodic boundary using independent axes
+        // SIMD-friendly periodic boundary
         dm.pos_x[i] = nx - config.domain_size.x * std::floor(nx * inv_domain_x);
         dm.pos_y[i] = ny - config.domain_size.y * std::floor(ny * inv_domain_y);
         dm.pos_z[i] = nz - config.domain_size.z * std::floor(nz * inv_domain_z);
 
         dm.ti_current[i] = dm.ti_global_time;
     }
-}
-
-struct KickResult {
-    double ke_spec_new;
-    double grav_work;
-    double drag_work;
-};
-
-inline KickResult apply_velocity_kicks(GasParticleSystem& gas, size_t i,
-                                       double dt, double drag_factor) {
-    KickResult res;
-    const double m = gas.mass[i];
-
-    // Cache old velocities
-    double vx_old = gas.vel_x[i];
-    double vy_old = gas.vel_y[i];
-    double vz_old = gas.vel_z[i];
-
-    double ke_old =
-        0.5 * m * (vx_old * vx_old + vy_old * vy_old + vz_old * vz_old);
-
-    // Gravity-only integration (for diagnostics)
-    double vx_g = vx_old + gas.acc_x[i] * dt;
-    double vy_g = vy_old + gas.acc_y[i] * dt;
-    double vz_g = vz_old + gas.acc_z[i] * dt;
-    double ke_g = 0.5 * m * (vx_g * vx_g + vy_g * vy_g + vz_g * vz_g);
-    res.grav_work = ke_g - ke_old;
-
-    // Total physical integration (Gravity + Hydro)
-    double vx_phys = vx_g + gas.hydro_acc_x[i] * dt;
-    double vy_phys = vy_g + gas.hydro_acc_y[i] * dt;
-    double vz_phys = vz_g + gas.hydro_acc_z[i] * dt;
-    double ke_phys =
-        0.5 * m * (vx_phys * vx_phys + vy_phys * vy_phys + vz_phys * vz_phys);
-
-    // Cosmological drag applied directly to the global arrays
-    gas.vel_x[i] = vx_phys * drag_factor;
-    gas.vel_y[i] = vy_phys * drag_factor;
-    gas.vel_z[i] = vz_phys * drag_factor;
-
-    double ke_new = 0.5 * m *
-                    (gas.vel_x[i] * gas.vel_x[i] + gas.vel_y[i] * gas.vel_y[i] +
-                     gas.vel_z[i] * gas.vel_z[i]);
-
-    res.drag_work = ke_new - ke_phys;
-    res.ke_spec_new = ke_new / m;
-
-    return res;
 }
 
 void apply_gas_drift(GasParticleSystem& gas, const Config& config) {
@@ -185,7 +192,7 @@ void apply_gas_drift(GasParticleSystem& gas, const Config& config) {
 #pragma omp parallel for simd schedule(static)
     for (size_t i = 0; i < n; i++) {
         if (gas.ti_global_time <= gas.ti_current[i])
-            continue;  // Skip if already drifted
+            continue;  // This should never happen
 
         uint64_t ti_drift = gas.ti_global_time - gas.ti_current[i];
         double drift_dt = ti_drift * config.timebase_to_float;
@@ -212,32 +219,33 @@ void apply_drift(SimState& state, const Config& config, Diagnostics& diag) {
 }
 
 void update_timesteps(SimState& state, const Config& config) {
-    state.dm.update_particle_timesteps(config, state.gravity.softening_length);
+    state.dm.update_particle_timesteps(config, state.gravity.softening_length,
+                                       state.hubble_param);
     state.gas.update_particle_timesteps(config, state.gravity.softening_length,
                                         state.hubble_param);
 }
 }  // namespace
 
-Integrator::KickWork Integrator::kick_single_gas_particle(
-    GasParticleSystem& gas, size_t i, double dt, double a, double H,
-    const Config& config) {
-    KickWork work;
+void Integrator::kick_wakeup_catchup(GasParticleSystem& gas, size_t i,
+                                     double dt_actual, double a, double H,
+                                     const Config& config) {
+    // Kinematic update using continuous rates computed before sleep
+    gas.vel_x[i] += (gas.acc_x[i] + gas.hydro_acc_x[i]) * dt_actual;
+    gas.vel_y[i] += (gas.acc_y[i] + gas.hydro_acc_y[i]) * dt_actual;
+    gas.vel_z[i] += (gas.acc_z[i] + gas.hydro_acc_z[i]) * dt_actual;
 
-    // Cosmological Factors
-    double drag_factor, expansion_factor;
-    Cosmology::compute_step_factors(a, H, dt, config.gamma, drag_factor,
+    // Apply Hubble Drag
+    double drag_factor = 1.0;
+    double expansion_factor = 0.0;
+    Cosmology::compute_step_factors(a, H, dt_actual, config.gamma, drag_factor,
                                     expansion_factor);
 
-    // Kinematics (In-place velocity updates & mechanical work)
-    auto kin = apply_velocity_kicks(gas, i, dt, drag_factor);
-    work.grav_work = kin.grav_work;
+    gas.vel_x[i] *= drag_factor;
+    gas.vel_y[i] *= drag_factor;
+    gas.vel_z[i] *= drag_factor;
 
-    // Thermodynamic Update (In-place integration & arbitration)
-    Thermodynamics::kick_particle_thermodynamics(
-        gas, i, kin.ke_spec_new, kin.grav_work, kin.drag_work, dt,
-        expansion_factor, a, config, work);
-
-    return work;
+    Thermodynamics::kick_wakeup_catchup(gas, i, a, dt_actual, expansion_factor,
+                                        config);
 }
 
 void Integrator::apply_gas_kick(GasParticleSystem& gas, uint64_t ti_dt,
@@ -245,12 +253,13 @@ void Integrator::apply_gas_kick(GasParticleSystem& gas, uint64_t ti_dt,
                                 bool is_kick1) {
     double step_grav_work = 0.0;
     double step_exp_work = 0.0;
-    double step_switch_energy = 0.0;
+    double step_def_energy = 0.0;
+    double step_entropy_energy = 0.0;
     double step_injected_energy = 0.0;
     const size_t n = gas.num_particles;
 
-#pragma omp parallel for reduction(+ : step_grav_work, step_exp_work, \
-                                       step_switch_energy,            \
+#pragma omp parallel for reduction(+ : step_grav_work, step_exp_work,        \
+                                       step_def_energy, step_entropy_energy, \
                                        step_injected_energy) schedule(static)
     for (size_t i = 0; i < n; i++) {
         // Determine if this particle should be kicked based on timeline
@@ -260,20 +269,45 @@ void Integrator::apply_gas_kick(GasParticleSystem& gas, uint64_t ti_dt,
 
         if (half_dt <= 0.0) continue;
 
-        Integrator::KickWork work =
-            kick_single_gas_particle(gas, i, half_dt, a, H, config);
+        if (is_kick1) {
+            gas.snap_vel_x[i] = gas.vel_x[i];
+            gas.snap_vel_y[i] = gas.vel_y[i];
+            gas.snap_vel_z[i] = gas.vel_z[i];
+            gas.snap_u[i] = gas.u[i];
+            gas.snap_total_energy[i] = gas.total_energy[i];
+            gas.snap_pressure[i] = gas.pressure[i];
+            gas.snap_entropy[i] = gas.entropy[i];
+        }
+
+        Integrator::KickWork work;
+
+        // Cosmological Factors
+        double drag_factor, expansion_factor;
+        Cosmology::compute_step_factors(a, H, half_dt, config.gamma,
+                                        drag_factor, expansion_factor);
+
+        // Kinematics (In-place velocity updates & mechanical work)
+        auto kin = apply_velocity_kicks(gas, i, half_dt, drag_factor, is_kick1);
+        work.grav_work = kin.grav_work;
+
+        // Thermodynamic Update (In-place integration & arbitration)
+        Thermodynamics::kick_particle_thermodynamics(
+            gas, i, kin.ke_spec_new, kin.grav_work, kin.drag_work, half_dt,
+            expansion_factor, a, config, is_kick1, work);
 
         // Accumulate local diagnostic work
         step_grav_work += work.grav_work;
         step_exp_work += work.exp_work;
-        step_switch_energy += work.switch_energy;
+        step_def_energy += work.def_energy;
+        step_entropy_energy += work.entropy_energy;
         step_injected_energy += work.injected_energy;
     }
 
     // Update global diagnostics
     gas.budget.gravitational_work += step_grav_work;
     gas.budget.expansion_work += step_exp_work;
-    gas.budget.entropy_switch += step_switch_energy;
+    gas.budget.def_switch += step_def_energy;
+    gas.budget.entropy_switch += step_entropy_energy;
     gas.budget.floor_injection += step_injected_energy;
 }
 
@@ -339,7 +373,6 @@ void Integrator::compute_forces(SimState& state, const Config& config,
 
 void Integrator::apply_kick(SimState& state, uint64_t ti_dt,
                             const Config& config, bool is_kick1) {
-    // Forward the config and kick state to the updated DM function
     apply_dm_kick(state.dm, ti_dt, state.scale_factor, state.hubble_param,
                   config, is_kick1);
 

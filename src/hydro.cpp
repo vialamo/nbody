@@ -62,15 +62,12 @@ inline void update_signal_velocities(const Reconstruction::ParticleState& p_i,
                                      const Reconstruction::ParticleState& p_j,
                                      double dx, double dy, double dz, double r2,
                                      double gamma, double& v_sig_max_i,
-                                     double& v_sig_max_j, double& out_v_sig_ij,
-                                     double& out_c_j) {
+                                     double& v_sig_max_j) {
     double r = std::sqrt(r2);
 
     // Comoving sound speeds
     double c_i = std::sqrt(gamma * p_i.pressure / p_i.rho);
     double c_j = std::sqrt(gamma * p_j.pressure / p_j.rho);
-
-    out_c_j = c_j;
 
     // Comoving relative velocities
     double dvx = p_j.vel.x() - p_i.vel.x();
@@ -84,13 +81,10 @@ inline void update_signal_velocities(const Reconstruction::ParticleState& p_i,
         v_sig_ij -= dv_dot_dx / r;
     }
 
-    out_v_sig_ij = v_sig_ij;
-
     // Update particle i and j using the atomic CAS
     atomic_update_max(&v_sig_max_i, v_sig_ij);
     atomic_update_max(&v_sig_max_j, v_sig_ij);
 }
-
 }  // end anonymous namespace
 
 // Compute the least-squares matrix gradients for all primitive variables
@@ -283,11 +277,9 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                             Riemann::solve_hllc(face, v_frame, config.gamma);
                     }
 
-                    // Fallback to First-Order Reconstruction if solvers still
-                    // fail
+                    // Fallback to First-Order Reconstruction if solvers fail
                     if (!flux_1d.success) {
-                        // Overwrite the extrapolated face states with the
-                        // particle center values
+                        // Use particle center values
                         face.rho_L = p_i.rho;
                         face.rho_R = p_j.rho;
                         face.p_L = p_i.pressure;
@@ -312,12 +304,10 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
 
                     // Calculate Maximum Signal Velocity for the CFL
                     // condition
-                    double v_sig_ij, c_j;
                     update_signal_velocities(p_i, p_j, dx, dy, dz, r2,
                                              config.gamma, gas.v_sig_max[i],
-                                             gas.v_sig_max[j], v_sig_ij, c_j);
+                                             gas.v_sig_max[j]);
 
-                    // Back to code units
                     double P_star_com = flux_1d.P_star;
 
                     Eigen::Vector3d Force_mom = P_star_com * face.area_vec;
@@ -332,6 +322,39 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                         P_star_com * v_star_lab.dot(face.area_vec);
                     double de_dt_i = -Rate_energy / p_i.mass;
 
+                    double work_j =
+                        P_star_com * (v_star_lab - p_j.vel).dot(face.area_vec);
+                    double du_dt_j = work_j / p_j.mass;
+                    double de_dt_j = Rate_energy / p_j.mass;
+
+                    // Determine the interaction timestep (minimum of both)
+                    double dt_i = gas.ti_step[i] * config.timebase_to_float;
+                    double dt_j = gas.ti_step[j] * config.timebase_to_float;
+                    double dt_int = std::min(dt_i, dt_j);
+
+#pragma omp atomic
+                    gas.hydro_dv_x[i] -= (Force_mom.x() / p_i.mass) * dt_int;
+#pragma omp atomic
+                    gas.hydro_dv_y[i] -= (Force_mom.y() / p_i.mass) * dt_int;
+#pragma omp atomic
+                    gas.hydro_dv_z[i] -= (Force_mom.z() / p_i.mass) * dt_int;
+#pragma omp atomic
+                    gas.hydro_du[i] += du_dt_i * dt_int;
+#pragma omp atomic
+                    gas.hydro_de[i] += de_dt_i * dt_int;
+
+                // Populate IMPULSES for particle j (Active or Inactive)
+#pragma omp atomic
+                    gas.hydro_dv_x[j] += (Force_mom.x() / p_j.mass) * dt_int;
+#pragma omp atomic
+                    gas.hydro_dv_y[j] += (Force_mom.y() / p_j.mass) * dt_int;
+#pragma omp atomic
+                    gas.hydro_dv_z[j] += (Force_mom.z() / p_j.mass) * dt_int;
+#pragma omp atomic
+                    gas.hydro_du[j] += du_dt_j * dt_int;
+#pragma omp atomic
+                    gas.hydro_de[j] += de_dt_j * dt_int;
+
                 // Apply the flux to the active particle 'i'
 #pragma omp atomic
                     gas.hydro_acc_x[i] -= Force_mom.x() / p_i.mass;
@@ -344,7 +367,7 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
 #pragma omp atomic
                     gas.de_dt[i] += de_dt_i;
 
-                    // Apply the reverse flux to j if j is ALSO active
+                    // Apply the reverse flux to j if j is also active
                     if (gas.is_active[j]) {
                         double work_j =
                             P_star_com *
@@ -361,28 +384,6 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                         gas.du_dt[j] += du_dt_j;
 #pragma omp atomic
                         gas.de_dt[j] += de_dt_j;
-
-                    } else {
-                        uint8_t current_wakeup_state;
-#pragma omp atomic read
-                        current_wakeup_state = gas.needs_wakeup[j];
-
-                        if (current_wakeup_state == 0) {
-                            // Wake up the sleeping neighbor if the signal
-                            // velocity of the interaction exceeds x times its
-                            // own sound speed
-                            bool v_sig_trigger = (v_sig_ij > 1.5 * c_j);
-
-                            // Saitoh & Makino (2009) Timestep Limiter
-                            // Wake up the sleeping neighbor if its timestep is
-                            // x times larger than the particle hitting it
-                            bool dt_step_trigger =
-                                (gas.ti_step[j] >= 4 * gas.ti_step[i]);
-                            if (v_sig_trigger || dt_step_trigger) {
-#pragma omp atomic write
-                                gas.needs_wakeup[j] = 1;
-                            }
-                        }
                     }
                 }
             });
@@ -400,6 +401,11 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
                 gas.hydro_acc_y[i] = 0.0;
                 gas.hydro_acc_z[i] = 0.0;
                 gas.du_dt[i] = 0.0;
+                gas.hydro_dv_x[i] = 0.0;
+                gas.hydro_dv_y[i] = 0.0;
+                gas.hydro_dv_z[i] = 0.0;
+                gas.hydro_du[i] = 0.0;
+                gas.hydro_de[i] = 0.0;
             }
         }
     }

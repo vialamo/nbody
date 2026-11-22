@@ -5,6 +5,7 @@
 namespace TimeConstants {
 constexpr int MAX_TIMESTEP_BIN_DEPTH = 30;
 constexpr uint64_t TIMEBASE = 1ULL << MAX_TIMESTEP_BIN_DEPTH;
+constexpr int MAX_NGB_TIME_FACTOR = 4;
 }  // namespace TimeConstants
 
 struct Vec3 {
@@ -34,6 +35,7 @@ struct EnergyBudget {
     double photoheated = 0.0;
     double gravitational_work = 0.0;
     double expansion_work = 0.0;
+    double def_switch = 0.0;
     double entropy_switch = 0.0;
     double floor_injection = 0.0;
 
@@ -43,6 +45,7 @@ struct EnergyBudget {
         photoheated += rhs.photoheated;
         gravitational_work += rhs.gravitational_work;
         expansion_work += rhs.expansion_work;
+        def_switch += rhs.def_switch;
         entropy_switch += rhs.entropy_switch;
         floor_injection += rhs.floor_injection;
         return *this;

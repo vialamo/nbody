@@ -78,6 +78,7 @@ class GasParticleSystem {
     std::vector<uint64_t> ti_step;     // Duration of the current step
     std::vector<uint64_t> ti_current;  // Time this particle was last drifted to
     std::vector<uint64_t> ti_end;      // Time this particle's current step ends
+    std::vector<uint8_t> changed_timestep;  // Particle has changed timestep
 
     std::vector<uint8_t> is_active;  // Particle is synced with the global clock
     std::vector<int> active_indices;
@@ -88,6 +89,20 @@ class GasParticleSystem {
     std::vector<double> vel_y_pred;
     std::vector<double> vel_z_pred;
     std::vector<double> pressure_pred;
+
+    std::vector<double> hydro_dv_x;
+    std::vector<double> hydro_dv_y;
+    std::vector<double> hydro_dv_z;
+    std::vector<double> hydro_du;
+    std::vector<double> hydro_de;
+
+    std::vector<double> snap_vel_x;
+    std::vector<double> snap_vel_y;
+    std::vector<double> snap_vel_z;
+    std::vector<double> snap_u;
+    std::vector<double> snap_total_energy;
+    std::vector<double> snap_pressure;
+    std::vector<double> snap_entropy;
 
     // Debugging
     std::vector<double> n_enc_final;
@@ -104,6 +119,7 @@ class GasParticleSystem {
         size_t sph_fallback = 0;
         size_t cooling_failed = 0;
         size_t particles_at_min_dt = 0;
+        size_t forced_wakeup = 0;
     };
     GasDiagnostics diag;
 
@@ -127,5 +143,6 @@ class GasParticleSystem {
     void reset_diagnostic_counters();
 
    private:
+    void enforce_timestep_restrictions(uint64_t ti_dt, const Config& config);
     void sort_arrays(const std::vector<int>& sorted_indices);
 };

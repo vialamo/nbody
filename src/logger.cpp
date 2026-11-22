@@ -156,15 +156,9 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
               << " | Gas Err: " << format_double(diag.gas_energy_err, 1, true)
               << "\n";
 
-    double flux_err =
-        std::max(abs(diag.flux_energy_error), diag.flux_momentum_error);
     std::cout << "    - Vol Err: " << format_double(diag.volume_error, 1, true)
-              << " | Flux Err: " << format_double(flux_err, 1, true)
               << " | Ill: " << format_double(diag.ill_cond_percent, 1, true)
-              << "% | Clamp: "
-              << format_double(diag.h_clamp_percent, 1, true)
-              // << "% | Incr: "
-              // << format_double(diag.h_inc_percent, 1, false)
+              << "% | Clamp: " << format_double(diag.h_clamp_percent, 1, true)
               << "%\n";
 
     std::cout << "    - Softening: "
@@ -177,7 +171,10 @@ void Logger::log(const Diagnostics& diag, const Config& conf) {
               << format_double(diag.dt_final, 1, true);
     if (conf.individual_particle_timesteps) {
         std::cout << " | Particles/step: "
-                  << format_double(diag.percent_particles_updated, 1) << "%\n";
+                  << format_double(diag.percent_particles_updated, 1)
+                  << "% | Wake: "
+                  << format_double(diag.forced_wakeup_percent, 1, false)
+                  << "%\n";
     } else {
         std::cout << " | Grav: " << format_double(diag.dt_gravity, 1, true)
                   << " | CFL: " << format_double(diag.dt_cfl, 1, true) << "\n";

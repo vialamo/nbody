@@ -14,20 +14,20 @@ class GasParticleSystem;
 
 class Integrator {
    public:
+    struct KickWork {
+        double grav_work = 0.0;
+        double exp_work = 0.0;
+        double def_energy = 0.0;
+        double entropy_energy = 0.0;
+        double injected_energy = 0.0;
+    };
+
     void initialize(SimState& state, const Config& config);
     void KDK_step(SimState& state, uint64_t ti_dt, const Config& config,
                   Diagnostics& diag);
 
-    struct KickWork {
-        double grav_work = 0.0;
-        double exp_work = 0.0;
-        double switch_energy = 0.0;
-        double injected_energy = 0.0;
-    };
-
-    KickWork kick_single_gas_particle(GasParticleSystem& gas, size_t i,
-                                      double dt, double a, double H,
-                                      const Config& config);
+    void kick_wakeup_catchup(GasParticleSystem& gas, size_t i, double dt_actual,
+                             double a, double H, const Config& config);
 
     Integrator() = default;
     ~Integrator() = default;

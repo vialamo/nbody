@@ -5,35 +5,6 @@
 
 namespace {
 constexpr double MIN_ENERGY_EPS = 1e-12;
-
-struct HydroConservationError {
-    Eigen::Vector3d momentum_error_rate;  // Net un-conserved force
-    double energy_error_rate;             // Net un-conserved power
-};
-
-HydroConservationError diagnose_hydro_conservation_error(
-    const GasParticleSystem& gas) {
-    double net_fx = 0.0;
-    double net_fy = 0.0;
-    double net_fz = 0.0;
-    double net_edot = 0.0;
-
-    // Summing m * a_hydro gives the aggregate of all Riemann face fluxes
-#pragma omp parallel for reduction(+ : net_fx, net_fy, net_fz, net_edot) \
-    schedule(static)
-    for (size_t i = 0; i < gas.num_particles; ++i) {
-        net_fx += gas.mass[i] * gas.hydro_acc_x[i];
-        net_fy += gas.mass[i] * gas.hydro_acc_y[i];
-        net_fz += gas.mass[i] * gas.hydro_acc_z[i];
-        net_edot += gas.mass[i] * gas.de_dt[i];
-    }
-
-    HydroConservationError error;
-    error.momentum_error_rate = Eigen::Vector3d(net_fx, net_fy, net_fz);
-    error.energy_error_rate = net_edot;
-
-    return error;
-}
 }  // namespace
 
 ScopedTimer::ScopedTimer(Diagnostics& d, TimerRegion r) : diag(d), region(r) {
@@ -188,7 +159,7 @@ void Diagnostics::compute_gas_metrics(const GasParticleSystem& gas,
     this->gas_energy_err =
         calculate_hydro_energy_error(sum_ke + sum_ie, gas.budget);
 
-    // MFM Specific Diagnostics
+    // Gas Specific Diagnostics
     const size_t num_gas_particles = gas.num_particles;
     this->particles_at_min_dt = gas.diag.particles_at_min_dt;
     this->h_non_converged_cases = gas.diag.non_converged_h;
@@ -217,15 +188,16 @@ void Diagnostics::compute_gas_metrics(const GasParticleSystem& gas,
             (static_cast<double>(gas.diag.neighbor_increased) /
              std::max(1, accumulated_cycles)) /
             num_gas_particles;
+        this->forced_wakeup_percent =
+            100.0 *
+            (static_cast<double>(gas.diag.forced_wakeup) /
+             std::max(1, accumulated_cycles)) /
+            num_gas_particles;
     }
 
     double box_volume =
         config.domain_size.x * config.domain_size.y * config.domain_size.z;
     this->volume_error = (total_sim_volume / box_volume) - 1.0;
-
-    auto hce = diagnose_hydro_conservation_error(gas);
-    this->flux_energy_error = hce.energy_error_rate;
-    this->flux_momentum_error = hce.momentum_error_rate.norm();
 }
 
 void Diagnostics::update_physics(const SimState& state, const TimestepInfo& ts,

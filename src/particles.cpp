@@ -194,10 +194,16 @@ void ParticleSystem::sync_and_activate(uint64_t ti_dt, const Config& config) {
 }
 
 void ParticleSystem::update_particle_timesteps(const Config& config,
-                                               double softening_length) {
+                                               double softening_length,
+                                               double hubble_param) {
     if (num_particles == 0) return;
 
     double dt_max = config.fixed_dt;
+
+    // Apply cosmological expansion limiter
+    if (config.expanding_universe && hubble_param > 0.0) {
+        dt_max = std::min(dt_max, config.max_expansion_step / hubble_param);
+    }
 
     if (!config.individual_particle_timesteps) {
         // Under global timesteps, calculate the integer step from dt_max
@@ -215,7 +221,6 @@ void ParticleSystem::update_particle_timesteps(const Config& config,
     double epsilon = softening_length;
 
     // Prevent OpenMP from deadlocking on 0-trip dynamic loops
-    // during micro-cycles where all particles are asleep
     size_t num_active = get_num_active();
     if (num_active == 0) return;
 
@@ -247,16 +252,15 @@ void ParticleSystem::update_particle_timesteps(const Config& config,
             n++;
         }
 
-        // A particle can ONLY adopt a timestep bin if the current global clock
+        // A particle can only adopt a timestep bin if the current global clock
         // is aligned to an integer multiple of that bin's boundary
         while ((ti_global_time % ti_bin) != 0 &&
                n < TimeConstants::MAX_TIMESTEP_BIN_DEPTH) {
             ti_bin >>= 1;
-            dt_bin *= 0.5;
             n++;
         }
 
-        // Update the Integer Source of Truth
+        // Update
         ti_step[i] = ti_bin;
         ti_end[i] = ti_global_time + ti_bin;
     }

@@ -103,26 +103,33 @@ void kick_particle_thermodynamics(GasParticleSystem& gas, size_t i,
                                   double ke_spec_new, double grav_work,
                                   double drag_work, double dt,
                                   double expansion_factor, double a,
-                                  const Config& config,
+                                  const Config& config, bool is_kick1,
                                   Integrator::KickWork& work) {
     constexpr double min_energy = 0.0;
     const double gamma_minus_1 = config.gamma - 1.0;
     const double m = gas.mass[i];
     const double rho = gas.rho[i];
 
-    work.switch_energy = 0.0;
+    work.entropy_energy = 0.0;
+    work.def_energy = 0.0;
     work.injected_energy = 0.0;
 
     // Base Integration (Explicit and Conservative)
-    double u_post_hydro = gas.u[i] + gas.du_dt[i] * dt;
+    double u_post_hydro = gas.u[i] + (is_kick1 ? 0.0 : gas.hydro_du[i]);
     double u_cooling = u_post_hydro * expansion_factor;
 
     double u_raw = std::max(u_post_hydro - u_cooling, min_energy);
     work.exp_work = -drag_work + (u_cooling * m);
 
-    double e_tot_post = gas.total_energy[i] + (gas.de_dt[i] * dt) +
-                        (grav_work / m) + (drag_work / m) - u_cooling;
+    double e_tot_post = gas.total_energy[i] +
+                        (is_kick1 ? 0.0 : gas.hydro_de[i]) + (grav_work / m) +
+                        (drag_work / m) - u_cooling;
     e_tot_post = std::max(e_tot_post, min_energy);
+
+    if (!is_kick1) {
+        gas.hydro_du[i] = 0.0;
+        gas.hydro_de[i] = 0.0;
+    }
 
     double u_cons = e_tot_post - ke_spec_new;
 
@@ -145,12 +152,12 @@ void kick_particle_thermodynamics(GasParticleSystem& gas, size_t i,
                 gas.entropy[i] * std::pow(rho, gamma_minus_1) / gamma_minus_1;
             u_clean -= (u_clean * expansion_factor);
 
-            work.switch_energy = (u_clean - u_raw) * m;
+            work.entropy_energy = (u_clean - u_raw) * m;
             gas.u[i] = std::max(u_clean, min_energy);
             gas.total_energy[i] = gas.u[i] + ke_spec_new;
         } else if (u_cons < thresh_trunc) {
             // DUAL ENERGY FORMALISM: Trust explicit integration
-            work.switch_energy = (u_raw - u_cons) * m;
+            work.def_energy = (u_raw - u_cons) * m;
             gas.u[i] = u_raw;
             gas.total_energy[i] = gas.u[i] + ke_spec_new;
         } else {
@@ -177,6 +184,30 @@ void kick_particle_thermodynamics(GasParticleSystem& gas, size_t i,
     // Finalize Entropy and Pressure to match settled internal energy
     gas.entropy[i] = gamma_minus_1 * gas.u[i] / std::pow(rho, gamma_minus_1);
     gas.pressure[i] = gamma_minus_1 * rho * gas.u[i];
+}
+
+void kick_wakeup_catchup(GasParticleSystem& gas, size_t i, double a,
+                         double dt_actual, double expansion_factor,
+                         const Config& config) {
+    const double u_floor = get_u_floor(a, config);
+
+    // Thermodynamic update using continuous rates
+    gas.u[i] += gas.du_dt[i] * dt_actual;
+    gas.total_energy[i] += gas.de_dt[i] * dt_actual;
+
+    // Apply adiabatic expansion cooling
+    gas.u[i] -= gas.u[i] * expansion_factor;
+    gas.total_energy[i] -= gas.u[i] * expansion_factor;
+
+    // Floor enforcement to prevent crashes during the catch-up
+    gas.u[i] = std::max(gas.u[i], u_floor);
+    gas.total_energy[i] = std::max(gas.total_energy[i], u_floor);
+
+    // Re-sync EOS state
+    double gamma_minus_1 = config.gamma - 1.0;
+    gas.entropy[i] =
+        gamma_minus_1 * gas.u[i] / std::pow(gas.rho[i], gamma_minus_1);
+    gas.pressure[i] = gamma_minus_1 * gas.rho[i] * gas.u[i];
 }
 
 }  // namespace Thermodynamics

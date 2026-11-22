@@ -280,6 +280,8 @@ void HDF5Writer::save_snapshot(int snapshot_index, int cycle_count,
                             gas.budget.expansion_work);
             set_attr_double(gas_group, "cumulative_entropy_switch_energy",
                             gas.budget.entropy_switch);
+            set_attr_double(gas_group, "cumulative_def_switch_energy",
+                            gas.budget.def_switch);
             set_attr_double(gas_group, "cumulative_floor_injected_energy",
                             gas.budget.floor_injection);
 
