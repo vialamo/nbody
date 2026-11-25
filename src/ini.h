@@ -51,9 +51,15 @@ class Ini {
         std::string val = get(section, key);
         if (val.empty()) return default_val;
         try {
-            return std::stoi(val);
-        } catch (...) {
-            return default_val;
+            size_t pos = 0;
+            int result = std::stoi(val, &pos);
+            if (pos != val.size()) {
+                throw std::invalid_argument("trailing characters");
+            }
+            return result;
+        } catch (const std::exception&) {
+            throw std::runtime_error("INI: Invalid integer for [" + section +
+                                     "] " + key + " = '" + val + "'");
         }
     }
 
@@ -63,9 +69,15 @@ class Ini {
         std::string val = get(section, key);
         if (val.empty()) return default_val;
         try {
-            return std::stod(val);
-        } catch (...) {
-            return default_val;
+            size_t pos = 0;
+            double result = std::stod(val, &pos);
+            if (pos != val.size()) {
+                throw std::invalid_argument("trailing characters");
+            }
+            return result;
+        } catch (const std::exception&) {
+            throw std::runtime_error("INI: Invalid number for [" + section +
+                                     "] " + key + " = '" + val + "'");
         }
     }
 
@@ -74,10 +86,13 @@ class Ini {
                   bool default_val = false) {
         std::string val = get(section, key);
         if (val.empty()) return default_val;
-        std::transform(val.begin(), val.end(), val.begin(), ::tolower);
-        if (val == "true" || val == "yes" || val == "1") return true;
-        if (val == "false" || val == "no" || val == "0") return false;
-        return default_val;
+        std::string lower = val;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        if (lower == "true" || lower == "yes" || lower == "1") return true;
+        if (lower == "false" || lower == "no" || lower == "0") return false;
+        throw std::runtime_error("INI: Invalid boolean for [" + section + "] " +
+                                 key + " = '" + val + "'");
     }
 
    private:

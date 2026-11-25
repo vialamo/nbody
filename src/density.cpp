@@ -165,7 +165,7 @@ double build_matrix_and_compute_condition(const GasParticleSystem& gas,
 
     Eigen::Vector3d inv_eigenvalues = Eigen::Vector3d::Zero();
 
-#define USE_TIKHONOV_REGULARIZATION
+#define TIKHONOV_REGULARIZATION
 #ifdef TIKHONOV_REGULARIZATION
     // Tikhonov Regularization (Damped Pseudoinverse)
     // Smoothly suppresses degenerate dimensions to prevent abrupt mathematical

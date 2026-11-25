@@ -167,7 +167,6 @@ struct Config {
     static constexpr bool using_GPU = false;
 #endif
 
-    Config();
     void load(const std::string& filename);
     void compute_derived_data();
 

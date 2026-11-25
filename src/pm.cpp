@@ -15,41 +15,43 @@ void bin_and_add_mass(const Config& config, size_t num_particles,
                       PM::Grid3D& out_rho_grid) {
     if (num_particles == 0) return;
 
-    out_cic_data.assign(num_particles, {});
+    out_cic_data.resize(num_particles);
 
     int Nx = config.mesh_size.x;
     int Ny = config.mesh_size.y;
     int Nz = config.mesh_size.z;
     double inv_cell_size = 1.0 / config.cell_size;
+    const size_t stride_x = static_cast<size_t>(Ny) * Nz;
+    const size_t stride_y = static_cast<size_t>(Nz);
+    const double half_cell = 0.5 * config.cell_size;
+    double* rho_data = out_rho_grid.data.data();
 
-    // Calculate cells & densities
-    // Note: This loop is intentionally sequential to avoid OpenMP
-    // race conditions when multiple particles write to the same grid cell
+// Calculate cells and densities
+#pragma omp parallel for schedule(static)
     for (size_t i = 0; i < num_particles; ++i) {
         double px = pos_x[i], py = pos_y[i], pz = pos_z[i];
 
         // Cell centered PM grid nodes
-        double shifted_x = px - 0.5 * config.cell_size;
-        double shifted_y = py - 0.5 * config.cell_size;
-        double shifted_z = pz - 0.5 * config.cell_size;
+        double shifted_x = std::fmod(px - half_cell + config.domain_size.x,
+                                     config.domain_size.x);
+        double shifted_y = std::fmod(py - half_cell + config.domain_size.y,
+                                     config.domain_size.y);
+        double shifted_z = std::fmod(pz - half_cell + config.domain_size.z,
+                                     config.domain_size.z);
 
-        // Ensure periodic wrap-around bounds[cite: 13, 15]
-        shifted_x =
-            fmod(shifted_x + config.domain_size.x, config.domain_size.x);
-        shifted_y =
-            fmod(shifted_y + config.domain_size.y, config.domain_size.y);
-        shifted_z =
-            fmod(shifted_z + config.domain_size.z, config.domain_size.z);
+        double gx = shifted_x * inv_cell_size;
+        double gy = shifted_y * inv_cell_size;
+        double gz = shifted_z * inv_cell_size;
 
-        int ix = static_cast<int>(shifted_x * inv_cell_size);
-        int iy = static_cast<int>(shifted_y * inv_cell_size);
-        int iz = static_cast<int>(shifted_z * inv_cell_size);
+        int ix = static_cast<int>(gx);
+        int iy = static_cast<int>(gy);
+        int iz = static_cast<int>(gz);
 
-        double frac_x = (shifted_x * inv_cell_size) - ix;
-        double frac_y = (shifted_y * inv_cell_size) - iy;
-        double frac_z = (shifted_z * inv_cell_size) - iz;
+        double frac_x = gx - ix;
+        double frac_y = gy - iy;
+        double frac_z = gz - iz;
 
-        // Trilinear interpolation weights[cite: 13, 15]
+        // Trilinear interpolation weights
         double w000 = (1 - frac_x) * (1 - frac_y) * (1 - frac_z);
         double w100 = frac_x * (1 - frac_y) * (1 - frac_z);
         double w010 = (1 - frac_x) * frac_y * (1 - frac_z);
@@ -66,15 +68,26 @@ void bin_and_add_mass(const Config& config, size_t num_particles,
         int iy0 = (iy + Ny) % Ny, iy1 = (iy + 1 + Ny) % Ny;
         int iz0 = (iz + Nz) % Nz, iz1 = (iz + 1 + Nz) % Nz;
 
+        size_t bx0 = ix0 * stride_x, bx1 = ix1 * stride_x;
+        size_t by0 = iy0 * stride_y, by1 = iy1 * stride_y;
+
         double m = mass[i];
-        out_rho_grid(ix0, iy0, iz0) += m * w000;
-        out_rho_grid(ix1, iy0, iz0) += m * w100;
-        out_rho_grid(ix0, iy1, iz0) += m * w010;
-        out_rho_grid(ix1, iy1, iz0) += m * w110;
-        out_rho_grid(ix0, iy0, iz1) += m * w001;
-        out_rho_grid(ix1, iy0, iz1) += m * w101;
-        out_rho_grid(ix0, iy1, iz1) += m * w011;
-        out_rho_grid(ix1, iy1, iz1) += m * w111;
+#pragma omp atomic
+        rho_data[bx0 + by0 + iz0] += m * w000;
+#pragma omp atomic
+        rho_data[bx1 + by0 + iz0] += m * w100;
+#pragma omp atomic
+        rho_data[bx0 + by1 + iz0] += m * w010;
+#pragma omp atomic
+        rho_data[bx1 + by1 + iz0] += m * w110;
+#pragma omp atomic
+        rho_data[bx0 + by0 + iz1] += m * w001;
+#pragma omp atomic
+        rho_data[bx1 + by0 + iz1] += m * w101;
+#pragma omp atomic
+        rho_data[bx0 + by1 + iz1] += m * w011;
+#pragma omp atomic
+        rho_data[bx1 + by1 + iz1] += m * w111;
     }
 }
 
@@ -268,28 +281,44 @@ void PM::compute_acceleration(SimState& state, const Config& config) {
     // Backward Transform
     fftw_execute(backward_plan);
 
-    // Normalization and gradients
+    // Normalization and gradients (4-point central difference)
     double norm = 1.0 / ((double)Nx * Ny * Nz);
     double a_inv3 =
         1.0 / (state.scale_factor * state.scale_factor * state.scale_factor);
-    double factor = (-norm / (2.0 * config.cell_size)) * a_inv3;
+    double factor = (-norm / config.cell_size) * a_inv3;
+
+    constexpr double c1 = 2.0 / 3.0;
+    constexpr double c2 = 1.0 / 12.0;
 
 #pragma omp parallel for collapse(2)
     for (int i = 0; i < Nx; ++i) {
         for (int j = 0; j < Ny; ++j) {
-            int ip1 = (i + 1 == Nx) ? 0 : i + 1;
-            int im1 = (i == 0) ? Nx - 1 : i - 1;
-            int jp1 = (j + 1 == Ny) ? 0 : j + 1;
-            int jm1 = (j == 0) ? Ny - 1 : j - 1;
+            int ip1 = (i + 1) % Nx;
+            int ip2 = (i + 2) % Nx;
+            int im1 = (i - 1 + Nx) % Nx;
+            int im2 = (i - 2 + Nx) % Nx;
+
+            int jp1 = (j + 1) % Ny;
+            int jp2 = (j + 2) % Ny;
+            int jm1 = (j - 1 + Ny) % Ny;
+            int jm2 = (j - 2 + Ny) % Ny;
 
 #pragma omp simd
             for (int k = 0; k < Nz; ++k) {
-                int kp1 = (k + 1 == Nz) ? 0 : k + 1;
-                int km1 = (k == 0) ? Nz - 1 : k - 1;
+                int kp1 = (k + 1) % Nz;
+                int kp2 = (k + 2) % Nz;
+                int km1 = (k - 1 + Nz) % Nz;
+                int km2 = (k - 2 + Nz) % Nz;
 
-                acc_x(i, j, k) = (phi(ip1, j, k) - phi(im1, j, k)) * factor;
-                acc_y(i, j, k) = (phi(i, jp1, k) - phi(i, jm1, k)) * factor;
-                acc_z(i, j, k) = (phi(i, j, kp1) - phi(i, j, km1)) * factor;
+                acc_x(i, j, k) = (c1 * (phi(ip1, j, k) - phi(im1, j, k)) -
+                                  c2 * (phi(ip2, j, k) - phi(im2, j, k))) *
+                                 factor;
+                acc_y(i, j, k) = (c1 * (phi(i, jp1, k) - phi(i, jm1, k)) -
+                                  c2 * (phi(i, jp2, k) - phi(i, jm2, k))) *
+                                 factor;
+                acc_z(i, j, k) = (c1 * (phi(i, j, kp1) - phi(i, j, km1)) -
+                                  c2 * (phi(i, j, kp2) - phi(i, j, km2))) *
+                                 factor;
             }
         }
     }

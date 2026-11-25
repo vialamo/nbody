@@ -141,14 +141,9 @@ GlassData HDF5Reader::read_glass_cube(const std::string& filepath) {
         H5::DataSet h_dataset = file.openDataSet("/PartType0/SmoothingLength");
         data.h.resize(data.num_particles);
 
-        // SWIFT files sometimes use float instead of double for properties,
-        // read into a float buffer if necessary, then cast.
-        if (h_dataset.getFloatType().getSize() == 4) {
-            std::vector<float> h_buffer(data.num_particles);
-            h_dataset.read(h_buffer.data(), H5::PredType::NATIVE_FLOAT);
-        } else {
-            h_dataset.read(data.h.data(), H5::PredType::NATIVE_DOUBLE);
-        }
+        // SWIFT files use float instead of double for properties,
+        // but the read should be automatically converted
+        h_dataset.read(data.h.data(), H5::PredType::NATIVE_DOUBLE);
 
     } catch (const H5::Exception& e) {
         throw std::runtime_error("Failed to read glass file: " + filepath);

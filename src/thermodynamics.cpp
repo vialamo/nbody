@@ -100,7 +100,7 @@ double get_pressure_floor(double a, const Config& config) {
 }
 
 void kick_particle_thermodynamics(GasParticleSystem& gas, size_t i,
-                                  double ke_spec_new, double grav_work,
+                                  double ke_spec, double grav_work,
                                   double drag_work, double dt,
                                   double expansion_factor, double a,
                                   const Config& config, bool is_kick1,
@@ -131,44 +131,42 @@ void kick_particle_thermodynamics(GasParticleSystem& gas, size_t i,
         gas.hydro_de[i] = 0.0;
     }
 
-    double u_cons = e_tot_post - ke_spec_new;
+    double u_cons = e_tot_post - ke_spec;
 
-    if (dt > 0.0) {
-        // Gravity Noise Thresholding
-        double a_grav_mag = std::sqrt(gas.acc_x[i] * gas.acc_x[i] +
-                                      gas.acc_y[i] * gas.acc_y[i] +
-                                      gas.acc_z[i] * gas.acc_z[i]);
-        double delta_E_grav = a_grav_mag * gas.h[i];
+    // Gravity Noise Thresholding
+    double a_grav_mag =
+        std::sqrt(gas.acc_x[i] * gas.acc_x[i] + gas.acc_y[i] * gas.acc_y[i] +
+                  gas.acc_z[i] * gas.acc_z[i]);
+    double delta_E_grav = a_grav_mag * gas.h[i];
 
-        // Arbitration (DEF & Entropy Switch)
-        double thresh_trunc = config.dual_energy_threshold * ke_spec_new;
-        double thresh_kin =
-            config.entropy_switch_akin * (gas.max_rel_ke[i] + u_raw);
-        double thresh_grav = config.entropy_switch_agrav * delta_E_grav;
+    // Arbitration (DEF & Entropy Switch)
+    double thresh_trunc =
+        config.dual_energy_threshold * (ke_spec + delta_E_grav);
+    double thresh_kin =
+        config.entropy_switch_akin * (gas.max_rel_ke[i] + u_raw);
+    double thresh_grav = config.entropy_switch_agrav * delta_E_grav;
 
-        if (u_raw < thresh_kin || u_raw < thresh_grav) {
-            // ENTROPY FALLBACK: Revert to pristine adiabatic state
-            double u_clean =
-                gas.entropy[i] * std::pow(rho, gamma_minus_1) / gamma_minus_1;
-            u_clean -= (u_clean * expansion_factor);
-
-            work.entropy_energy = (u_clean - u_raw) * m;
-            gas.u[i] = std::max(u_clean, min_energy);
-            gas.total_energy[i] = gas.u[i] + ke_spec_new;
-        } else if (u_cons < thresh_trunc) {
-            // DUAL ENERGY FORMALISM: Trust explicit integration
-            work.def_energy = (u_raw - u_cons) * m;
-            gas.u[i] = u_raw;
-            gas.total_energy[i] = gas.u[i] + ke_spec_new;
-        } else {
-            // NORMAL REGIME: Trust conservative integration
-            gas.u[i] = std::max(u_cons, min_energy);
-            gas.total_energy[i] = e_tot_post;
-        }
-    } else {
-        // When undoing a kick, trust the rewound values without clamping
+    if (u_raw > thresh_trunc) {
+        // NORMAL REGIME (Shocked/Hot): derive 'u' from the integrated total
+        // energy
         gas.u[i] = std::max(u_cons, min_energy);
         gas.total_energy[i] = e_tot_post;
+    } else if (u_raw < thresh_kin || u_raw < thresh_grav) {
+        // ENTROPY FALLBACK (Cold/Smooth): Flow is adiabatic but
+        // kinetic/gravitational noise is high. Recover 'u' from entropy
+        double u_clean =
+            gas.entropy[i] * std::pow(rho, gamma_minus_1) / gamma_minus_1;
+        u_clean -= (u_clean * expansion_factor);
+
+        work.entropy_energy = (u_clean - u_cons) * m;
+        gas.u[i] = std::max(u_clean, min_energy);
+        gas.total_energy[i] = gas.u[i] + ke_spec;
+    } else {
+        // DUAL ENERGY FORMALISM (Intermediate): Truncation error ruins
+        // conservative subtraction. Trust explicitly integrated 'u_raw'
+        work.def_energy = (u_raw - u_cons) * m;
+        gas.u[i] = u_raw;
+        gas.total_energy[i] = gas.u[i] + ke_spec;
     }
 
     // Apply Thermodynamic Floor
@@ -181,7 +179,7 @@ void kick_particle_thermodynamics(GasParticleSystem& gas, size_t i,
         gas.total_energy[i] += injected;
     }
 
-    // Finalize Entropy and Pressure to match settled internal energy
+    // Finalize Entropy and Pressure to match internal energy
     gas.entropy[i] = gamma_minus_1 * gas.u[i] / std::pow(rho, gamma_minus_1);
     gas.pressure[i] = gamma_minus_1 * rho * gas.u[i];
 }
@@ -196,14 +194,15 @@ void kick_wakeup_catchup(GasParticleSystem& gas, size_t i, double a,
     gas.total_energy[i] += gas.de_dt[i] * dt_actual;
 
     // Apply adiabatic expansion cooling
-    gas.u[i] -= gas.u[i] * expansion_factor;
-    gas.total_energy[i] -= gas.u[i] * expansion_factor;
+    double u_cooling = gas.u[i] * expansion_factor;
+    gas.u[i] -= u_cooling;
+    gas.total_energy[i] -= u_cooling;
 
     // Floor enforcement to prevent crashes during the catch-up
     gas.u[i] = std::max(gas.u[i], u_floor);
     gas.total_energy[i] = std::max(gas.total_energy[i], u_floor);
 
-    // Re-sync EOS state
+    // Re-sync state
     double gamma_minus_1 = config.gamma - 1.0;
     gas.entropy[i] =
         gamma_minus_1 * gas.u[i] / std::pow(gas.rho[i], gamma_minus_1);

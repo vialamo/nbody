@@ -22,9 +22,8 @@ uint64_t get_next_sync_ti(const std::vector<uint64_t>& ti_end,
 }
 }  // namespace
 
-SimulationEngine::SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5,
-                                   Diagnostics& diag)
-    : config(conf), logger(log), h5_writer(h5), diagnostics(diag), state(conf) {
+SimulationEngine::SimulationEngine(Config& conf, const std::string& run_dir)
+    : config(conf), logger(run_dir), h5_writer(run_dir, conf), state(conf) {
     initialize_state(state, conf);
     integrator.initialize(state, config);
 
@@ -35,7 +34,7 @@ SimulationEngine::SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5,
     diagnostics.update_physics(state, current_ts, config);
     last_debug_time = std::chrono::high_resolution_clock::now();
 
-    logger.log(diag, conf);
+    logger.log(diagnostics, conf);
 
     if (config.save_HDF5_every_delta_a > 0.0) {
         h5_writer.save_snapshot(snapshot_count, cycle_count, state, config,

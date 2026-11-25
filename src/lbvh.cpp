@@ -194,6 +194,7 @@ void build_topology_and_aggregate(size_t num_particles,
         // Walk up the tree
         int curr = bvh_nodes[leaf_idx].parent;
         while (curr != -1) {
+#pragma omp flush
             int old_flag;
 #pragma omp atomic capture
             old_flag = atomic_flags[curr]++;
@@ -205,6 +206,7 @@ void build_topology_and_aggregate(size_t num_particles,
             }
 
             // Second thread to arrive. Both children are ready. Compute parent
+#pragma omp flush
             int left = bvh_nodes[curr].left_child;
             int right = bvh_nodes[curr].right_child;
 
@@ -273,6 +275,7 @@ void update_h_and_bboxes(size_t num_particles, const std::vector<double>& pos_x,
         // Walk up the tree
         int curr = bvh_nodes[leaf_idx].parent;
         while (curr != -1) {
+#pragma omp flush
             int old_flag;
 #pragma omp atomic capture
             old_flag = atomic_flags[curr]++;
@@ -283,6 +286,7 @@ void update_h_and_bboxes(size_t num_particles, const std::vector<double>& pos_x,
             }
 
             // Second thread to arrive. Both children are ready. Compute parent
+#pragma omp flush
             int left = bvh_nodes[curr].left_child;
             int right = bvh_nodes[curr].right_child;
 
@@ -491,8 +495,8 @@ void build_topology_and_aggregate_gpu(Workspace& ws, size_t num_particles,
         bvh_nodes[0].parent = -1;
     }
 
-    // BOTTOM-UP AGGREGATION
-    int flags_size = n - 1;
+    // BOTTOM-UP AGGREGATION (Pure OpenMP 4.5, level-synchronous)
+    size_t flags_size = static_cast<size_t>(num_nodes);
 
     if (flags_size > ws.current_flags_capacity) {
         int dev = omp_get_default_device();
@@ -504,17 +508,18 @@ void build_topology_and_aggregate_gpu(Workspace& ws, size_t num_particles,
         ws.current_flags_capacity = flags_size;
     }
 
-    int* d_atomic_flags = ws.d_atomic_flags;
+    int* d_ready = ws.d_atomic_flags;
 
-    // Zero out the atomic flags
-#pragma omp target teams distribute parallel for is_device_ptr(d_atomic_flags)
-    for (int i = 0; i < flags_size; ++i) {
-        d_atomic_flags[i] = 0;
+    // Mark internal nodes as not ready (0)
+#pragma omp target teams distribute parallel for is_device_ptr(d_ready)
+    for (int i = 0; i < n - 1; ++i) {
+        d_ready[i] = 0;
     }
 
+    // Initialize leaves and mark them ready at level 1
 #pragma omp target teams distribute parallel for is_device_ptr(           \
         sorted_pos_x, sorted_pos_y, sorted_pos_z, sorted_mass, bvh_nodes, \
-            d_atomic_flags)
+            d_ready)
     for (int i = 0; i < n; ++i) {
         int leaf_idx = n - 1 + i;
         double px = sorted_pos_x[i], py = sorted_pos_y[i], pz = sorted_pos_z[i];
@@ -531,52 +536,73 @@ void build_topology_and_aggregate_gpu(Workspace& ws, size_t num_particles,
         bvh_nodes[leaf_idx].com_y = py * sorted_mass[i];
         bvh_nodes[leaf_idx].com_z = pz * sorted_mass[i];
 
-        int curr = bvh_nodes[leaf_idx].parent;
-        while (curr != -1) {
-            int old_flag;
-#pragma omp atomic capture
-            old_flag = d_atomic_flags[curr]++;
+        d_ready[leaf_idx] = 1;
+    }
 
-            if (old_flag == 0) break;  // First thread terminates
+    // Propagate bottom-up one level per kernel launch
+    int level = 1;
+    int unfinished = 1;
+    while (unfinished > 0) {
+        unfinished = 0;
 
-            int left = bvh_nodes[curr].left_child;
-            int right = bvh_nodes[curr].right_child;
+#pragma omp target teams distribute parallel for is_device_ptr( \
+        bvh_nodes, d_ready) reduction(+ : unfinished)
+        for (int i = 0; i < n - 1; ++i) {
+            if (d_ready[i] == 0) {
+                int left = bvh_nodes[i].left_child;
+                int right = bvh_nodes[i].right_child;
 
-            bvh_nodes[curr].bbox.min_x =
-                (bvh_nodes[left].bbox.min_x < bvh_nodes[right].bbox.min_x)
-                    ? bvh_nodes[left].bbox.min_x
-                    : bvh_nodes[right].bbox.min_x;
-            bvh_nodes[curr].bbox.max_x =
-                (bvh_nodes[left].bbox.max_x > bvh_nodes[right].bbox.max_x)
-                    ? bvh_nodes[left].bbox.max_x
-                    : bvh_nodes[right].bbox.max_x;
-            bvh_nodes[curr].bbox.min_y =
-                (bvh_nodes[left].bbox.min_y < bvh_nodes[right].bbox.min_y)
-                    ? bvh_nodes[left].bbox.min_y
-                    : bvh_nodes[right].bbox.min_y;
-            bvh_nodes[curr].bbox.max_y =
-                (bvh_nodes[left].bbox.max_y > bvh_nodes[right].bbox.max_y)
-                    ? bvh_nodes[left].bbox.max_y
-                    : bvh_nodes[right].bbox.max_y;
-            bvh_nodes[curr].bbox.min_z =
-                (bvh_nodes[left].bbox.min_z < bvh_nodes[right].bbox.min_z)
-                    ? bvh_nodes[left].bbox.min_z
-                    : bvh_nodes[right].bbox.min_z;
-            bvh_nodes[curr].bbox.max_z =
-                (bvh_nodes[left].bbox.max_z > bvh_nodes[right].bbox.max_z)
-                    ? bvh_nodes[left].bbox.max_z
-                    : bvh_nodes[right].bbox.max_z;
+                int r_left, r_right;
+#pragma omp atomic read
+                r_left = d_ready[left];
+#pragma omp atomic read
+                r_right = d_ready[right];
 
-            bvh_nodes[curr].mass = bvh_nodes[left].mass + bvh_nodes[right].mass;
-            bvh_nodes[curr].com_x =
-                bvh_nodes[left].com_x + bvh_nodes[right].com_x;
-            bvh_nodes[curr].com_y =
-                bvh_nodes[left].com_y + bvh_nodes[right].com_y;
-            bvh_nodes[curr].com_z =
-                bvh_nodes[left].com_z + bvh_nodes[right].com_z;
+                // Only consume children finalized in a PREVIOUS kernel launch
+                if (r_left > 0 && r_left <= level && r_right > 0 &&
+                    r_right <= level) {
+                    bvh_nodes[i].bbox.min_x = (bvh_nodes[left].bbox.min_x <
+                                               bvh_nodes[right].bbox.min_x)
+                                                  ? bvh_nodes[left].bbox.min_x
+                                                  : bvh_nodes[right].bbox.min_x;
+                    bvh_nodes[i].bbox.max_x = (bvh_nodes[left].bbox.max_x >
+                                               bvh_nodes[right].bbox.max_x)
+                                                  ? bvh_nodes[left].bbox.max_x
+                                                  : bvh_nodes[right].bbox.max_x;
+                    bvh_nodes[i].bbox.min_y = (bvh_nodes[left].bbox.min_y <
+                                               bvh_nodes[right].bbox.min_y)
+                                                  ? bvh_nodes[left].bbox.min_y
+                                                  : bvh_nodes[right].bbox.min_y;
+                    bvh_nodes[i].bbox.max_y = (bvh_nodes[left].bbox.max_y >
+                                               bvh_nodes[right].bbox.max_y)
+                                                  ? bvh_nodes[left].bbox.max_y
+                                                  : bvh_nodes[right].bbox.max_y;
+                    bvh_nodes[i].bbox.min_z = (bvh_nodes[left].bbox.min_z <
+                                               bvh_nodes[right].bbox.min_z)
+                                                  ? bvh_nodes[left].bbox.min_z
+                                                  : bvh_nodes[right].bbox.min_z;
+                    bvh_nodes[i].bbox.max_z = (bvh_nodes[left].bbox.max_z >
+                                               bvh_nodes[right].bbox.max_z)
+                                                  ? bvh_nodes[left].bbox.max_z
+                                                  : bvh_nodes[right].bbox.max_z;
 
-            curr = bvh_nodes[curr].parent;
+                    bvh_nodes[i].mass =
+                        bvh_nodes[left].mass + bvh_nodes[right].mass;
+                    bvh_nodes[i].com_x =
+                        bvh_nodes[left].com_x + bvh_nodes[right].com_x;
+                    bvh_nodes[i].com_y =
+                        bvh_nodes[left].com_y + bvh_nodes[right].com_y;
+                    bvh_nodes[i].com_z =
+                        bvh_nodes[left].com_z + bvh_nodes[right].com_z;
+
+#pragma omp atomic write
+                    d_ready[i] = level + 1;
+                } else {
+                    unfinished += 1;
+                }
+            }
         }
+        level++;
     }
 
 // Normalize Center of Mass on GPU

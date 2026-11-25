@@ -72,6 +72,10 @@ void Config::compute_derived_data() {
     box_size_mpc.y = box_size_mpc_1d;
     box_size_mpc.z = box_size_mpc_1d;
 
+    domain_size.x = domain_size_1d;
+    domain_size.y = domain_size_1d;
+    domain_size.z = domain_size_1d;
+
     domain_size.x *= domain_size_x_factor;
     mesh_size.x *= domain_size_x_factor;
     box_size_mpc.x *= domain_size_x_factor;
@@ -107,13 +111,6 @@ void Config::compute_derived_data() {
     timebase_to_float = fixed_dt / static_cast<double>(TimeConstants::TIMEBASE);
 
     init_derived_units();
-}
-
-Config::Config() {
-    domain_size.x = domain_size_1d;
-    domain_size.y = domain_size.x;
-    domain_size.z = domain_size.x;
-    compute_derived_data();
 }
 
 void Config::load(const std::string& filename) {
@@ -246,9 +243,9 @@ void Config::load(const std::string& filename) {
     if (a_start < 0) {
         throw std::runtime_error("Error: a_start can't be negative.");
     }
-    if (mesh_size_1d <= 0) {
+    if (mesh_size_1d <= 4) {
         throw std::runtime_error(
-            "Error: mesh_size_1d must be greater than zero.");
+            "Error: mesh_size_1d must be greater or equal than 4.");
     }
     if (num_dm_particles_1d + num_gas_particles_1d <= 0 ||
         num_dm_particles_1d < 0 || num_gas_particles_1d < 0) {

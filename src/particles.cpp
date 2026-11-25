@@ -66,70 +66,26 @@ void ParticleSystem::add_particle(double px, double py, double pz, double vx,
 void ParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     if (num_particles == 0) return;
 
-    std::vector<double> new_px(num_particles), new_py(num_particles),
-        new_pz(num_particles);
-    std::vector<double> new_vx(num_particles), new_vy(num_particles),
-        new_vz(num_particles);
-    std::vector<double> new_ax(num_particles), new_ay(num_particles),
-        new_az(num_particles);
-    std::vector<double> new_m(num_particles);
+    // Doubles
+    permute_array(pos_x, scratch_double, sorted_indices);
+    permute_array(pos_y, scratch_double, sorted_indices);
+    permute_array(pos_z, scratch_double, sorted_indices);
+    permute_array(vel_x, scratch_double, sorted_indices);
+    permute_array(vel_y, scratch_double, sorted_indices);
+    permute_array(vel_z, scratch_double, sorted_indices);
+    permute_array(acc_x, scratch_double, sorted_indices);
+    permute_array(acc_y, scratch_double, sorted_indices);
+    permute_array(acc_z, scratch_double, sorted_indices);
+    permute_array(mass, scratch_double, sorted_indices);
 
-    std::vector<uint8_t> new_is_active(num_particles);
+    // Integers & flags
+    permute_array(ti_step, scratch_uint64, sorted_indices);
+    permute_array(ti_current, scratch_uint64, sorted_indices);
+    permute_array(ti_end, scratch_uint64, sorted_indices);
+    permute_array(is_active, scratch_uint8, sorted_indices);
 
-    std::vector<uint64_t> new_ti_step(num_particles);
-    std::vector<uint64_t> new_ti_current(num_particles);
-    std::vector<uint64_t> new_ti_end(num_particles);
-
-    std::vector<CIC_Data> new_cic(num_particles);
-
-    for (size_t i = 0; i < num_particles; ++i) {
-        int src = sorted_indices[i];
-
-        new_px[i] = pos_x[src];
-        new_py[i] = pos_y[src];
-        new_pz[i] = pos_z[src];
-
-        new_vx[i] = vel_x[src];
-        new_vy[i] = vel_y[src];
-        new_vz[i] = vel_z[src];
-
-        new_ax[i] = acc_x[src];
-        new_ay[i] = acc_y[src];
-        new_az[i] = acc_z[src];
-
-        new_m[i] = mass[src];
-
-        new_ti_step[i] = ti_step[src];
-        new_ti_current[i] = ti_current[src];
-        new_ti_end[i] = ti_end[src];
-
-        new_is_active[i] = is_active[src];
-
-        new_cic[i] = cic_data[src];
-    }
-
-    // Move sorted data back
-    pos_x = std::move(new_px);
-    pos_y = std::move(new_py);
-    pos_z = std::move(new_pz);
-
-    vel_x = std::move(new_vx);
-    vel_y = std::move(new_vy);
-    vel_z = std::move(new_vz);
-
-    acc_x = std::move(new_ax);
-    acc_y = std::move(new_ay);
-    acc_z = std::move(new_az);
-
-    mass = std::move(new_m);
-
-    is_active = std::move(new_is_active);
-
-    ti_step = std::move(new_ti_step);
-    ti_current = std::move(new_ti_current);
-    ti_end = std::move(new_ti_end);
-
-    cic_data = std::move(new_cic);
+    // Others
+    permute_array(cic_data, scratch_cic, sorted_indices);
 
     active_indices.clear();
     for (size_t i = 0; i < num_particles; ++i) {
@@ -224,6 +180,11 @@ void ParticleSystem::update_particle_timesteps(const Config& config,
     size_t num_active = get_num_active();
     if (num_active == 0) return;
 
+    const double inv_timebase = 1.0 / config.timebase_to_float;
+    const uint64_t max_aligned_ti =
+        (ti_global_time > 0) ? (ti_global_time & (~ti_global_time + 1))
+                             : TimeConstants::TIMEBASE;
+
 #pragma omp parallel for schedule(dynamic, 64)
     for (size_t k = 0; k < num_active; ++k) {
         size_t i = active_indices[k];
@@ -240,25 +201,21 @@ void ParticleSystem::update_particle_timesteps(const Config& config,
             dt_ideal = std::min(dt_ideal, dt_grav);
         }
 
-        // Integer Power-of-two binning
-        int n = 0;
-        uint64_t ti_bin = TimeConstants::TIMEBASE;
-        double dt_bin = config.fixed_dt;  // Always anchor to the fixed_dt
-
-        // Halve the timestep until it bounds the ideal timestep
-        while (dt_bin > dt_ideal && n < TimeConstants::MAX_TIMESTEP_BIN_DEPTH) {
-            ti_bin >>= 1;  // Fast integer divide by 2
-            dt_bin *= 0.5;
-            n++;
+        // Power-of-two binning
+        uint64_t ti_bin;
+        if (dt_ideal >= config.fixed_dt) {
+            ti_bin = TimeConstants::TIMEBASE;
+        } else {
+            uint64_t ti_ideal = static_cast<uint64_t>(dt_ideal * inv_timebase);
+            // Largest power of 2 <= ti_ideal (clamped to 1)
+            ti_bin = (ti_ideal <= 1)
+                         ? 1ULL
+                         : (1ULL << (63 - __builtin_clzll(ti_ideal)));
         }
 
         // A particle can only adopt a timestep bin if the current global clock
         // is aligned to an integer multiple of that bin's boundary
-        while ((ti_global_time % ti_bin) != 0 &&
-               n < TimeConstants::MAX_TIMESTEP_BIN_DEPTH) {
-            ti_bin >>= 1;
-            n++;
-        }
+        ti_bin = std::min(ti_bin, max_aligned_ti);
 
         // Update
         ti_step[i] = ti_bin;

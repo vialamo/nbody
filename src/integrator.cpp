@@ -38,7 +38,7 @@ inline double get_particle_kick_half_dt(const Config& config,
 }
 
 struct KickResult {
-    double ke_spec_new;
+    double ke_spec;
     double grav_work;
     double drag_work;
 };
@@ -87,7 +87,7 @@ inline KickResult apply_velocity_kicks(GasParticleSystem& gas, size_t i,
                      gas.vel_z[i] * gas.vel_z[i]);
 
     res.drag_work = ke_new - ke_phys;
-    res.ke_spec_new = ke_new / m;
+    res.ke_spec = ke_new / m;
 
     return res;
 }
@@ -224,6 +224,28 @@ void update_timesteps(SimState& state, const Config& config) {
     state.gas.update_particle_timesteps(config, state.gravity.softening_length,
                                         state.hubble_param);
 }
+
+void enforce_boundary_conditions(SimState& state, const Config& config) {
+    // For sod test, keep boundaries static
+    if (config.initial_setup == InitialSetup::SodShockTube) {
+        auto& gas = state.gas;
+#pragma omp parallel for schedule(static)
+        for (size_t i = 0; i < gas.num_particles; ++i) {
+            if (gas.pos_x[i] < 0.05 * config.domain_size.x ||
+                gas.pos_x[i] > 0.95 * config.domain_size.x) {
+                gas.hydro_acc_x[i] = 0.0;
+                gas.hydro_acc_y[i] = 0.0;
+                gas.hydro_acc_z[i] = 0.0;
+                gas.du_dt[i] = 0.0;
+                gas.hydro_dv_x[i] = 0.0;
+                gas.hydro_dv_y[i] = 0.0;
+                gas.hydro_dv_z[i] = 0.0;
+                gas.hydro_du[i] = 0.0;
+                gas.hydro_de[i] = 0.0;
+            }
+        }
+    }
+}
 }  // namespace
 
 void Integrator::kick_wakeup_catchup(GasParticleSystem& gas, size_t i,
@@ -292,7 +314,7 @@ void Integrator::apply_gas_kick(GasParticleSystem& gas, uint64_t ti_dt,
 
         // Thermodynamic Update (In-place integration & arbitration)
         Thermodynamics::kick_particle_thermodynamics(
-            gas, i, kin.ke_spec_new, kin.grav_work, kin.drag_work, half_dt,
+            gas, i, kin.ke_spec, kin.grav_work, kin.drag_work, half_dt,
             expansion_factor, a, config, is_kick1, work);
 
         // Accumulate local diagnostic work
@@ -369,6 +391,9 @@ void Integrator::compute_forces(SimState& state, const Config& config,
 #endif
         state.gravity.map_results(state.dm, state.gas, diag);
     }
+
+    // Force boundary conditions
+    enforce_boundary_conditions(state, config);
 }
 
 void Integrator::apply_kick(SimState& state, uint64_t ti_dt,
@@ -430,4 +455,6 @@ void Integrator::initialize(SimState& state, const Config& config) {
     compute_forces(state, config, dummy_diag);
 
     update_timesteps(state, config);
+
+    state.gas.reset_accumulators();
 }

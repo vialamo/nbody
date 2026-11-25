@@ -154,6 +154,7 @@ TEST_CASE("Zeldovich field amplitudes scale perfectly with sigma_8",
     config.hubble_h = 0.7;
     config.spectral_index = 0.96;
     config.seed = 42;
+    config.compute_derived_data();
 
     double start_a = 0.02;
 
@@ -248,6 +249,7 @@ TEST_CASE("Zeldovich field has zero mean (k=0 mode is dead)",
     config.sigma_8 = 0.81;
     config.spectral_index = 0.96;
     config.seed = 42;
+    config.compute_derived_data();
 
     ZeldovichField zf = compute_zeldovich_field(0.02, config);
 

@@ -35,7 +35,6 @@ class GravitySolver {
 
     LBVH::Workspace lbvh_ws;
 
-    void free_gpu_resources();
     void prepare_arrays(ParticleSystem& dm, GasParticleSystem& gas,
                         const Config& config, Diagnostics& diag);
 #endif
@@ -43,6 +42,9 @@ class GravitySolver {
    public:
     GravitySolver();
     ~GravitySolver();
+
+    GravitySolver(const GravitySolver&) = delete;
+    GravitySolver& operator=(const GravitySolver&) = delete;
 
     void update_softening(double a, const Config& config);
 

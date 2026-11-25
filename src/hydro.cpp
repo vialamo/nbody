@@ -369,11 +369,6 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
 
                     // Apply the reverse flux to j if j is also active
                     if (gas.is_active[j]) {
-                        double work_j =
-                            P_star_com *
-                            (v_star_lab - p_j.vel).dot(face.area_vec);
-                        double du_dt_j = work_j / p_j.mass;
-                        double de_dt_j = Rate_energy / p_j.mass;
 #pragma omp atomic
                         gas.hydro_acc_x[j] += Force_mom.x() / p_j.mass;
 #pragma omp atomic
@@ -390,25 +385,6 @@ void compute_forces(GasParticleSystem& gas, const Config& config, double a) {
     }
     gas.diag.sph_fallback += step_sph_fallbacks;
     gas.diag.riemann_failed += riemann_failed_cases;
-
-    // For sod test, keep boundaries static
-    if (config.initial_setup == InitialSetup::SodShockTube) {
-#pragma omp parallel for schedule(static)
-        for (size_t i = 0; i < gas.num_particles; ++i) {
-            if (gas.pos_x[i] < 0.05 * config.domain_size.x ||
-                gas.pos_x[i] > 0.95 * config.domain_size.x) {
-                gas.hydro_acc_x[i] = 0.0;
-                gas.hydro_acc_y[i] = 0.0;
-                gas.hydro_acc_z[i] = 0.0;
-                gas.du_dt[i] = 0.0;
-                gas.hydro_dv_x[i] = 0.0;
-                gas.hydro_dv_y[i] = 0.0;
-                gas.hydro_dv_z[i] = 0.0;
-                gas.hydro_du[i] = 0.0;
-                gas.hydro_de[i] = 0.0;
-            }
-        }
-    }
 }
 
 void step(GasParticleSystem& gas, const Config& config, double a) {

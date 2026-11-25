@@ -1,25 +1,20 @@
+#include <omp.h>
+
 #include <csignal>
 #include <filesystem>
 #include <iostream>
 #include <string>
 
 #include "config.h"
-#include "diagnostics.h"
 #include "engine.h"
-#include "hdf5_writer.h"
 #include "logger.h"
 #include "utils.h"
 
 SimulationEngine* g_engine = nullptr;
 
 void signal_handler(int signal) {
-    if (signal == SIGINT) {
-        std::cout << "\n[Ctrl+C Detected] Finishing the current cycle and "
-                     "shutting down..."
-                  << std::endl;
-        if (g_engine != nullptr) {
-            g_engine->request_stop();
-        }
+    if (signal == SIGINT && g_engine != nullptr) {
+        g_engine->request_stop();
     }
 }
 
@@ -50,18 +45,23 @@ int main(int argc, char* argv[]) {
     // Create the output directories
     std::string timestamp = Utils::get_timestamp();
     std::string run_dir = Utils::generate_directory_name(config, timestamp);
-    std::filesystem::create_directories(run_dir);
+    try {
+        if (!std::filesystem::create_directories(run_dir)) {
+            throw std::runtime_error("Output directory already exists: " +
+                                     run_dir);
+        }
 
-    // Copy the config file into the run directory for reproducibility
-    std::filesystem::copy_file(
-        config_filename, run_dir + "/config.ini",
-        std::filesystem::copy_options::overwrite_existing);
+        // Copy the config file into the run directory
+        std::filesystem::copy_file(
+            config_filename, std::filesystem::path(run_dir) / "config.ini",
+            std::filesystem::copy_options::overwrite_existing);
+    } catch (const std::exception& e) {
+        std::cerr << "Error preparing output directory '" << run_dir
+                  << "': " << e.what() << std::endl;
+        return 1;
+    }
 
-    HDF5Writer h5_writer(run_dir, config);
-    Logger logger(run_dir);
-    Diagnostics diagnostics;
-
-    SimulationEngine engine(config, logger, h5_writer, diagnostics);
+    SimulationEngine engine(config, run_dir);
     g_engine = &engine;
 
     std::cout << "\nSimulation loop started: " << timestamp << "\n"

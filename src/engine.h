@@ -1,13 +1,14 @@
 #pragma once
+#include <atomic>
 #include <chrono>
 
+#include "diagnostics.h"
+#include "hdf5_writer.h"
 #include "integrator.h"
+#include "logger.h"
 #include "state.h"
 
 struct Config;
-struct Diagnostics;
-class HDF5Writer;
-class Logger;
 
 enum class ExitStatus { ReachedMaxScaleFactor, ReachedMaxCycles, UserAborted };
 
@@ -22,9 +23,9 @@ class SimulationEngine {
     std::chrono::time_point<std::chrono::high_resolution_clock> last_debug_time;
 
     Config& config;
-    Logger& logger;
-    Diagnostics& diagnostics;
-    HDF5Writer& h5_writer;
+    Logger logger;
+    Diagnostics diagnostics;
+    HDF5Writer h5_writer;
 
     Integrator integrator;
     SimState state;
@@ -33,8 +34,7 @@ class SimulationEngine {
     void step();
 
    public:
-    SimulationEngine(Config& conf, Logger& log, HDF5Writer& h5,
-                     Diagnostics& diag);
+    SimulationEngine(Config& conf, const std::string& run_dir);
 
     ExitStatus run();
     void request_stop() { stop_requested = true; }

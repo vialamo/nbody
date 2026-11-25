@@ -1,6 +1,8 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 #include "math_utils.h"
@@ -60,7 +62,8 @@ inline void traverse(const BVHNode* bvh_nodes, const double* target_pos_x,
                      const double* target_pos_y, const double* target_pos_z,
                      double px, double py, double pz, double search_sq,
                      const Vec3& domain_size, LeafOperation&& leaf_op) {
-    int stack[128];
+    constexpr int MAX_STACK_SIZE = 128;
+    int stack[MAX_STACK_SIZE];
     int stack_ptr = 0;
     stack[stack_ptr++] = 0;
 
@@ -91,6 +94,10 @@ inline void traverse(const BVHNode* bvh_nodes, const double* target_pos_x,
             // Call the lambda
             leaf_op(j, dx, dy, dz, r2);
         } else {
+            if (stack_ptr + 2 > MAX_STACK_SIZE) {
+                printf("FATAL ERROR: LBVH traversal stack overflow\n");
+                return;
+            }
             stack[stack_ptr++] = node.left_child;
             stack[stack_ptr++] = node.right_child;
         }

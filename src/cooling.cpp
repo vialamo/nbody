@@ -14,14 +14,34 @@
 #include "thermodynamics.h"
 
 namespace {
-// Helper function to read an entire HDF5 dataset into a flattened 1D
-// std::vector
-std::vector<double> read_hdf5_dataset(const H5::H5File& file,
-                                      const std::string& dataset_name) {
+std::vector<double> read_hdf5_dataset_3d(const H5::H5File& file,
+                                         const std::string& dataset_name,
+                                         size_t expected_nd, size_t expected_nz,
+                                         size_t expected_nt) {
     H5::DataSet dataset = file.openDataSet(dataset_name);
     H5::DataSpace dataspace = dataset.getSpace();
 
-    hsize_t num_elements = dataspace.getSimpleExtentNpoints();
+    int rank = dataspace.getSimpleExtentNdims();
+    if (rank != 3) {
+        throw std::runtime_error("Dataset '" + dataset_name +
+                                 "' must be 3D, got rank " +
+                                 std::to_string(rank));
+    }
+
+    hsize_t dims[3];
+    dataspace.getSimpleExtentDims(dims, nullptr);
+
+    if (dims[0] != expected_nd || dims[1] != expected_nz ||
+        dims[2] != expected_nt) {
+        throw std::runtime_error(
+            "Dimension mismatch in '" + dataset_name + "': expected [" +
+            std::to_string(expected_nd) + ", " + std::to_string(expected_nz) +
+            ", " + std::to_string(expected_nt) + "] but got [" +
+            std::to_string(dims[0]) + ", " + std::to_string(dims[1]) + ", " +
+            std::to_string(dims[2]) + "]");
+    }
+
+    hsize_t num_elements = dims[0] * dims[1] * dims[2];
     std::vector<double> data(num_elements);
 
     dataset.read(data.data(), H5::PredType::NATIVE_DOUBLE, H5::DataSpace::ALL,
@@ -73,16 +93,20 @@ void Cooling::load_cooling_tables(const Config& config) {
         cooling_data.Nd = cooling_data.density.size();
         cooling_data.Nt = cooling_data.temperature.size();
 
-        // Read the 3D data tables
+        /// Read and validate the 3D data tables [Nd, Nz, Nt]
         cooling_data.cooling_metal =
-            read_hdf5_dataset(file, base_path + "Cooling");
+            read_hdf5_dataset_3d(file, base_path + "Cooling", cooling_data.Nd,
+                                 cooling_data.Nz, cooling_data.Nt);
         cooling_data.heating_metal =
-            read_hdf5_dataset(file, base_path + "Heating");
+            read_hdf5_dataset_3d(file, base_path + "Heating", cooling_data.Nd,
+                                 cooling_data.Nz, cooling_data.Nt);
 
-        cooling_data.cooling_primordial =
-            read_hdf5_dataset(file, "/CoolingRates/Primordial/Cooling");
-        cooling_data.heating_primordial =
-            read_hdf5_dataset(file, "/CoolingRates/Primordial/Heating");
+        cooling_data.cooling_primordial = read_hdf5_dataset_3d(
+            file, "/CoolingRates/Primordial/Cooling", cooling_data.Nd,
+            cooling_data.Nz, cooling_data.Nt);
+        cooling_data.heating_primordial = read_hdf5_dataset_3d(
+            file, "/CoolingRates/Primordial/Heating", cooling_data.Nd,
+            cooling_data.Nz, cooling_data.Nt);
 
         // Ensure the arrays size match the product of the axes
         size_t expected_size =
@@ -407,11 +431,13 @@ void Cooling::apply_cooling(GasParticleSystem& gas, const Config& config,
 
                 double delta_u = u_current - u_initial;
                 if (std::abs(delta_u) > 0.0) {
-                    gas.u[i] = u_current;
+                    gas.u[i] += delta_u;
                     gas.total_energy[i] += delta_u;
                     gas.entropy[i] = gamma_minus_1 * gas.u[i] /
                                      std::pow(gas.rho[i], gamma_minus_1);
-                    gas.pressure[i] = gamma_minus_1 * gas.rho[i] * gas.u[i];
+                    // This pressure should not be used anywhere until it is
+                    // updated again
+                    gas.pressure[i] = gamma_minus_1 * local_rho * gas.u[i];
 
                     double delta_E = delta_u * gas.mass[i];
                     if (delta_u < 0.0) {

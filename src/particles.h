@@ -59,4 +59,25 @@ class ParticleSystem {
 
    private:
     void sort_arrays(const std::vector<int>& sorted_indices);
+
+    // Reusable scratch buffers for sort_arrays()
+    std::vector<double> scratch_double;
+    std::vector<uint8_t> scratch_uint8;
+    std::vector<uint64_t> scratch_uint64;
+    std::vector<CIC_Data> scratch_cic;
+
+    template <typename T>
+    static void permute_array(std::vector<T>& arr, std::vector<T>& scratch,
+                              const std::vector<int>& sorted_indices) {
+        const size_t n = arr.size();
+        if (scratch.size() < n) {
+            scratch.resize(n);
+        }
+
+#pragma omp parallel for schedule(static)
+        for (size_t i = 0; i < n; ++i) {
+            scratch[i] = arr[sorted_indices[i]];
+        }
+        arr.swap(scratch);
+    }
 };

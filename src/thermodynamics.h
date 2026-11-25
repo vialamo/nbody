@@ -15,7 +15,7 @@ void predict_primitive_variables(GasParticleSystem& gas, const Config& config,
                                  double a);
 
 void kick_particle_thermodynamics(GasParticleSystem& gas, size_t i,
-                                  double ke_spec_new, double grav_work,
+                                  double ke_spec, double grav_work,
                                   double drag_work, double dt,
                                   double expansion_factor, double a,
                                   const Config& config, bool is_kick1,

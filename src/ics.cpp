@@ -1,7 +1,9 @@
 #include "ics.h"
 
 #include <fftw3.h>
+#include <omp.h>
 
+#include <filesystem>
 #include <random>
 
 #include "constants.h"
@@ -13,6 +15,44 @@
 #include "math_utils.h"
 #include "particles.h"
 #include "thermodynamics.h"
+
+namespace GlassUtils {
+
+constexpr int MIN_SIZE = 8;
+constexpr int MAX_SIZE = 128;
+
+// Finds the largest power-of-two divisor of target_n within [MIN_SIZE,
+// MAX_SIZE]. Used for exact tiling (Cosmological DM/Gas, Zeldovich Pancake)
+int select_divisor_size(int target_n) {
+    int n_glass = 1;
+    while (target_n % (n_glass * 2) == 0 && n_glass * 2 <= MAX_SIZE) {
+        n_glass *= 2;
+    }
+    return std::max(MIN_SIZE, n_glass);
+}
+
+// Finds the nearest power-of-two within [MIN_SIZE, MAX_SIZE]
+// Used for non-exact/clipped tiling (Sedov, Evrard, Sod)
+int select_nearest_size(int target_n) {
+    int n_glass =
+        static_cast<int>(std::pow(2.0, std::round(std::log2(target_n))));
+    return std::clamp(n_glass, MIN_SIZE, MAX_SIZE);
+}
+
+// Reads a glass file of the given size and throws an error on failure
+GlassData load_cube(const Config& config, int glass_size) {
+    std::filesystem::path dir(config.glass_folder_path);
+    std::filesystem::path filepath =
+        dir / ("glassCube_" + std::to_string(glass_size) + ".hdf5");
+    try {
+        return HDF5Reader::read_glass_cube(filepath.string());
+    } catch (const std::exception& e) {
+        throw std::runtime_error("Failed to read glass cube '" +
+                                 filepath.string() + "': " + e.what());
+    }
+}
+
+}  // namespace GlassUtils
 
 namespace {
 // The pure shape of the BBKS power spectrum (Unnormalized)
@@ -116,11 +156,8 @@ void initialize_dm(SimState& state, const Config& config,
     if (config.use_glass) {
         // Find largest power-of-two divisor to tile the particles
         int N_1d = config.num_dm_particles_1d;
-        int N_glass = 1;
-        while (N_1d % (N_glass * 2) == 0 && N_glass * 2 <= 128) {
-            N_glass *= 2;
-        }
-        N_glass = std::max(8, N_glass);
+        int N_glass = GlassUtils::select_divisor_size(N_1d);
+        GlassData glass = GlassUtils::load_cube(config, N_glass);
 
         double L_base = std::min(
             {config.domain_size.x, config.domain_size.y, config.domain_size.z});
@@ -133,16 +170,6 @@ void initialize_dm(SimState& state, const Config& config,
             static_cast<int>(std::round(config.domain_size.y / L_block));
         int n_tiles_z =
             static_cast<int>(std::round(config.domain_size.z / L_block));
-
-        std::string file_glass = config.glass_folder_path + "/glassCube_" +
-                                 std::to_string(N_glass) + ".hdf5";
-        GlassData glass;
-        try {
-            glass = HDF5Reader::read_glass_cube(file_glass);
-        } catch (const std::exception& e) {
-            throw std::runtime_error("Failed to read glass cube '" +
-                                     file_glass + "': " + e.what());
-        }
 
         // Derive actual particle mass from the tiled glass
         double total_dm_particles =
@@ -240,11 +267,8 @@ void initialize_gas(SimState& state, const Config& config,
 
     if (config.use_glass) {
         int N_1d = config.num_gas_particles_1d;
-        int N_glass = 1;
-        while (N_1d % (N_glass * 2) == 0 && N_glass * 2 <= 128) {
-            N_glass *= 2;
-        }
-        N_glass = std::max(8, N_glass);
+        int N_glass = GlassUtils::select_divisor_size(N_1d);
+        GlassData glass = GlassUtils::load_cube(config, N_glass);
 
         double L_base = std::min(
             {config.domain_size.x, config.domain_size.y, config.domain_size.z});
@@ -257,16 +281,6 @@ void initialize_gas(SimState& state, const Config& config,
             static_cast<int>(std::round(config.domain_size.y / L_block));
         int n_tiles_z =
             static_cast<int>(std::round(config.domain_size.z / L_block));
-
-        std::string file_glass = config.glass_folder_path + "/glassCube_" +
-                                 std::to_string(N_glass) + ".hdf5";
-        GlassData glass;
-        try {
-            glass = HDF5Reader::read_glass_cube(file_glass);
-        } catch (const std::exception& e) {
-            throw std::runtime_error("Failed to read glass cube '" +
-                                     file_glass + "': " + e.what());
-        }
 
         double total_gas_particles =
             glass.num_particles * n_tiles_x * n_tiles_y * n_tiles_z;
@@ -390,32 +404,15 @@ void initialize_sod_shock_tube(SimState& state, const Config& config) {
     double seed_metallicity = 0.0;
 
     if (config.use_glass) {
-        int target_N = config.num_gas_particles_1d;
-        int N_L = 8;
-        if (target_N >= 96)
-            N_L = 128;
-        else if (target_N >= 48)
-            N_L = 64;
-        else if (target_N >= 24)
-            N_L = 32;
-        else if (target_N >= 12)
-            N_L = 16;
+        // Clamp N_L to at least 2 * MIN_SIZE so N_R = N_L / 2 never drops below
+        // MIN_SIZE (8)
+        int N_L = std::max(
+            2 * GlassUtils::MIN_SIZE,
+            GlassUtils::select_nearest_size(config.num_gas_particles_1d));
+        int N_R = N_L / 2;
 
-        int N_R = N_L / 2;  // Right side is one tier lower
-
-        std::string file_L = config.glass_folder_path + "/glassCube_" +
-                             std::to_string(N_L) + ".hdf5";
-        std::string file_R = config.glass_folder_path + "/glassCube_" +
-                             std::to_string(N_R) + ".hdf5";
-
-        GlassData glass_L, glass_R;
-        try {
-            glass_L = HDF5Reader::read_glass_cube(file_L);
-            glass_R = HDF5Reader::read_glass_cube(file_R);
-        } catch (const std::exception& e) {
-            throw std::runtime_error("Failed to read glass files '" + file_L +
-                                     "' and '" + file_R + "': " + e.what());
-        }
+        GlassData glass_L = GlassUtils::load_cube(config, N_L);
+        GlassData glass_R = GlassUtils::load_cube(config, N_R);
 
         // Particle mass is defined by the density of the base block
         double particle_mass = rho_L * (L_base * L_base * L_base) /
@@ -553,70 +550,10 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
     double dx_base = L_base / static_cast<double>(N_res);
     double R_inj = 2.0 * dx_base;
 
-    if (!config.use_glass) {
-        int scale_x = static_cast<int>(std::round(Lx / L_base));
-        int scale_y = static_cast<int>(std::round(Ly / L_base));
-        int scale_z = static_cast<int>(std::round(Lz / L_base));
-
-        int N_x = N_res * scale_x;
-        int N_y = N_res * scale_y;
-        int N_z = N_res * scale_z;
-
-        double gas_particle_mass = rho_bg * (dx_base * dx_base * dx_base);
-        double initial_h = 2.0 * dx_base;
-
-        constexpr bool spread_over_8_particles = true;
-
-        // Calculate center indices per axis
-        auto get_bounds = [](int N, bool spread) {
-            if (spread && N % 2 == 0) return std::make_pair((N / 2) - 1, N / 2);
-            return std::make_pair(N / 2, N / 2);
-        };
-
-        auto [ix_min, ix_max] = get_bounds(N_x, spread_over_8_particles);
-        auto [iy_min, iy_max] = get_bounds(N_y, spread_over_8_particles);
-        auto [iz_min, iz_max] = get_bounds(N_z, spread_over_8_particles);
-
-        int num_central = (ix_max - ix_min + 1) * (iy_max - iy_min + 1) *
-                          (iz_max - iz_min + 1);
-
-        double offset = spread_over_8_particles ? 0.5 : 0.0;
-        double injected_E = E_total / num_central;
-        double added_u = injected_E / gas_particle_mass;
-
-        for (int i = 0; i < N_x; ++i) {
-            for (int j = 0; j < N_y; ++j) {
-                for (int k = 0; k < N_z; ++k) {
-                    double p_x = (i + offset) * dx_base;
-                    double p_y = (j + offset) * dx_base;
-                    double p_z = (k + offset) * dx_base;
-
-                    double particle_u = u_bg;
-                    if (i >= ix_min && i <= ix_max && j >= iy_min &&
-                        j <= iy_max && k >= iz_min && k <= iz_max) {
-                        particle_u += added_u;
-                    }
-
-                    state.gas.add_particle(p_x, p_y, p_z, 0.0, 0.0, 0.0,
-                                           gas_particle_mass, particle_u,
-                                           initial_h, seed_metallicity);
-                }
-            }
-        }
-    } else {
+    if (config.use_glass) {
         // Glass Initialization (Two-Pass Approach)
-        int N_glass = std::max(
-            8, static_cast<int>(std::pow(2, std::round(std::log2(N_res)))));
-        N_glass = std::min(N_glass, 128);
-
-        std::string file_glass = config.glass_folder_path + "/glassCube_" +
-                                 std::to_string(N_glass) + ".hdf5";
-        GlassData glass;
-        try {
-            glass = HDF5Reader::read_glass_cube(file_glass);
-        } catch (const std::exception& e) {
-            return;
-        }
+        int N_glass = GlassUtils::select_nearest_size(N_res);
+        GlassData glass = GlassUtils::load_cube(config, N_glass);
 
         double vol_base = L_base * L_base * L_base;
         double gas_particle_mass =
@@ -743,6 +680,56 @@ void initialize_sedov_blastwave(SimState& state, const Config& config) {
                 tiled_particles[i].pos.x, tiled_particles[i].pos.y,
                 tiled_particles[i].pos.z, 0.0, 0.0, 0.0, gas_particle_mass,
                 particle_u, initial_h, seed_metallicity);
+        }
+    } else {
+        int scale_x = static_cast<int>(std::round(Lx / L_base));
+        int scale_y = static_cast<int>(std::round(Ly / L_base));
+        int scale_z = static_cast<int>(std::round(Lz / L_base));
+
+        int N_x = N_res * scale_x;
+        int N_y = N_res * scale_y;
+        int N_z = N_res * scale_z;
+
+        double gas_particle_mass = rho_bg * (dx_base * dx_base * dx_base);
+        double initial_h = 2.0 * dx_base;
+
+        constexpr bool spread_over_8_particles = true;
+
+        // Calculate center indices per axis
+        auto get_bounds = [](int N, bool spread) {
+            if (spread && N % 2 == 0) return std::make_pair((N / 2) - 1, N / 2);
+            return std::make_pair(N / 2, N / 2);
+        };
+
+        auto [ix_min, ix_max] = get_bounds(N_x, spread_over_8_particles);
+        auto [iy_min, iy_max] = get_bounds(N_y, spread_over_8_particles);
+        auto [iz_min, iz_max] = get_bounds(N_z, spread_over_8_particles);
+
+        int num_central = (ix_max - ix_min + 1) * (iy_max - iy_min + 1) *
+                          (iz_max - iz_min + 1);
+
+        double offset = spread_over_8_particles ? 0.5 : 0.0;
+        double injected_E = E_total / num_central;
+        double added_u = injected_E / gas_particle_mass;
+
+        for (int i = 0; i < N_x; ++i) {
+            for (int j = 0; j < N_y; ++j) {
+                for (int k = 0; k < N_z; ++k) {
+                    double p_x = (i + offset) * dx_base;
+                    double p_y = (j + offset) * dx_base;
+                    double p_z = (k + offset) * dx_base;
+
+                    double particle_u = u_bg;
+                    if (i >= ix_min && i <= ix_max && j >= iy_min &&
+                        j <= iy_max && k >= iz_min && k <= iz_max) {
+                        particle_u += added_u;
+                    }
+
+                    state.gas.add_particle(p_x, p_y, p_z, 0.0, 0.0, 0.0,
+                                           gas_particle_mass, particle_u,
+                                           initial_h, seed_metallicity);
+                }
+            }
         }
     }
 }
@@ -912,18 +899,8 @@ void initialize_evrard_collapse(SimState& state, const Config& config) {
 
     // Generate a uniform sphere of points (Glass or Lattice)
     if (config.use_glass) {
-        int N_glass = std::max(
-            8, static_cast<int>(std::pow(2, std::round(std::log2(N_res)))));
-        N_glass = std::min(N_glass, 128);
-
-        std::string file_glass = config.glass_folder_path + "/glassCube_" +
-                                 std::to_string(N_glass) + ".hdf5";
-        GlassData glass;
-        try {
-            glass = HDF5Reader::read_glass_cube(file_glass);
-        } catch (const std::exception& e) {
-            return;
-        }
+        int N_glass = GlassUtils::select_nearest_size(N_res);
+        GlassData glass = GlassUtils::load_cube(config, N_glass);
 
         // Scale the length of one glass block so its internal number density
         // matches the target N_res^3 over the (2 * R_sphere)^3 bounding box
@@ -1014,9 +991,7 @@ void initialize_zeldovich_pancake(SimState& state, const Config& config) {
     double a_i = config.a_start;
     double z_i = (1.0 / a_i) - 1.0;  // Initial redshift
     double z_c = 1.0;  // Redshift of caustic formation (non-linear collapse)
-    double T_i =
-        config
-            .initial_gas_temperature_k;  // Initial unperturbed temperature in K
+    double T_i = config.initial_gas_temperature_k;  // Initial unperturbed temp
 
     // Explicit domain dimensions (usually lambda = 64 Mpc/h)
     double Lx = config.domain_size.x;
@@ -1039,11 +1014,8 @@ void initialize_zeldovich_pancake(SimState& state, const Config& config) {
 
     if (config.use_glass) {
         // Find largest power-of-two divisor to tile the particles
-        int N_glass = 1;
-        while (N_part % (N_glass * 2) == 0 && N_glass * 2 <= 128) {
-            N_glass *= 2;
-        }
-        N_glass = std::max(8, N_glass);
+        int N_glass = GlassUtils::select_divisor_size(N_part);
+        GlassData glass = GlassUtils::load_cube(config, N_glass);
 
         int sub_tiles = N_part / N_glass;
         double L_block = L_base / sub_tiles;
@@ -1051,16 +1023,6 @@ void initialize_zeldovich_pancake(SimState& state, const Config& config) {
         int n_tiles_x = static_cast<int>(std::round(Lx / L_block));
         int n_tiles_y = static_cast<int>(std::round(Ly / L_block));
         int n_tiles_z = static_cast<int>(std::round(Lz / L_block));
-
-        std::string file_glass = config.glass_folder_path + "/glassCube_" +
-                                 std::to_string(N_glass) + ".hdf5";
-        GlassData glass;
-        try {
-            glass = HDF5Reader::read_glass_cube(file_glass);
-        } catch (const std::exception& e) {
-            throw std::runtime_error("Failed to read glass cube '" +
-                                     file_glass + "': " + e.what());
-        }
 
         double total_gas_particles =
             glass.num_particles * n_tiles_x * n_tiles_y * n_tiles_z;
@@ -1182,7 +1144,6 @@ void initialize_zeldovich_pancake(SimState& state, const Config& config) {
 }
 
 void initialize_soundwave(SimState& state, const Config& config) {
-    // Explicit domain dimensions
     double Lx = config.domain_size.x;
     double Ly = config.domain_size.y;
     double Lz = config.domain_size.z;
@@ -1460,7 +1421,7 @@ ZeldovichField compute_zeldovich_field(double scale_factor,
     // Rewind the z=0 density field back to the starting epoch.
     // Because structure growth stalls at late times due to Dark Energy, in a
     // LambdaCDM D(1) is only ~0.77, not 1.0. We must divide by g_1 to recover
-    // the true early-universe amplitude.
+    // the true early-universe amplitude
     double true_growth_factor = scale_factor / g_1;
 
     // Calculate final normalizer (incorporating the 1/M^3 FFT correction)
