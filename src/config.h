@@ -66,12 +66,13 @@ struct Config {
     bool expanding_universe = true;
 
     // Gravity
-    double comoving_softening_factor = 0.0334;
+    double comoving_softening_factor = 0.033;
     double softening_cap_a = 0.3;
     bool use_PM = true;
     bool use_PP = true;
     double cutoff_radius_factor = 4.5;
     double PM_smoothing_cells = 1.25;
+    bool use_adaptive_softening = false;
 
     // Initial conditions
     InitialSetup initial_setup = InitialSetup::Cosmological;
@@ -85,7 +86,7 @@ struct Config {
 
     // Hydro
     double target_neighbors = 32.0;
-    double neighbor_tolerance = 0.01;
+    double neighbor_tolerance = 0.05;
     int max_iterations = 50;
     double min_hsml_fraction = 0.25;
     double max_condition_number = 5.0;

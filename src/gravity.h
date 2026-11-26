@@ -29,6 +29,11 @@ class GravitySolver {
     uint64_t* d_u_morton = nullptr;
     BVHNode* d_u_bvh = nullptr;
 
+    // Adaptive softening
+    double *d_u_eps = nullptr, *d_u_gradh_fac = nullptr;
+    double *d_t_eps = nullptr, *d_t_gradh_fac = nullptr;
+    double* d_u_xi = nullptr;
+
     // Arrays requiring CPU interaction
     std::vector<uint8_t> u_is_active;
     std::vector<int> u_active_indices;

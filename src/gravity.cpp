@@ -8,8 +8,6 @@
 #include "math_utils.h"
 #include "state.h"
 
-// #define SINGLE_PRECISION_TRANSCENDENTALS
-
 namespace {
 // Microscopic floor for squared distances to prevent 1/r singularities
 // when particles perfectly overlap
@@ -21,13 +19,8 @@ constexpr double MIN_R2_EPSILON = 1e-24;
 inline double compute_pm_taper(double r, double inv_two_r_s,
                                double taper_coeff) {
     double r_scaled = r * inv_two_r_s;
-#ifdef SINGLE_PRECISION_TRANSCENDENTALS
-    return erfcf(static_cast<float>(r_scaled)) +
-           (r * taper_coeff) * expf(static_cast<float>(-r_scaled * r_scaled));
-#else
     return std::erfc(r_scaled) +
            (r * taper_coeff) * std::exp(-r_scaled * r_scaled);
-#endif
 }
 #ifdef USE_GPU
 #pragma omp end declare target
@@ -68,6 +61,11 @@ void GravitySolver::prepare_arrays(ParticleSystem& dm, GasParticleSystem& gas,
             omp_target_free(d_t_is_active, dev);
             omp_target_free(d_u_morton, dev);
             omp_target_free(d_u_sorted_idx, dev);
+            omp_target_free(d_u_eps, dev);
+            omp_target_free(d_t_eps, dev);
+            omp_target_free(d_u_gradh_fac, dev);
+            omp_target_free(d_t_gradh_fac, dev);
+            omp_target_free(d_u_xi, dev);
 
             // Only use map(delete) for the host-backed active array
             uint8_t* old_is_active = u_is_active.data();
@@ -101,6 +99,14 @@ void GravitySolver::prepare_arrays(ParticleSystem& dm, GasParticleSystem& gas,
             (uint64_t*)omp_target_alloc(n_total * sizeof(uint64_t), dev);
         d_u_sorted_idx = (int*)omp_target_alloc(n_total * sizeof(int), dev);
 
+        d_u_eps = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_t_eps = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_u_gradh_fac =
+            (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_t_gradh_fac =
+            (double*)omp_target_alloc(n_total * sizeof(double), dev);
+        d_u_xi = (double*)omp_target_alloc(n_total * sizeof(double), dev);
+
         current_gpu_capacity = n_total;
     }
 
@@ -116,6 +122,9 @@ void GravitySolver::prepare_arrays(ParticleSystem& dm, GasParticleSystem& gas,
     int* loc_t_orig_idx = d_t_orig_idx;
     uint8_t *loc_t_type = d_t_type, *loc_t_is_active = d_t_is_active;
 
+    double *loc_u_eps = d_u_eps, *loc_t_eps = d_t_eps;
+    double *loc_u_gradh_fac = d_u_gradh_fac, *loc_t_gradh_fac = d_t_gradh_fac;
+
     // Zero out the accelerations on the GPU for the current step
 #pragma omp target teams distribute parallel for is_device_ptr( \
         loc_u_ax, loc_u_ay, loc_u_az)
@@ -124,6 +133,12 @@ void GravitySolver::prepare_arrays(ParticleSystem& dm, GasParticleSystem& gas,
         loc_u_ay[i] = 0.0;
         loc_u_az[i] = 0.0;
     }
+
+    const bool use_adaptive = config.use_adaptive_softening;
+    const double eps_min = softening_length;
+    const double eps_max = config.use_PM
+                               ? std::sqrt(config.cutoff_radius_squared)
+                               : std::numeric_limits<double>::infinity();
 
     // On-Device Concatenation
     // Map the CPU particle arrays to the device temporarily to build the
@@ -135,7 +150,8 @@ void GravitySolver::prepare_arrays(ParticleSystem& dm, GasParticleSystem& gas,
     uint8_t* d_dm_is_active = dm.is_active.data();
 
 #pragma omp target teams distribute parallel for is_device_ptr(            \
-        loc_u_px, loc_u_py, loc_u_pz, loc_u_m, loc_u_orig_idx, loc_u_type) \
+        loc_u_px, loc_u_py, loc_u_pz, loc_u_m, loc_u_orig_idx, loc_u_type, \
+            loc_u_eps, loc_u_gradh_fac)                                    \
     map(to : d_dm_px[0 : n_dm], d_dm_py[0 : n_dm], d_dm_pz[0 : n_dm],      \
             d_dm_m[0 : n_dm], d_dm_is_active[0 : n_dm])
     for (size_t i = 0; i < n_dm; ++i) {
@@ -146,6 +162,8 @@ void GravitySolver::prepare_arrays(ParticleSystem& dm, GasParticleSystem& gas,
         loc_u_orig_idx[i] = i;
         loc_u_type[i] = 0;  // Type 0: DM
         loc_u_is_active[i] = d_dm_is_active[i];
+        loc_u_eps[i] = eps_min;
+        loc_u_gradh_fac[i] = 0.0;
     }
 
     if (n_gas > 0) {
@@ -154,11 +172,16 @@ void GravitySolver::prepare_arrays(ParticleSystem& dm, GasParticleSystem& gas,
         double* d_gas_pz = gas.pos_z.data();
         double* d_gas_m = gas.mass.data();
         uint8_t* d_gas_is_active = gas.is_active.data();
+        double* d_gas_h = gas.h.data();
+        double* d_gas_rho = gas.rho.data();
+        double* d_gas_omega = gas.omega.data();
 
 #pragma omp target teams distribute parallel for is_device_ptr(             \
-        loc_u_px, loc_u_py, loc_u_pz, loc_u_m, loc_u_orig_idx, loc_u_type)  \
+        loc_u_px, loc_u_py, loc_u_pz, loc_u_m, loc_u_orig_idx, loc_u_type,  \
+            loc_u_eps, loc_u_gradh_fac)                                     \
     map(to : d_gas_px[0 : n_gas], d_gas_py[0 : n_gas], d_gas_pz[0 : n_gas], \
-            d_gas_m[0 : n_gas], d_gas_is_active[0 : n_gas])
+            d_gas_m[0 : n_gas], d_gas_is_active[0 : n_gas],                 \
+            d_gas_h[0 : n_gas], d_gas_rho[0 : n_gas], d_gas_omega[0 : n_gas])
         for (size_t i = 0; i < n_gas; ++i) {
             size_t offset = n_dm + i;
             loc_u_px[offset] = d_gas_px[i];
@@ -168,6 +191,22 @@ void GravitySolver::prepare_arrays(ParticleSystem& dm, GasParticleSystem& gas,
             loc_u_orig_idx[offset] = i;
             loc_u_type[offset] = 1;  // Type 1: Gas
             loc_u_is_active[offset] = d_gas_is_active[i];
+            double eps_val = eps_min;
+            double gradh_fac = 0.0;
+            if (use_adaptive) {
+                double h_i = d_gas_h[i];
+                if (h_i <= eps_min) {
+                    eps_val = eps_min;
+                } else if (h_i >= eps_max) {
+                    eps_val = eps_max;
+                } else {
+                    eps_val = h_i;
+                    gradh_fac = (d_gas_m[i] * h_i) /
+                                (3.0 * d_gas_rho[i] * d_gas_omega[i]);
+                }
+            }
+            loc_u_eps[offset] = eps_val;
+            loc_u_gradh_fac[offset] = gradh_fac;
         }
     }
 
@@ -179,10 +218,11 @@ void GravitySolver::prepare_arrays(ParticleSystem& dm, GasParticleSystem& gas,
         d_u_morton, d_u_sorted_idx);
 
 // Permute into temporary device arrays
-#pragma omp target teams distribute parallel for is_device_ptr(            \
-        loc_u_px, loc_u_py, loc_u_pz, loc_u_m, loc_u_orig_idx, loc_u_type, \
-            loc_u_sorted_idx, loc_t_px, loc_t_py, loc_t_pz, loc_t_m,       \
-            loc_t_orig_idx, loc_t_type, loc_t_is_active)
+#pragma omp target teams distribute parallel for is_device_ptr(                \
+        loc_u_px, loc_u_py, loc_u_pz, loc_u_m, loc_u_orig_idx, loc_u_type,     \
+            loc_u_sorted_idx, loc_t_px, loc_t_py, loc_t_pz, loc_t_m,           \
+            loc_t_orig_idx, loc_t_type, loc_t_is_active, loc_u_eps, loc_t_eps, \
+            loc_u_gradh_fac, loc_t_gradh_fac)
     for (size_t i = 0; i < n_total; ++i) {
         int idx = loc_u_sorted_idx[i];
         loc_t_px[i] = loc_u_px[idx];
@@ -192,13 +232,16 @@ void GravitySolver::prepare_arrays(ParticleSystem& dm, GasParticleSystem& gas,
         loc_t_orig_idx[i] = loc_u_orig_idx[idx];
         loc_t_type[i] = loc_u_type[idx];
         loc_t_is_active[i] = loc_u_is_active[idx];
+        loc_t_eps[i] = loc_u_eps[idx];
+        loc_t_gradh_fac[i] = loc_u_gradh_fac[idx];
     }
 
 // Copy back to the persistent device arrays
 #pragma omp target teams distribute parallel for is_device_ptr(                \
         loc_u_px, loc_u_py, loc_u_pz, loc_u_m, loc_u_orig_idx, loc_u_type,     \
             loc_t_px, loc_t_py, loc_t_pz, loc_t_m, loc_t_orig_idx, loc_t_type, \
-            loc_t_is_active)
+            loc_t_is_active, loc_u_eps, loc_t_eps, loc_u_gradh_fac,            \
+            loc_t_gradh_fac)
     for (size_t i = 0; i < n_total; ++i) {
         loc_u_px[i] = loc_t_px[i];
         loc_u_py[i] = loc_t_py[i];
@@ -207,6 +250,8 @@ void GravitySolver::prepare_arrays(ParticleSystem& dm, GasParticleSystem& gas,
         loc_u_orig_idx[i] = loc_t_orig_idx[i];
         loc_u_type[i] = loc_t_type[i];
         loc_u_is_active[i] = loc_t_is_active[i];
+        loc_u_eps[i] = loc_t_eps[i];
+        loc_u_gradh_fac[i] = loc_t_gradh_fac[i];
     }
 
     // Persistent GPU allocation for the tree
@@ -344,6 +389,7 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
                                     : std::numeric_limits<double>::infinity();
     const double inv_two_r_s = 1.0 / (2.0 * r_s);
     const double taper_coeff = 1.0 / (std::sqrt(M_PI) * r_s);
+    const bool use_adaptive = config.use_adaptive_softening;
 
     // Raw pointers for GPU Offload
     int* d_active_idx = u_active_indices.data();
@@ -355,17 +401,60 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
     double* d_ay = d_u_ay;
     double* d_az = d_u_az;
     BVHNode* d_bvh = d_u_bvh;
+    double* d_eps = d_u_eps;
+    double* d_gradh_fac = d_u_gradh_fac;
+    double* d_xi = d_u_xi;
+    uint8_t* d_type = d_u_type;
 
     auto start_compute = std::chrono::high_resolution_clock::now();
 
-#pragma omp target teams distribute parallel for map( \
-        to : d_active_idx[0 : n_active])              \
-    is_device_ptr(d_px, d_py, d_pz, d_m, d_bvh, d_ax, d_ay, d_az)
+    if (use_adaptive) {
+#pragma omp target teams distribute parallel for is_device_ptr( \
+        d_px, d_py, d_pz, d_m, d_eps, d_gradh_fac, d_xi, d_bvh)
+        for (size_t i = 0; i < n_total; ++i) {
+            double fac = d_gradh_fac[i];
+            if (fac == 0.0) {
+                d_xi[i] = 0.0;
+                continue;
+            }
+
+            double p1_x = d_px[i], p1_y = d_py[i], p1_z = d_pz[i];
+            double eps_i = d_eps[i];
+            double eps_sq = eps_i * eps_i;
+            double sum_dphi_dh = 0.0;
+
+            LBVH::traverse(
+                d_bvh, d_px, d_py, d_pz, p1_x, p1_y, p1_z, eps_sq, domain_size,
+                [=, &sum_dphi_dh](int j, double dx, double dy, double dz,
+                                  double r2) {
+                    if (r2 > 0.0 && r2 < eps_sq) {
+                        double r = std::sqrt(r2 + MIN_R2_EPSILON);
+                        double term =
+                            d_m[j] * Kernels::gravity_dphi_dh(r, eps_i);
+                        if (use_pm) {
+                            term *= std::erfc(r * inv_two_r_s);
+                        }
+                        sum_dphi_dh += term;
+                    }
+                });
+
+            d_xi[i] = fac * sum_dphi_dh;
+        }
+    }
+
+#pragma omp target teams distribute parallel for map(                          \
+        to : d_active_idx[0 : n_active])                                       \
+    is_device_ptr(d_px, d_py, d_pz, d_m, d_eps, d_bvh, d_ax, d_ay, d_az, d_xi, \
+                      d_type)
     for (size_t k = 0; k < n_active; ++k) {
         size_t i = d_active_idx[k];
 
         double p1_x = d_px[i], p1_y = d_py[i], p1_z = d_pz[i];
+        double eps_i = d_eps[i];
         double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
+        double m_i = d_m[i];
+        double xi_i = d_xi[i];
+        uint8_t type_i = d_type[i];
 
         LBVH::traverse(
             d_bvh, d_px, d_py, d_pz, p1_x, p1_y, p1_z, search_sq, domain_size,
@@ -374,8 +463,17 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
                 if (r2 < search_sq) {
                     double r = std::sqrt(r2 + MIN_R2_EPSILON);
                     double m_j = d_m[j];
+                    double eps_j = d_eps[j];
 
-                    double dphi_dr = Kernels::gravity_derivatives(r, epsilon);
+                    double dphi_dr;
+                    if (use_adaptive) {
+                        dphi_dr =
+                            0.5 * (Kernels::gravity_derivatives(r, eps_i) +
+                                   Kernels::gravity_derivatives(r, eps_j));
+                    } else {
+                        dphi_dr = Kernels::gravity_derivatives(r, epsilon);
+                    }
+
                     double force_mag_over_r = G * dphi_dr / r;
 
                     if (use_pm) {
@@ -386,6 +484,32 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
                     local_acc_x += force_mag_over_r * m_j * dx;
                     local_acc_y += force_mag_over_r * m_j * dy;
                     local_acc_z += force_mag_over_r * m_j * dz;
+
+                    // Price & Monaghan (2007) adaptive softening correction
+                    // (gas-gas pairs only; dW/dr <= 0 so leading minus makes it
+                    // attractive)
+                    if (use_adaptive && type_i == 1 && d_type[j] == 1) {
+                        double xi_j = d_xi[j];
+                        if (xi_i != 0.0 || xi_j != 0.0) {
+                            double dW_dr_i =
+                                (xi_i != 0.0)
+                                    ? Kernels::cubic_spline_gradient(r, eps_i)
+                                    : 0.0;
+                            double dW_dr_j =
+                                (xi_j != 0.0)
+                                    ? Kernels::cubic_spline_gradient(r, eps_j)
+                                    : 0.0;
+
+                            double corr_over_r =
+                                -0.5 * (G / m_i) *
+                                (m_i * xi_i * dW_dr_i + m_j * xi_j * dW_dr_j) /
+                                r;
+
+                            local_acc_x += corr_over_r * dx;
+                            local_acc_y += corr_over_r * dy;
+                            local_acc_z += corr_over_r * dz;
+                        }
+                    }
                 }
             });
         d_ax[i] += local_acc_x;
@@ -411,6 +535,10 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
     const double r_s = config.PM_smoothing_cells * config.cell_size;
     const bool use_pm = config.use_PM;
     const double epsilon = softening_length;
+    const bool use_adaptive = config.use_adaptive_softening;
+    const double eps_min = softening_length;
+    const double eps_max = use_pm ? std::sqrt(config.cutoff_radius_squared)
+                                  : std::numeric_limits<double>::infinity();
     const double inv_two_r_s = 1.0 / (2.0 * r_s);
     const double taper_coeff = 1.0 / (std::sqrt(M_PI) * r_s);
 
@@ -446,6 +574,68 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
     double* d_gas_az = gas.acc_z.data();
     BVHNode* d_gas_bvh = gas.bvh_nodes.data();
     int* d_gas_active_idx = gas.active_indices.data();
+    double* d_gas_h = gas.h.data();
+
+    std::vector<double> gas_xi(n_gas, 0.0);
+    double* d_gas_xi = gas_xi.data();
+    double* d_gas_rho = gas.rho.data();
+    double* d_gas_omega = gas.omega.data();
+
+    // Accumulate xi_i for all gas particles (gas + DM neighbors)
+    if (use_adaptive && n_gas > 0) {
+#pragma omp parallel for schedule(dynamic, 64)
+        for (size_t i = 0; i < n_gas; ++i) {
+            double h_i = d_gas_h[i];
+            if (h_i <= eps_min || h_i >= eps_max) {
+                d_gas_xi[i] = 0.0;
+                continue;
+            }
+
+            double p1_x = d_gas_px[i], p1_y = d_gas_py[i], p1_z = d_gas_pz[i];
+            double eps_sq = h_i * h_i;
+            double sum_dphi_dh = 0.0;
+
+            // Sum over Gas neighbors
+            LBVH::traverse(d_gas_bvh, d_gas_px, d_gas_py, d_gas_pz, p1_x, p1_y,
+                           p1_z, eps_sq, domain_size,
+                           [=, &sum_dphi_dh](int j, double dx, double dy,
+                                             double dz, double r2) {
+                               if (r2 > 0.0 && r2 < eps_sq) {
+                                   double r = std::sqrt(r2 + MIN_R2_EPSILON);
+                                   double term =
+                                       d_gas_m[j] *
+                                       Kernels::gravity_dphi_dh(r, h_i);
+                                   if (use_pm) {
+                                       term *= std::erfc(r * inv_two_r_s);
+                                   }
+                                   sum_dphi_dh += term;
+                               }
+                           });
+
+            // Sum over DM neighbors
+            if (n_dm > 0) {
+                LBVH::traverse(
+                    d_dm_bvh, d_dm_px, d_dm_py, d_dm_pz, p1_x, p1_y, p1_z,
+                    eps_sq, domain_size,
+                    [=, &sum_dphi_dh](int j, double dx, double dy, double dz,
+                                      double r2) {
+                        if (r2 > 0.0 && r2 < eps_sq) {
+                            double r = std::sqrt(r2 + MIN_R2_EPSILON);
+                            double term =
+                                d_dm_m[j] * Kernels::gravity_dphi_dh(r, h_i);
+                            if (use_pm) {
+                                term *= std::erfc(r * inv_two_r_s);
+                            }
+                            sum_dphi_dh += term;
+                        }
+                    });
+            }
+
+            double fac =
+                (d_gas_m[i] * h_i) / (3.0 * d_gas_rho[i] * d_gas_omega[i]);
+            d_gas_xi[i] = fac * sum_dphi_dh;
+        }
+    }
 
 #ifdef USE_GPU
     auto start_transfer = std::chrono::high_resolution_clock::now();
@@ -457,7 +647,8 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
             d_dm_ay[0 : n_dm], d_dm_az[0 : n_dm], d_gas_px[0 : n_gas],        \
             d_gas_py[0 : n_gas], d_gas_pz[0 : n_gas], d_gas_m[0 : n_gas],     \
             d_gas_bvh[0 : gas_num_nodes], d_gas_active_idx[0 : n_gas_active], \
-            d_gas_ax[0 : n_gas], d_gas_ay[0 : n_gas], d_gas_az[0 : n_gas])
+            d_gas_ax[0 : n_gas], d_gas_ay[0 : n_gas], d_gas_az[0 : n_gas],    \
+            d_gas_h[0 : n_gas], d_gas_xi[0 : n_gas])
 
     auto end_transfer = std::chrono::high_resolution_clock::now();
     auto start_compute = std::chrono::high_resolution_clock::now();
@@ -509,8 +700,18 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
                         double r = std::sqrt(r2 + MIN_R2_EPSILON);
                         double m_j = d_gas_m[j];
 
-                        double dphi_dr =
-                            Kernels::gravity_derivatives(r, epsilon);
+                        double dphi_dr;
+                        if (use_adaptive) {
+                            double eps_j = d_gas_h[j];
+                            if (eps_j < eps_min) eps_j = eps_min;
+                            if (eps_j > eps_max) eps_j = eps_max;
+                            dphi_dr =
+                                0.5 *
+                                (Kernels::gravity_derivatives(r, epsilon) +
+                                 Kernels::gravity_derivatives(r, eps_j));
+                        } else {
+                            dphi_dr = Kernels::gravity_derivatives(r, epsilon);
+                        }
                         double force_mag_over_r = G * dphi_dr / r;
 
                         if (use_pm) {
@@ -541,6 +742,15 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
             size_t i = d_gas_active_idx[k];
             double p1_x = d_gas_px[i], p1_y = d_gas_py[i], p1_z = d_gas_pz[i];
             double local_acc_x = 0.0, local_acc_y = 0.0, local_acc_z = 0.0;
+            double eps_i = epsilon;
+            if (use_adaptive) {
+                eps_i = d_gas_h[i];
+                if (eps_i < eps_min) eps_i = eps_min;
+                if (eps_i > eps_max) eps_i = eps_max;
+            }
+            double m_i = d_gas_m[i];
+            double xi_i = d_gas_xi[i];
+
             LBVH::traverse(
                 d_gas_bvh, d_gas_px, d_gas_py, d_gas_pz, p1_x, p1_y, p1_z,
                 search_sq, domain_size,
@@ -550,8 +760,18 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
 
                     double r = std::sqrt(r2 + MIN_R2_EPSILON);
                     double m_j = d_gas_m[j];
+                    double eps_j = d_gas_h[j];
 
-                    double dphi_dr = Kernels::gravity_derivatives(r, epsilon);
+                    double dphi_dr;
+                    if (use_adaptive) {
+                        if (eps_j < eps_min) eps_j = eps_min;
+                        if (eps_j > eps_max) eps_j = eps_max;
+                        dphi_dr =
+                            0.5 * (Kernels::gravity_derivatives(r, eps_i) +
+                                   Kernels::gravity_derivatives(r, eps_j));
+                    } else {
+                        dphi_dr = Kernels::gravity_derivatives(r, epsilon);
+                    }
                     double force_mag_over_r = G * dphi_dr / r;
 
                     if (use_pm) {
@@ -562,6 +782,30 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
                     local_acc_x += force_mag_over_r * m_j * dx;
                     local_acc_y += force_mag_over_r * m_j * dy;
                     local_acc_z += force_mag_over_r * m_j * dz;
+
+                    // Price & Monaghan (2007) adaptive softening correction
+                    if (use_adaptive) {
+                        double xi_j = d_gas_xi[j];
+                        if (xi_i != 0.0 || xi_j != 0.0) {
+                            double dW_dr_i =
+                                (xi_i != 0.0)
+                                    ? Kernels::cubic_spline_gradient(r, eps_i)
+                                    : 0.0;
+                            double dW_dr_j =
+                                (xi_j != 0.0)
+                                    ? Kernels::cubic_spline_gradient(r, eps_j)
+                                    : 0.0;
+
+                            double corr_over_r =
+                                -0.5 * (G / m_i) *
+                                (m_i * xi_i * dW_dr_i + m_j * xi_j * dW_dr_j) /
+                                r;
+
+                            local_acc_x += corr_over_r * dx;
+                            local_acc_y += corr_over_r * dy;
+                            local_acc_z += corr_over_r * dz;
+                        }
+                    }
                 });
 
             // Evaluate against DM Tree
@@ -577,7 +821,11 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
                         double m_j = d_dm_m[j];
 
                         double dphi_dr =
-                            Kernels::gravity_derivatives(r, epsilon);
+                            use_adaptive
+                                ? 0.5 *
+                                      (Kernels::gravity_derivatives(r, eps_i) +
+                                       Kernels::gravity_derivatives(r, epsilon))
+                                : Kernels::gravity_derivatives(r, epsilon);
                         double force_mag_over_r = G * dphi_dr / r;
 
                         if (use_pm) {
@@ -608,7 +856,8 @@ void GravitySolver::add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
             d_dm_m[0 : n_dm], d_dm_bvh[0 : dm_num_nodes],                      \
             d_dm_active_idx[0 : n_dm_active], d_gas_px[0 : n_gas],             \
             d_gas_py[0 : n_gas], d_gas_pz[0 : n_gas], d_gas_m[0 : n_gas],      \
-            d_gas_bvh[0 : gas_num_nodes], d_gas_active_idx[0 : n_gas_active])
+            d_gas_bvh[0 : gas_num_nodes], d_gas_active_idx[0 : n_gas_active],  \
+            d_gas_h[0 : n_gas], d_gas_xi[0 : n_gas])
 
     auto end_return = std::chrono::high_resolution_clock::now();
 
@@ -666,14 +915,56 @@ double GravitySolver::get_timestep(const ParticleSystem& dm,
                                    const Config& config) const {
     if (dm.num_particles == 0 && gas.num_particles == 0)
         return std::numeric_limits<double>::infinity();
-    double a_dm_max = 0;
-    if (dm.num_particles > 0) a_dm_max = calculate_max_acceleration(dm);
-    double a_gas_max = 0;
-    if (gas.num_particles > 0) a_gas_max = calculate_max_acceleration(gas);
 
-    double a_max = std::max(a_dm_max, a_gas_max);
-    double epsilon = softening_length;
-    return std::sqrt((2.0 * config.gravity_accuracy_eta * epsilon) / a_max);
+    const double eps_min = softening_length;
+    const double eps_max = config.use_PM
+                               ? std::sqrt(config.cutoff_radius_squared)
+                               : std::numeric_limits<double>::infinity();
+
+    double dt_min = std::numeric_limits<double>::infinity();
+
+    // DM: fixed softening
+    if (dm.num_particles > 0) {
+        double a_dm_max = calculate_max_acceleration(dm);
+        double dt_dm =
+            std::sqrt((2.0 * config.gravity_accuracy_eta * eps_min) / a_dm_max);
+        dt_min = std::min(dt_min, dt_dm);
+    }
+
+    // Gas: per-particle adaptive softening (or fixed if disabled)
+    if (gas.num_particles > 0) {
+        if (!config.use_adaptive_softening) {
+            double a_gas_max = calculate_max_acceleration(gas);
+            double dt_gas = std::sqrt(
+                (2.0 * config.gravity_accuracy_eta * eps_min) / a_gas_max);
+            dt_min = std::min(dt_min, dt_gas);
+        } else {
+            double max_a_over_eps = 1e-9;
+            const size_t n = gas.num_particles;
+            const double* ax = gas.acc_x.data();
+            const double* ay = gas.acc_y.data();
+            const double* az = gas.acc_z.data();
+            const double* h = gas.h.data();
+
+#pragma omp parallel for reduction(max : max_a_over_eps) schedule(static)
+            for (size_t i = 0; i < n; ++i) {
+                double eps_i = h[i];
+                if (eps_i < eps_min) eps_i = eps_min;
+                if (eps_i > eps_max) eps_i = eps_max;
+
+                double a_mag =
+                    std::sqrt(ax[i] * ax[i] + ay[i] * ay[i] + az[i] * az[i]);
+                double ratio = a_mag / eps_i;
+                if (ratio > max_a_over_eps) max_a_over_eps = ratio;
+            }
+
+            double dt_gas =
+                std::sqrt((2.0 * config.gravity_accuracy_eta) / max_a_over_eps);
+            dt_min = std::min(dt_min, dt_gas);
+        }
+    }
+
+    return dt_min;
 }
 
 void GravitySolver::update_softening(double a, const Config& config) {
@@ -722,6 +1013,12 @@ GravitySolver::~GravitySolver() {
         omp_target_free(d_t_is_active, dev);
         omp_target_free(d_u_morton, dev);
         omp_target_free(d_u_sorted_idx, dev);
+
+        omp_target_free(d_u_eps, dev);
+        omp_target_free(d_t_eps, dev);
+        omp_target_free(d_u_gradh_fac, dev);
+        omp_target_free(d_t_gradh_fac, dev);
+        omp_target_free(d_u_xi, dev);
 
         uint8_t* old_is_active = u_is_active.data();
 #pragma omp target exit data map( \

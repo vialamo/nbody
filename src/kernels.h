@@ -97,6 +97,29 @@ inline double gravity_derivatives(double r, double h) {
     return dphi_dr;
 }
 
+// --------------------------------------------------------------------------------
+// Softening Length Derivative of Gravitational Potential (Price & Monaghan
+// 2007) Returns d(phi)/dh >= 0 for 1h support cubic spline (0 for r >= h)
+// --------------------------------------------------------------------------------
+inline double gravity_dphi_dh(double r, double h) {
+    if (r >= h) {
+        return 0.0;
+    }
+
+    double q = r / h;
+    double q2 = q * q;
+    double q3 = q2 * q;
+    double q4 = q2 * q2;
+    double q5 = q4 * q;
+    double inv_h2 = 1.0 / (h * h);
+
+    if (q < 0.5) {
+        return inv_h2 * (2.8 - 16.0 * q2 + 48.0 * q4 - 38.4 * q5);
+    } else {
+        return inv_h2 * (3.2 - 32.0 * q2 + 64.0 * q3 - 48.0 * q4 + 12.8 * q5);
+    }
+}
+
 }  // namespace Kernels
 
 #ifdef USE_GPU

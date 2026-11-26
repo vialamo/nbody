@@ -39,6 +39,7 @@ GasParticleSystem::GasParticleSystem(const Config& config) {
 
     h.reserve(config.num_gas_particles);
     rho.reserve(config.num_gas_particles);
+    omega.reserve(config.num_gas_particles);
     pressure.reserve(config.num_gas_particles);
     total_energy.reserve(config.num_gas_particles);
     u.reserve(config.num_gas_particles);
@@ -118,6 +119,7 @@ void GasParticleSystem::add_particle(double px, double py, double pz, double vx,
 
     h.push_back(initial_h);
     rho.push_back(0.0);
+    omega.push_back(1.0);
     pressure.push_back(0.0);
     u.push_back(initial_u);
     du_dt.push_back(0.0);
@@ -196,6 +198,7 @@ void GasParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     permute_array(hydro_acc_z, scratch_double, sorted_indices);
     permute_array(h, scratch_double, sorted_indices);
     permute_array(rho, scratch_double, sorted_indices);
+    permute_array(omega, scratch_double, sorted_indices);
     permute_array(pressure, scratch_double, sorted_indices);
     permute_array(total_energy, scratch_double, sorted_indices);
     permute_array(u, scratch_double, sorted_indices);
@@ -398,8 +401,15 @@ void GasParticleSystem::update_particle_timesteps(const Config& config,
         double a_mag = std::sqrt(acc_x[i] * acc_x[i] + acc_y[i] * acc_y[i] +
                                  acc_z[i] * acc_z[i]);
         if (a_mag > 0.0) {
-            double dt_grav = std::sqrt(
-                (2.0 * config.gravity_accuracy_eta * epsilon) / a_mag);
+            double eps_i = epsilon;
+            if (config.use_adaptive_softening) {
+                double eps_max = config.use_PM
+                                     ? std::sqrt(config.cutoff_radius_squared)
+                                     : std::numeric_limits<double>::infinity();
+                eps_i = std::clamp(h[i], softening_length, eps_max);
+            }
+            double dt_grav =
+                std::sqrt((2.0 * config.gravity_accuracy_eta * eps_i) / a_mag);
             dt_ideal = std::min(dt_ideal, dt_grav);
         }
 

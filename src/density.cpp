@@ -216,6 +216,7 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
     const double max_h_cap = 0.5 * config.domain_size_1d;
 
     constexpr double sphere_volume_factor = (4.0 / 3.0) * M_PI;
+    constexpr double omega_floor = 0.5;
 
     size_t num_h_clamped = 0;
     size_t num_non_converged = 0;
@@ -356,6 +357,11 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
             gas.h[i] = h_guess;
             gas.rho[i] = gas.mass[i] * number_density;
             gas.n_enc_final[i] = effective_neighbors;
+            double omega_val =
+                (number_density > 0.0)
+                    ? (1.0 + (h_guess / (3.0 * number_density)) * dn_dh)
+                    : 1.0;
+            gas.omega[i] = (omega_val > omega_floor) ? omega_val : 1.0;
             particle_target_N[i] = current_target_N;  // Save for Pass 2
 
             if (h_clamped) num_h_clamped++;
@@ -467,6 +473,11 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
                 gas.h[i] = h_guess;
                 gas.rho[i] = gas.mass[i] * number_density;
                 gas.n_enc_final[i] = effective_neighbors;
+                double omega_val =
+                    (number_density > 0.0)
+                        ? (1.0 + (h_guess / (3.0 * number_density)) * dn_dh)
+                        : 1.0;
+                gas.omega[i] = (omega_val > omega_floor) ? omega_val : 1.0;
 
                 if (h_clamped && h_guess >= max_h_cap) break;
             } else {

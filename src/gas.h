@@ -32,6 +32,7 @@ class GasParticleSystem {
     std::vector<double> h;    // Comoving smoothing length [Code Length]
     std::vector<double> rho;  // Comoving density (rho_c = a^3 * rho_phys) [Code
                               // Mass / Code Length^3]
+    std::vector<double> omega;
     std::vector<double>
         pressure;  // Comoving pressure (P_c = (gamma-1) * rho_c * u) [Code Mass
                    // / (Code Length * Code Time^2)]

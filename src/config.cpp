@@ -149,6 +149,8 @@ void Config::load(const std::string& filename) {
         "gravity", "cutoff_radius_factor", cutoff_radius_factor);
     PM_smoothing_cells = config_file.get_double("gravity", "pm_smoothing_cells",
                                                 PM_smoothing_cells);
+    use_adaptive_softening = config_file.get_bool(
+        "gravity", "use_adaptive_softening", use_adaptive_softening);
 
     std::string ics_str = config_file.get(
         "initial_conditions", "setup", InitialConfig::to_string(initial_setup));

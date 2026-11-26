@@ -359,6 +359,12 @@ void Integrator::compute_forces(SimState& state, const Config& config,
         }
     }
 
+    {
+        ScopedTimer timer(diag, TimerRegion::Density);
+        DensitySolver::compute_density_and_h(state.gas, config,
+                                             state.gravity.softening_length);
+    }
+
     // PP
 #ifdef GPU_CPU_PARALLEL_EXECUTION
     if (config.use_PP) {
@@ -371,11 +377,6 @@ void Integrator::compute_forces(SimState& state, const Config& config,
     }
 #endif
 
-    {
-        ScopedTimer timer(diag, TimerRegion::Density);
-        DensitySolver::compute_density_and_h(state.gas, config,
-                                             state.gravity.softening_length);
-    }
     {
         ScopedTimer hydro_timer(diag, TimerRegion::Hydro);
         HydroSolver::step(state.gas, config, state.scale_factor);
