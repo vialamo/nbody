@@ -161,7 +161,8 @@ Defines the cosmological model of the universe.
 
 * **`comoving_softening_factor`**: The gravitational softening length as a multiplier of the mean inter-particle spacing.
 * **`softening_cap_scale_factor`**: The expansion scale factor at which the physical size of the softening length is capped (so that its physical size won't grow more). This may be needed to preserve halo density through the simulation.
-* **`use_adaptive_softening`**: For gas only, use adaptive softening based on each particle's smoothing length instead of the fixed one.
+* **`use_adaptive_softening_gas`**: For gas only, use adaptive softening length based the particle's smoothing length instead of the fixed one.
+* **`use_adaptive_softening_dm`**: Use adaptive softening length for dark matter.
 * **`use_pm`**: Boolean. Enables the long-range Particle-Mesh (PM) force calculation via Fast Fourier Transform.
 * **`use_pp`**: Boolean. Enables the short-range Particle-Particle (PP) direct summation for sub-grid resolution.
 * **`pm_smoothing_cells`**: The scale ($r_s$) of the Fourier-space Gaussian filter, defined in units of grid cells. Determines how smoothly the grid force is blunted to avoid anisotropic grid artifacts.
@@ -200,6 +201,7 @@ Configures the fluid dynamics solver for the baryonic gas.
 * **`gamma`**: The adiabatic index (ratio of specific heats) of the gas. Set to `1.6666666667` (5/3) for a monatomic, non-relativistic ideal gas.
 * **`primordial_mu`**: The mean molecular weight of the gas (e.g., `1.22` for neutral primordial hydrogen/helium gas). Used to map internal energy to physical temperatures.
 * **`temp_floor_k`**: The minimum temperature (in Kelvin) the gas is allowed to reach. Note that internally, the radiative cooling module halts at `cooling_cutoff_k` regardless, but this parameter acts as the ultimate floor for the hydrodynamics engine.
+* **`jeans_resolution_factor`**: Sets the Jeans resolution parameter $N_J$ for the Jeans pressure floor. It enforces the Truelove et al. (1997) criterion by guaranteeing that the local Jeans length $\lambda_J$ is always resolved by at least $N_J$ resolution elements. Typical value is 4.0. Set to 0.0 to disable.
 * **`dual_energy_threshold`**: Threshold to activate the dual energy formalism. If the internal energy falls below this fraction of the kinetic energy, the fallback is triggered.
 * **`entropy_switch_akin`**: Threshold to activate the entropy switch. If the internal energy falls below this fraction of the maximum relative kinetic energy of interacting neighbors the fallback is triggered to enforce purely adiabatic evolution.
 * **`entropy_switch_agrav`**: Threshold to activate the entropy switch. If the internal energy falls below this fraction of the local gravitational energy variation across the smoothing length, the fallback is triggered to enforce purely adiabatic evolution.

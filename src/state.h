@@ -7,6 +7,7 @@
 #include "gravity.h"
 #include "particles.h"
 #include "pm.h"
+#include "star.h"
 #include "types.h"
 
 struct SimState {
@@ -17,6 +18,7 @@ struct SimState {
 
     ParticleSystem dm;
     GasParticleSystem gas;
+    StarParticleSystem star;
     Cooling cooling;
     PM pm;
     GravitySolver gravity;

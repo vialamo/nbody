@@ -12,6 +12,7 @@ struct Diagnostics;
 struct SimState;
 class GasParticleSystem;
 class ParticleSystem;
+class StarParticleSystem;
 
 class GravitySolver {
 #ifdef USE_GPU
@@ -41,9 +42,22 @@ class GravitySolver {
     LBVH::Workspace lbvh_ws;
 
     void prepare_arrays(ParticleSystem& dm, GasParticleSystem& gas,
-                        const Config& config, Diagnostics& diag);
+                        StarParticleSystem& star, const Config& config,
+                        Diagnostics& diag);
 
     void resize_gpu_buffers(size_t required_capacity);
+
+    void upload_species_to_gpu(size_t n, size_t offset, uint8_t type,
+                               const double* px, const double* py,
+                               const double* pz, const double* m,
+                               const uint8_t* is_active, const double* h,
+                               const double* rho, const double* omega,
+                               bool use_adaptive, double eps_min,
+                               double eps_max);
+
+    void download_species_accels(size_t n, uint8_t type, double* ax, double* ay,
+                                 double* az, const int* d_active_idx,
+                                 size_t n_active);
 #endif
 
    public:
@@ -56,11 +70,12 @@ class GravitySolver {
     void compute_dm_density_and_h(ParticleSystem& dm, const Config& config);
     void update_softening(double a, const Config& config);
 
-    void add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas, double a,
-                      const Config& config, Diagnostics& diag);
+    void add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas,
+                      StarParticleSystem& star, double a, const Config& config,
+                      Diagnostics& diag);
 
     void map_results(ParticleSystem& dm, GasParticleSystem& gas,
-                     Diagnostics& diag);
+                     StarParticleSystem& star, Diagnostics& diag);
 
     void reset_accels(SimState& state, const Config& config) const;
 

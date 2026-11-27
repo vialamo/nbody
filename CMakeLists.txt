@@ -62,6 +62,7 @@ set(CORE_SOURCES
     src/pm.cpp
     src/reconstruction.cpp
     src/riemann.cpp
+    src/star.cpp
     src/state.cpp
     src/thermodynamics.cpp
     src/utils.cpp

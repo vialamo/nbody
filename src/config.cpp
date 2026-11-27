@@ -143,8 +143,8 @@ void Config::load(const std::string& filename) {
         "gravity", "comoving_softening_factor", comoving_softening_factor);
     softening_cap_a = config_file.get_double(
         "gravity", "softening_cap_scale_factor", softening_cap_a);
-    use_adaptive_softening = config_file.get_bool(
-        "gravity", "use_adaptive_softening", use_adaptive_softening);
+    use_adaptive_softening_gas = config_file.get_bool(
+        "gravity", "use_adaptive_softening_gas", use_adaptive_softening_gas);
     use_adaptive_softening_dm = config_file.get_bool(
         "gravity", "use_adaptive_softening_dm", use_adaptive_softening_dm);
     use_PM = config_file.get_bool("gravity", "use_pm", use_PM);

@@ -68,7 +68,7 @@ struct Config {
     // Gravity
     double comoving_softening_factor = 0.033;
     double softening_cap_a = 0.3;
-    bool use_adaptive_softening = false;
+    bool use_adaptive_softening_gas = false;
     bool use_adaptive_softening_dm = false;
     bool use_PM = true;
     bool use_PP = true;

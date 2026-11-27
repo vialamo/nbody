@@ -387,8 +387,8 @@ void Integrator::compute_forces(SimState& state, const Config& config,
         ScopedTimer pp_timer(diag, TimerRegion::PP);
         pp_worker.launch([&]() {
             ScopedTimer pp_timer(diag, TimerRegion::PP_GPU);
-            state.gravity.add_pp_accel(state.dm, state.gas, state.scale_factor,
-                                       config, diag);
+            state.gravity.add_pp_accel(state.dm, state.gas, state.star,
+                                       state.scale_factor, config, diag);
         });
     }
 #endif
@@ -403,10 +403,10 @@ void Integrator::compute_forces(SimState& state, const Config& config,
 #ifdef GPU_CPU_PARALLEL_EXECUTION
         pp_worker.wait();
 #else
-        state.gravity.add_pp_accel(state.dm, state.gas, state.scale_factor,
-                                   config, diag);
+        state.gravity.add_pp_accel(state.dm, state.gas, state.star,
+                                   state.scale_factor, config, diag);
 #endif
-        state.gravity.map_results(state.dm, state.gas, diag);
+        state.gravity.map_results(state.dm, state.gas, state.star, diag);
     }
 
     // Force boundary conditions

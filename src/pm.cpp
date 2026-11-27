@@ -211,6 +211,10 @@ void PM::bin_and_assign_mass(SimState& state, const Config& config) {
     bin_and_add_mass(config, gas.num_particles, gas.pos_x, gas.pos_y, gas.pos_z,
                      gas.mass, gas.cic_data, rho);
 
+    StarParticleSystem& star = state.star;
+    bin_and_add_mass(config, star.num_particles, star.pos_x, star.pos_y,
+                     star.pos_z, star.mass, star.cic_data, rho);
+
     rho.data /= config.cell_volume;
 }
 
@@ -222,6 +226,10 @@ void PM::interpolate_forces(SimState& state, const Config& config) {
     GasParticleSystem& gas = state.gas;
     ::interpolate_forces(config, gas.num_particles, gas.cic_data, acc_x, acc_y,
                          acc_z, gas.acc_x, gas.acc_y, gas.acc_z);
+
+    StarParticleSystem& star = state.star;
+    ::interpolate_forces(config, star.num_particles, star.cic_data, acc_x,
+                         acc_y, acc_z, star.acc_x, star.acc_y, star.acc_z);
 }
 
 void PM::compute_acceleration(SimState& state, const Config& config) {

@@ -402,7 +402,7 @@ void GasParticleSystem::update_particle_timesteps(const Config& config,
                                  acc_z[i] * acc_z[i]);
         if (a_mag > 0.0) {
             double eps_i = epsilon;
-            if (config.use_adaptive_softening) {
+            if (config.use_adaptive_softening_gas) {
                 double eps_max = config.use_PM
                                      ? std::sqrt(config.cutoff_radius_squared)
                                      : std::numeric_limits<double>::infinity();
