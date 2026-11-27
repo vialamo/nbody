@@ -1,11 +1,11 @@
 # Cosmological Code
 
-This repository contains a Tree-accelerated P$^3$M/MFM cosmological C++ code, along with documentation that explains the underlying physics and algorithms.
+This repository contains a Tree-accelerated P³M/MFM cosmological C++ code, along with documentation that explains the underlying physics and algorithms.
 
 ## Key Features
 
 * **Gravity Solvers:**
-    * **Tree-accelerated P$^3$M Gravity:** Fourier-Split solver combining an FFT-based Particle-Mesh (PM) for long-range forces with a Linear Bounding Volume Hierarchy (LBVH) tree for short-range PP interactions.
+    * **Tree-accelerated P³M Gravity:** Fourier-Split solver combining an FFT-based Particle-Mesh (PM) for long-range forces with a Linear Bounding Volume Hierarchy (LBVH) tree for short-range PP interactions.
 * **Cosmology:**
     * **Integration:** Supports generalized flat $\Lambda\text{CDM}$ cosmologies (including Einstein-de Sitter) using a Kick-Drift-Kick (KDK) scheme.
     * **Initial Conditions:** Includes native generation of initial conditions for cosmological simulations (via the Zel'dovich Approximation and the BBKS transfer function) and a set of typical tests.
@@ -24,7 +24,7 @@ This repository contains a Tree-accelerated P$^3$M/MFM cosmological C++ code, al
 ## Repository Structure
 
 * [`/src/`](src/): The C++ source of the cosmological code.
-* [`/docs/`](docs/): Contains several documents, including a methods document, in Markdown format. It includes a `Makefile` to automatically build the sources into EPUB and PDF files.
+* [`/docs/`](docs/): Contains several documents, including a methods document, in Markdown format. It includes a `Makefile` to build the sources into EPUB and PDF files.
 * [`/examples/`](examples/): Contains configuration files for typical simulations and tests.
 * [`/scripts/`](scripts/): Contains Python utilities for post-processing, including a dashboard (`dashboard.py`) to plot and diagnose physics from the HDF5 outputs.
 
@@ -123,9 +123,9 @@ The `/docs` folder contains several documents detailing the physics and algorith
 2.  **Build:** Navigate to the `docs` directory and use the provided `Makefile`.
     ```bash
     cd docs
-    make        # Builds both EPUB and PDF
+    make        # Builds PDF
     
-    # Or build them individually:
+    # Or build specific format:
     make pdf
     make epub
     ```

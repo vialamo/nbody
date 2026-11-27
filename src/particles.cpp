@@ -23,6 +23,10 @@ ParticleSystem::ParticleSystem(const Config& config) {
 
     mass.reserve(config.num_dm_particles);
 
+    h.reserve(config.num_dm_particles);
+    rho.reserve(config.num_dm_particles);
+    omega.reserve(config.num_dm_particles);
+
     size_t num_nodes = 2 * config.num_dm_particles - 1;
     if (config.num_dm_particles > 0) {
         morton_codes.reserve(config.num_dm_particles);
@@ -51,6 +55,10 @@ void ParticleSystem::add_particle(double px, double py, double pz, double vx,
     acc_z.push_back(0.0);
     mass.push_back(m);
 
+    h.push_back(0.05);
+    rho.push_back(0.0);
+    omega.push_back(1.0);
+
     ti_step.push_back(0);
     ti_current.push_back(0);
     ti_end.push_back(0);
@@ -77,6 +85,9 @@ void ParticleSystem::sort_arrays(const std::vector<int>& sorted_indices) {
     permute_array(acc_y, scratch_double, sorted_indices);
     permute_array(acc_z, scratch_double, sorted_indices);
     permute_array(mass, scratch_double, sorted_indices);
+    permute_array(h, scratch_double, sorted_indices);
+    permute_array(rho, scratch_double, sorted_indices);
+    permute_array(omega, scratch_double, sorted_indices);
 
     // Integers & flags
     permute_array(ti_step, scratch_uint64, sorted_indices);
@@ -196,8 +207,15 @@ void ParticleSystem::update_particle_timesteps(const Config& config,
                                  acc_z[i] * acc_z[i]);
 
         if (a_mag > 0.0) {
-            double dt_grav = std::sqrt(
-                (2.0 * config.gravity_accuracy_eta * epsilon) / a_mag);
+            double eps_i = epsilon;
+            if (config.use_adaptive_softening_dm) {
+                double eps_max = config.use_PM
+                                     ? std::sqrt(config.cutoff_radius_squared)
+                                     : std::numeric_limits<double>::infinity();
+                eps_i = std::clamp(h[i], softening_length, eps_max);
+            }
+            double dt_grav =
+                std::sqrt((2.0 * config.gravity_accuracy_eta * eps_i) / a_mag);
             dt_ideal = std::min(dt_ideal, dt_grav);
         }
 

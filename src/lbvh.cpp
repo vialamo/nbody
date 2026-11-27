@@ -309,8 +309,7 @@ void update_h_and_bboxes(size_t num_particles, const std::vector<double>& pos_x,
     }
 }
 
-#ifdef GRAVITY_GPU_MEMORY
-
+#ifdef USE_GPU
 Workspace::~Workspace() {
     int dev = omp_get_default_device();
     if (current_padded_capacity > 0) {
@@ -495,7 +494,7 @@ void build_topology_and_aggregate_gpu(Workspace& ws, size_t num_particles,
         bvh_nodes[0].parent = -1;
     }
 
-    // BOTTOM-UP AGGREGATION (Pure OpenMP 4.5, level-synchronous)
+    // BOTTOM-UP AGGREGATION (OpenMP 4.5, level-synchronous)
     size_t flags_size = static_cast<size_t>(num_nodes);
 
     if (flags_size > ws.current_flags_capacity) {

@@ -34,6 +34,10 @@ class ParticleSystem {
 
     std::vector<double> mass;
 
+    std::vector<double> h;
+    std::vector<double> rho;
+    std::vector<double> omega;
+
     EnergyBudget budget;
 
     uint64_t ti_global_time = 0;

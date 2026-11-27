@@ -18,7 +18,6 @@ option(USE_GPU_OFFLOAD "Enable GPU Offloading" ON)
 option(USE_FFTW_OMP "Use FFTW3 OpenMP backend (disable if libgomp conflicts arise)" OFF)
 option(ENABLE_IPO "Enable Interprocedural Optimization (LTO)" ON)
 option(ENABLE_VEC_DIAGNOSTICS "Enable compiler vectorization diagnostics" OFF)
-option(ENABLE_GRAVITY_GPU_MEMORY "Keep gravity solver data resident in GPU VRAM" ON)
 option(ENABLE_PARALLEL_EXECUTION "Execute CPU hydro and GPU gravity solvers concurrently" ON)
 option(USE_GEOMETRIC_MATRIX "Exclude neighbor density from MFM matrix computations" OFF)
 option(USE_MIDPOINT_QUADRATURE "Use midpoint instead of weighted quadrature in MFM" OFF)
@@ -139,10 +138,6 @@ if(USE_GPU_OFFLOAD)
     message(STATUS "GPU Offloading ENABLED")
     
     target_compile_definitions(SimulationCore PUBLIC USE_GPU)
-    
-    if(ENABLE_GRAVITY_GPU_MEMORY)
-		target_compile_definitions(SimulationCore PUBLIC GRAVITY_GPU_MEMORY)
-	endif()
 
 	if(ENABLE_PARALLEL_EXECUTION)
 		target_compile_definitions(SimulationCore PUBLIC GPU_CPU_PARALLEL_EXECUTION)

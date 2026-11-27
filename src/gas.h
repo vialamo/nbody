@@ -105,6 +105,8 @@ class GasParticleSystem {
     std::vector<double> snap_pressure;
     std::vector<double> snap_entropy;
 
+    double min_h_cap;
+
     // Debugging
     std::vector<double> n_enc_final;
 

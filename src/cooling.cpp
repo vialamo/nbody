@@ -2,7 +2,7 @@
 
 #include <H5Cpp.h>
 
-#include <algorithm>  // For std::max, std::min
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -360,7 +360,6 @@ double Cooling::solve_cooling_implicit(double u_old, double rho_code, double Z,
         // Explicit fallback if the safety escape triggers
         if ((u_high - u_old -
              dt * compute_du_dt(u_high, rho_code, Z, a, config)) < 0.0) {
-            std::cout << "warning: cooling explicit fallback" << std::endl;
             iterations_taken = 1;
             return u_old + (dt * du_dt_initial);
         }

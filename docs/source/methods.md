@@ -524,6 +524,7 @@ Sorting the SoA particle arrays into Morton order each step ensures spatial loca
 Snapshots are written in a custom HDF5 schema using Single-Writer Multiple-Reader (SWMR) mode, allowing concurrent inspection during a running simulation. Each snapshot file contains five groups:
 
 | Group | Contents |
+| --- | --- |
 | `Header` | Scale factor, simulation time, current softening length and other parameters |
 | `Config` | All runtime configuration parameters, domain dimensions, cosmological parameters, and internal $G$ |
 | `Units` | Conversion factors to physical Mpc, Gyr, $\mathrm{km\,s^{-1}}$, $M_\odot$, CGS, and $u \to T$ |
@@ -543,6 +544,7 @@ Runtime parameters are read from an INI-format configuration file. Key parameter
 **Table 1.** Key runtime configuration parameters and defaults.
 
 | Section | Parameter | Default | Description |
+| --- | --- | --- | --- |
 | `[domain]` | `box_size_mpc` | `96.0` | Comoving box side length (Mpc) |
 | `[domain]` | `mesh_size_1d` | `64` | PM grid dimension $N_\mathrm{grid}$ |
 | `[domain]` | `num_dm_particles_1d` | `64` | DM particles per dimension |

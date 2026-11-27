@@ -14,7 +14,7 @@ class GasParticleSystem;
 class ParticleSystem;
 
 class GravitySolver {
-#ifdef GRAVITY_GPU_MEMORY
+#ifdef USE_GPU
    private:
     size_t current_gpu_capacity = 0;
     size_t current_bvh_capacity = 0;
@@ -42,6 +42,8 @@ class GravitySolver {
 
     void prepare_arrays(ParticleSystem& dm, GasParticleSystem& gas,
                         const Config& config, Diagnostics& diag);
+
+    void resize_gpu_buffers(size_t required_capacity);
 #endif
 
    public:
@@ -51,6 +53,7 @@ class GravitySolver {
     GravitySolver(const GravitySolver&) = delete;
     GravitySolver& operator=(const GravitySolver&) = delete;
 
+    void compute_dm_density_and_h(ParticleSystem& dm, const Config& config);
     void update_softening(double a, const Config& config);
 
     void add_pp_accel(ParticleSystem& dm, GasParticleSystem& gas, double a,
@@ -61,7 +64,6 @@ class GravitySolver {
 
     void reset_accels(SimState& state, const Config& config) const;
 
-    // Timestep
     double get_timestep(const ParticleSystem& dm, const GasParticleSystem& gas,
                         const Config& config) const;
 

@@ -68,11 +68,12 @@ struct Config {
     // Gravity
     double comoving_softening_factor = 0.033;
     double softening_cap_a = 0.3;
+    bool use_adaptive_softening = false;
+    bool use_adaptive_softening_dm = false;
     bool use_PM = true;
     bool use_PP = true;
     double cutoff_radius_factor = 4.5;
     double PM_smoothing_cells = 1.25;
-    bool use_adaptive_softening = false;
 
     // Initial conditions
     InitialSetup initial_setup = InitialSetup::Cosmological;
@@ -104,6 +105,7 @@ struct Config {
     double dual_energy_threshold = 0.001;
     double entropy_switch_akin = 0.001;
     double entropy_switch_agrav = 0.001;
+    double jeans_resolution_factor = 0.0;
 
     // Cooling
     bool enable_cooling = true;

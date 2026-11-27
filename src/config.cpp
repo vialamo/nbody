@@ -143,14 +143,16 @@ void Config::load(const std::string& filename) {
         "gravity", "comoving_softening_factor", comoving_softening_factor);
     softening_cap_a = config_file.get_double(
         "gravity", "softening_cap_scale_factor", softening_cap_a);
+    use_adaptive_softening = config_file.get_bool(
+        "gravity", "use_adaptive_softening", use_adaptive_softening);
+    use_adaptive_softening_dm = config_file.get_bool(
+        "gravity", "use_adaptive_softening_dm", use_adaptive_softening_dm);
     use_PM = config_file.get_bool("gravity", "use_pm", use_PM);
     use_PP = config_file.get_bool("gravity", "use_pp", use_PP);
     cutoff_radius_factor = config_file.get_double(
         "gravity", "cutoff_radius_factor", cutoff_radius_factor);
     PM_smoothing_cells = config_file.get_double("gravity", "pm_smoothing_cells",
                                                 PM_smoothing_cells);
-    use_adaptive_softening = config_file.get_bool(
-        "gravity", "use_adaptive_softening", use_adaptive_softening);
 
     std::string ics_str = config_file.get(
         "initial_conditions", "setup", InitialConfig::to_string(initial_setup));
@@ -195,6 +197,8 @@ void Config::load(const std::string& filename) {
                                            primordial_mu);
     temp_floor_k =
         config_file.get_double("thermodynamics", "temp_floor_k", temp_floor_k);
+    jeans_resolution_factor = config_file.get_double(
+        "thermodynamics", "jeans_resolution_factor", jeans_resolution_factor);
     dual_energy_threshold = config_file.get_double(
         "thermodynamics", "dual_energy_threshold", dual_energy_threshold);
     entropy_switch_akin = config_file.get_double(

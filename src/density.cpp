@@ -214,6 +214,7 @@ void compute_density_and_h(GasParticleSystem& gas, const Config& config,
 
     const double min_h_cap = config.min_hsml_fraction * softening_length;
     const double max_h_cap = 0.5 * config.domain_size_1d;
+    gas.min_h_cap = min_h_cap;
 
     constexpr double sphere_volume_factor = (4.0 / 3.0) * M_PI;
     constexpr double omega_floor = 0.5;

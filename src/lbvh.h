@@ -108,7 +108,7 @@ inline void traverse(const BVHNode* bvh_nodes, const double* target_pos_x,
 #endif
 
 // GPU specific versions
-#ifdef GRAVITY_GPU_MEMORY
+#ifdef USE_GPU
 
 class Workspace {
    public:

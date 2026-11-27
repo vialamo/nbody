@@ -1,8 +1,5 @@
 # Makefile for generating docs
 
-# Variables
-CSS = source/style.css
-
 BOOK_SRC = source/notes.md
 BOOK_PDF = build/notes.pdf
 BOOK_EPUB = build/notes.epub
@@ -16,7 +13,7 @@ METHODS_TITLE = "A Hybrid PM+PP/MFM Cosmological Hydrodynamics Code with GPU Acc
 .PHONY: all epub pdf book methods clean
 
 # Default target
-all: pdf
+all: epub pdf
 
 # Explicit targets
 epub: $(BOOK_EPUB) $(METHODS_EPUB)
@@ -27,7 +24,7 @@ methods: $(METHODS_EPUB) $(METHODS_PDF)
 # Book targets
 $(BOOK_EPUB): $(BOOK_SRC) $(CSS)
 	@mkdir -p build
-	pandoc $(BOOK_SRC) --css=$(CSS) -o $@ --mathml --to=epub3 -V documentclass=book --metadata title=$(BOOK_TITLE)
+	pandoc $(BOOK_SRC) -o $@ --mathml --to=epub3 -V documentclass=book --metadata title=$(BOOK_TITLE)
 
 $(BOOK_PDF): $(BOOK_SRC)
 	@mkdir -p build

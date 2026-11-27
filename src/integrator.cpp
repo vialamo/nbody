@@ -341,7 +341,7 @@ void Integrator::compute_forces(SimState& state, const Config& config,
     // Build trees
     {
         ScopedTimer timer(diag, TimerRegion::Tree);
-#ifndef GRAVITY_GPU_MEMORY
+#ifndef USE_GPU
         state.dm.build_lbvh(config);
 #endif
         state.gas.build_lbvh(config);
@@ -361,8 +361,24 @@ void Integrator::compute_forces(SimState& state, const Config& config,
 
     {
         ScopedTimer timer(diag, TimerRegion::Density);
+        if (config.use_adaptive_softening_dm) {
+#ifdef GPU_CPU_PARALLEL_EXECUTION
+            pp_worker.launch([&]() {
+                state.gravity.compute_dm_density_and_h(state.dm, config);
+            });
+#else
+            state.gravity.compute_dm_density_and_h(state.dm, config);
+#endif
+        }
+
         DensitySolver::compute_density_and_h(state.gas, config,
                                              state.gravity.softening_length);
+
+#ifdef GPU_CPU_PARALLEL_EXECUTION
+        if (config.use_adaptive_softening_dm) {
+            pp_worker.wait();
+        }
+#endif
     }
 
     // PP

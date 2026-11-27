@@ -3,8 +3,16 @@
 #include "gas.h"
 #include "integrator.h"
 
-namespace Thermodynamics {
+namespace {
+inline double get_jeans_pressure_floor(double rho, double h, double a,
+                                       const Config& config) {
+    const double N_J = config.jeans_resolution_factor;
+    const double G_eff = config.G / (a * a * a);
+    return (N_J * N_J) / (M_PI * config.gamma) * G_eff * (rho * rho) * (h * h);
+}
+}  // namespace
 
+namespace Thermodynamics {
 void initialize_primitive_variables(GasParticleSystem& gas,
                                     const Config& config, double a) {
     size_t num_active = gas.get_num_active();
@@ -82,7 +90,10 @@ void predict_primitive_variables(GasParticleSystem& gas, const Config& config,
         // Enforce the thermodynamic floor on the predicted state
         if (u_pred < u_floor) u_pred = u_floor;
 
-        gas.pressure_pred[i] = gamma_minus_1 * gas.rho[i] * u_pred;
+        double p_pred = gamma_minus_1 * gas.rho[i] * u_pred;
+        double p_jeans =
+            get_jeans_pressure_floor(gas.rho[i], gas.min_h_cap, a, config);
+        gas.pressure_pred[i] = std::max(p_pred, p_jeans);
     }
 }
 
@@ -170,8 +181,8 @@ void kick_particle_thermodynamics(GasParticleSystem& gas, size_t i,
     }
 
     // Apply Thermodynamic Floor
-    const double u_floor = Thermodynamics::get_internal_energy_from_temp(
-        config.temp_floor_k, a, config);
+    double u_floor =
+        get_internal_energy_from_temp(config.temp_floor_k, a, config);
     if (gas.u[i] < u_floor) {
         double injected = u_floor - gas.u[i];
         work.injected_energy = injected * m;
